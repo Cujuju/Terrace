@@ -9,7 +9,7 @@ import {
   seabedHeight,
 } from '@terrace/shared';
 import { HEIGHT_WORLD_SCALE, SEA_DEPTH_CUE_SPAN_BANDS } from '../config.ts';
-import { isCellReceived, sampleRenderBandHeight, type TerrainMirror } from './mirror.ts';
+import { type TerrainMirror } from './mirror.ts';
 
 export const WATER_MIN_ALPHA = 0.1;
 
@@ -156,44 +156,6 @@ export function writeWaterCurveTexels(
         out[base + WATER_CURVE_ALPHA_CHANNEL] = surfaceAlphaByte(height);
         out[base + WATER_CURVE_SPECULAR_CHANNEL] = depthSpecularFactorByte(depth);
         out[base + WATER_CURVE_SHADE_CHANNEL] = depthShadeMixByte(depth);
-      }
-    }
-  }
-}
-
-// The sea's wet/dry edge is the band-0 isoline the land caps march, so the field is their sample.
-const SHORE_FIELD_BAND = 0;
-
-export function createShoreFieldBuffer(worldSize: number): Float32Array {
-  return new Float32Array(worldSize * worldSize);
-}
-
-/** Row/column span a dirty chunk writes: its cells plus the far seam, which its last cell interpolates toward. */
-export function shoreFieldChunkRect(
-  worldSize: number,
-  chunkIdx: number,
-): { x0: number; y0: number; x1: number; y1: number } {
-  const chunkCols = chunksPerEdge(worldSize);
-  const x0 = (chunkIdx % chunkCols) * CHUNK_SIZE;
-  const y0 = Math.floor(chunkIdx / chunkCols) * CHUNK_SIZE;
-  const max = worldSize - 1;
-  return { x0, y0, x1: Math.min(x0 + CHUNK_SIZE, max), y1: Math.min(y0 + CHUNK_SIZE, max) };
-}
-
-export function writeShoreFieldTexels(
-  out: Float32Array,
-  worldSize: number,
-  mirror: TerrainMirror,
-  dirtyChunks: Iterable<number>,
-): void {
-  for (const chunkIdx of dirtyChunks) {
-    const { x0, y0, x1, y1 } = shoreFieldChunkRect(worldSize, chunkIdx);
-    for (let y = y0; y <= y1; y++) {
-      const seamRow = y === y0 + CHUNK_SIZE;
-      for (let x = x0; x <= x1; x++) {
-        // A received neighbour owns its own texels; an unreceived one takes the mesher's substitute.
-        if ((seamRow || x === x0 + CHUNK_SIZE) && isCellReceived(mirror, x, y)) continue;
-        out[y * worldSize + x] = sampleRenderBandHeight(mirror, x, y, SHORE_FIELD_BAND);
       }
     }
   }

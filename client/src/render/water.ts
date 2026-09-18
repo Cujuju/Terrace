@@ -16,32 +16,22 @@ import {
 } from 'three';
 import { MeshPhysicalNodeMaterial, type UniformNode } from 'three/webgpu';
 import {
-  cameraPosition,
   diffuseColor,
-  float,
-  fwidth,
-  ivec2,
-  max,
   mix,
   positionWorld,
   select,
   texture,
-  textureLoad,
   uniform,
-  vec2,
   vec3,
 } from 'three/tsl';
 import {
   CHUNK_SIZE,
-  DRAWN_GROUND_BAND_BIAS,
   MAX_BRUSH_RADIUS,
   chunksPerEdge,
-  drawnLevelThreshold,
 } from '@terrace/shared';
 import {
   CELL_WORLD_SIZE,
   SEA_SURFACE_WORLD_Y,
-  WATER_SURFACE_LIFT,
 } from '../config.ts';
 import type { TerrainMirror } from '../terrain/mirror.ts';
 import {
@@ -51,10 +41,7 @@ import {
   WATER_TRENCH_TINT,
   WATER_DEEP_TINT,
   WATER_SHALLOW_TINT,
-  createShoreFieldBuffer,
   createWaterCurveBuffer,
-  shoreFieldChunkRect,
-  writeShoreFieldTexels,
   writeWaterCurveTexels,
 } from '../terrain/waterDepth.ts';
 import { compose } from './materialSlots.ts';
@@ -85,76 +72,7 @@ function createCurveTexture(worldSize: number): { texture: DataTexture; buffer: 
   return { texture, buffer };
 }
 
-function createShoreFieldTexture(worldSize: number): { texture: DataTexture; buffer: Float32Array } {
-  const buffer = createShoreFieldBuffer(worldSize);
-  const texture = new DataTexture(buffer, worldSize, worldSize, RedFormat, FloatType);
-  texture.generateMipmaps = false;
-  texture.minFilter = NearestFilter;
-  texture.magFilter = NearestFilter;
-  texture.needsUpdate = true;
-  return { texture, buffer };
-}
-
 const TEXEL_CENTRE_CELLS = 0.5;
-
-// Land at or above this raw height draws band 0: the shoreline the land caps march.
-const SHORE_FIELD_THRESHOLD = drawnLevelThreshold(0) - DRAWN_GROUND_BAND_BIAS;
-
-// Keeps a flat field's zero screen derivative from dividing by zero.
-const MIN_SHORE_EDGE_WIDTH = 1e-6;
-
-// Band 0's cap, the height the shore field describes. The sea plane floats a lift above it.
-const SHORE_CAP_WORLD_Y = SEA_SURFACE_WORLD_Y - WATER_SURFACE_LIFT;
-
-// An eye at the surface sees the plane edge-on; below this the correction is meaningless.
-const MIN_EYE_LIFT_ABOVE_SEA = WATER_SURFACE_LIFT;
-
-// The cap plane stands in for terrain only near the shore. Past this the fragment is
-// open sea, whose field is nowhere near the threshold, so capping changes nothing.
-const MAX_SHORE_PARALLAX_CELLS = 8;
-const MAX_SHORE_PARALLAX_WORLD_UNITS = MAX_SHORE_PARALLAX_CELLS * CELL_WORLD_SIZE;
-
-// Coverage changes between pixels only at the wet/dry edge, so its derivative is
-// that edge at any view angle. The gain lights a partial step fully.
-const SHORE_OUTLINE_GAIN = 3;
-const SHORE_OUTLINE_COLOUR: readonly [number, number, number] = [1, 0, 0.85];
-
-const shoreOutline = uniform(0);
-
-/** Debug overlay: light the water's own wet/dry edge, to read against the land cap's. */
-export function setShoreOutlineVisible(visible: boolean): void {
-  shoreOutline.value = visible ? 1 : 0;
-}
-
-// Where the view ray reaches band 0's cap. The sea plane sits above it, so a
-// grazing ray meets the plane cells seaward of the land it covers.
-function shoreCapXZ() {
-  const eyeLift = max(cameraPosition.y.sub(SEA_SURFACE_WORLD_Y), MIN_EYE_LIFT_ABOVE_SEA);
-  const toCap = float(SEA_SURFACE_WORLD_Y - SHORE_CAP_WORLD_Y).div(eyeLift);
-  const shift = positionWorld.xz.sub(cameraPosition.xz).mul(toCap);
-  const reach = shift.length();
-  return positionWorld.xz.add(
-    shift.mul(float(MAX_SHORE_PARALLAX_WORLD_UNITS).div(max(reach, MAX_SHORE_PARALLAX_WORLD_UNITS))),
-  );
-}
-
-// The shared drawn field: corner samples blended bilinearly, as drawnCornerNumerator does.
-// Returns the signed distance to the shore in screen pixels; positive is wet.
-function shoreEdgeDistance(
-  fieldTexture: DataTexture,
-  worldSizeCells: UniformNode<'float', number>,
-) {
-  const cell = shoreCapXZ().div(CELL_WORLD_SIZE);
-  const corner = cell.floor();
-  const t = cell.sub(corner);
-  const lastCell = worldSizeCells.sub(1);
-  const tap = (dx: number, dz: number) =>
-    textureLoad(fieldTexture, ivec2(corner.add(vec2(dx, dz)).clamp(0, lastCell))).r;
-  const field = mix(mix(tap(0, 0), tap(1, 0), t.x), mix(tap(0, 1), tap(1, 1), t.x), t.y);
-  // Wet below the threshold; one screen pixel of fade on the wet side keeps the exact shore dry.
-  const wetDepth = float(SHORE_FIELD_THRESHOLD).sub(field);
-  return wetDepth.div(max(fwidth(wetDepth), MIN_SHORE_EDGE_WIDTH));
-}
 
 function tintOf(shadeMix: ReturnType<typeof texture>['b']) {
   const trenchSide = mix(
@@ -173,7 +91,6 @@ function tintOf(shadeMix: ReturnType<typeof texture>['b']) {
 function makeDepthAware(
   material: MeshPhysicalNodeMaterial,
   curveTexture: DataTexture,
-  fieldTexture: DataTexture,
   worldSizeCells: UniformNode<'float', number>,
 ): void {
   const depthUv = positionWorld.xz
@@ -182,12 +99,9 @@ function makeDepthAware(
     .div(worldSizeCells);
   const curves = texture(curveTexture, depthUv);
   compose(material, 'color', (previous) => previous.mul(tintOf(curves.b)));
-  const edgeDistance = shoreEdgeDistance(fieldTexture, worldSizeCells);
-  const coverage = edgeDistance.clamp(0, 1);
-  const edge = fwidth(coverage).mul(SHORE_OUTLINE_GAIN).clamp(0, 1).mul(shoreOutline);
-  compose(material, 'opacity', (previous) => max(previous.mul(curves.r).mul(coverage), edge));
+  compose(material, 'opacity', (previous) => previous.mul(curves.r));
   compose(material, 'emissive', (previous) =>
-    previous.add(diffuseColor.rgb.mul(WATER_SELF_LIGHT_RADIANCE)).add(vec3(...SHORE_OUTLINE_COLOUR).mul(edge)),
+    previous.add(diffuseColor.rgb.mul(WATER_SELF_LIGHT_RADIANCE)),
   );
   // The GLSL scaled totalSpecular, which has no slot; F0 is the nearest hook.
   material.specularColorNode = vec3(curves.g);
@@ -210,9 +124,6 @@ export function createWater(
   const { texture: curveTexture, buffer: initialCurveBuffer } =
     createCurveTexture(initialWorldSize);
   let curveBuffer = initialCurveBuffer;
-  const { texture: fieldTexture, buffer: initialFieldBuffer } =
-    createShoreFieldTexture(initialWorldSize);
-  let fieldBuffer = initialFieldBuffer;
   const worldSizeCells = uniform(initialWorldSize);
   const dirtyChunkScratch: number[] = [];
 
@@ -224,7 +135,7 @@ export function createWater(
     depthWrite: false,
     side: DoubleSide,
   });
-  makeDepthAware(material, curveTexture, fieldTexture, worldSizeCells);
+  makeDepthAware(material, curveTexture, worldSizeCells);
   applyGroundShade(material, 'water');
   makeBanded(material);
 
@@ -271,10 +182,6 @@ export function createWater(
     curveTexture.image = { data: curveBuffer, width: worldSize, height: worldSize };
     curveTexture.clearUpdateRanges();
     curveTexture.needsUpdate = true;
-    fieldBuffer = createShoreFieldBuffer(worldSize);
-    fieldTexture.image = { data: fieldBuffer, width: worldSize, height: worldSize };
-    fieldTexture.clearUpdateRanges();
-    fieldTexture.needsUpdate = true;
     worldSizeCells.value = worldSize;
   };
 
@@ -332,10 +239,8 @@ export function createWater(
       if (dirtyChunkScratch.length === 0) return;
       const worldSize = worldSizeCells.value;
       writeWaterCurveTexels(curveBuffer, worldSize, mirror, dirtyChunkScratch);
-      writeShoreFieldTexels(fieldBuffer, worldSize, mirror, dirtyChunkScratch);
       if (dirtyChunkScratch.length > MAX_RANGED_REFRESH_CHUNKS) {
         curveTexture.clearUpdateRanges();
-        fieldTexture.clearUpdateRanges();
       } else {
         const chunkCols = chunksPerEdge(worldSize);
         for (const chunkIdx of dirtyChunkScratch) {
@@ -347,21 +252,15 @@ export function createWater(
               CHUNK_SIZE * WATER_CURVE_BYTES_PER_TEXEL,
             );
           }
-          const rect = shoreFieldChunkRect(worldSize, chunkIdx);
-          for (let y = rect.y0; y <= rect.y1; y++) {
-            fieldTexture.addUpdateRange(y * worldSize + rect.x0, rect.x1 - rect.x0 + 1);
-          }
         }
       }
       curveTexture.needsUpdate = true;
-      fieldTexture.needsUpdate = true;
     },
     dispose(): void {
       parent.remove(mesh);
       mesh.geometry.dispose();
       material.dispose();
       curveTexture.dispose();
-      fieldTexture.dispose();
     },
   };
 }
