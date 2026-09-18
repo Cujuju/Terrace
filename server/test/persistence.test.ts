@@ -1,6 +1,4 @@
 import DatabaseConstructor from 'better-sqlite3';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -31,6 +29,7 @@ import {
   worldWithUnlockedChunks,
   type RawFloorSpan,
 } from './support/harness.ts';
+import { makeTempRoot, removeTempRoot } from './support/tempRoot.ts';
 
 const WORLD_SIZE = CHUNK_SIZE * 4;
 
@@ -69,12 +68,12 @@ describe('SnapshotStore', () => {
   let dbPath: string;
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'terrace-test-'));
+    dir = makeTempRoot('terrace-test-');
     dbPath = join(dir, 'nested', 'world.db');
   });
 
   afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
+    removeTempRoot(dir);
   });
 
   it('round-trips heightmap, mask and plugin slices across a restart', () => {
@@ -466,12 +465,12 @@ describe('reading a schema 1 world under the band-floor rule', () => {
   let dbPath: string;
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'terrace-v1-'));
+    dir = makeTempRoot('terrace-v1-');
     dbPath = join(dir, 'world.db');
   });
 
   afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
+    removeTempRoot(dir);
   });
 
   // A roof whose raw floor sits exactly on a band level converts losslessly; one

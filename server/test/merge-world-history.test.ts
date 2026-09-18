@@ -1,7 +1,6 @@
 import DatabaseConstructor from 'better-sqlite3';
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { copyFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -12,6 +11,7 @@ import {
 } from '../src/persistence/snapshot-store.ts';
 import { carveArchFixture } from '../src/world/arch-fixture.ts';
 import { worldWithUnlockedChunks } from './support/harness.ts';
+import { makeTempRoot, removeTempRoot } from './support/tempRoot.ts';
 
 const WORLD_SIZE = 64;
 const SEEDED_SNAPSHOTS = 2;
@@ -25,13 +25,13 @@ let fromPath: string;
 let intoPath: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'terrace-merge-'));
+  dir = makeTempRoot('terrace-merge-');
   fromPath = join(dir, 'from.db');
   intoPath = join(dir, 'into.db');
 });
 
 afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
+  removeTempRoot(dir);
 });
 
 /** `into.db`: two snapshots of a world whose arch fixture leaves real layered columns. */

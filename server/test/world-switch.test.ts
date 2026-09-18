@@ -1,5 +1,3 @@
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CHUNK_SIZE } from '@terrace/shared';
@@ -10,8 +8,12 @@ import type { Player } from '../src/player.ts';
 import { InstalledPlugins } from '../src/plugins/installed.ts';
 import { WorldManager } from '../src/world/world-manager.ts';
 import { RecordingSink, asLoadedPlugin } from './support/harness.ts';
+import { makeTempRoot, removeTempRoot } from './support/tempRoot.ts';
 
 const WORLD_SIZE = CHUNK_SIZE * 4;
+
+/** Long enough that a countdown under test never elapses on its own. */
+const COUNTDOWN_S = 10;
 const RETENTION = 5;
 
 let pluginValue = 0;
@@ -63,22 +65,31 @@ function makeConfig(worldsDir: string): ServerConfig {
   };
 }
 
-function makeManager(): WorldManager {
-  return new WorldManager({ config, registry, plugins, switchCountdownS: 0 });
+/** Every manager a test makes, so teardown can close the world it holds open. */
+let managers: WorldManager[] = [];
+
+function makeManager(switchCountdownS = 0): WorldManager {
+  const manager = new WorldManager({ config, registry, plugins, switchCountdownS });
+  managers.push(manager);
+  return manager;
 }
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), 'terrace-switch-'));
+  root = makeTempRoot('terrace-switch-');
   registry = new WorldRegistry(join(root, 'worlds'));
   config = makeConfig(registry.worldsDir);
   plugins = new InstalledPlugins([asLoadedPlugin(counterPlugin())]);
   pluginValue = 0;
   staged = 0;
   worldCreateCalls = 0;
+  managers = [];
 });
 
 afterEach(() => {
-  rmSync(root, { recursive: true, force: true });
+  // A live world holds its snapshot file open; Windows will not remove a
+  // directory underneath an open handle.
+  for (const manager of managers) manager.shutdown();
+  removeTempRoot(root);
 });
 
 function player(id: string): Player {
@@ -236,7 +247,7 @@ describe('unloading', () => {
 
 describe('the switch countdown', () => {
   it('is skipped when the operator is the only client', () => {
-    const manager = new WorldManager({ config, registry, plugins, switchCountdownS: 10 });
+    const manager = makeManager(COUNTDOWN_S);
     const from = manager.createWorld('Frostwick Hollows', WORLD_SIZE, 50) as string;
     const to = manager.createWorld('Moonreach', WORLD_SIZE, 50) as string;
     const sink = new RecordingSink();
@@ -248,7 +259,7 @@ describe('the switch countdown', () => {
   });
 
   it('announces and waits when somebody else is connected', () => {
-    const manager = new WorldManager({ config, registry, plugins, switchCountdownS: 10 });
+    const manager = makeManager(COUNTDOWN_S);
     const from = manager.createWorld('Frostwick Hollows', WORLD_SIZE, 50) as string;
     const to = manager.createWorld('Moonreach', WORLD_SIZE, 50) as string;
     const sink = new RecordingSink();
@@ -258,11 +269,11 @@ describe('the switch countdown', () => {
     clients = 2;
     sink.clear();
 
-    expect(manager.requestLoad(to)).toEqual({ mode: 'countdown', secondsRemaining: 10 });
+    expect(manager.requestLoad(to)).toEqual({ mode: 'countdown', secondsRemaining: COUNTDOWN_S });
     expect(manager.activeId).toBe(from);
     const notice = sink.ofType('worldSwitchNotice');
     expect(notice).toHaveLength(1);
-    expect(notice[0].payload).toMatchObject({ toId: to, secondsRemaining: 10 });
+    expect(notice[0].payload).toMatchObject({ toId: to, secondsRemaining: COUNTDOWN_S });
 
     expect(manager.cancelSwitch()).toBe(true);
     expect(manager.activeId).toBe(from);
@@ -273,7 +284,7 @@ describe('the switch countdown', () => {
   });
 
   it('refuses a second switch while one is counting down', () => {
-    const manager = new WorldManager({ config, registry, plugins, switchCountdownS: 10 });
+    const manager = makeManager(COUNTDOWN_S);
     const from = manager.createWorld('Frostwick Hollows', WORLD_SIZE, 50) as string;
     const to = manager.createWorld('Moonreach', WORLD_SIZE, 50) as string;
     const third = manager.createWorld('Galewick Downs', WORLD_SIZE, 50) as string;

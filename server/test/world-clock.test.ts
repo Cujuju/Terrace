@@ -1,6 +1,4 @@
 import DatabaseConstructor from 'better-sqlite3';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -13,6 +11,7 @@ import {
 import { SnapshotStore } from '../src/persistence/snapshot-store.ts';
 import { World } from '../src/world/world.ts';
 import { worldWithUnlockedChunks } from './support/harness.ts';
+import { makeTempRoot, removeTempRoot } from './support/tempRoot.ts';
 
 const WORLD_SIZE = CHUNK_SIZE * 4;
 
@@ -93,12 +92,12 @@ describe('the birthday on disk', () => {
   let dbPath: string;
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'terrace-clock-'));
+    dir = makeTempRoot('terrace-clock-');
     dbPath = join(dir, 'world.db');
   });
 
   afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
+    removeTempRoot(dir);
   });
 
   function save(input: { simMillis?: number; genesisMillis?: number }): void {

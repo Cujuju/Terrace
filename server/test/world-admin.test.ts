@@ -1,5 +1,3 @@
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CHUNK_SIZE, validateWorldAdminRequest } from '@terrace/shared';
@@ -10,6 +8,7 @@ import { OPERATOR_MAX_FAILED_ATTEMPTS, OPERATOR_LOCKOUT_MS } from '../src/world/
 import { WorldAdminService } from '../src/world/world-admin.ts';
 import { InstalledPlugins } from '../src/plugins/installed.ts';
 import { WorldManager } from '../src/world/world-manager.ts';
+import { makeTempRoot, removeTempRoot } from './support/tempRoot.ts';
 
 const WORLD_SIZE = MIN_WORLD_SIZE;
 const KEY = 'admin-key-long-enough';
@@ -43,7 +42,7 @@ function makeConfig(worldsDir: string, worldAdminKey: string | null): ServerConf
 }
 
 function setUp(worldAdminKey: string | null = KEY): void {
-  root = mkdtempSync(join(tmpdir(), 'terrace-admin-'));
+  root = makeTempRoot('terrace-admin-');
   registry = new WorldRegistry(join(root, 'worlds'));
   const config = makeConfig(registry.worldsDir, worldAdminKey);
   manager = new WorldManager({ config, registry, plugins: new InstalledPlugins([]), switchCountdownS: 0 });
@@ -62,7 +61,10 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  rmSync(root, { recursive: true, force: true });
+  // The live world holds its snapshot file open; Windows will not remove a
+  // directory underneath an open handle.
+  manager.shutdown();
+  removeTempRoot(root);
 });
 
 function create(name: string): string {
@@ -111,7 +113,8 @@ describe('the gate', () => {
   });
 
   it('requires no key at all when none is configured', () => {
-    rmSync(root, { recursive: true, force: true });
+    manager.shutdown();
+    removeTempRoot(root);
     setUp(null);
     expect(admin.keyed).toBe(false);
     expect(admin.list(CLIENT, '').refused).toBeUndefined();

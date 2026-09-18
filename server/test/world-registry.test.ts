@@ -1,11 +1,11 @@
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CHUNK_SIZE } from '@terrace/shared';
 import { SnapshotStore } from '../src/persistence/snapshot-store.ts';
 import { TRASH_DIR_NAME, WorldRegistry } from '../src/persistence/world-registry.ts';
 import { World } from '../src/world/world.ts';
+import { makeTempRoot, removeTempRoot } from './support/tempRoot.ts';
 
 const WORLD_SIZE = CHUNK_SIZE * 4;
 
@@ -15,12 +15,12 @@ let root: string;
 let registry: WorldRegistry;
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), 'terrace-worlds-'));
+  root = makeTempRoot('terrace-worlds-');
   registry = new WorldRegistry(join(root, 'worlds'));
 });
 
 afterEach(() => {
-  rmSync(root, { recursive: true, force: true });
+  removeTempRoot(root);
 });
 
 function makeWorld(name: string, retention = TEST_RETENTION): string {

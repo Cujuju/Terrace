@@ -1,5 +1,3 @@
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { BAND_HEIGHT, CHUNK_SIZE, SEA_LEVEL, WORLD_THUMBNAIL_SIZE, bandOf } from '@terrace/shared';
@@ -7,6 +5,7 @@ import { SnapshotStore } from '../src/persistence/snapshot-store.ts';
 import { THUMBNAIL_BYTES, buildThumbnail } from '../src/persistence/thumbnail.ts';
 import { WorldRegistry } from '../src/persistence/world-registry.ts';
 import { World } from '../src/world/world.ts';
+import { makeTempRoot, removeTempRoot } from './support/tempRoot.ts';
 
 const WORLD_SIZE = CHUNK_SIZE * 8;
 
@@ -14,12 +13,12 @@ let root: string;
 let registry: WorldRegistry;
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), 'terrace-thumb-'));
+  root = makeTempRoot('terrace-thumb-');
   registry = new WorldRegistry(join(root, 'worlds'));
 });
 
 afterEach(() => {
-  rmSync(root, { recursive: true, force: true });
+  removeTempRoot(root);
 });
 
 function splitWorld(size: number, low: number, high: number): Int16Array {
