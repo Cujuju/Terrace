@@ -1,7 +1,7 @@
 # Brush preview: conform the footprint to the drawn ground
 
-Status: Commit 1 landed plus a band-cap fix (2026-09-18) — ready for review.
-Commit 2 not started (see section 6: headroom math needs a second look).
+Status: wax-melt drape landed (2026-09-18) — verified headed with screenshots.
+Commit 2 (midpoint joins) is moot: the drape subsumes it. Ready for review.
 Written 2026-09-17, updated 2026-09-18.
 
 ## 1. What we are changing and why
@@ -77,6 +77,13 @@ selected band (`hover.band`, the lit/held band — e.g. mid-carve), every vertex
 Y is pinned at or below that band's cap (`drawnBandCapY`), fallback included.
 The footprint paints the surface being edited, never the ground above it.
 With no selected band the highest-cell rule above stands on its own.
+
+Wax-melt drape (added 2026-09-18, owner direction): the outline is subdivided
+at build time into runs of at most `DRAPE_STEP_CELLS` (0.25 cell), each
+sub-point clamped inside the mark, and every vertex samples the ground beneath
+it. Segments can no longer cut through the air between treads. Grid runs keep
+their endpoints but ride the ground per end. Capacities are exact draped
+maxima, computed per footprint at construction.
 
 ## 4. Commit 1 — conform the ring, grid and hem
 
@@ -424,6 +431,10 @@ Verification: `pnpm typecheck && pnpm test` — the existing tests use
 `FLAT_GROUND`, so no step ever triggers and every assertion is untouched. That
 means this commit is **not** covered by tests; say so plainly when you hand
 back, and flag it for the owner's visual check.
+
+Superseded 2026-09-18 by the wax-melt drape above: subdivision + in-mark
+clamp handles every step, so midpoint joins add nothing. The 2x headroom note
+below is moot — capacities are now exact per-footprint draped maxima.
 
 Reviewer note (2026-09-18): the 2x ring headroom from section 4.3 does not
 cover the worst case — if every segment steps, the ring holds
