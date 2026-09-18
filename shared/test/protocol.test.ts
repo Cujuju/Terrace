@@ -134,7 +134,7 @@ describe('sculptOptionsOf — the normalisation contract', () => {
   const base = { type: 'sculpt', x: 10, y: 20, radius: 2, dir: 1 } as const;
 
   it('resolves an intent that names neither to the wire default (stamp + soft)', () => {
-    const wireDefault = { tool: 'stamp', depthBands: CARVE_DEFAULT_DEPTH_BANDS, profile: 'soft', spill: 'banded', anchor: 'clicked', targetBand: null, spanBand: null, sweepFrom: null, smoothLambda: 50 };
+    const wireDefault = { tool: 'stamp', depthBands: CARVE_DEFAULT_DEPTH_BANDS, profile: 'soft', spill: 'banded', anchor: 'clicked', targetBand: null, runFloorBand: null, spanBand: null, sweepFrom: null, smoothLambda: 50 };
     expect(sculptOptionsOf(base)).toEqual(wireDefault);
     expect(WIRE_DEFAULT_SCULPT_OPTIONS).toEqual(wireDefault);
   });
@@ -147,6 +147,7 @@ describe('sculptOptionsOf — the normalisation contract', () => {
       spill: 'banded',
       anchor: 'clicked',
       targetBand: null,
+      runFloorBand: null,
       spanBand: null,
       sweepFrom: null,
       smoothLambda: 50,
@@ -160,6 +161,7 @@ describe('sculptOptionsOf — the normalisation contract', () => {
       spill: 'banded',
       anchor: 'clicked',
       targetBand: null,
+      runFloorBand: null,
       spanBand: null,
       sweepFrom: null,
       smoothLambda: 50,
@@ -171,6 +173,7 @@ describe('sculptOptionsOf — the normalisation contract', () => {
       spill: 'banded',
       anchor: 'clicked',
       targetBand: null,
+      runFloorBand: null,
       spanBand: null,
       sweepFrom: null,
       smoothLambda: 50,
@@ -257,9 +260,10 @@ describe('targetBand — the drag field on the wire', () => {
 
   it('accepts a band the world could hold, and carries it through verbatim', () => {
     for (const targetBand of [MIN_BAND, -1, 0, 1, MAX_BAND]) {
-      expect(validateSculptIntent({ ...drag, targetBand }, WORLD)).toEqual({
+      expect(validateSculptIntent({ ...drag, targetBand, floorBand: MIN_BAND }, WORLD)).toEqual({
         ...drag,
         targetBand,
+        floorBand: MIN_BAND,
       });
     }
   });
@@ -267,11 +271,13 @@ describe('targetBand — the drag field on the wire', () => {
   it('rejects a drag carrying no band — it would apply as a silent no-op', () => {
     expect(validateSculptIntent({ ...drag }, WORLD)).toBeNull();
     expect(validateSculptIntent({ ...drag, fromX: 11, fromY: 21 }, WORLD)).toBeNull();
-    expect(validateSculptIntent({ ...drag, targetBand: 0 }, WORLD)).not.toBeNull();
+    expect(validateSculptIntent({ ...drag, targetBand: 0, floorBand: 0 }, WORLD)).not.toBeNull();
   });
 
   it('rejects a spanBand on a drag — the cursor cell is not the grasped cell', () => {
-    expect(validateSculptIntent({ ...drag, targetBand: 2, spanBand: 2 }, WORLD)).toBeNull();
+    expect(
+      validateSculptIntent({ ...drag, targetBand: 2, floorBand: 2, spanBand: 2 }, WORLD),
+    ).toBeNull();
     for (const tool of ['stamp', 'smooth'] as const) {
       expect(validateSculptIntent({ ...base, tool, spanBand: 2 }, WORLD)).not.toBeNull();
     }
@@ -285,7 +291,7 @@ describe('targetBand — the drag field on the wire', () => {
     expect(
       validateSculptIntent({ ...base, dir: -1, tool: 'carve', targetBand: 3 }, WORLD),
     ).toBeNull();
-    expect(validateSculptIntent({ ...drag, targetBand: 3 }, WORLD)).not.toBeNull();
+    expect(validateSculptIntent({ ...drag, targetBand: 3, floorBand: 3 }, WORLD)).not.toBeNull();
   });
 
   it('is optional — an intent without one is a stamp, exactly as before', () => {
@@ -296,18 +302,18 @@ describe('targetBand — the drag field on the wire', () => {
 
   it('rejects a band outside the range the world can hold', () => {
     for (const targetBand of [MIN_BAND - 1, MAX_BAND + 1, 10_000]) {
-      expect(validateSculptIntent({ ...drag, targetBand }, WORLD)).toBeNull();
+      expect(validateSculptIntent({ ...drag, targetBand, floorBand: MIN_BAND }, WORLD)).toBeNull();
     }
   });
 
   it('rejects a non-integer band WITH THE WHOLE INTENT, never defaulting it', () => {
     for (const targetBand of [1.5, NaN, Infinity, '3', null, {}]) {
-      expect(validateSculptIntent({ ...drag, targetBand }, WORLD)).toBeNull();
+      expect(validateSculptIntent({ ...drag, targetBand, floorBand: MIN_BAND }, WORLD)).toBeNull();
     }
   });
 
   it('flips the anchor to the drag, and only ever together with the band', () => {
-    const pulled = sculptOptionsOf({ ...drag, targetBand: 4 });
+    const pulled = sculptOptionsOf({ ...drag, targetBand: 4, floorBand: 4 });
     expect(pulled.anchor).toBe('band');
     expect(pulled.targetBand).toBe(4);
 
@@ -381,10 +387,13 @@ describe('the tool set is the wire contract, not a local list', () => {
       tool: 'carve',
       spanBand: 2,
     });
-    expect(validateSculptIntent({ ...base, tool: 'drag', targetBand: 2 }, WORLD)).toEqual({
+    expect(
+      validateSculptIntent({ ...base, tool: 'drag', targetBand: 2, floorBand: 2 }, WORLD),
+    ).toEqual({
       ...base,
       tool: 'drag',
       targetBand: 2,
+      floorBand: 2,
     });
   });
 
@@ -394,7 +403,7 @@ describe('the tool set is the wire contract, not a local list', () => {
       expect(validateSculptIntent({ ...base, dir: 1, tool }, WORLD)).not.toBeNull();
     }
     expect(
-      validateSculptIntent({ ...base, dir: 1, tool: 'drag', targetBand: 2 }, WORLD),
+      validateSculptIntent({ ...base, dir: 1, tool: 'drag', targetBand: 2, floorBand: 2 }, WORLD),
     ).not.toBeNull();
   });
 

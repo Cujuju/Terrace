@@ -365,22 +365,30 @@ function airRemainsBetween(spans: readonly Span[], lo: number, hi: number): bool
   return cursor < hi;
 }
 
-/** A drag never removes a gap that existed before it: air survives inside every one. */
-export function expectGapsSurvive(
+/**
+ * Shielding: a drag never reaches air below the run's floor. Gaps ABOVE it may
+ * close — the slab lands and welds — but nothing under the grasped material
+ * can be touched.
+ */
+export function expectGapsBelowRunSurvive(
   map: Heightmap,
   before: ColumnSnapshot,
+  runFloorBand: number,
   context = '',
 ): void {
   const violations: string[] = [];
+  const reach = bandFloorHeight(runFloorBand);
   for (const [i, was] of before) {
     if (was.length < 2) continue;
     const now = readSpans(map, cellX(map.size, i), cellY(map.size, i));
     for (let k = 1; k < was.length; k++) {
       const lo = spanCeilingOf(was[k - 1]!);
       const hi = spanFloorOf(was[k]!);
+      if (hi > reach) continue;
       if (airRemainsBetween(now, lo, hi)) continue;
       violations.push(
-        `${at(map, i)}: gap [${lo}, ${hi}) went solid — ${describeColumn(was)} became ${describeColumn(now)}`,
+        `${at(map, i)}: gap [${lo}, ${hi}) under run floor ${runFloorBand} went solid — ` +
+          `${describeColumn(was)} became ${describeColumn(now)}`,
       );
     }
   }

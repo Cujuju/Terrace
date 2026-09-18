@@ -1,15 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
-  applyBandFill,
   applyPackedSpans,
-  bandFillAt,
   bandLevelHeight,
   BAND_HEIGHT,
   BEDROCK_BAND,
   BEDROCK_FLOOR,
   canonicaliseColumn,
   columnCoversBand,
+  columnHoldsRun,
   createHeightmap,
+  fillBandRun,
   heightAt,
   highestCeilingUnderSpan,
   isGapDrawn,
@@ -19,6 +19,7 @@ import {
   packColumnSpans,
   parsePackedSpans,
   readSpans,
+  runFloorBandAt,
   seabedHeight,
   SEA_LEVEL,
   setColumn,
@@ -286,70 +287,109 @@ describe('highestCeilingUnderSpan', () => {
   });
 });
 
-describe('bandFillAt — drag-fill admission', () => {
-  const BAND = 2;
-  const LEVEL = BAND * BAND_HEIGHT;
+describe('runFloorBandAt — the run down from a dragged band', () => {
+  // The spec specimen, band for band: ground to 3, hollow at 4-5, ledge at
+  // 6-7, cutout at 8, cap at 9, open sky above.
+  const SPECIMEN: readonly Span[] = [
+    { floorBand: BEDROCK_BAND, ceiling: bandLevelHeight(3) },
+    { floorBand: 6, ceiling: bandLevelHeight(7) },
+    { floorBand: 9, ceiling: bandLevelHeight(9) },
+  ];
 
-  it('writes band levels at raw multiples of the band height', () => {
-    expect(LEVEL).toBe(32);
-    expect(bandLevelHeight(BAND)).toBe(LEVEL);
+  function specimen(): Heightmap {
+    const map = world();
+    setColumn(map, 0, 0, SPECIMEN);
+    return map;
+  }
+
+  it('runs solid down to its own span’s floor', () => {
+    const map = specimen();
+    // Ground carries everything beneath it; the ledge carries only itself.
+    expect([1, 2, 3].map((b) => runFloorBandAt(map, 0, 0, b))).toEqual([
+      BEDROCK_BAND,
+      BEDROCK_BAND,
+      BEDROCK_BAND,
+    ]);
+    expect([runFloorBandAt(map, 0, 0, 6), runFloorBandAt(map, 0, 0, 7)]).toEqual([6, 6]);
+    expect(runFloorBandAt(map, 0, 0, 9)).toBe(9);
   });
 
-  it('fills toward the write level while the column does not draw the band', () => {
-    for (const h of [8, 16, 23]) {
-      const map = world();
-      setHeight(map, 0, 0, h);
-      expect([h, columnCoversBand(map, 0, 0, BAND)]).toEqual([h, false]);
-      const fill = bandFillAt(map, 0, 0, BAND);
-      expect([h, fill]).toEqual([h, { kind: 'extend', spanIndex: 0 }]);
-      applyBandFill(map, 0, 0, fill!, LEVEL);
-      expect([h, heightAt(map, 0, 0)]).toEqual([h, LEVEL]);
+  it('runs air down to the floor of its own void', () => {
+    const map = specimen();
+    // The 4-5 hollow floors at 4; the one-band cutout and open sky floor in themselves.
+    expect([runFloorBandAt(map, 0, 0, 4), runFloorBandAt(map, 0, 0, 5)]).toEqual([4, 4]);
+    expect(runFloorBandAt(map, 0, 0, 8)).toBe(8);
+    expect(runFloorBandAt(map, 0, 0, 10)).toBe(10);
+  });
+
+  it('never reaches below the material it was grasped in', () => {
+    const map = specimen();
+    // Shielding, stated: no run started at or above band 6 can touch the hollow.
+    for (const band of [6, 7, 8, 9, 10]) {
+      expect([band, runFloorBandAt(map, 0, 0, band) > 5]).toEqual([band, true]);
     }
   });
+});
 
-  it('skips as soon as the column already draws the band', () => {
-    // Coverage is the ONE predicate: a ceiling of 24 draws band 2, so a drag to
-    // band 2 has nothing left to fill.
-    for (const h of [24, LEVEL, LEVEL + BAND_HEIGHT]) {
-      const map = world();
-      setHeight(map, 0, 0, h);
-      expect([h, bandFillAt(map, 0, 0, BAND)]).toEqual([h, null]);
-    }
-    // An upper span covering the band also counts.
+describe('fillBandRun — what a swept cell writes', () => {
+  // Same ground as the specimen, nothing above it: the cell a stroke sweeps into.
+  function swept(): Heightmap {
     const map = world();
-    setColumn(map, 0, 0, [
-      { floorBand: BEDROCK_BAND, ceiling: SEA_LEVEL },
-      { floorBand: BAND, ceiling: 48 },
-    ]);
-    expect(bandFillAt(map, 0, 0, BAND)).toBeNull();
-  });
+    setColumn(map, 0, 0, [{ floorBand: BEDROCK_BAND, ceiling: bandLevelHeight(3) }]);
+    return map;
+  }
 
-  it('inserts an overhang across a gap with room under the slab', () => {
-    const map = world();
-    setColumn(map, 0, 0, [
-      { floorBand: BEDROCK_BAND, ceiling: 4 },
-      { floorBand: 4, ceiling: 80 },
-    ]);
-    const fill = bandFillAt(map, 0, 0, BAND);
-    expect(fill).toEqual({ kind: 'overhang' });
-    applyBandFill(map, 0, 0, fill!, LEVEL);
-    // The slab is its own band, and the ground under it is untouched.
+  function fill(map: Heightmap, floorBand: number, band: number): boolean {
+    return fillBandRun(map, 0, 0, floorBand, band, bandLevelHeight(band));
+  }
+
+  it('welds a slab that lands on material, closing the gap under it', () => {
+    const map = swept();
+    expect(fill(map, 4, 5)).toBe(true);
     expect(readSpans(map, 0, 0)).toEqual([
-      { floorBand: BEDROCK_BAND, ceiling: 4 },
-      { floorBand: BAND, ceiling: LEVEL },
-      { floorBand: 4, ceiling: 80 },
+      { floorBand: BEDROCK_BAND, ceiling: bandLevelHeight(5) },
     ]);
   });
 
-  it('refuses a slab that would weld to the ground under it (overhangs.md 2026-08-27)', () => {
-    // An overhang needs its own band plus one of air to be seen under.
-    for (const groundCeiling of [8, 16, 23]) {
-      const map = world();
-      setColumn(map, 0, 0, [
-        { floorBand: BEDROCK_BAND, ceiling: groundCeiling },
-        { floorBand: 3, ceiling: 48 },
-      ]);
-      expect([groundCeiling, bandFillAt(map, 0, 0, BAND)]).toEqual([groundCeiling, null]);
-    }
+  it('lays a slab with air under it, and leaves that air alone', () => {
+    const map = swept();
+    // The ledge pulled out sideways: the hollow under it is continued, not filled.
+    expect(fill(map, 6, 7)).toBe(true);
+    expect(readSpans(map, 0, 0)).toEqual([
+      { floorBand: BEDROCK_BAND, ceiling: bandLevelHeight(3) },
+      { floorBand: 6, ceiling: bandLevelHeight(7) },
+    ]);
+  });
+
+  it('has no refusal but “already solid”', () => {
+    const map = swept();
+    // Every band of the run is held, so there is nothing to write.
+    expect(columnHoldsRun(map, 0, 0, BEDROCK_BAND, 3)).toBe(true);
+    expect(fill(map, BEDROCK_BAND, 3)).toBe(false);
+    // Held deeper than the run asks still counts as held.
+    expect(fill(map, 2, 3)).toBe(false);
+    // Held above but not through: the run is written.
+    expect(fill(map, 5, 6)).toBe(true);
+  });
+
+  it('merges a slab that spans two standing spans into one', () => {
+    const map = world();
+    setColumn(map, 0, 0, [
+      { floorBand: BEDROCK_BAND, ceiling: bandLevelHeight(3) },
+      { floorBand: 6, ceiling: bandLevelHeight(7) },
+    ]);
+    // Nothing inspects what is overhead: the slab lands and canonicalisation joins it.
+    expect(fill(map, 4, 5)).toBe(true);
+    expect(readSpans(map, 0, 0)).toEqual([
+      { floorBand: BEDROCK_BAND, ceiling: bandLevelHeight(7) },
+    ]);
+  });
+
+  it('leaves a column it cannot draw into untouched', () => {
+    const map = swept();
+    const before = readSpans(map, 0, 0);
+    // A ceiling below the slab's own floor draws nothing, so nothing is written.
+    expect(fillBandRun(map, 0, 0, 6, 7, bandLevelHeight(4))).toBe(false);
+    expect(readSpans(map, 0, 0)).toEqual(before);
   });
 });

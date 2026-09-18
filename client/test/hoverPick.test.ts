@@ -100,6 +100,7 @@ function driveInput(
     worldSize: () => mirror.map.size,
     riserBand: () => null,
     bandAtCell: () => null,
+    runFloorBandAt: () => null,
     graspSpanBand: () => null,
     carveBand: (pick) => (pick === null ? null : carveBandOfPick(mirror.map, pick, () => false)),
     carveReach: (o, d, band) => carveReachCell(mirror, o, d, band),
