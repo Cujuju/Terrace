@@ -120,15 +120,13 @@ const HINT_MODIFIER: Record<string, string> = {
 
 const SMOOTH_LAMBDA_DETENTS: readonly number[] = [25, 50, 75, 100];
 
-/** One ring per slab the cut can open: the depths are counted, not blended. */
-const CARVE_DEPTH_DETENTS: readonly number[] = (() => {
-  const stops: number[] = [];
-  for (let d = CARVE_MIN_DEPTH_BANDS; d <= CARVE_MAX_DEPTH_BANDS; d++) stops.push(d);
-  return stops;
-})();
-
-/** Every ring marks one slab, so none of them outgrows its neighbours. */
-const CARVE_DEPTH_DETENT_ANCHOR = 0;
+/** The marked depths: one slab, an overhang's two, then five and the ceiling. */
+const CARVE_DEPTH_DETENTS: readonly number[] = [
+  CARVE_MIN_DEPTH_BANDS,
+  2,
+  5,
+  CARVE_MAX_DEPTH_BANDS,
+];
 
 /** The chord that overrides the mode — none, when no chord names the other way. */
 function overrideChord(mode: SculptMode, bindings: ControlBindings): string | null {
@@ -319,13 +317,13 @@ export function BrushModeler(): JSX.Element {
             <span class="brush-slider__rail" />
             <span class="brush-slider__fill" />
             <For each={CARVE_DEPTH_DETENTS}>
-              {(detent) => (
+              {(detent, anchor) => (
                 <span
                   class="brush-slider__detent"
                   classList={{ on: carveDepthBands() >= detent }}
                   style={{
                     '--brush-detent': String(detent - CARVE_MIN_DEPTH_BANDS),
-                    '--brush-anchor': String(CARVE_DEPTH_DETENT_ANCHOR),
+                    '--brush-anchor': String(anchor()),
                   }}
                 />
               )}
