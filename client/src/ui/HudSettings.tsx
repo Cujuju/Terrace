@@ -19,11 +19,14 @@ import {
   perfOpen,
   setPerfOpen,
 } from '../state/hudState.ts';
+import { setShoreOutlineVisible } from '../render/water.ts';
 import { chartOpen, setChartOpen } from './Cartographer.tsx';
 import type { WorldActions } from './WorldManager.tsx';
 import { AudioSettingsPanel } from './AudioSettingsPanel.tsx';
 import { ControlsPanel } from './ControlsPanel.tsx';
 import type { ConnectionStatus } from '../net/connection.ts';
+
+const [shoreOutlineOn, setShoreOutlineOn] = createSignal(false);
 
 const STATUS_LABEL: Record<ConnectionStatus, string> = {
   offline: 'Offline',
@@ -268,6 +271,24 @@ export function HudSettings(props: {
 }
         <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M3 12h3.5l2.5-6 4 12 2.5-6H21" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        class="hud-panel hud-settings-button"
+        classList={{ open: shoreOutlineOn() }}
+        aria-pressed={shoreOutlineOn()}
+        aria-label="Shore outline"
+        title="Shore outline: light the water's own wet/dry edge"
+        onClick={() => {
+          const next = !shoreOutlineOn();
+          setShoreOutlineOn(next);
+          setShoreOutlineVisible(next);
+        }}
+      >
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 9c3-3 6 3 9 0s6-3 9 0" />
+          <path d="M3 15h18" />
         </svg>
       </button>
       {
