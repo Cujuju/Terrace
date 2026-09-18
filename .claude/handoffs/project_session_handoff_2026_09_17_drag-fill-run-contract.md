@@ -1,16 +1,24 @@
-# Drag fill — the run contract
+# Drag fill — the run contract, the tread grab, and the honest carve outline
 
 ## Status
 
-DONE. Typecheck clean workspace-wide. `shared` 531/531 green. `client`
-2 failed / 774 passed — same two as before this work, and better than the
-4 fail / 772 pass baseline the last handoff recorded. `overhangs.md` rewritten,
-goldens re-recorded with the owner's approval.
+DONE. Typecheck clean workspace-wide. `shared` 533/533. `client` green but for
+two failures that are not this work (see Known-failing below).
 
-Commits: 66fd1858 (code) · e414e23b, 7a58e3be, 9e50df5e (tests + goldens) ·
-7e0a53e6 (doc).
+Commits, oldest first:
 
-## The rule (unchanged from the spec)
+| commit | what |
+|---|---|
+| `66fd1858` | the run contract in `shared/` + the wire field |
+| `e414e23b` | run-contract tests; shielding invariant replaces gap-survival |
+| `7a58e3be` | retire the assertions the run contract supersedes |
+| `9e50df5e` | re-record the five sculpt goldens |
+| `7e0a53e6` | `overhangs.md` rewritten against the run contract |
+| `2bdf1d24` | tread grab + `carveAdmittedCells` + live carve outline |
+| `8c7b6afd` | carve outline on riser aims too |
+| `12a82689` | disconnected carve outlines + tests |
+
+## The drag: the run contract
 
 From the dragged band, run down through like material to the first boundary.
 That slab is what the stroke writes into every swept cell. Solid runs to its
@@ -20,82 +28,94 @@ span's floor; air runs to its void's floor. Welding is not a decision —
 
 Spec artifact: https://claude.ai/artifact/HUr9vxiorBCBLJmY3HHymM
 
-## What changed in code
+- `shared/src/columns/bandQueries.ts`: `runFloorBandAt`, `columnHoldsRun`,
+  `fillBandRun`, private `weldSlab`. `BandFill`, `overhangSlabAtBand`,
+  `bandFillAt`, `applyBandFill` are gone.
+- `shared/src/sculpt/drag.ts`: `pushLowerLayers` gone — the run IS the descent.
+  The raise path is one plain loop; `settleEachCellOnce` serves the LOWER path
+  only. `applyDragRegion` takes `runFloorBand` after `targetBand`.
+- The run's floor rides the intent as `floorBand`, because a swept cell cannot
+  derive it: in a neighbour the same band sits in a different run.
+- Verified: all ten bands of the spec specimen, grabbed column AND swept
+  neighbour, match the artifact exactly.
 
-`shared/src/columns/bandQueries.ts`
-- DELETED `BandFill`, `overhangSlabAtBand`, `bandFillAt`, `applyBandFill`.
-- ADDED `runFloorBandAt(map,x,y,band)` — the run's floor. Read in the GRABBED
-  column only.
-- ADDED `columnHoldsRun(map,x,y,floorBand,band)` — the one refusal.
-- ADDED `fillBandRun(map,x,y,floorBand,band,ceiling)` — writes the slab,
-  returns whether the column changed.
-- ADDED private `weldSlab(spans, slab)` — absorbs every span the slab overlaps
-  or abuts, in one ordered pass, so the result ascends without sorting
-  (`canonicaliseColumn` throws on a non-ascending column).
+## The drag: pressing on a tread
 
-`shared/src/sculpt/drag.ts`
-- DELETED `pushLowerLayers`, `DRAG_TREAD_TOLERANCE_CELLS`, the `priorSpans` /
-  `record` / `hadCapAtBandBefore` bookkeeping, and the `canSpreadBandTo` gate
-  on the raise path.
-- `applyDragRegion` gained a `runFloorBand` parameter (after `targetBand`).
-- The raise path is now one plain loop over the disc; nothing cascades off a
-  neighbour, so `settleEachCellOnce` is used by the LOWER path only.
+A press grabs the band under the aim and sends no seed — which is what
+`sculpt-tools.md` always said ("A drag press grabs the clicked band — no seed
+layer first"); the code had diverged.
 
-Wire — the run's floor travels on the intent as `floorBand`:
-- `shared/src/protocol/sculpt.ts`: `SculptIntent.floorBand?`, validated to ride
-  with a drag and only a drag, `MIN_BAND <= floorBand <= targetBand`; resolves
-  to `ResolvedSculptOptions.runFloorBand`.
-- `shared/src/sculpt/options.ts`: `runFloorBand` on `SculptOptions` (optional)
-  and `ResolvedSculptOptions` (nullable); library default `null`.
-- `shared/src/heightmap.ts`: passes it through; `null` falls back to
-  `targetBand` (the slab is the band alone — no grabbed column spoke).
-- `client`: `world.runFloorBandAt` → `SculptInputOptions.runFloorBandAt` →
-  `StrokeState.strokeGrabFloor`, read once in `takeHold` and sent on every leg.
+`riserBand` answers only on a riser, so once the seed was removed a tread press
+refused outright. `takeHold` now falls back to `options.aimBand(hover)`, a new
+member on `SculptInputOptions` wired to `world.aimBand`.
 
-## Verified
+This is what lets a drag start anywhere on a flat surface and heal a hollow
+without hunting for its edge. Verified by simulation: grabbing flat ground at
+band 5 runs to bedrock and fills a pit from band 2 up to band 5.
 
-All ten bands of the spec specimen, grabbed column AND swept neighbour, match
-the artifact exactly — including the owner's rulings on bands 4, 5, 6, 7, 8.
-(Throwaway script, already deleted.)
+## The carve outline tells the truth
 
-Client tests before the test-block rewrite: 2 failed / 774 passed.
-Handoff baseline was 4 fail / 772 pass, so no regression.
+`shared/src/sculpt/carve.ts` now exports `carveAdmittedCells`, and `applyCarve`
+consumes it — one admission, two readers, so the preview cannot promise a cut
+the stroke will not make. Tested: they agree cell for cell at radii 1-3.
 
-## What changed in tests
+`client/src/render/brushPreview.ts` outlines those cells instead of borrowing
+the stamp's reach disc, on tread AND riser aims, and shows the refusal mark
+when nothing is admitted. It reads the band the carve itself reads
+(`world.carveBand`), not the band the lip highlight lit.
 
-- `shared/test/columns.test.ts`: the `bandFillAt` block is replaced by
-  `runFloorBandAt` and `fillBandRun` cases built on the spec specimen.
-- `shared/test/support/invariants.ts`: `expectGapsSurvive` →
-  `expectGapsBelowRunSurvive(map, before, runFloorBand, context)`. Gaps ABOVE
-  the run's floor may now close; below it they must survive. The fuzzer's
-  drags carry `floorBand`, and all 7 worlds pass.
-- `heightmap-carve.test.ts`: #224's "never fills the carve under it" is now
-  "never reaches below its run's floor", plus a case asserting the tunnel DOES
-  fill when the run is its own air.
-- `heightmap-drag.test.ts`: the staircase pull asserts whole-step raising (a
-  ground grab runs to bedrock), not `pushLowerLayers`' one-step descent; the
-  point disc asserts its own footprint, not a refusal.
-- `protocol` / `heightmap-dispatch` / 4 client files: fixture wiring only.
+Disconnected admitted sets are ordinary, not a corner case — measured on a
+ridged world, **27% of drawable aims at radius 4** admit two or more
+components. So `markOutlineLoops` returns every loop largest-first; the ring
+strip keeps the dominant one and a new `LineSegments` object (`stage.extra`,
+sharing the outline material) draws the rest. `BRUSH_PREVIEW_DRAW_OBJECTS` is
+now 5. A footprint past the fixed buffers still falls back to the reach disc.
 
-## Assumption to flag
+## Known-failing, NOT this work
 
-The raise path no longer consults `canSpreadBandTo`. The spec's codebox is
-"the whole of it, per swept cell" and names no adjacency gate, and keeping one
-would have broken the air-grab cases (a hollow's neighbour holds no material
-at the dragged band, so nothing could ever start). `canSpreadBandTo` is
-untouched for stamp and `anchor: 'band'`.
+Confirmed by terrace-fd at HEAD with their changes stashed:
+
+- `client/test/predictionGhost.test.ts` — "ghost-marks a grabbed drag sweep
+  into a chunk never received".
+- the untracked `zz-perf-snapshot.gen` test, which wants a `~/.terrace-perf`
+  directory.
+
+## Coordination with terrace-fd [2cf41c]
+
+They hold none of the brush/render files. Their ports: **server 2571, vite
+5190** — take anything else.
+
+Their `25263633 refactor(pick): decide the band once, where the hit is decided`
+lands under this work:
+
+- `TerrainRayPick` now carries a REQUIRED `band`. Any pick literal in a test or
+  fixture needs it.
+- Nothing downstream may re-derive a band from `hitY`/`surfaceY`/`spanIndex`;
+  read `pick.band`. The rule is `drawnBandAtY(worldY)` in `capEmission.ts`.
+  This work stays on the sanctioned path — `world.carveBand` and
+  `world.aimBand` — and re-derives nothing.
+- Behaviour change they flagged to the owner: a pick re-homed to a neighbouring
+  column now names that cell and surface but NOT its band.
+
+Two dev-server traps they hit: `localhost:5174` silently reaches MoManga's
+Electron and returns plain-text "Not found"; and a vite on 5175 served a STALE
+transform — a page ran the old module while `curl` returned the new text. If
+you verify in a browser, confirm the live rule from inside the page.
 
 ## Pending
 
-1. Server suite not re-run this session. Prior-session baseline: 29 fail /
-   441 pass, other agents' in-flight work. `pnpm test` bails at the first
-   failing package — run `shared`, `client`, `server` separately.
-2. Untracked diagnostics in `server/` still call the deleted `bandFillAt`
-   (`scratch-cliff-sim.ts`, `scratch-drag-hole.ts`, `scratch-void-mint.ts`,
-   `scratch-drag-dead6.ts`). Not typechecked, safe to delete.
-3. A pre-commit hook caps comments at 30 words and flags PRE-EXISTING ones in
-   `client/src/input/sculpt/contract.ts` (lines 6 and 26). Touching that file
-   needs `SKIP_COMMENT_BUDGET=1` until someone trims them.
+1. **Nothing here has been seen in the running app.** Every claim above is from
+   tests and simulation. The tread-grab heal and the carve outline both want
+   eyes on them.
+2. `docs/decisions/overhangs.md` describes the run contract but not the tread
+   grab or the carve outline. Owner permission needed to touch it again.
+3. Issue #499 — `canCarveBandAt` tests lateral exposure but is used as an
+   access rule. Four decisions wait there: what the predicate means (extend vs.
+   grant access), contiguous vs. atomic depth, diagonals, and the OOB rule.
+   The pit-floor case (open sky above, one cell wide, cannot be deepened) is
+   the sharpest argument that it is wrong as written.
+4. Untracked `server/scratch-*.ts` diagnostics still call the deleted
+   `bandFillAt`. Not typechecked, safe to delete.
 
 ## Cross-refs
 
