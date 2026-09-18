@@ -30,6 +30,8 @@ export interface BrushHover {
   readonly hitY?: number;
   readonly hitZ?: number;
   readonly band?: number | null;
+  /** Band of the surface under the aim, whether or not a lip is grabbable there. */
+  readonly aimBand?: number | null;
 }
 
 export interface BrushSelection {
@@ -134,9 +136,10 @@ export function createBrushPreview(
         hem.position.copy(line.position);
         cellGrid.position.copy(line.position);
         const selected = footprints.get(shownKey)!;
-        // The lit band is the surface being edited: pin the footprint to its
-        // cap so the ring paints that surface, never the ground above it.
-        const capY = hover.band == null ? null : drawnBandCapY(hover.band);
+        // Pin the footprint to the edited surface: held or lit band first,
+        // else the aim's own band, so treads pin too.
+        const clampBand = hover.band ?? hover.aimBand ?? null;
+        const capY = clampBand == null ? null : drawnBandCapY(clampBand);
         conformed.syncTo(
           selected.footprint,
           selected.id,
