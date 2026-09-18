@@ -2,8 +2,11 @@
 
 ## Status
 
-IMPLEMENTED. Code + tests written this session. Typecheck clean across the
-whole workspace. Tests not yet fully re-run; `overhangs.md` not yet rewritten.
+DONE but for the goldens. Typecheck clean workspace-wide. `shared` is
+526 passed / 5 failed — the 5 are the `golden-sculpt` snapshots, which move by
+design and need the owner's go-ahead to regenerate. `overhangs.md` rewritten.
+
+Commits: 66fd1858 (code) · e414e23b, 7a58e3be (tests) · 7e0a53e6 (doc).
 
 ## The rule (unchanged from the spec)
 
@@ -56,13 +59,21 @@ the artifact exactly — including the owner's rulings on bands 4, 5, 6, 7, 8.
 Client tests before the test-block rewrite: 2 failed / 774 passed.
 Handoff baseline was 4 fail / 772 pass, so no regression.
 
-## Owner decisions this session
+## What changed in tests
 
-- Stale `bandFillAt` test block: replace with run-contract cases. DONE —
-  `shared/test/columns.test.ts` now has `describe('runFloorBandAt …')` and
-  `describe('fillBandRun …')` in its place.
-- `docs/decisions/overhangs.md`: rewrite, "rip it down to its bare minimum,
-  facts only, terse, the smaller the better." NOT DONE YET.
+- `shared/test/columns.test.ts`: the `bandFillAt` block is replaced by
+  `runFloorBandAt` and `fillBandRun` cases built on the spec specimen.
+- `shared/test/support/invariants.ts`: `expectGapsSurvive` →
+  `expectGapsBelowRunSurvive(map, before, runFloorBand, context)`. Gaps ABOVE
+  the run's floor may now close; below it they must survive. The fuzzer's
+  drags carry `floorBand`, and all 7 worlds pass.
+- `heightmap-carve.test.ts`: #224's "never fills the carve under it" is now
+  "never reaches below its run's floor", plus a case asserting the tunnel DOES
+  fill when the run is its own air.
+- `heightmap-drag.test.ts`: the staircase pull asserts whole-step raising (a
+  ground grab runs to bedrock), not `pushLowerLayers`' one-step descent; the
+  point disc asserts its own footprint, not a refusal.
+- `protocol` / `heightmap-dispatch` / 4 client files: fixture wiring only.
 
 ## Assumption to flag
 
@@ -74,17 +85,17 @@ untouched for stamp and `anchor: 'band'`.
 
 ## Pending
 
-1. Re-run `pnpm --filter shared test` and `pnpm --filter client test`.
-   NOTE: `pnpm test` bails at the first failing package — run separately.
-   Server baseline from the prior session: 29 fail / 441 pass (other agents').
-2. Regenerate the two `golden-sculpt` file snapshots — they WILL move.
-   ASK THE OWNER FIRST.
-3. Rewrite `docs/decisions/overhangs.md` (permission granted, see above).
-   Its "The drag lays a roof; it never fills the carve beneath one" section
-   and #224's no-span-field-on-the-wire ruling are both superseded.
-4. Untracked diagnostics in `server/` still reference the deleted `bandFillAt`
+1. THE ONLY REAL ONE: regenerate the 5 `golden-sculpt` snapshots. They move by
+   design — the drag writes a different shape now. Owner has not yet approved.
+2. Server suite not re-run this session. Prior-session baseline: 29 fail /
+   441 pass, other agents' in-flight work. `pnpm test` bails at the first
+   failing package — run `shared`, `client`, `server` separately.
+3. Untracked diagnostics in `server/` still call the deleted `bandFillAt`
    (`scratch-cliff-sim.ts`, `scratch-drag-hole.ts`, `scratch-void-mint.ts`,
    `scratch-drag-dead6.ts`). Not typechecked, safe to delete.
+4. A pre-commit hook caps comments at 30 words and flags PRE-EXISTING ones in
+   `client/src/input/sculpt/contract.ts` (lines 6 and 26). Touching that file
+   needs `SKIP_COMMENT_BUDGET=1` until someone trims them.
 
 ## Cross-refs
 
