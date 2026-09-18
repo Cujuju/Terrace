@@ -16,7 +16,11 @@ Facts about how the client answers "which cell, face and band is under the curso
 - A face belongs to the column behind it: clicking a cliff sculpts the cliff, not the ground at its foot.
 - An entry exactly on a column's own drawn cap is a tread, whatever its height, so a plateau at `MAX_HEIGHT` still picks as ground.
 - Rays that strike an underside name the roof span; a raise on an underside is refused by the input layer.
-- `bandOfPick` names the drawn band the tool acts on; carve derives its `spanBand` from the struck lip cell, and a held carve keeps cutting from the cell the ray strikes, not one it flies over.
+- The band is decided once, where the hit is decided, and rides on the pick. `resolvePick` only clamps it to the span it landed on; nothing downstream re-derives it, and the rule does not vary by tool.
+- `drawnBandAtY` is that rule: the band whose slab `((b-1) cap, b cap]` holds a world Y, the inverse of `drawnBandCapY`. Riser and tread take it at the hit point; an underside takes its span's `floorBand`.
+- Drawn caps are evenly spaced, so no shore case applies to world-Y-to-band. The shore rule lives in `drawnBandOfSample` (height sample to drawn band) and reaches a pick only through the span clamp: a shore column drawing band 0 clamps a skirt hit to 0, never to water.
+- The hit point always lies on the pointer ray, so the crosshair tracks the cursor. A pick re-homed to a neighbouring column names that cell and its surface, never its band.
+- A held carve keeps cutting from the cell the ray strikes, not one it flies over.
 - A cell outside received chunks is not pickable.
 
 ## Layered columns
