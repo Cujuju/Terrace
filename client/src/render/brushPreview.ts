@@ -10,12 +10,14 @@ import { CELL_WORLD_SIZE } from '../config.ts';
 import type { PickFace } from '../terrain/picking.ts';
 import type { DenialCue } from './denialCue.ts';
 import { BRUSH_RADII } from '../state/hudState.ts';
-import { brushGeometry, type BrushGeometry } from './brush/brushGeometry.ts';
+import { brushFootprint, type BrushFootprint } from './brush/brushGeometry.ts';
+import { createConformedGeometry, type BrushGround } from './brush/conform.ts';
 import { createBrushStage, type CursorSurface } from './brush/brushStage.ts';
 import type { SculptDir } from './brush/footprintMark.ts';
 import { OUTLINE_COLOR_CAP, OUTLINE_COLOR_RISER, OUTLINE_LIFT_WORLD_UNITS } from './brush/style.ts';
 
 export type { CursorSurface } from './brush/brushStage.ts';
+export type { BrushGround } from './brush/conform.ts';
 
 export interface BrushHover {
   readonly x: number;
@@ -51,23 +53,37 @@ export function createBrushPreview(
   canvas: CursorSurface,
   worldSize: () => number,
   denial: DenialCue,
+  ground: BrushGround,
 ): BrushPreview {
-  const geometries = new Map<string, BrushGeometry>();
+  const footprints = new Map<string, { footprint: BrushFootprint; id: number }>();
   const key = (radius: number, tool: SculptTool, profile: SculptProfile): string =>
     `${radius}|${tool}|${profile}`;
+  let maxRingPoints = 0;
+  let maxGridSegments = 0;
+  let nextId = 0;
   for (const r of BRUSH_RADII) {
     for (const tool of SCULPT_TOOLS) {
       if (tool === 'drag' || tool === 'carve') continue;
       for (const profile of SCULPT_PROFILES) {
-        geometries.set(key(r, tool, profile), brushGeometry(r, tool, profile));
+        const footprint = brushFootprint(r, tool, profile);
+        footprints.set(key(r, tool, profile), { footprint, id: nextId++ });
+        if (footprint.ringCount > maxRingPoints) maxRingPoints = footprint.ringCount;
+        if (footprint.gridCount > maxGridSegments) maxGridSegments = footprint.gridCount;
       }
     }
   }
   const initialKey = key(MIN_BRUSH_RADIUS, SCULPT_TOOLS[0]!, SCULPT_PROFILES[0]!);
-  const initial = geometries.get(initialKey)!;
+  if (!footprints.has(initialKey)) {
+    throw new RangeError(`brush preview has no footprint for ${initialKey}`);
+  }
 
-  const stage = createBrushStage(scene, canvas, denial, initial);
-  const { line, skirt, cellGrid, crosshair, material, skirtMaterial } = stage;
+  const conformed = createConformedGeometry(maxRingPoints, maxGridSegments);
+  const stage = createBrushStage(scene, canvas, denial, {
+    ring: conformed.ring,
+    hem: conformed.hem,
+    grid: conformed.grid,
+  });
+  const { line, hem, cellGrid, crosshair, material, hemMaterial } = stage;
   const show = stage.show;
   const paintFlatMark = stage.paintFlatMark;
 
@@ -98,26 +114,33 @@ export function createBrushPreview(
       // refusal collapses to the crosshair.
       const useFootprint = (wanted: string): boolean => {
         if (wanted === shownKey) return true;
-        const geometry = geometries.get(wanted);
-        if (geometry === undefined) {
+        if (!footprints.has(wanted)) {
           show(false);
           return false;
         }
-        line.geometry = geometry.ring;
-        skirt.geometry = geometry.skirt;
-        cellGrid.geometry = geometry.cellGrid;
         shownKey = wanted;
         return true;
       };
       const tintFootprint = (): void => {
         material.color.setHex(hover.face === 'riser' ? OUTLINE_COLOR_RISER : OUTLINE_COLOR_CAP);
-        skirtMaterial.color.setHex(hover.face === 'riser' ? OUTLINE_COLOR_RISER : OUTLINE_COLOR_CAP);
+        hemMaterial.color.setHex(hover.face === 'riser' ? OUTLINE_COLOR_RISER : OUTLINE_COLOR_CAP);
       };
       const placeFootprint = (): void => {
-        const lift = hover.surfaceY + OUTLINE_LIFT_WORLD_UNITS;
-        line.position.set(hover.x * CELL_WORLD_SIZE, lift, hover.y * CELL_WORLD_SIZE);
-        skirt.position.copy(line.position);
+        // Height lives in the vertices (absolute world Y); objects carry XZ
+        // only. syncTo no-ops until the aim, footprint, or ground moves —
+        // panning or rotating the camera rewrites nothing.
+        line.position.set(hover.x * CELL_WORLD_SIZE, 0, hover.y * CELL_WORLD_SIZE);
+        hem.position.copy(line.position);
         cellGrid.position.copy(line.position);
+        const selected = footprints.get(shownKey)!;
+        conformed.syncTo(
+          selected.footprint,
+          selected.id,
+          hover.x,
+          hover.y,
+          hover.surfaceY,
+          ground,
+        );
       };
 
       if (!seeding && (brush.tool === 'drag' || brush.tool === 'carve')) {
@@ -142,24 +165,17 @@ export function createBrushPreview(
       if (!useFootprint(wanted)) return;
       tintFootprint();
       paintFlatMark();
-      const lift = hover.surfaceY + OUTLINE_LIFT_WORLD_UNITS;
-      line.position.set(hover.x * CELL_WORLD_SIZE, lift, hover.y * CELL_WORLD_SIZE);
+      placeFootprint();
       // The crosshair glides on the continuous ray-hit point, not the cell
       // centre: copying the ring position here made it snap to centre on
       // every riser/tread flip.
       crosshair.position.set(atX, atY + OUTLINE_LIFT_WORLD_UNITS, atZ);
-      skirt.position.copy(line.position);
-      cellGrid.position.copy(line.position);
       show(true);
     },
     dispose() {
       show(false);
       stage.removeFromScene();
-      for (const g of geometries.values()) {
-        g.ring.dispose();
-        g.skirt.dispose();
-        g.cellGrid.dispose();
-      }
+      conformed.dispose();
       stage.disposeResources();
     },
   };

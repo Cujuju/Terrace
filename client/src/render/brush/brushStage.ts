@@ -17,13 +17,13 @@ import { BAND_HEIGHT } from '@terrace/shared';
 import { CELL_WORLD_SIZE } from '../../config.ts';
 import { bandColorOf } from '../../terrain/bandColors.ts';
 import { DENIED_COLOR, GHOST_OPACITY_SCALE, OFFLINE_COLOR, type DenialCue } from '../denialCue.ts';
-import type { BrushGeometry } from './brushGeometry.ts';
 import {
   CELL_GRID_COLOR,
   CELL_GRID_OPACITY,
   CROSSHAIR_ARM_WORLD_UNITS,
   CROSSHAIR_GAP_WORLD_UNITS,
   CROSSHAIR_OPACITY,
+  HEM_OPACITY,
   MARK_BAND_TINT_MIX,
   MARK_COLOR_REFUSED,
   MARK_COLOR_RISER,
@@ -31,7 +31,6 @@ import {
   OUTLINE_COLOR_CAP,
   OUTLINE_IS_CURSOR_CLASS,
   OUTLINE_OPACITY,
-  SKIRT_OPACITY,
 } from './style.ts';
 
 export interface CursorSurface {
@@ -66,14 +65,20 @@ function createWorldEdgeClip(): WorldEdgeClip {
   };
 }
 
+export interface BrushLiveGeometries {
+  readonly ring: BufferGeometry;
+  readonly hem: BufferGeometry;
+  readonly grid: BufferGeometry;
+}
+
 /** The scene objects the preview drives, plus the cue painting they answer to. */
 export interface BrushStage {
   readonly line: Line;
-  readonly skirt: Mesh;
+  readonly hem: Mesh;
   readonly cellGrid: LineSegments;
   readonly crosshair: LineSegments;
   readonly material: LineBasicMaterial;
-  readonly skirtMaterial: MeshBasicMaterial;
+  readonly hemMaterial: MeshBasicMaterial;
   syncEdgeClipTo(worldSizeCells: number): void;
   paintRiserMark(band: number | null): void;
   paintFlatMark(): void;
@@ -86,7 +91,7 @@ export function createBrushStage(
   scene: Scene,
   canvas: CursorSurface,
   denial: DenialCue,
-  initial: BrushGeometry,
+  live: BrushLiveGeometries,
 ): BrushStage {
   const edgeClip = createWorldEdgeClip();
 
@@ -99,23 +104,27 @@ export function createBrushStage(
     clippingPlanes: [...edgeClip.planes],
   });
 
-  const line = new Line(initial.ring, material);
+  const line = new Line(live.ring, material);
   line.renderOrder = 998;
   line.visible = false;
+  // The buffers are preallocated past the draw range, so the bounding sphere
+  // reads the zeroed tail: never cull.
+  line.frustumCulled = false;
   scene.add(line);
 
-  const skirtMaterial = new MeshBasicMaterial({
+  const hemMaterial = new MeshBasicMaterial({
     color: 0xffffff,
     transparent: true,
-    opacity: SKIRT_OPACITY,
+    opacity: HEM_OPACITY,
     side: DoubleSide,
     depthWrite: false,
     clippingPlanes: [...edgeClip.planes],
   });
-  const skirt = new Mesh(initial.skirt, skirtMaterial);
-  skirt.renderOrder = 997;
-  skirt.visible = false;
-  scene.add(skirt);
+  const hem = new Mesh(live.hem, hemMaterial);
+  hem.renderOrder = 997;
+  hem.visible = false;
+  hem.frustumCulled = false;
+  scene.add(hem);
 
   const cellGridMaterial = new LineBasicMaterial({
     color: CELL_GRID_COLOR,
@@ -125,9 +134,10 @@ export function createBrushStage(
     depthWrite: false,
     clippingPlanes: [...edgeClip.planes],
   });
-  const cellGrid = new LineSegments(initial.cellGrid, cellGridMaterial);
+  const cellGrid = new LineSegments(live.grid, cellGridMaterial);
   cellGrid.renderOrder = 998;
   cellGrid.visible = false;
+  cellGrid.frustumCulled = false;
   scene.add(cellGrid);
 
   const crosshairMaterial = new LineBasicMaterial({
@@ -181,7 +191,7 @@ export function createBrushStage(
   let showing = false;
   // The four cue states: refused=red, offline=grey/hollow (never red),
   // ghost=unpredicted (hollow, dimmed), flat=posture flat-mark (crosshair only).
-  // Hollow keeps the ring, drops skirt and grid. `markOnly` drops the footprint.
+  // Hollow keeps the ring, drops hem and grid. `markOnly` drops the footprint.
   const show = (visible: boolean, markOnly = false): void => {
     const isOffline = denial.offline();
     const isGhost = denial.ghost();
@@ -190,7 +200,7 @@ export function createBrushStage(
     const flatMark = markOnly || flatPosture;
     const footprint = visible && !flatMark;
     line.visible = footprint || (visible && hollow && !flatMark);
-    skirt.visible = footprint && !hollow;
+    hem.visible = footprint && !hollow;
     cellGrid.visible = footprint && !hollow;
     crosshair.visible = visible;
     if (visible) {
@@ -203,7 +213,7 @@ export function createBrushStage(
         crosshairMaterial.opacity = CROSSHAIR_OPACITY;
       } else if (red) {
         material.color.setHex(DENIED_COLOR);
-        skirtMaterial.color.setHex(DENIED_COLOR);
+        hemMaterial.color.setHex(DENIED_COLOR);
         crosshairMaterial.color.setHex(DENIED_COLOR);
         material.opacity = OUTLINE_OPACITY;
         crosshairMaterial.opacity = CROSSHAIR_OPACITY;
@@ -223,11 +233,11 @@ export function createBrushStage(
 
   return {
     line,
-    skirt,
+    hem,
     cellGrid,
     crosshair,
     material,
-    skirtMaterial,
+    hemMaterial,
     syncEdgeClipTo: (worldSizeCells: number): void => edgeClip.syncTo(worldSizeCells),
     paintRiserMark,
     paintFlatMark,
@@ -235,14 +245,14 @@ export function createBrushStage(
     removeFromScene(): void {
       scene.remove(line);
       scene.remove(crosshair);
-      scene.remove(skirt);
+      scene.remove(hem);
       scene.remove(cellGrid);
     },
     disposeResources(): void {
       material.dispose();
       crosshairGeometry.dispose();
       crosshairMaterial.dispose();
-      skirtMaterial.dispose();
+      hemMaterial.dispose();
       cellGridMaterial.dispose();
     },
   };

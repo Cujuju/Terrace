@@ -13,6 +13,8 @@ import {
 
 const WORLD_SIZE = 64;
 
+const FLAT_GROUND = { yAt: () => null, revisionAt: () => 0 };
+
 function fakeCanvas(): {
   on: boolean;
   classList: { toggle(token: string, force: boolean): void };
@@ -83,6 +85,7 @@ describe('lane E: brush preview cue states', () => {
       fakeCanvas(),
       () => WORLD_SIZE,
       createDenialCue(() => true),
+      FLAT_GROUND,
     );
     preview.update(HOVER, BRUSH);
     expect(colorOf(ringOf(scene))).toBe(DENIED_COLOR);
@@ -94,7 +97,7 @@ describe('lane E: brush preview cue states', () => {
     const denial = createDenialCue(() => true, { offline: () => true });
     expect(denial.isRed()).toBe(false);
     const scene = new Scene();
-    const preview = createBrushPreview(scene, fakeCanvas(), () => WORLD_SIZE, denial);
+    const preview = createBrushPreview(scene, fakeCanvas(), () => WORLD_SIZE, denial, FLAT_GROUND);
     preview.update(HOVER, BRUSH);
     const { cellGrid, crosshair } = segmentsOf(scene);
     expect(colorOf(ringOf(scene))).toBe(OFFLINE_COLOR);
@@ -114,6 +117,7 @@ describe('lane E: brush preview cue states', () => {
       fakeCanvas(),
       () => WORLD_SIZE,
       createDenialCue(() => false, { ghost: () => true }),
+      FLAT_GROUND,
     );
     preview.update(HOVER, BRUSH);
     const { cellGrid, crosshair } = segmentsOf(scene);
@@ -132,6 +136,7 @@ describe('lane E: brush preview cue states', () => {
       fakeCanvas(),
       () => WORLD_SIZE,
       createDenialCue(() => false, { flat: () => true }),
+      FLAT_GROUND,
     );
     preview.update(HOVER, BRUSH);
     const { cellGrid, crosshair } = segmentsOf(scene);
@@ -150,6 +155,7 @@ describe('lane E: brush preview cue states', () => {
       canvas,
       () => WORLD_SIZE,
       createDenialCue(() => false, { flat: () => true }),
+      FLAT_GROUND,
     );
     preview.update(HOVER, BRUSH);
     const { cellGrid, crosshair } = segmentsOf(scene);
@@ -175,6 +181,7 @@ describe('lane E: brush preview cue states', () => {
       fakeCanvas(),
       () => WORLD_SIZE,
       createDenialCue(() => false, { flatBlinks: () => blinks }),
+      FLAT_GROUND,
     );
     preview.update(HOVER, BRUSH);
     const { crosshair } = segmentsOf(scene);
@@ -195,6 +202,7 @@ describe('lane E: brush preview cue states', () => {
       canvas,
       () => WORLD_SIZE,
       createDenialCue(() => false),
+      FLAT_GROUND,
     );
     preview.update(HOVER, BRUSH);
     const { crosshair } = segmentsOf(scene);
@@ -212,6 +220,7 @@ describe('lane E: brush preview cue states', () => {
       fakeCanvas(),
       () => WORLD_SIZE,
       createDenialCue(() => false),
+      FLAT_GROUND,
     );
     preview.update(HOVER, BRUSH);
     const { cellGrid, crosshair } = segmentsOf(scene);
@@ -229,6 +238,7 @@ describe('lane E: brush preview cue states', () => {
       fakeCanvas(),
       () => WORLD_SIZE,
       createDenialCue(() => false),
+      FLAT_GROUND,
     );
     const drag: BrushSelection = {
       radius: BRUSH_RADII[0]!,
@@ -255,6 +265,7 @@ describe('lane E: brush preview cue states', () => {
       fakeCanvas(),
       () => WORLD_SIZE,
       createDenialCue(() => false),
+      FLAT_GROUND,
     );
     // A tread hit a quarter-cell off-centre: the crosshair must sit on the
     // hit, or every riser/tread flip strobes it back to the ring centre.

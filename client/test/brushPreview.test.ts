@@ -43,8 +43,10 @@ function outlineOf(scene: Scene): Line {
 
 function outlinePoints(line: Line): { x: number; z: number }[] {
   const position = line.geometry.getAttribute('position') as BufferAttribute;
+  // The buffers are preallocated past the draw range: only the drawn prefix holds vertices.
+  const count = Math.min(line.geometry.drawRange.count, position.count);
   const points: { x: number; z: number }[] = [];
-  for (let i = 0; i < position.count; i++) {
+  for (let i = 0; i < count; i++) {
     points.push({ x: position.getX(i) / CELL_WORLD_SIZE, z: position.getZ(i) / CELL_WORLD_SIZE });
   }
   return points;
@@ -124,6 +126,8 @@ const TEST_WORLD_SIZE_CELLS = 64;
 
 const NEVER_DENIED = createDenialCue(() => false);
 
+const FLAT_GROUND = { yAt: () => null, revisionAt: () => 0 };
+
 describe('world-edge clipping', () => {
   const hover = { x: 0, y: 0, surfaceY: 0, face: 'tread', grabbable: false } as const;
   const stamp = { radius: BRUSH_RADII[0]!, tool: 'stamp', profile: 'hard', dir: 1 } as const;
@@ -143,7 +147,7 @@ describe('world-edge clipping', () => {
   it('cuts the ring, skirt and cell grid at the editable extent, and follows a world switch', () => {
     let size = TEST_WORLD_SIZE_CELLS;
     const scene = new Scene();
-    const preview = createBrushPreview(scene, fakeCanvas(), () => size, NEVER_DENIED);
+    const preview = createBrushPreview(scene, fakeCanvas(), () => size, NEVER_DENIED, FLAT_GROUND);
     preview.update(hover, stamp);
 
     const clipped = footprintMaterials(scene).filter((m) => m.clippingPlanes !== null && m.clippingPlanes.length > 0);
@@ -167,7 +171,7 @@ describe('world-edge clipping', () => {
 
   it('leaves the outline geometry itself position-independent — clipping is the material\'s job', () => {
     const scene = new Scene();
-    const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED);
+    const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED, FLAT_GROUND);
     const line = outlineOf(scene);
     preview.update(hover, stamp);
     const centre = outlinePoints(line);
@@ -180,7 +184,7 @@ describe('world-edge clipping', () => {
 describe('createBrushPreview', () => {
   it('encloses exactly the cells the brush edits, and no others', () => {
     const scene = new Scene();
-    const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED);
+    const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED, FLAT_GROUND);
     const line = outlineOf(scene);
 
     for (const radius of BRUSH_RADII) {
@@ -206,7 +210,7 @@ describe('createBrushPreview', () => {
 
   it('outlines exactly what one click renders, for every tool, edge and direction', () => {
     const scene = new Scene();
-    const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED);
+    const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED, FLAT_GROUND);
     const line = outlineOf(scene);
 
     for (const radius of [1, 2, 4, 8]) {
@@ -243,7 +247,7 @@ describe('createBrushPreview', () => {
 
   it('never draws a vertex outside the cells the brush edits', () => {
     const scene = new Scene();
-    const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED);
+    const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED, FLAT_GROUND);
     const line = outlineOf(scene);
 
     for (const radius of BRUSH_RADII) {
@@ -266,7 +270,7 @@ describe('createBrushPreview', () => {
 
   it('draws the shared edge of every adjacent pair of footprint cells, once', () => {
     const scene = new Scene();
-    const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED);
+    const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED, FLAT_GROUND);
     const grids = scene.children.filter(
       (c): c is LineSegments => c instanceof LineSegments,
     );
@@ -282,7 +286,10 @@ describe('createBrushPreview', () => {
         if (edited.has(`${dx},${dy + 1}`)) expected++;
       });
 
-      const counts = grids.map((g) => g.geometry.getAttribute('position').count / 2);
+      const counts = grids.map(
+        (g) =>
+          Math.min(g.geometry.drawRange.count, g.geometry.getAttribute('position').count) / 2,
+      );
       expect({ radius, hasGrid: counts.includes(expected) }).toEqual({
         radius, hasGrid: true,
       });
@@ -293,7 +300,7 @@ describe('createBrushPreview', () => {
 
   it('centres every radius outline on the object origin', () => {
     const scene = new Scene();
-    const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED);
+    const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED, FLAT_GROUND);
     const line = outlineOf(scene);
 
     for (const radius of BRUSH_RADII) {
@@ -312,7 +319,7 @@ describe('createBrushPreview', () => {
 
   it('places the outline at the hovered cell centre', () => {
     const scene = new Scene();
-    const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED);
+    const preview = createBrushPreview(scene, fakeCanvas(), () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED, FLAT_GROUND);
     const line = outlineOf(scene);
 
     preview.update({ x: 7, y: 11, surfaceY: 3, face: 'tread', grabbable: false }, brush(MIN_BRUSH_RADIUS));
@@ -326,7 +333,7 @@ describe('createBrushPreview', () => {
   it('hides the pointer exactly while an outline is drawn', () => {
     const scene = new Scene();
     const canvas = fakeCanvas();
-    const preview = createBrushPreview(scene, canvas, () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED);
+    const preview = createBrushPreview(scene, canvas, () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED, FLAT_GROUND);
 
     expect(canvas.on).toBe(false);
 
@@ -348,7 +355,7 @@ describe('createBrushPreview', () => {
   it('writes the cursor class only when it changes', () => {
     const scene = new Scene();
     const canvas = fakeCanvas();
-    const preview = createBrushPreview(scene, canvas, () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED);
+    const preview = createBrushPreview(scene, canvas, () => TEST_WORLD_SIZE_CELLS, NEVER_DENIED, FLAT_GROUND);
 
     for (let frame = 0; frame < 60; frame++) {
       preview.update({ x: 2, y: 2, surfaceY: 0, face: 'tread', grabbable: false }, brush(MIN_BRUSH_RADIUS));

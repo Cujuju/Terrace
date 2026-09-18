@@ -1,10 +1,16 @@
-import { CELL_WORLD_SIZE } from '../../config.ts';
+import { BAND_WORLD_HEIGHT, CELL_WORLD_SIZE } from '../../config.ts';
 
 export const OUTLINE_LIFT_WORLD_UNITS = 0.05;
 
 export const OUTLINE_OPACITY = 0.28;
 
-export const SKIRT_OPACITY = OUTLINE_OPACITY / 3;
+export const HEM_OPACITY = OUTLINE_OPACITY / 3;
+
+/**
+ * The hem gives the ring thickness against its tread: half a band, so it
+ * reads clearly without mimicking a second surface.
+ */
+export const RING_HEM_WORLD_UNITS = BAND_WORLD_HEIGHT / 2;
 
 export const CELL_GRID_COLOR = 0x8b918a;
 
