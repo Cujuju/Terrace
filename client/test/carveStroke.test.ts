@@ -278,6 +278,7 @@ function driveCarve(
     worldSize: () => mirror.map.size,
     riserBand: () => null,
     bandAtCell: () => null,
+    runFloorBandAt: () => null,
     graspSpanBand: () => null,
     carveBand: knobs.carveBand ?? (() => PLATEAU_BAND),
     carveReach: knobs.carveReach ?? (() => null),

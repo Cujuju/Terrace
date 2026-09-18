@@ -92,6 +92,7 @@ interface DriveKnobs {
   pickInColumn?: (x: number, y: number, origin: Vec3, direction: Vec3) => TerrainRayPick | null;
   riserBand?: (pick: TerrainRayPick | null) => number | null;
   bandAtCell?: (x: number, y: number, spanBand: number | null) => number | null;
+  runFloorBandAt?: (x: number, y: number, band: number) => number | null;
   graspSpanBand?: (pick: TerrainRayPick | null, atX: number, atY: number) => number | null;
   origin?: Vec3;
   lookAt?: Vec3;
@@ -145,6 +146,7 @@ function driveInput(mirror: TerrainMirror, knobs: DriveKnobs = {}): {
     worldSize: () => mirror.map.size,
     riserBand: knobs.riserBand ?? (() => null),
     bandAtCell: knobs.bandAtCell ?? (() => null),
+    runFloorBandAt: knobs.runFloorBandAt ?? (() => null),
     graspSpanBand: knobs.graspSpanBand ?? (() => null),
     carveBand: () => null,
     carveReach: () => null,

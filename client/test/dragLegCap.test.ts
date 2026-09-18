@@ -6,6 +6,8 @@ import type { SculptInputOptions } from '../src/input/sculpt/contract.ts';
 import { brushRadius, setBrushRadius } from '../src/state/hudState.ts';
 
 const HELD_BAND = 3;
+/** The run under HELD_BAND: these legs only assert sweep geometry, so one band is enough. */
+const HELD_FLOOR = HELD_BAND;
 
 const START = { x: 100, y: 100 } as const;
 
@@ -50,7 +52,7 @@ describe('one pointer move emits at most the leg cap', () => {
     const { state, sent } = rig();
     const target = START.x + JUMPED_LEGS * MAX_DRAG_SWEEP_CELLS;
 
-    expect(emitDragOutcome(state, target, START.y, 'raise', HELD_BAND)).toBe('sent');
+    expect(emitDragOutcome(state, target, START.y, 'raise', HELD_BAND, HELD_FLOOR)).toBe('sent');
 
     expect(sent).toHaveLength(MAX_DRAG_LEGS_PER_MOVE);
     expect(sent.at(-1)!.x).toBeLessThan(target);
@@ -59,7 +61,7 @@ describe('one pointer move emits at most the leg cap', () => {
   it('keeps every emitted leg within one sweep', () => {
     const { state, sent } = rig();
     const target = START.x + JUMPED_LEGS * MAX_DRAG_SWEEP_CELLS;
-    emitDragOutcome(state, target, START.y, 'raise', HELD_BAND);
+    emitDragOutcome(state, target, START.y, 'raise', HELD_BAND, HELD_FLOOR);
 
     for (const leg of sent) {
       expect(chebyshevDistance(leg.fromX!, leg.fromY!, leg.x, leg.y)).toBeLessThanOrEqual(
@@ -71,13 +73,13 @@ describe('one pointer move emits at most the leg cap', () => {
   it('carries the hold on from the last leg it sent', () => {
     const { state, sent } = rig();
     const target = START.x + JUMPED_LEGS * MAX_DRAG_SWEEP_CELLS;
-    emitDragOutcome(state, target, START.y, 'raise', HELD_BAND);
+    emitDragOutcome(state, target, START.y, 'raise', HELD_BAND, HELD_FLOOR);
 
     const lastSent = sent.at(-1)!;
     expect(state.lastDragToX).toBe(lastSent.x);
     expect(state.lastDragToY).toBe(lastSent.y);
 
-    emitDragOutcome(state, lastSent.x + MAX_DRAG_SWEEP_CELLS, START.y, 'raise', HELD_BAND);
+    emitDragOutcome(state, lastSent.x + MAX_DRAG_SWEEP_CELLS, START.y, 'raise', HELD_BAND, HELD_FLOOR);
     expect(sent.at(-1)!.fromX).toBe(lastSent.x);
     expect(sent.at(-1)!.fromY).toBe(lastSent.y);
   });
@@ -90,6 +92,7 @@ describe('one pointer move emits at most the leg cap', () => {
       START.y,
       'raise',
       HELD_BAND,
+      HELD_FLOOR,
     );
 
     let previous: { x: number; y: number } = START;
@@ -107,6 +110,7 @@ describe('one pointer move emits at most the leg cap', () => {
       START.y,
       'raise',
       HELD_BAND,
+      HELD_FLOOR,
     );
 
     expect(state.offlineBlinkCount).toBe(0);
@@ -118,7 +122,7 @@ describe('one pointer move emits at most the leg cap', () => {
     const { state, sent } = rig();
     const target = START.x + (MAX_DRAG_LEGS_PER_MOVE - 1) * MAX_DRAG_SWEEP_CELLS;
 
-    emitDragOutcome(state, target, START.y, 'raise', HELD_BAND);
+    emitDragOutcome(state, target, START.y, 'raise', HELD_BAND, HELD_FLOOR);
 
     expect(sent).toHaveLength(MAX_DRAG_LEGS_PER_MOVE - 1);
     expect(sent.at(-1)!.x).toBe(target);

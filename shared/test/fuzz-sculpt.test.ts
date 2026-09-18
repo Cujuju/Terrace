@@ -6,6 +6,7 @@ import {
   canCarveBandAt,
   cellIndex,
   columnCoversBand,
+  runFloorBandAt,
   createHeightmap,
   createSeededRng,
   DEFAULT_SCULPT_AMOUNT,
@@ -39,7 +40,7 @@ import {
   expectCarveCutsOnlyNamedSlabs,
   expectColumnsCanonical,
   expectDrawnCoverageMatchesSpans,
-  expectGapsSurvive,
+  expectGapsBelowRunSurvive,
   expectGradientLimitOverSettled,
   expectPriceMatchesBrushVolume,
   expectSculptDeterministic,
@@ -280,6 +281,7 @@ function makeIntent(map: Heightmap, random: Random): SculptIntent {
     return {
       ...intent,
       targetBand,
+      floorBand: runFloorBandAt(map, x, y, targetBand),
       ...(swept
         ? {
             fromX: Math.min(map.size - 1, Math.max(0, x + pickInt(random, -FUZZ_MAX_SWEEP_CELLS, FUZZ_MAX_SWEEP_CELLS))),
@@ -390,7 +392,9 @@ function runWireStroke(
     const footprint = footprintCells(map, intent.x, intent.y, intent.radius);
     expectCarveCutsOnlyNamedSlabs(map, before, diff, footprint, lo, hi, context);
   }
-  if (options.tool === 'drag') expectGapsSurvive(map, before, context);
+  if (options.tool === 'drag' && options.runFloorBand !== null) {
+    expectGapsBelowRunSurvive(map, before, options.runFloorBand, context);
+  }
   return diff.length > 0;
 }
 
