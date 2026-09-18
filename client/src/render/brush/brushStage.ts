@@ -105,7 +105,7 @@ export function createBrushStage(
   });
 
   const line = new Line(live.ring, material);
-  line.renderOrder = 998;
+  line.renderOrder = 999;
   line.visible = false;
   // The buffers are preallocated past the draw range, so the bounding sphere
   // reads the zeroed tail: never cull.
@@ -123,7 +123,7 @@ export function createBrushStage(
     clippingPlanes: [...edgeClip.planes],
   });
   const hem = new Mesh(live.hem, hemMaterial);
-  hem.renderOrder = 997;
+  hem.renderOrder = 999;
   hem.visible = false;
   hem.frustumCulled = false;
   scene.add(hem);
@@ -137,7 +137,7 @@ export function createBrushStage(
     clippingPlanes: [...edgeClip.planes],
   });
   const cellGrid = new LineSegments(live.grid, cellGridMaterial);
-  cellGrid.renderOrder = 998;
+  cellGrid.renderOrder = 999;
   cellGrid.visible = false;
   cellGrid.frustumCulled = false;
   scene.add(cellGrid);
