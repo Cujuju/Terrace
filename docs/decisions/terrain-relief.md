@@ -52,7 +52,8 @@ work.
 
 ## The shore isoline is degenerate because band 0 sits on its own threshold (2026-09-18)
 
-Investigated for #487. **Nothing changed** — recorded so it is not re-diagnosed.
+Investigated for #487. The band geometry is **unchanged**; a separate mask bug found
+alongside it was fixed in `2cab9ea5` (below).
 
 **Symptom.** The sea's wet/dry edge renders as a cell-aligned staircase while
 every other band in the same frame is a smooth contour.
@@ -112,3 +113,29 @@ to −2 as well centres the shore but skews band −1's own contour to 0.267.
 Forcing the band-0 `crossingOverride` to 0.5 — the sea mask reads the raw
 bilinear field, not `drawnCrossingFraction`, so land and water would part by
 half a cell.
+
+## The shore mask asked about the water plane, not the land under it (2026-09-18)
+
+Owner: "I can see the water jetting into the land." Fixed in `2cab9ea5`.
+
+The sea is a flat plane at `SEA_LEVEL + WATER_SURFACE_LIFT`; band 0's cap is at
+exactly `SEA_LEVEL`. `shoreCoverage` sampled the shore field at `positionWorld.xz`
+— the plane's own xz — so a grazing ray, which meets the plane before the land
+beneath it, tested a point up to several cells seaward of the land it covered.
+The wet side then flooded the flat shore, bounded by the locus where the two
+points straddle the shoreline: a constant-height line, and so dead straight
+across the frame. Invisible from overhead, which is why top-down A/B comparisons
+of the mask against the land cap kept agreeing.
+
+**Fix.** Project the fragment onto band 0's cap plane along the view ray before
+sampling: `P.xz + (P.xz - eye.xz) * lift / (eye.y - planeY)`, with the divisor
+floored at the lift so an eye at or below the surface cannot flip the sign.
+
+**Measured** at a grazing camera over the Frostwick Hollows shore (cell 223,359),
+watered pixels landing on dry band-0 cap: 2.17% → 0.36%, and 0.14% close in. The
+residual is the one-pixel shore fade, scattered — at most 7 of 159 sampled columns
+in any row, against a solid 35-row band before.
+
+**Not** the isoline degeneracy above: that governs the shoreline's *shape*, this
+governed *where the mask was asked*. `SEA_SURFACE_WORLD_Y` was left alone — boats,
+skiffs, monsters, wildlife, saucers, cyclone and rivers all float on it.
