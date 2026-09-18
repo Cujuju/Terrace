@@ -1,9 +1,9 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, request as httpRequest, type Server as HttpServer } from 'node:http';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createStaticFileHandler } from '../src/static/serve-client.ts';
+import { makeTempRoot, removeTempRoot } from './support/tempRoot.ts';
 
 const INDEX_HTML = '<!doctype html><html><body>INDEX</body></html>';
 const APP_JS = 'console.log("app");';
@@ -38,7 +38,7 @@ describe('createStaticFileHandler', () => {
   }
 
   beforeEach(async () => {
-    dir = mkdtempSync(join(tmpdir(), 'terrace-static-test-'));
+    dir = makeTempRoot('terrace-static-test-');
     writeFileSync(join(dir, 'index.html'), INDEX_HTML);
     mkdirSync(join(dir, 'assets'));
     writeFileSync(join(dir, 'assets', 'app.js'), APP_JS);
@@ -56,7 +56,7 @@ describe('createStaticFileHandler', () => {
 
   afterEach(async () => {
     await new Promise<void>((resolvePromise) => server.close(() => resolvePromise()));
-    rmSync(dir, { recursive: true, force: true });
+    removeTempRoot(dir);
   });
 
   it('serves index.html at the root, with the right content type', async () => {

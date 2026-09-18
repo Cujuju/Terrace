@@ -1,6 +1,4 @@
 import DatabaseConstructor from 'better-sqlite3';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BEDROCK_BAND, BEDROCK_FLOOR, MAX_HEIGHT, bandLevelHeight, readSpans } from '@terrace/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -24,6 +22,7 @@ import {
   TEST_WORLD_NAME,
   worldWithUnlockedChunks,
 } from './support/harness.ts';
+import { makeTempRoot, removeTempRoot } from './support/tempRoot.ts';
 
 const WORLD_SIZE = 64;
 const KEY = 'correct-horse-battery';
@@ -36,13 +35,13 @@ let dir: string;
 let store: SnapshotStore;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'terrace-rollback-'));
+  dir = makeTempRoot('terrace-rollback-');
   store = SnapshotStore.open(join(dir, 'world.db'));
 });
 
 afterEach(() => {
   store.close();
-  rmSync(dir, { recursive: true, force: true });
+  removeTempRoot(dir);
 });
 
 function counterPlugin(): TerracePlugin & { value: number } {

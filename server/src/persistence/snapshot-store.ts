@@ -380,16 +380,23 @@ export class SnapshotStore {
       mkdirSync(dirname(dbPath), { recursive: true });
     }
     const db = new DatabaseConstructor(dbPath);
-    db.pragma('journal_mode = WAL');
-    db.pragma('foreign_keys = ON');
-    db.exec(SCHEMA_DDL);
-    addColumnIfMissing(db, 'snapshots', WORLD_NAME_COLUMN, 'TEXT');
-    addColumnIfMissing(db, 'snapshots', PINNED_COLUMN, 'INTEGER NOT NULL DEFAULT 0');
-    addColumnIfMissing(db, 'snapshots', THUMBNAIL_COLUMN, 'BLOB');
-    addColumnIfMissing(db, 'snapshots', SIM_MILLIS_COLUMN, 'INTEGER NOT NULL DEFAULT 0');
-    addColumnIfMissing(db, 'snapshots', GENESIS_MILLIS_COLUMN, 'INTEGER');
-    addColumnIfMissing(db, 'snapshots', COLUMN_SPANS_COLUMN, 'BLOB');
-    return new SnapshotStore(db, retention, dbPath);
+    // The handle is ours from here: a file that is not a database throws on the
+    // first pragma, and an unclosed handle blocks its own directory's removal.
+    try {
+      db.pragma('journal_mode = WAL');
+      db.pragma('foreign_keys = ON');
+      db.exec(SCHEMA_DDL);
+      addColumnIfMissing(db, 'snapshots', WORLD_NAME_COLUMN, 'TEXT');
+      addColumnIfMissing(db, 'snapshots', PINNED_COLUMN, 'INTEGER NOT NULL DEFAULT 0');
+      addColumnIfMissing(db, 'snapshots', THUMBNAIL_COLUMN, 'BLOB');
+      addColumnIfMissing(db, 'snapshots', SIM_MILLIS_COLUMN, 'INTEGER NOT NULL DEFAULT 0');
+      addColumnIfMissing(db, 'snapshots', GENESIS_MILLIS_COLUMN, 'INTEGER');
+      addColumnIfMissing(db, 'snapshots', COLUMN_SPANS_COLUMN, 'BLOB');
+      return new SnapshotStore(db, retention, dbPath);
+    } catch (error) {
+      db.close();
+      throw error;
+    }
   }
 
   saveSnapshot(input: SnapshotInput): number {

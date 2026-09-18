@@ -1,5 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { JoinSnapshotMessage } from '@terrace/shared';
@@ -13,6 +12,7 @@ import { discoverPlugins } from '../src/plugins/discovery.ts';
 import type { SiblingModule, TerracePlugin, WorldApi } from '../src/plugins/types.ts';
 import { WorldManager } from '../src/world/world-manager.ts';
 import { RecordingSink, asLoadedPlugin } from './support/harness.ts';
+import { makeTempRoot, removeTempRoot } from './support/tempRoot.ts';
 
 const WORLD_SIZE = CHUNK_SIZE * 4;
 const RETENTION = 5;
@@ -121,7 +121,7 @@ function snapshotIdentities(): ReadonlyArray<readonly [string, string | undefine
 }
 
 beforeEach(async () => {
-  root = mkdtempSync(join(tmpdir(), 'terrace-reload-'));
+  root = makeTempRoot('terrace-reload-');
   pluginsDir = join(root, 'plugins');
   writeProbe(pluginsDir, { mark: 'v1', messageType: 'one' });
 
@@ -147,7 +147,10 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
-  rmSync(root, { recursive: true, force: true });
+  // The live world holds its snapshot file open; Windows will not remove a
+  // directory underneath an open handle.
+  manager.shutdown();
+  removeTempRoot(root);
 });
 
 describe('reloading one plugin in place', () => {
