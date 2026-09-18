@@ -18,6 +18,7 @@ export const emitDragOutcome = (
   toY: number,
   action: SculptAction,
   band: number,
+  floorBand: number,
 ): EmitOutcome => {
   const dir = sculptDirection(action);
   const radius = brushRadius();
@@ -31,7 +32,7 @@ export const emitDragOutcome = (
     return 'absent-silent';
   }
   if (!s.haveDragTo || (s.lastDragToX === toX && s.lastDragToY === toY)) {
-    const firstLeg = emitDragLeg(s, toX, toY, dir, radius, band, null);
+    const firstLeg = emitDragLeg(s, toX, toY, dir, radius, band, floorBand, null);
     if (firstLeg !== 'sent') {
       // A dropped first leg is one offline blink for the whole sweep; a local
       // veto is already red and never blinks grey.
@@ -51,7 +52,7 @@ export const emitDragOutcome = (
   for (let leg = 1; leg <= legs; leg++) {
     const legX = fromX + Math.round(((toX - fromX) * leg) / span);
     const legY = fromY + Math.round(((toY - fromY) * leg) / span);
-    const legOutcome = emitDragLeg(s, legX, legY, dir, radius, band, {
+    const legOutcome = emitDragLeg(s, legX, legY, dir, radius, band, floorBand, {
       x: s.lastDragToX,
       y: s.lastDragToY,
     });
@@ -77,6 +78,7 @@ const emitDragLeg = (
   dir: 1 | -1,
   radius: number,
   band: number,
+  floorBand: number,
   from: { x: number; y: number } | null,
 ): SendOutcome => {
   const outcome = s.options.send({
@@ -87,6 +89,7 @@ const emitDragLeg = (
     dir,
     tool: 'drag',
     targetBand: band,
+    floorBand,
     ...(from !== null ? { fromX: from.x, fromY: from.y } : {}),
     seq: s.nextSeq++,
   });
@@ -137,12 +140,21 @@ const readSeedBand = (
   return spanBand === null ? { kind: 'top', band } : { kind: 'layer', band };
 };
 
+/** The run's floor, read once in the grabbed column and sent on every leg. */
+const holdRunFloor = (s: StrokeState, x: number, y: number, band: number): void => {
+  s.strokeGrabFloor = s.options.runFloorBandAt(x, y, band);
+};
+
 export const takeHold = (s: StrokeState, action: SculptAction): void => {
   s.strokeGrab = null;
+  s.strokeGrabFloor = null;
   if (s.strokeTool !== 'drag') return;
   const hover = hoverTarget(s);
   s.strokeGrab = s.options.riserBand(hover);
-  if (s.strokeGrab !== null) return;
+  if (s.strokeGrab !== null) {
+    if (hover !== null) holdRunFloor(s, hover.x, hover.y, s.strokeGrab);
+    return;
+  }
   // The seed cues its own send failures below; every other refusal to take
   // hold blinks here, so a press is never silent.
   if (hover === null || hover.face !== 'tread') {
@@ -171,6 +183,7 @@ export const takeHold = (s: StrokeState, action: SculptAction): void => {
       return;
     }
     s.strokeGrab = after.band;
+    holdRunFloor(s, hover.x, hover.y, s.strokeGrab);
   } else {
     // Lowers grab the pre-seed band: the seed lowers it away, so the drag plane rides the starting band.
     if (after.band >= before.band) {
@@ -178,5 +191,6 @@ export const takeHold = (s: StrokeState, action: SculptAction): void => {
       return;
     }
     s.strokeGrab = before.band;
+    holdRunFloor(s, hover.x, hover.y, s.strokeGrab);
   }
 };

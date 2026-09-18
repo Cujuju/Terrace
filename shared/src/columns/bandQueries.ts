@@ -1,14 +1,16 @@
-import { bandFloorHeight, bandLevelHeight, drawnBandOfSample } from '../bands.ts';
+import { bandFloorHeight } from '../bands.ts';
 import { type Heightmap } from '../grid.ts';
 import {
+  BEDROCK_BAND,
   canonicaliseColumn,
   isGapDrawn,
+  isSpanDrawn,
   OPEN_COLUMN_SAMPLE,
   spanCapBand,
   spanCoversBand,
   type Span,
 } from './span.ts';
-import { moveSpanCeiling, readSpans, setColumn, spanAt, spanCount } from './store.ts';
+import { readSpans, setColumn, spanAt, spanCount } from './store.ts';
 
 export function spanIndexCoveringBand(
   map: Heightmap,
@@ -43,62 +45,78 @@ export function spanIndexBelowBand(
   return below;
 }
 
-export type BandFill =
-  | { readonly kind: 'extend'; readonly spanIndex: number }
-  | { readonly kind: 'overhang' };
-
-/** The slab a band's own overhang lays: that one band, floored and capped in it. */
-export function overhangSlabAtBand(band: number): Span {
-  return { floorBand: band, ceiling: bandLevelHeight(band) };
-}
-
-export function bandFillAt(
-  map: Heightmap,
-  x: number,
-  y: number,
-  band: number,
-): BandFill | null {
+/**
+ * Floor of the run down from `band`: solid to its span's floor, air to its
+ * void's. Read in the GRABBED column only — see `overhangs.md`.
+ */
+export function runFloorBandAt(map: Heightmap, x: number, y: number, band: number): number {
   const count = spanCount(map, x, y);
-  let below: number | null = null;
+  let capBelow: number | null = null;
   for (let k = 0; k < count; k++) {
     const span = spanAt(map, x, y, k);
-    if (spanCoversBand(span, band)) return null;
-    if (spanCapBand(span) < band) below = k;
+    if (spanCoversBand(span, band)) return span.floorBand;
+    const cap = spanCapBand(span);
+    if (cap < band) capBelow = cap;
   }
-  const firstAbove = below === null ? 0 : below + 1;
-  if (firstAbove < count) {
-    // A slab that welds to the ground under it is a filled carve, not a roof:
-    // an overhang needs its own slab plus one of air to be seen under.
-    const slab = overhangSlabAtBand(band);
-    if (below !== null && !isGapDrawn(spanAt(map, x, y, below), slab)) return null;
-    return { kind: 'overhang' };
-  }
-  if (below === null) return null;
-  return { kind: 'extend', spanIndex: below };
+  return capBelow === null ? BEDROCK_BAND : capBelow + 1;
 }
 
-export function applyBandFill(
+/** True when the column already holds every band of `[floorBand, band]`. */
+export function columnHoldsRun(
   map: Heightmap,
   x: number,
   y: number,
-  fill: BandFill,
-  ceiling: number,
-): void {
-  if (fill.kind === 'extend') {
-    moveSpanCeiling(map, x, y, fill.spanIndex, ceiling);
-    return;
-  }
-  const slab = overhangSlabAtBand(drawnBandOfSample(ceiling));
-  const spans = readSpans(map, x, y);
-  let at = spans.length;
-  for (let k = 0; k < spans.length; k++) {
-    if (spans[k]!.floorBand > slab.floorBand) {
-      at = k;
-      break;
+  floorBand: number,
+  band: number,
+): boolean {
+  const k = spanIndexCoveringBand(map, x, y, band);
+  return k !== null && spanAt(map, x, y, k).floorBand <= floorBand;
+}
+
+/**
+ * Welds `slab` in, absorbing every span it meets. One ordered pass, so the
+ * result ascends without sorting — which `canonicaliseColumn` demands.
+ */
+function weldSlab(spans: readonly Span[], slab: Span): Span[] {
+  const out: Span[] = [];
+  let pending: Span | null = slab;
+  for (const span of spans) {
+    if (pending === null || isGapDrawn(span, pending)) {
+      out.push(span);
+      continue;
     }
+    if (isGapDrawn(pending, span)) {
+      out.push(pending);
+      pending = null;
+      out.push(span);
+      continue;
+    }
+    pending = {
+      floorBand: span.floorBand < pending.floorBand ? span.floorBand : pending.floorBand,
+      ceiling: span.ceiling > pending.ceiling ? span.ceiling : pending.ceiling,
+    };
   }
-  spans.splice(at, 0, slab);
-  setColumn(map, x, y, canonicaliseColumn(spans));
+  if (pending !== null) out.push(pending);
+  return out;
+}
+
+/**
+ * Writes the run's slab into one cell, returning whether it changed. Nothing
+ * inspects what is overhead; only an already-solid run refuses.
+ */
+export function fillBandRun(
+  map: Heightmap,
+  x: number,
+  y: number,
+  floorBand: number,
+  band: number,
+  ceiling: number,
+): boolean {
+  if (columnHoldsRun(map, x, y, floorBand, band)) return false;
+  const slab: Span = { floorBand, ceiling };
+  if (!isSpanDrawn(slab)) return false;
+  setColumn(map, x, y, canonicaliseColumn(weldSlab(readSpans(map, x, y), slab)));
+  return true;
 }
 
 export function highestCeilingBelow(

@@ -29,6 +29,7 @@ export interface SculptIntent {
   tool?: SculptTool;
   profile?: SculptProfile;
   targetBand?: number;
+  floorBand?: number;
   spanBand?: number;
   smoothLambda?: number;
   depthBands?: number;
@@ -50,6 +51,7 @@ export const WIRE_DEFAULT_SCULPT_OPTIONS: ResolvedWireSculptOptions = {
   targetBand: null,
   spanBand: null,
   anchor: 'clicked',
+  runFloorBand: null,
   sweepFrom: null,
   smoothLambda: SMOOTH_LAMBDA_DEFAULT,
 };
@@ -71,6 +73,8 @@ export function sculptOptionsOf(intent: SculptIntent): ResolvedWireSculptOptions
     spill: WIRE_DEFAULT_SCULPT_OPTIONS.spill,
     anchor: targetBand !== null ? 'band' : WIRE_DEFAULT_SCULPT_OPTIONS.anchor,
     targetBand,
+    runFloorBand:
+      tool === 'drag' ? (intent.floorBand ?? null) : WIRE_DEFAULT_SCULPT_OPTIONS.runFloorBand,
     spanBand: intent.spanBand ?? null,
     sweepFrom:
       tool === 'drag' && intent.fromX !== undefined && intent.fromY !== undefined
@@ -151,6 +155,19 @@ export function validateSculptIntent(
   // no lip to move and would apply as a silent, acked no-op.
   if ((targetBand !== undefined) !== (tool === 'drag')) return null;
 
+  // The run's floor, read in the grabbed column because no swept cell can
+  // derive it. Rides with a drag and only a drag, never above its own band.
+  const { floorBand } = m;
+  if ((floorBand !== undefined) !== (tool === 'drag')) return null;
+  if (
+    floorBand !== undefined &&
+    (!Number.isInteger(floorBand) ||
+      (floorBand as number) < MIN_BAND ||
+      (floorBand as number) > (targetBand as number))
+  ) {
+    return null;
+  }
+
   // A carve grasps a band it can open; bedrock is not one, and acking a stroke
   // the applier always refuses would promise a cut that never happens.
   const { spanBand } = m;
@@ -212,6 +229,7 @@ export function validateSculptIntent(
     ...(tool !== undefined ? { tool: tool as SculptTool } : {}),
     ...(profile !== undefined ? { profile: profile as SculptProfile } : {}),
     ...(targetBand !== undefined ? { targetBand: targetBand as number } : {}),
+    ...(floorBand !== undefined ? { floorBand: floorBand as number } : {}),
     ...(spanBand !== undefined ? { spanBand: spanBand as number } : {}),
     ...(smoothLambda !== undefined ? { smoothLambda: smoothLambda as number } : {}),
     ...(depthBands !== undefined ? { depthBands: depthBands as number } : {}),

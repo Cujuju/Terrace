@@ -130,7 +130,21 @@ export function applySculpt(
   if (tool === 'drag') {
     const dragChanged = new Set<number>();
     if (targetBand !== null && amount !== 0) {
-      applyDragRegion(map, cx, cy, radius, amount > 0, targetBand, profile, sweepFrom, dragChanged);
+      // No grabbed column named a run, so the slab is the target band alone.
+      const runFloorBand =
+        options?.runFloorBand ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.runFloorBand ?? targetBand;
+      applyDragRegion(
+        map,
+        cx,
+        cy,
+        radius,
+        amount > 0,
+        targetBand,
+        runFloorBand > targetBand ? targetBand : runFloorBand,
+        profile,
+        sweepFrom,
+        dragChanged,
+      );
     }
     return diffOf(map, dragChanged);
   }
