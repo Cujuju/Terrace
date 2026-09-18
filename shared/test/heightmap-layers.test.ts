@@ -130,7 +130,7 @@ describe('an anchored smooth conserves height (2026-09-15)', () => {
   const TOWER_PRESSES = 6;
   const TRENCH_DEPTHS = [6, 20, 40];
   // Measured against the Laplacian melt; the limit below is a hang guard.
-  const CONVERGED_PRESSES = 31;
+  const CONVERGED_PRESSES = 32;
   const CONVERGENCE_LIMIT = 40;
   const SMOOTH_LOWER = sculptOptionsOf({
     type: 'sculpt', x: CLICK_X, y: ROW, radius: MAX_BRUSH_RADIUS, dir: -1, tool: 'smooth',
@@ -192,9 +192,8 @@ describe('an anchored smooth conserves height (2026-09-15)', () => {
   };
 
   it('moves height whatever the pit under it holds, leaking at most two bands per touched cell', () => {
-    // Laplacian passes are not exactly conserving; owner decision 2026-09-16
-    // accepts bounded drift: every write stays inside its clamp window,
-    // at most two bands wide, so net drift per touched cell is bounded.
+    // Laplacian passes are not exactly conserving; see docs/decisions/
+    // relaxation.md. Every write stays inside a clamp window two bands wide.
     for (const digs of TRENCH_DEPTHS) {
       const map = trenchAndTower(digs);
       const before = totalOf(map);

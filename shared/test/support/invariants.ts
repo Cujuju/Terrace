@@ -453,7 +453,7 @@ export function expectPriceMatchesBrushVolume(
   if (tool === 'carve') {
     const cut = cells * depthBands * BAND_HEIGHT;
     if (price !== cut) violations.push(`carve over ${cells} cells prices ${price}, cuts ${cut}`);
-  } else if (tool === 'smooth' || profile === 'soft') {
+  } else if (tool === 'smooth') {
     // Graduated: the centre cell pays the full step, every other cell less.
     const graduated = cells === 1 ? price === fill : price > 0 && price < fill;
     if (!graduated) {

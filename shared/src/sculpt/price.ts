@@ -82,9 +82,9 @@ export function sculptDisplacementUnits(
     return cells * depthBands * BAND_HEIGHT;
   }
 
-  // A soft clicked stamp moves the linear falloff, and smooth only melts
-  // partial steps, so both pay the graduated volume instead of the fill.
-  if ((tool === 'stamp' && profile === 'soft') || tool === 'smooth') {
+  // Both profiles level the core radius names, so soft prices as that same
+  // fill, apron thrown in. Smooth only melts partial steps: graduated volume.
+  if (tool === 'smooth') {
     let total = 0;
     forEachFootprintOffset(radius, (_dx, _dy, dist) => {
       total += brushDelta(SCULPT_PRESS_UNITS_PER_CELL, radius, dist, 'soft');

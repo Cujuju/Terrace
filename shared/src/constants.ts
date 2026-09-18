@@ -55,9 +55,13 @@ export const LEGACY_MIN_HEIGHT = -1536;
 
 export const MAX_STEP = BAND_HEIGHT / WORLD_UNIT_CELLS;
 
-export const SOFT_APRON_TREAD_CELLS = WORLD_UNIT_CELLS;
-
 export const SOFT_APRON_MAX_BANDS = 4;
+
+/** Treads double outward from a one-cell first tread, so four bands end here. */
+export const SOFT_APRON_MAX_REACH_CELLS = 2 ** SOFT_APRON_MAX_BANDS - 1;
+
+/** How far past the core the sheet may reach before the tread cap takes over. */
+export const SOFT_APRON_REACH_PER_RADIUS = 2;
 
 /** Soft stamp strength at the footprint's outermost ring, as a fraction of the centre. */
 export const SOFT_EDGE_STRENGTH_NUMERATOR = 1;

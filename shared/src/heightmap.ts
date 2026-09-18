@@ -161,10 +161,9 @@ export function applySculpt(
     : 0;
   // Smooth never deposits: relaxation alone melts roughness within anchor bounds.
   if (deposits) {
-    // A soft clicked stamp keeps the anchor ceiling but moves each cell by
-    // the linear falloff: the centre reaches the target, the edge moves
-    // partway. Hard stays a flat fill.
-    if (profile === 'hard') {
+    // Radius names the flat under both profiles: the disc levels to the
+    // anchor, and soft hangs its sheet outside that edge.
+    if (profile === 'hard' || softCore) {
       applyLevelFillBrush(map, cx, cy, radius, strokeAmount, changed, anchor, targetBand, spanBand);
     } else {
       applyBrush(map, cx, cy, radius, strokeAmount, changed, profile, anchor, targetBand, spanBand);
@@ -195,8 +194,8 @@ export function applySculpt(
           anchorBounds.set(i, { lo: h, hi: h });
         } else if (!pinCenter) {
           // Symmetric window, both ends: an independent kernel with any
-          // unbounded side deletes hillsides, so each cell moves at most
-          // about a band per stroke while the target side still directs it.
+          // unbounded side deletes hillsides, so each cell moves about a
+          // band per stroke while the target side still directs it.
           anchorBounds.set(
             i,
             raising

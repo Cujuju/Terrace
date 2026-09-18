@@ -17,6 +17,7 @@ import {
   displacementOf,
   sculptDisplacementUnits,
   sculptOptionsOf,
+  sculptSweepRadius,
   smooth,
   snapshotSolidUnits,
   strokeReachBox,
@@ -37,19 +38,21 @@ function observedDisplacement(
   applySculpt(map, 32, 32, radius, amount, options);
 
   let total = 0;
-  forEachFootprintOffset(radius, (dx, dy) => {
+  forEachFootprintOffset(sculptSweepRadius(radius, profile, 'stamp', 'clicked'), (dx, dy) => {
     total += Math.abs(map.cells[(32 + dy) * size + (32 + dx)]! - start);
   });
   return total;
 }
 
 describe('sculptDisplacementUnits', () => {
-  it('equals the volume applyBrush actually moves, for every radius × profile', () => {
+  it('covers the volume a press moves, exactly for a fill, for every radius × profile', () => {
     for (const profile of ['soft', 'hard'] as const) {
       for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
-        expect(sculptDisplacementUnits(radius, 'stamp', profile, CARVE_DEFAULT_DEPTH_BANDS)).toBe(
-          observedDisplacement(radius, profile, DEFAULT_SCULPT_AMOUNT),
-        );
+        const price = sculptDisplacementUnits(radius, 'stamp', profile, CARVE_DEFAULT_DEPTH_BANDS);
+        const moved = observedDisplacement(radius, profile, DEFAULT_SCULPT_AMOUNT);
+        // A soft press pays for a sheet flat ground gives it no room to hang.
+        if (profile === 'hard') expect(price).toBe(moved);
+        else expect(price).toBeGreaterThanOrEqual(moved);
       }
     }
   });
@@ -57,8 +60,8 @@ describe('sculptDisplacementUnits', () => {
   it('prices a lower exactly like the raise that undoes it', () => {
     for (const profile of ['soft', 'hard'] as const) {
       for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
-        expect(sculptDisplacementUnits(radius, 'stamp', profile, CARVE_DEFAULT_DEPTH_BANDS)).toBe(
-          observedDisplacement(radius, profile, -DEFAULT_SCULPT_AMOUNT),
+        expect(observedDisplacement(radius, profile, -DEFAULT_SCULPT_AMOUNT)).toBe(
+          observedDisplacement(radius, profile, DEFAULT_SCULPT_AMOUNT),
         );
       }
     }
@@ -214,12 +217,12 @@ describe('displacementOf — what a stroke actually moved', () => {
     }
   });
 
-  it('a soft stamp pays its core and its apron, never the flat fill', () => {
+  it('a soft stamp levels its core, and on flat ground its apron is free', () => {
     const measured = measure(flatWorld(bandLevelHeight(LOW_BAND)), stamp('soft', 4));
     expect(measured.units).toBe(measured.up + measured.down);
-    expect(measured.units).toBeGreaterThan(0);
-    expect(measured.units).toBeLessThan(
-      sculptDisplacementUnits(4, 'stamp', 'hard', CARVE_DEFAULT_DEPTH_BANDS),
+    // Flat ground leaves the apron nothing to reach down to, so only the core moves.
+    expect(measured.units).toBe(
+      sculptDisplacementUnits(4, 'stamp', 'soft', CARVE_DEFAULT_DEPTH_BANDS),
     );
   });
 

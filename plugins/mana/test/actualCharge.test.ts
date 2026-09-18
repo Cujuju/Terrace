@@ -142,13 +142,13 @@ describe('the charge is the material the stroke moved', () => {
     expect(onSea.units * BAND_HEIGHT).toBe(footprintCells(radius) * DEFAULT_SCULPT_AMOUNT);
   });
 
-  it('a soft stamp pays the graduated volume it moved, less than the flat fill', () => {
+  it('a soft stamp levels the core a hard one does, and pays the same fill', () => {
     const radius = 4;
     const soft = sculpt(boot(bandLevelHeight(GROUND_BAND)), press(radius, 'soft'));
     const hard = sculpt(boot(bandLevelHeight(GROUND_BAND)), press(radius, 'hard'));
 
     expect(soft.units).toBeGreaterThan(0);
-    expect(soft.units).toBeLessThan(hard.units);
+    expect(soft.units).toBe(hard.units);
     expect(soft.charged).toBe(expectedCharge(soft.units));
     expect(hard.charged).toBe(expectedCharge(hard.units));
   });
