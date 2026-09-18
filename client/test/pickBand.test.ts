@@ -41,8 +41,6 @@ function pickAt(
   };
 }
 
-const LIP_EVERYWHERE = (): boolean => true;
-const LIP_NOWHERE = (): boolean => false;
 
 describe('resolvePick / bandOfPick', () => {
   const CAP_BAND = 10;
@@ -113,27 +111,12 @@ describe('carveBandOfPick', () => {
   it('carves the band of the face on a riser hit — the SIDE FACE', () => {
     const map = oneSpan();
     const midFace = BAND_HEIGHT * 6 - BAND_HEIGHT / 2;
-    expect(carveBandOfPick(map, pickAt(0, 'riser', midFace, CAP), LIP_NOWHERE)).toBe(6);
+    expect(carveBandOfPick(map, pickAt(0, 'riser', midFace, CAP))).toBe(6);
   });
 
-  it('carves the cap band on a tread hit WITH a lip in reach — the CORNER EDGE', () => {
+  it('carves the cap band on a tread hit — the CORNER EDGE', () => {
     const map = oneSpan();
-    expect(carveBandOfPick(map, pickAt(0, 'tread', CAP, CAP), LIP_EVERYWHERE)).toBe(CAP_BAND);
-  });
-
-  it('carves NOTHING on a tread hit with no lip in reach', () => {
-    const map = oneSpan();
-    expect(carveBandOfPick(map, pickAt(0, 'tread', CAP, CAP), LIP_NOWHERE)).toBeNull();
-  });
-
-  it('asks the lip test about exactly the band it would carve', () => {
-    const map = oneSpan();
-    const asked: number[] = [];
-    carveBandOfPick(map, pickAt(0, 'tread', CAP, CAP), (band) => {
-      asked.push(band);
-      return true;
-    });
-    expect(asked).toEqual([CAP_BAND]);
+    expect(carveBandOfPick(map, pickAt(0, 'tread', CAP, CAP))).toBe(CAP_BAND);
   });
 
   it('never answers a band no span covers — the server-side belt', () => {
@@ -146,7 +129,7 @@ describe('carveBandOfPick', () => {
     for (const spanIndex of [0, 1]) {
       for (let h = BEDROCK_FLOOR; h <= CAP; h += BAND_HEIGHT / 2) {
         for (const face of ['riser', 'tread', 'underside'] as const) {
-          const band = carveBandOfPick(map, pickAt(spanIndex, face, h, CAP), LIP_EVERYWHERE);
+          const band = carveBandOfPick(map, pickAt(spanIndex, face, h, CAP));
           if (band === null) continue;
           expect(spanIndexCoveringBand(map, CELL_X, CELL_Z, band)).not.toBeNull();
         }

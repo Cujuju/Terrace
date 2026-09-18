@@ -111,7 +111,6 @@ import {
 export interface LayerEdgeLight {
   readonly litSpanWorldUnits: number;
   readonly heldBand?: number | null;
-  readonly tool?: SculptTool;
 }
 
 /**
@@ -281,13 +280,8 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
   const bandOfPick = (pick: TerrainRayPick): number | null =>
     mirror === null ? null : bandOfPickIn(mirror.map, pick);
 
-  const carveBandOfPick = (pick: TerrainRayPick): number | null => {
-    const edges = layerEdges;
-    if (mirror === null || edges === null) return null;
-    return carveBandOfPickIn(mirror.map, pick, (band) =>
-      edges.lipNear({ x: pick.x, y: pick.y }, band, pick.hitX, pick.hitZ),
-    );
-  };
+  const carveBandOfPick = (pick: TerrainRayPick): number | null =>
+    mirror === null ? null : carveBandOfPickIn(mirror.map, pick);
 
   const clearExpiryTimer = (): void => {
     if (expiryTimer !== null) {
@@ -633,20 +627,12 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
 
     highlightLayerEdge(pick: TerrainRayPick | null, light: LayerEdgeLight): number | null {
       if (layerEdges === null) return null;
-      const carving = light.tool === 'carve';
-      const band =
-        light.heldBand ??
-        (pick === null
-          ? null
-          : carving
-            ? carveBandOfPick(pick)
-            : pick.face === 'riser'
-              ? bandOfPick(pick)
-              : null);
-      const useHitPoint = carving || (pick !== null && pick.face === 'riser');
-      const atX = pick === null ? 0 : useHitPoint ? pick.hitX : pick.x * CELL_WORLD_SIZE;
-      const atZ = pick === null ? 0 : useHitPoint ? pick.hitZ : pick.y * CELL_WORLD_SIZE;
-      return layerEdges.lightBand(pick, band, atX, atZ, light.litSpanWorldUnits) ? band : null;
+      const band = light.heldBand ?? (pick === null ? null : bandOfPick(pick));
+      const atX = pick === null ? 0 : pick.hitX;
+      const atZ = pick === null ? 0 : pick.hitZ;
+      // Lip proximity decides what the overlay draws, never which band the aim names.
+      layerEdges.lightBand(pick, band, atX, atZ, light.litSpanWorldUnits);
+      return band;
     },
     setLayerEdgeStyle(style: LayerEdgeStyle): void {
       layerEdgeStyle = style;

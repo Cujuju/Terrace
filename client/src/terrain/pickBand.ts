@@ -64,15 +64,10 @@ export function bandOfPick(map: Heightmap, pick: TerrainRayPick): number | null 
   return resolvePick(map, pick)?.band ?? null;
 }
 
-export function carveBandOfPick(
-  map: Heightmap,
-  pick: TerrainRayPick,
-  lipNear: (band: number) => boolean,
-): number | null {
+export function carveBandOfPick(map: Heightmap, pick: TerrainRayPick): number | null {
   const resolved = resolvePick(map, pick);
   if (resolved === null) return null;
-  if (resolved.face === 'tread' && !lipNear(resolved.band)) return null;
-  // F3: carve reach queries the drawn banding, matching the emitted caps.
+  // A cut needs material at the named band; the aim alone never proves it.
   if (drawnSpanIndexCoveringBand(map, pick.x, pick.y, resolved.band) === null) return null;
   return resolved.band;
 }

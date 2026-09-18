@@ -71,7 +71,7 @@ const scheduleRepeat = (s: StrokeState, repeatIndex: number): void => {
 };
 
 export const armStroke = (s: StrokeState): void => {
-  if (s.strokeIsTouch) takeHold(s, currentStrokeAction(s));
+  if (s.strokeIsTouch) takeHold(s);
   if (!strokeIsLive(s)) return;
   s.strokeArmed = true;
   // A press-time send failure latches the offline cue and skips the repeat.
@@ -101,7 +101,7 @@ export const startStroke = (
   s.pointerClientX = event.clientX;
   s.pointerClientY = event.clientY;
   s.havePointer = true;
-  if (!s.strokeIsTouch) takeHold(s, s.strokeAction);
+  if (!s.strokeIsTouch) takeHold(s);
 
   if (s.strokeIsTouch) {
     s.graceTimer = setTimeout(() => {

@@ -62,7 +62,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     if (event.pointerId === s.refusedPointerId) s.refusedPointerId = null;
     if (event.pointerId !== s.strokePointerId) return;
     if (s.graceTimer !== null) {
-      takeHold(s, currentStrokeAction(s));
+      takeHold(s);
       emitIntent(s, 'press');
     }
     stopRepeat(s);
