@@ -45,9 +45,11 @@ import {
 import {
   brushRadius,
   brushTool,
+  effectiveSculptMode,
   sculptMode,
   setBrushRadius,
   setBrushTool,
+  setSculptChord,
   setSculptMode,
 } from '../src/state/hudState.ts';
 
@@ -876,6 +878,7 @@ describe('the HUD direction toggle holds against an unmodified mouse', () => {
   afterEach(() => {
     restoreHud(tool, radius);
     setSculptMode(mode);
+    setSculptChord(null);
     vi.useRealTimers();
   });
 
@@ -900,9 +903,10 @@ describe('the HUD direction toggle holds against an unmodified mouse', () => {
     try {
       setSculptMode('raise');
       fire('keydown', { shiftKey: true });
-      expect(sculptMode()).toBe('lower');
-      fire('keyup', { shiftKey: false });
+      expect(effectiveSculptMode()).toBe('lower');
       expect(sculptMode()).toBe('raise');
+      fire('keyup', { shiftKey: false });
+      expect(effectiveSculptMode()).toBe('raise');
     } finally {
       dispose();
     }
@@ -920,7 +924,8 @@ describe('the HUD direction toggle holds against an unmodified mouse', () => {
 
       fire('pointerup', {});
       fire('pointermove', { shiftKey: true });
-      expect(sculptMode()).toBe('lower');
+      expect(effectiveSculptMode()).toBe('lower');
+      expect(sculptMode()).toBe('raise');
     } finally {
       dispose();
     }
@@ -937,7 +942,7 @@ describe('the HUD direction toggle holds against an unmodified mouse', () => {
 
       setBrushTool('stamp');
       fire('pointermove', { shiftKey: true });
-      expect(sculptMode()).toBe('lower');
+      expect(effectiveSculptMode()).toBe('lower');
     } finally {
       dispose();
     }

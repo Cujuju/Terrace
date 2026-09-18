@@ -214,6 +214,30 @@ export function resolvePress(
   return null;
 }
 
+/**
+ * Which way a press sculpts. A chord names its direction outright; a press with
+ * no modifier names none of its own and takes the direction the HUD holds.
+ */
+export function resolveSculptPress(
+  eventButton: number,
+  mods: ModifierState,
+  hudDirection: SculptAction,
+): SculptAction | null {
+  const action = resolvePress(eventButton, mods);
+  if (action !== 'raise' && action !== 'lower') return null;
+  return controlBindings()[action].modifier === 'none' ? hudDirection : action;
+}
+
+/** The direction the held modifiers name, or null when they name none. */
+export function chordDirection(mods: ModifierState): SculptAction | null {
+  const modifier = modifierOf(mods);
+  if (modifier === null || modifier === 'none') return null;
+  const bindings = controlBindings();
+  if (bindings.raise.modifier === modifier) return 'raise';
+  if (bindings.lower.modifier === modifier) return 'lower';
+  return null;
+}
+
 export function shadowedActions(bindings: ControlBindings): ControlAction[] {
   const seen = new Map<string, ControlAction>();
   const shadowed: ControlAction[] = [];

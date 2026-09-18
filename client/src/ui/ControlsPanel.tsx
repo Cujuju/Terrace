@@ -133,6 +133,11 @@ const HINT_VERB: Record<ControlAction, string> = {
 function hintText(bindings: ControlBindings, wheel: WheelBehaviour): string {
   const parts = ACTION_PRECEDENCE.map((action) => {
     const b = bindings[action];
+    // An unmodified sculpt press names no direction of its own: it sculpts
+    // whichever way the HUD toggle points.
+    if ((action === 'raise' || action === 'lower') && b.modifier === 'none') {
+      return `${BUTTON_LABEL[b.button]}-drag sculpts the HUD direction`;
+    }
     return `${HINT_MODIFIER[b.modifier]}${BUTTON_LABEL[b.button]}-drag ${HINT_VERB[action]}`;
   });
   const wheelVerb = wheel === 'zoom' ? 'zooms' : 'pans';

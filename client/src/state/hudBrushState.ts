@@ -171,6 +171,12 @@ const [sculptMode, setSculptModeSignal] = createSignal<SculptMode>(
   stored.sculptMode,
 );
 
+/**
+ * The direction a held chord names, for as long as it is held. The toggle is
+ * the mode; a chord only overrides it, so this is never persisted.
+ */
+const [sculptChord, setSculptChordSignal] = createSignal<SculptMode | null>(null);
+
 const [smoothLambda, setSmoothLambdaSignal] = createSignal<number>(
   stored.smoothLambda,
 );
@@ -221,6 +227,15 @@ export function setSculptMode(mode: SculptMode): void {
   if (mode === sculptMode()) return;
   setSculptModeSignal(mode);
   persist();
+}
+
+export function setSculptChord(mode: SculptMode | null): void {
+  if (mode !== sculptChord()) setSculptChordSignal(mode);
+}
+
+/** What a press sculpts right now: the chord it holds, else the HUD mode. */
+export function effectiveSculptMode(): SculptMode {
+  return sculptChord() ?? sculptMode();
 }
 
 export function setSmoothLambda(lambda: number): void {

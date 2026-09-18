@@ -11,6 +11,7 @@ import {
   brushRadius,
   brushTool,
   denialHint,
+  effectiveSculptMode,
   sculptMode,
   setBrushProfile,
   setBrushRadius,
@@ -115,12 +116,18 @@ const HINT_MODIFIER: Record<string, string> = {
 
 const SMOOTH_LAMBDA_DETENTS: readonly number[] = [25, 50, 75, 100];
 
-function modeTitle(mode: SculptMode, bindings: ControlBindings): string {
+/** The chord that overrides the mode — none, when no chord names the other way. */
+function overrideChord(mode: SculptMode, bindings: ControlBindings): string | null {
   const opposite = mode === 'lower' ? bindings.raise : bindings.lower;
-  const chord = `${HINT_MODIFIER[opposite.modifier]}${HINT_BUTTON[opposite.button]}`;
-  return mode === 'lower'
-    ? `Lower: drag digs land (${chord}-drag raises)`
-    : `Raise: drag piles land (${chord}-drag lowers)`;
+  if (opposite.modifier === 'none') return null;
+  return `${HINT_MODIFIER[opposite.modifier]}${HINT_BUTTON[opposite.button]}`;
+}
+
+function modeTitle(mode: SculptMode, bindings: ControlBindings): string {
+  const base = mode === 'lower' ? 'Lower: drag digs land' : 'Raise: drag piles land';
+  const chord = overrideChord(mode, bindings);
+  if (chord === null) return base;
+  return `${base} (${chord}-drag ${mode === 'lower' ? 'raises' : 'lowers'})`;
 }
 
 export function BrushModeler(): JSX.Element {
@@ -177,15 +184,15 @@ export function BrushModeler(): JSX.Element {
           <button
             type="button"
             class="mode-value"
-            classList={{ lower: sculptMode() === 'lower' }}
-            aria-label={`Sculpt direction: ${sculptMode() === 'lower' ? 'Lower' : 'Raise'}`}
+            classList={{ lower: effectiveSculptMode() === 'lower' }}
+            aria-label={`Sculpt direction: ${effectiveSculptMode() === 'lower' ? 'Lower' : 'Raise'}`}
             title={modeTitle(sculptMode(), controlBindings())}
             onClick={() =>
               setSculptMode(sculptMode() === 'lower' ? 'raise' : 'lower')
             }
           >
             <Dynamic
-              component={sculptMode() === 'lower' ? LowerIcon : RaiseIcon}
+              component={effectiveSculptMode() === 'lower' ? LowerIcon : RaiseIcon}
             />
           </button>
         </Show>
