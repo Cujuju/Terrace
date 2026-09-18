@@ -16,6 +16,7 @@ import { creaseLook, layerEdgeStyle, lipHighlight } from './state/layerEdgePrefs
 import { frameRateTarget, frameRateTargetFps } from './state/frameRatePrefs.ts';
 import { multisampleEnabled, multisampleSetting } from './state/multisamplePrefs.ts';
 import { pointerToNdc, worldPointToCell } from './terrain/picking.ts';
+import type { TerrainRayPick } from './terrain/pick/types.ts';
 import { CELL_WORLD_SIZE } from './config.ts';
 import { createWorld } from './world.ts';
 import {
@@ -246,6 +247,8 @@ const pickDebug = new URLSearchParams(window.location.search).has(PICK_DEBUG_QUE
   ? createPickDebugOverlay(viewport.scene, canvas)
   : null;
 let frozenCursorShown = false;
+// The aim the overlays are drawn for; a camera gesture holds it.
+let heldAim: TerrainRayPick | null = null;
 viewport.onFrame(() => {
   world.setBrushRefused(denialCue.isRed());
   // While the drag plane is off the ray the stroke is frozen: show a crosshair.
@@ -257,10 +260,12 @@ viewport.onFrame(() => {
     frozenCursorShown = false;
     canvas.style.cursor = armedAction() === null ? '' : 'crosshair';
   }
-  // A camera gesture freezes the aim: the pointer holds still while the world
-  // slides under it, so every aim-derived overlay keeps its last value.
-  if (cameraGesture.active()) return;
-  const pick = activeToolId() === SCULPT_TOOL_ID ? sculptInput.hoverTarget() : null;
+  // A camera gesture holds the aim: the pointer is still while the world slides
+  // under it, so the overlays keep the aim they already drew and repaint nothing.
+  if (!cameraGesture.active()) {
+    heldAim = activeToolId() === SCULPT_TOOL_ID ? sculptInput.hoverTarget() : null;
+  }
+  const pick = heldAim;
   const tool = brushTool();
   const grabbedBand = world.highlightLayerEdge(pick, {
     litSpanWorldUnits: litLipSpan(),
