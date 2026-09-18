@@ -1170,3 +1170,62 @@ describe('a modifier change steers the leg it arrived on', () => {
     }
   });
 });
+
+describe('a drag press on a tread grabs the band under the aim', () => {
+  const tool = brushTool();
+  const radius = brushRadius();
+  afterEach(() => {
+    restoreHud(tool, radius);
+    vi.useRealTimers();
+  });
+
+  const TREAD_BAND = 5;
+  const RUN_FLOOR = BEDROCK_BAND;
+
+  const dragOnTread = (aimBand: () => number | null): ReturnType<typeof driveInput> => {
+    setBrushTool('drag');
+    // riserBand answers only on a riser: a tread press has to stand on aimBand.
+    return driveInput(flatWorld(), {
+      riserBand: () => null,
+      aimBand,
+      runFloorBandAt: () => RUN_FLOOR,
+    });
+  };
+
+  it('holds the aim’s band without seeding a layer first', () => {
+    const { input, attempts, fire, dispose } = dragOnTread(() => TREAD_BAND);
+    try {
+      fire('pointerdown', {});
+      expect(input.heldBand()).toBe(TREAD_BAND);
+      // No seed: the only intent a press sends is the drag itself.
+      expect(attempts.every((intent) => intent.tool === 'drag')).toBe(true);
+    } finally {
+      dispose();
+    }
+  });
+
+  it('carries the run’s floor from the grabbed column on every leg', () => {
+    const { attempts, fire, dispose } = dragOnTread(() => TREAD_BAND);
+    try {
+      fire('pointerdown', {});
+      fire('pointermove', { clientX: CENTRE_X + 40 });
+      const legs = attempts.filter((intent) => intent.tool === 'drag');
+      expect(legs.length).toBeGreaterThan(0);
+      for (const leg of legs) {
+        expect([leg.targetBand, leg.floorBand]).toEqual([TREAD_BAND, RUN_FLOOR]);
+      }
+    } finally {
+      dispose();
+    }
+  });
+
+  it('takes no hold when the aim names no band', () => {
+    const { input, fire, dispose } = dragOnTread(() => null);
+    try {
+      fire('pointerdown', {});
+      expect(input.heldBand()).toBeNull();
+    } finally {
+      dispose();
+    }
+  });
+});

@@ -55,7 +55,10 @@ export interface BrushPreview {
 const SEED_TOOL: SculptTool = 'stamp';
 const SEED_PROFILE: SculptProfile = 'hard';
 
-export const BRUSH_PREVIEW_DRAW_OBJECTS = 4;
+/** Four edges bound one cell: the worst case a mark's loops can add. */
+const CELL_BOUNDARY_EDGES = 4;
+
+export const BRUSH_PREVIEW_DRAW_OBJECTS = 5;
 
 /**
  * Cells the carve at this aim would actually cut, as offsets from it. Null when
@@ -98,12 +101,17 @@ export function createBrushPreview(
     throw new RangeError(`brush preview has no footprint for ${initialKey}`);
   }
 
-  const conformed = createConformedGeometry(maxRingVerts, maxGridSegments);
+  // A disconnected mark's loops are bounded by its cells: each contributes at
+  // most four boundary edges, over the widest footprint the radii reach.
+  let maxReachCells = 0;
+  for (const { footprint } of footprints.values()) {
+    if (footprint.reachCells > maxReachCells) maxReachCells = footprint.reachCells;
+  }
+  const markCellBound = (2 * maxReachCells + 1) * (2 * maxReachCells + 1);
+  const maxExtraSegments = CELL_BOUNDARY_EDGES * markCellBound;
+  const conformed = createConformedGeometry(maxRingVerts, maxGridSegments, maxExtraSegments);
   let liveCarve: { footprint: BrushFootprint | null; id: number; key: string } | null = null;
-  /**
-   * The admitted cells as an outline, or null when they cannot be drawn:
-   * markOutline admits one closed loop, and the buffers are fixed at build.
-   */
+  /** The admitted cells as an outline, or null when the fixed buffers cannot hold it. */
   const liveFootprint = (
     radius: number,
     cells: readonly (readonly [number, number])[],
@@ -114,11 +122,16 @@ export function createBrushPreview(
     } catch {
       return null;
     }
-    return built.ringCount > maxRingVerts || built.gridCount > maxGridSegments ? null : built;
+    return built.ringCount > maxRingVerts ||
+      built.gridCount > maxGridSegments ||
+      built.extraCount > maxExtraSegments
+      ? null
+      : built;
   };
   const stage = createBrushStage(scene, canvas, denial, {
     ring: conformed.ring,
     hem: conformed.hem,
+    extra: conformed.extra,
     grid: conformed.grid,
   });
   const { line, hem, cellGrid, crosshair, material, hemMaterial } = stage;
@@ -227,8 +240,8 @@ export function createBrushPreview(
           show(true);
           return;
         }
-        // An admitted set the ring cannot describe — disconnected, or past the
-        // buffers measured at construction — falls back to the reach outline.
+        // An admitted set past the buffers fixed at construction falls back to
+        // the reach outline rather than drawing a truncated one.
       }
 
       if (!seeding && (brush.tool === 'drag' || brush.tool === 'carve')) {
