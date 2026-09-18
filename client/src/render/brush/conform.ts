@@ -14,7 +14,8 @@ export interface ConformedGeometry {
   readonly ring: BufferGeometry;
   readonly hem: BufferGeometry;
   readonly grid: BufferGeometry;
-  /** Rewrites all three if anything it depends on moved; cheap no-op otherwise. */
+  /** Rewrites all three if anything it depends on moved; cheap no-op otherwise.
+   *  capY pins every vertex at or below the selected band (null = off). */
   syncTo(
     footprint: BrushFootprint,
     footprintId: number,
@@ -22,6 +23,7 @@ export interface ConformedGeometry {
     aimZ: number,
     fallbackY: number,
     ground: BrushGround,
+    capY: number | null,
   ): void;
   dispose(): void;
 }
@@ -54,14 +56,20 @@ const highestOf = (
   aimX: number,
   aimZ: number,
   fallbackY: number,
+  capY: number | null,
   ground: BrushGround,
 ): number => {
+  // capY pins the footprint to the selected band's cap: the ring never
+  // rides higher than the surface being edited.
   let y = -Infinity;
   for (let i = from; i < to; i += 2) {
     const sample = ground.yAt(aimX + cells[i]!, aimZ + cells[i + 1]!);
-    if (sample !== null && sample > y) y = sample;
+    if (sample === null) continue;
+    const capped = capY === null ? sample : Math.min(sample, capY);
+    if (capped > y) y = capped;
   }
-  return (y === -Infinity ? fallbackY : y) + OUTLINE_LIFT_WORLD_UNITS;
+  const base = y === -Infinity ? fallbackY : y;
+  return (capY === null ? base : Math.min(base, capY)) + OUTLINE_LIFT_WORLD_UNITS;
 };
 
 export function createConformedGeometry(
@@ -77,6 +85,7 @@ export function createConformedGeometry(
   let lastAimX = Infinity;
   let lastAimZ = Infinity;
   let lastFallbackY = NaN;
+  let lastCapY: number | null = null;
   let lastHash = 0;
   let hasWritten = false;
 
@@ -84,7 +93,7 @@ export function createConformedGeometry(
     ring: ring.geometry,
     hem: hem.geometry,
     grid: grid.geometry,
-    syncTo(footprint, footprintId, aimX, aimZ, fallbackY, ground): void {
+    syncTo(footprint, footprintId, aimX, aimZ, fallbackY, ground, capY): void {
       const reach = footprint.reachCells;
       const firstChunkX = Math.floor((aimX - reach) / CHUNK_SIZE);
       const lastChunkX = Math.floor((aimX + reach) / CHUNK_SIZE);
@@ -105,6 +114,7 @@ export function createConformedGeometry(
         aimX === lastAimX &&
         aimZ === lastAimZ &&
         fallbackY === lastFallbackY &&
+        capY === lastCapY &&
         hash === lastHash
       ) {
         return;
@@ -120,6 +130,7 @@ export function createConformedGeometry(
           aimX,
           aimZ,
           fallbackY,
+          capY,
           ground,
         );
         ring.array[i * 3] = footprint.ringPoints[i * 2]! * CELL_WORLD_SIZE;
@@ -138,6 +149,7 @@ export function createConformedGeometry(
           aimX,
           aimZ,
           fallbackY,
+          capY,
           ground,
         );
         grid.array[s * 6] = footprint.gridPoints[s * 4]! * CELL_WORLD_SIZE;
@@ -182,6 +194,7 @@ export function createConformedGeometry(
       lastAimX = aimX;
       lastAimZ = aimZ;
       lastFallbackY = fallbackY;
+      lastCapY = capY;
       lastHash = hash;
       hasWritten = true;
     },
