@@ -18,20 +18,6 @@ export function drawnBandOfSample(height: number): number {
   return band === 0 && height + DRAWN_GROUND_BAND_BIAS < drawnLevelThreshold(0) ? -1 : band;
 }
 
-export const SHORE_CONTOUR_BAND = 0;
-
-// As far above the shore threshold as the canonical shelf lies below it, so an
-// ordinary coast crosses mid-edge. See docs/decisions/terrain-relief.md.
-export const SHORE_CONTOUR_DRY_HEIGHT =
-  DRAWN_SHORE_HEIGHT + (DRAWN_SHORE_HEIGHT - (-BAND_HEIGHT));
-
-/** Dry land reads as one height; the sea keeps its depth, which shapes the shore. */
-export function shoreContourSample(height: number): number {
-  return height + DRAWN_GROUND_BAND_BIAS >= drawnLevelThreshold(SHORE_CONTOUR_BAND)
-    ? SHORE_CONTOUR_DRY_HEIGHT
-    : height;
-}
-
 /** Lowest raw height that draws as band k. Band 0 starts at the shore; every other band spans 16 heights. */
 export function bandFloorHeight(band: number): number {
   return band === 0 ? DRAWN_SHORE_HEIGHT : band * BAND_HEIGHT - DRAWN_GROUND_BAND_BIAS;

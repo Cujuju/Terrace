@@ -6,7 +6,6 @@ import {
   chunkIndex,
   drawnCornerNumerator,
   drawnLevelThreshold,
-  shoreContourSample,
 } from '@terrace/shared';
 import {
   createTerrainMirror,
@@ -17,7 +16,7 @@ import {
   RECT_NONE,
   assembleLoops,
   domainInside,
-  loadSampleField,
+  loadSamples,
   marchLevel,
 } from '../src/terrain/contours.ts';
 import { createShoreFieldBuffer, writeShoreFieldTexels } from '../src/terrain/waterDepth.ts';
@@ -95,13 +94,7 @@ function bandZeroLoops(mirror: TerrainMirror) {
     for (let cx = 0; cx < CHUNKS_PER_EDGE; cx++) {
       const originX = cx * CHUNK_SIZE;
       const originZ = cy * CHUNK_SIZE;
-      loadSampleField(
-        (i, j) =>
-          shoreContourSample(
-            sampleRenderBandHeight(mirror, originX + i, originZ + j, SHORE_FIELD_BAND),
-          ),
-        CHUNK_SIZE,
-      );
+      loadSamples(mirror, originX, originZ);
       const segments = marchLevel(threshold, originX, originZ, null);
       loops.push(
         ...assembleLoops(segments, originX, originZ, domainInside(threshold, null)),
@@ -112,13 +105,13 @@ function bandZeroLoops(mirror: TerrainMirror) {
 }
 
 describe('the sea reads the land cap band-0 field', () => {
-  it('stores the wet/dry value of every cell it owns', () => {
+  it('stores the band-0 sample of every cell it owns', () => {
     const mirror = coneMirror();
     const field = fieldOf(mirror, receiveAll(mirror));
     for (let z = 0; z < WORLD_SIZE; z++) {
       for (let x = 0; x < WORLD_SIZE; x++) {
         expect(field[z * WORLD_SIZE + x]).toBe(
-          shoreContourSample(sampleRenderBandHeight(mirror, x, z, SHORE_FIELD_BAND)),
+          sampleRenderBandHeight(mirror, x, z, SHORE_FIELD_BAND),
         );
       }
     }
@@ -170,7 +163,7 @@ describe('the sea reads the land cap band-0 field', () => {
     const seamX = CHUNK_SIZE;
     for (let z = 0; z < CHUNK_SIZE; z++) {
       expect(field[z * WORLD_SIZE + seamX]).toBe(
-        shoreContourSample(sampleRenderBandHeight(mirror, seamX, z, SHORE_FIELD_BAND)),
+        sampleRenderBandHeight(mirror, seamX, z, SHORE_FIELD_BAND),
       );
     }
   });

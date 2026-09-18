@@ -3,8 +3,6 @@ import {
   BEDROCK_BAND,
   CELL_WORLD_SIZE,
   DRAWN_GROUND_BAND_BIAS,
-  SHORE_CONTOUR_BAND,
-  SHORE_CONTOUR_DRY_HEIGHT,
   DRAWN_GROUND_CENTRE_CLEARANCE,
   DRAWN_GROUND_COORD_DENOM,
   DRAWN_GROUND_CROSSING_MIDPOINT,
@@ -213,8 +211,6 @@ const BAND_WORLD_HEIGHT : f32 = ${wgslF32(BAND_WORLD_HEIGHT)};
 const SEABED_RIM_HEIGHT : f32 = ${wgslF32(SEABED_RISER_BORDER_WORLD_HEIGHT)};
 const SHORE_THRESHOLD : i32 = ${wgslI32(drawnLevelThreshold(0))};
 const CEILING_EDGE_CROSSING : f32 = ${wgslF32(CEILING_EDGE_CROSSING)};
-const SHORE_CONTOUR_BAND : i32 = ${wgslI32(SHORE_CONTOUR_BAND)};
-const SHORE_CONTOUR_DRY_HEIGHT : i32 = ${wgslI32(SHORE_CONTOUR_DRY_HEIGHT)};
 const CEILING_INSIDE : i32 = ${wgslI32(CEILING_INSIDE)};
 const CEILING_OUTSIDE : i32 = ${wgslI32(CEILING_OUTSIDE)};
 const BAND_LUT_OFFSET : i32 = ${wgslI32(BAND_LUT_OFFSET)};
@@ -668,12 +664,8 @@ fn emitLevel(level : i32, localRef : array<i32, 4>, at : u32) -> u32 {
   let threshold = levelThreshold(level);
   var mask = 0;
   for (var c = 0; c < 4; c++) {
-    let raw = levelHeight(localRef[c], level);
-    let inside = raw + BAND_BIAS >= threshold;
-    if (inside) { mask |= 1 << u32(c); }
-    // Band 0's threshold is also the shore's level, so a raw crossing is identically 1.
-    let shore = select(raw, SHORE_CONTOUR_DRY_HEIGHT, inside);
-    cornerHeight[c] = select(raw, shore, level == SHORE_CONTOUR_BAND);
+    cornerHeight[c] = levelHeight(localRef[c], level);
+    if (cornerHeight[c] + BAND_BIAS >= threshold) { mask |= 1 << u32(c); }
   }
   if (mask == 0) { return 0u; }
   computeCrossings(mask, threshold);
