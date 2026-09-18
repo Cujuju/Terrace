@@ -110,6 +110,13 @@ export function oneClickMark(radius: number, tool: SculptTool, profile: SculptPr
   return { has: (dx, dy) => keys.has(`${dx},${dy}`), cells };
 }
 
+/** A mark over the exact cells given, as offsets from the aim. */
+export function markFromOffsets(cells: readonly (readonly [number, number])[]): Mark {
+  const keys = new Set<string>();
+  for (const [dx, dy] of cells) keys.add(`${dx},${dy}`);
+  return { has: (dx, dy) => keys.has(`${dx},${dy}`), cells };
+}
+
 export function clampIntoMark(x: number, z: number, mark: Mark): [number, number] {
   if (mark.has(Math.round(x), Math.round(z))) return [x, z];
   let bestX = x;

@@ -10,11 +10,15 @@ import { CELL_WORLD_SIZE } from '../config.ts';
 import type { PickFace } from '../terrain/picking.ts';
 import type { DenialCue } from './denialCue.ts';
 import { BRUSH_RADII } from '../state/hudState.ts';
-import { brushFootprint, type BrushFootprint } from './brush/brushGeometry.ts';
+import {
+  brushFootprint,
+  footprintFromMark,
+  type BrushFootprint,
+} from './brush/brushGeometry.ts';
 import { createConformedGeometry, type BrushGround } from './brush/conform.ts';
 import { drawnBandCapY } from '../terrain/capEmission.ts';
 import { createBrushStage, type CursorSurface } from './brush/brushStage.ts';
-import type { SculptDir } from './brush/footprintMark.ts';
+import { markFromOffsets, type SculptDir } from './brush/footprintMark.ts';
 import { OUTLINE_COLOR_CAP, OUTLINE_COLOR_RISER, OUTLINE_LIFT_WORLD_UNITS } from './brush/style.ts';
 
 export type { CursorSurface } from './brush/brushStage.ts';
@@ -51,12 +55,24 @@ const SEED_PROFILE: SculptProfile = 'hard';
 
 export const BRUSH_PREVIEW_DRAW_OBJECTS = 4;
 
+/**
+ * Cells the carve at this aim would actually cut, as offsets from it. Null when
+ * the aim names no band. The applier answers; the preview never guesses.
+ */
+export type CarveAdmits = (
+  x: number,
+  y: number,
+  band: number,
+  radius: number,
+) => readonly (readonly [number, number])[] | null;
+
 export function createBrushPreview(
   scene: Scene,
   canvas: CursorSurface,
   worldSize: () => number,
   denial: DenialCue,
   ground: BrushGround,
+  carveAdmits: CarveAdmits | null = null,
 ): BrushPreview {
   const footprints = new Map<string, { footprint: BrushFootprint; id: number }>();
   const key = (radius: number, tool: SculptTool, profile: SculptProfile): string =>
@@ -81,6 +97,23 @@ export function createBrushPreview(
   }
 
   const conformed = createConformedGeometry(maxRingVerts, maxGridSegments);
+  let liveCarve: { footprint: BrushFootprint | null; id: number; key: string } | null = null;
+  /**
+   * The admitted cells as an outline, or null when they cannot be drawn:
+   * markOutline admits one closed loop, and the buffers are fixed at build.
+   */
+  const liveFootprint = (
+    radius: number,
+    cells: readonly (readonly [number, number])[],
+  ): BrushFootprint | null => {
+    let built: BrushFootprint;
+    try {
+      built = footprintFromMark(radius, markFromOffsets(cells));
+    } catch {
+      return null;
+    }
+    return built.ringCount > maxRingVerts || built.gridCount > maxGridSegments ? null : built;
+  };
   const stage = createBrushStage(scene, canvas, denial, {
     ring: conformed.ring,
     hem: conformed.hem,
@@ -150,6 +183,46 @@ export function createBrushPreview(
           capY,
         );
       };
+
+      if (carveAdmits !== null && brush.tool === 'carve' && hover.face !== 'riser') {
+        // The outline is the cut, not the reach. A carve that admits nothing
+        // shows the refusal mark instead of a ring promising a bite.
+        const band = hover.band ?? hover.aimBand ?? null;
+        const cells = band === null ? null : carveAdmits(hover.x, hover.y, band, brush.radius);
+        if (cells !== null && cells.length === 0) {
+          paintFlatMark();
+          crosshair.position.set(atX, atY + OUTLINE_LIFT_WORLD_UNITS, atZ);
+          show(true, true);
+          return;
+        }
+        const liveKey =
+          cells === null ? null : `${brush.radius}|${hover.x}|${hover.y}|${band}|${cells.length}`;
+        if (liveKey !== null && (liveCarve === null || liveCarve.key !== liveKey)) {
+          liveCarve = { footprint: liveFootprint(brush.radius, cells!), id: nextId++, key: liveKey };
+        }
+        const live = liveKey === null ? null : liveCarve;
+        if (live !== null && live.footprint !== null) {
+          tintFootprint();
+          line.position.set(hover.x * CELL_WORLD_SIZE, 0, hover.y * CELL_WORLD_SIZE);
+          hem.position.copy(line.position);
+          cellGrid.position.copy(line.position);
+          conformed.syncTo(
+            live.footprint,
+            live.id,
+            hover.x,
+            hover.y,
+            hover.surfaceY,
+            ground,
+            band === null ? null : drawnBandCapY(band),
+          );
+          paintFlatMark();
+          crosshair.position.set(atX, atY + OUTLINE_LIFT_WORLD_UNITS, atZ);
+          show(true);
+          return;
+        }
+        // An admitted set the ring cannot describe — disconnected, or past the
+        // buffers measured at construction — falls back to the reach outline.
+      }
 
       if (!seeding && (brush.tool === 'drag' || brush.tool === 'carve')) {
         if (!useFootprint(key(brush.radius, SEED_TOOL, SEED_PROFILE))) return;

@@ -29,6 +29,7 @@ import {
   brushProfile,
   brushRadius,
   brushTool,
+  carveDepthBands,
   effectiveSculptMode,
   sculptDirection,
   setConnectionStatus,
@@ -189,6 +190,7 @@ const sculptInput = createSculptInput({
   pickInColumn: (x, y, origin, direction) => world.pickInColumn(x, y, origin, direction),
   worldSize: () => world.worldSize(),
   riserBand: (pick) => world.highlightLayerEdge(pick, { litSpanWorldUnits: litLipSpan() }),
+  aimBand: (pick) => world.aimBand(pick),
   runFloorBandAt: (x, y, band) => world.runFloorBandAt(x, y, band),
   graspSpanBand: (pick, atX, atY) => world.graspSpanBand(pick, atX, atY),
   carveBand: (pick) => world.carveBand(pick),
@@ -237,6 +239,7 @@ const brushPreview = createBrushPreview(
     yAt: (cellX, cellZ) => world.drawnGroundYAt(cellX, cellZ),
     revisionAt: (cellX, cellZ) => world.terrainRevisionAt(cellX, cellZ),
   },
+  (x, y, band, radius) => world.carveCellsAt(x, y, band, radius, carveDepthBands()),
 );
 const pickDebug = new URLSearchParams(window.location.search).has(PICK_DEBUG_QUERY_FLAG)
   ? createPickDebugOverlay(viewport.scene, canvas)
