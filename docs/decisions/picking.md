@@ -19,7 +19,7 @@ Facts about how the client answers "which cell, face and band is under the curso
 - The band is decided once, where the hit is decided, and rides on the pick. `resolvePick` only clamps it to the span it landed on; nothing downstream re-derives it, and the rule does not vary by tool.
 - `drawnBandAtY` is that rule: the band whose slab `((b-1) cap, b cap]` holds a world Y, the inverse of `drawnBandCapY`. Riser and tread take it at the hit point; an underside takes its span's `floorBand`.
 - Drawn caps are evenly spaced, so no shore case applies to world-Y-to-band. The shore rule lives in `drawnBandOfSample` (height sample to drawn band) and reaches a pick only through the span clamp: a shore column drawing band 0 clamps a skirt hit to 0, never to water.
-- The hit point always lies on the pointer ray, so the crosshair tracks the cursor. A pick re-homed to a neighbouring column names that cell and its surface, never its band.
+- The hit point always lies on the pointer ray, so the crosshair tracks the cursor. A pick re-homed to a neighbouring column names that cell and its surface, never its band: an aim meeting a tall neighbour's smoothed skirt grabs the band under the crosshair, not that column's cap (owner decision 2026-09-18).
 - A held carve keeps cutting from the cell the ray strikes, not one it flies over.
 - A cell outside received chunks is not pickable.
 
