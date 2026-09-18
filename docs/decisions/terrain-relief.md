@@ -139,3 +139,55 @@ in any row, against a solid 35-row band before.
 **Not** the isoline degeneracy above: that governs the shoreline's *shape*, this
 governed *where the mask was asked*. `SEA_SURFACE_WORLD_Y` was left alone — boats,
 skiffs, monsters, wildlife, saucers, cyclone and rivers all float on it.
+
+## The drawn-band contract, moved out of the source (2026-09-18)
+
+Lifted verbatim from `shared/src/bands.ts`, which the comment budget sends here.
+
+The renderer draws a height sample `h` as band `drawnBandOfSample(h)`, which reads
+the biased field `h + DRAWN_GROUND_BAND_BIAS`. Sculpt targets and coverage
+predicates must agree with that field, or a press can move raw heights without
+changing what is drawn (e.g. raising 8 to 16 used to stay inside drawn band 1).
+
+**Determinism.** Every function in `bands.ts` is integer-only — `Math.floor` (an
+exactly-specified IEEE-754 operation whose result is immediately used as an
+integer), integer +/-1 steps, and comparisons — evaluated in a fixed order with no
+iteration. Identical inputs give identical outputs on server and client.
+
+## Band 0's contour marches a two-valued field (2026-09-18)
+
+Owner: "I literally just want the water to match the outline of the shore on band
+zero." Fixed in the commit that follows this entry.
+
+The shore threshold is raw 1, which is also `bandLevelHeight(0)`, so
+
+    exact = (threshold − BIAS − outside) / (inside − outside) = (1 − outside) / (1 − outside) = 1.0
+
+for **every** shore edge whatever the depth on the wet side — −8, −24 and −67 all
+give 1.0. The shoreline collapsed onto the cell lattice: a straight run with
+hairline spikes where an isolated dry cell poked out, and one-cell puddles fell
+below `DRAWN_GROUND_SIMPLIFY_EPSILON` and vanished.
+
+**Fix.** Band 0 marches `SHORE_CONTOUR_OUTSIDE = 0` / `SHORE_CONTOUR_INSIDE = 2`
+instead of raw heights. The existing threshold 9 and bias 8 then give
+`(9 − 8 − 0) / 2` = exactly a half, while membership `+8 >= 9` still means `h >= 1`
+— so what counts as land, every stored height and the whole sculpt pipeline are
+untouched. `capEmission`, `mesherWgsl` and the sea's mask texture all read that one
+field, so land and water are a single curve by construction rather than by test.
+
+**A latent bug it surfaced.** `writeBlockyFallback` reads the shared `samples`
+array, which a per-band `loadLevel` had already been leaving derived for layered
+chunks; an over-budget chunk therefore drew its cells at the wrong heights. It only
+became reachable in tests once band 0 loaded a field of its own. Fixed by reloading
+raw samples before the fallback.
+
+**Cost.** Every one-cell puddle is now a real hole in band 0's cap rather than
+collapsing away, and ear-clipping is quadratic in merged vertices against
+`MAX_MERGED_POLYGON_VERTICES = 512`. A 1-in-5 scatter of wet cells (the
+`vertexGrid` honesty fixture) reaches ~918 merged vertices and drops the chunk to
+blocky. Frostwick Hollows has **no** blocky chunk at all, so real coastlines sit far
+inside the budget, but noisier terrain is the thing to watch.
+
+**Verified** at cell 223,359: the water edge spans 55 distinct screen rows across
+233 columns where it was one row at every column, and tracks the rendered land edge
+to within a pixel. shared 533 passed, client 789 passed.

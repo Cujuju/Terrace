@@ -1,5 +1,6 @@
 import {
   CHUNK_SIZE,
+  SHORE_CONTOUR_BAND,
   bandLevelHeight,
   anyColumnLayered,
   bandOf,
@@ -11,6 +12,7 @@ import {
   spanAt,
   spanCapHeight,
   spanCount,
+  shoreContourSample,
 } from '@terrace/shared';
 import {
   BAND_WORLD_HEIGHT,
@@ -559,6 +561,18 @@ export function planChunkCaps(
       CHUNK_SIZE,
     );
   };
+  const loadShoreLevel = (): void => {
+    loadSampleField(
+      (i, j) =>
+        shoreContourSample(
+          sampleRenderBandHeight(mirror, originX + i, originZ + j, SHORE_CONTOUR_BAND),
+        ),
+      CHUNK_SIZE,
+    );
+  };
+  // Levels may leave a derived field in `samples`; the fallback reads raw heights.
+  const loadRawSamples = (): void => loadSamples(mirror, originX, originZ);
+  let loadedField: 'raw' | 'shore' | 'band' = 'raw';
 
   const levels = makeLevels(palettes, floorBand);
 
@@ -571,7 +585,16 @@ export function planChunkCaps(
   const polygonsPerLevel: CapPolygon[][] = [];
   const ceilingsPerLevel: CapPolygon[][] = [];
   for (const level of levels) {
-    if (layered) loadLevel(level.sampleBand);
+    if (level.sampleBand === SHORE_CONTOUR_BAND) {
+      loadShoreLevel();
+      loadedField = 'shore';
+    } else if (layered) {
+      loadLevel(level.sampleBand);
+      loadedField = 'band';
+    } else if (loadedField !== 'raw') {
+      loadRawSamples();
+      loadedField = 'raw';
+    }
     const segmentCount = marchLevel(
       level.threshold,
       originX,
@@ -749,6 +772,8 @@ export function writeChunkVertexData(
   }
   if (usedFallback) {
     outVertex = 0;
+    // A level may have left a derived field in `samples`; blocky reads raw heights.
+    loadSamples(mirror, originX, originZ);
     const emitted = writeBlockyFallback(originX, originZ, palettes);
     capEmitted = emitted.caps;
     skirtEmitted = emitted.skirts;

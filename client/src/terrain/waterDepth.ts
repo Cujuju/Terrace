@@ -7,6 +7,7 @@ import {
   chunksPerEdge,
   drawnBandOfSample,
   seabedHeight,
+  shoreContourSample,
 } from '@terrace/shared';
 import { HEIGHT_WORLD_SCALE, SEA_DEPTH_CUE_SPAN_BANDS } from '../config.ts';
 import { isCellReceived, sampleRenderBandHeight, type TerrainMirror } from './mirror.ts';
@@ -193,7 +194,9 @@ export function writeShoreFieldTexels(
       for (let x = x0; x <= x1; x++) {
         // A received neighbour owns its own texels; an unreceived one takes the mesher's substitute.
         if ((seamRow || x === x0 + CHUNK_SIZE) && isCellReceived(mirror, x, y)) continue;
-        out[y * worldSize + x] = sampleRenderBandHeight(mirror, x, y, SHORE_FIELD_BAND);
+        out[y * worldSize + x] = shoreContourSample(
+          sampleRenderBandHeight(mirror, x, y, SHORE_FIELD_BAND),
+        );
       }
     }
   }
