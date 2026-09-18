@@ -11,6 +11,7 @@ import {
   type MouseButtonName,
 } from '../state/controlPrefs.ts';
 import { bindWheelCamera } from './wheelCamera.ts';
+import { createCameraPointerLock, pointerLockedForCamera } from './cameraPointerLock.ts';
 
 export interface CameraBindings {
   dispose(): void;
@@ -156,6 +157,7 @@ export function bindCameraControls(
   });
 
   const wheelGestures = bindWheelCamera(canvas, controls);
+  const pointerLock = createCameraPointerLock(canvas, controls);
 
   return {
     dispose(): void {
@@ -172,6 +174,7 @@ export function bindCameraControls(
         capture: true,
       });
       wheelGestures.dispose();
+      pointerLock.dispose();
     },
   };
 }

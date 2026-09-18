@@ -1,4 +1,5 @@
 import type { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { pointerLockedForCamera } from './cameraPointerLock.ts';
 
 /** Wheel silence after the last tick before the gesture counts as complete. */
 const WHEEL_QUIET_MS = 150;
@@ -31,7 +32,7 @@ export function createCameraGestureLock(
   controls.addEventListener('end', onEnd);
   canvas.addEventListener('wheel', onWheel, { capture: true, passive: true });
   return {
-    active: () => pointers > 0 || wheelTimer !== 0,
+    active: () => pointers > 0 || wheelTimer !== 0 || pointerLockedForCamera(),
     dispose(): void {
       controls.removeEventListener('start', onStart);
       controls.removeEventListener('end', onEnd);
