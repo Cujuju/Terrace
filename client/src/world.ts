@@ -5,6 +5,7 @@ import {
   chunkIndex,
   chunkIndexOfCell,
   chunksPerEdge,
+  runFloorBandAt as runFloorBandAtIn,
 } from '@terrace/shared';
 import type {
   ChunkUnlockMessage,
@@ -167,6 +168,8 @@ export interface World extends TerrainSink {
   setBrushRefused(refused: boolean): void;
   /** Cap band of the layer holding `spanBand` (the column top when null); after a lower, the layer just beneath it. */
   bandAtCell(x: number, y: number, spanBand: number | null): number | null;
+  /** Floor of the run down from `band` in this column — the slab a drag grabbed here writes. */
+  runFloorBandAt(x: number, y: number, band: number): number | null;
   graspSpanBand(pick: TerrainRayPick | null, atX: number, atY: number): number | null;
   carveBand(pick: TerrainRayPick | null): number | null;
   /** Drawn band of the surface under the aim, for every face: what a stroke would edit there. */
@@ -659,6 +662,10 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
     bandAtCell(x: number, y: number, spanBand: number | null): number | null {
       if (mirror === null) return null;
       return bandAtCellIn(mirror, x, y, spanBand);
+    },
+    runFloorBandAt(x: number, y: number, band: number): number | null {
+      if (mirror === null) return null;
+      return runFloorBandAtIn(mirror.map, x, y, band);
     },
     graspSpanBand(pick: TerrainRayPick | null, atX: number, atY: number): number | null {
       if (pick === null || mirror === null) return null;

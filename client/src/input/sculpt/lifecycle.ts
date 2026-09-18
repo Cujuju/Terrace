@@ -27,6 +27,7 @@ export const stopRepeat = (s: StrokeState): void => {
   s.strokePointerId = null;
   s.strokeIsTouch = false;
   s.strokeGrab = null;
+  s.strokeGrabFloor = null;
   s.strokeCarveBand = null;
   s.strokeArmed = false;
   s.haveDragTo = false;

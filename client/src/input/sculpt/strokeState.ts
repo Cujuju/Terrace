@@ -41,6 +41,9 @@ export interface StrokeState {
 
   strokeGrab: number | null;
 
+  /** Floor of the run read in the grabbed column, carried on every leg of the sweep. */
+  strokeGrabFloor: number | null;
+
   strokeCarveBand: number | null;
 
   strokeArmed: boolean;
@@ -105,6 +108,7 @@ export function createStrokeState(options: SculptInputOptions): StrokeState {
     strokeTool: DEFAULT_BRUSH_TOOL,
 
     strokeGrab: null,
+    strokeGrabFloor: null,
 
     strokeCarveBand: null,
 

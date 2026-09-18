@@ -1,19 +1,12 @@
 import { bandLevelHeight } from '../bands.ts';
 import {
-  applyBandFill,
-  bandFillAt,
   bandFloorHeight,
-  columnCoversBand,
+  fillBandRun,
   highestCeilingBelow,
-  isHeightInBand,
   isSpanDrawn,
   moveSpanCeiling,
-  readSpans,
   spanAt,
-  spanCount,
   spanIndexCoveringBand,
-  spansHaveCapAtBand,
-  type Span,
 } from '../columns.ts';
 import {
   cellIndex,
@@ -23,13 +16,10 @@ import {
   inBounds,
   type Heightmap,
 } from '../grid.ts';
-import { canSpreadBandTo, clampHeight } from './grasp.ts';
+import { clampHeight } from './grasp.ts';
 import { forEachFootprintOffset } from './footprint.ts';
 import { admitRimEnclaves, cellNoise, SOFT_DRAG_MIN_REACH } from './dragDisc.ts';
-import { MIN_BAND } from './options.ts';
 import type { SculptProfile, SweepOrigin } from './options.ts';
-
-const DRAG_TREAD_TOLERANCE_CELLS = 1;
 
 /**
  * A drag settles each cell once; the repeat only lets a settled cell's
@@ -47,65 +37,6 @@ function settleEachCellOnce(cells: readonly number[], act: (index: number) => bo
       quiet = false;
     }
   }
-}
-
-function pushLowerLayers(
-  map: Heightmap,
-  raisedAtBand: number[],
-  topBand: number,
-  hadCapAtBandBefore: (index: number, band: number) => boolean,
-  record: (index: number) => void,
-  changed: Set<number>,
-): void {
-  const treadWasNear = (cx: number, cy: number, band: number): boolean => {
-    for (let dy = -DRAG_TREAD_TOLERANCE_CELLS; dy <= DRAG_TREAD_TOLERANCE_CELLS; dy++) {
-      for (let dx = -DRAG_TREAD_TOLERANCE_CELLS; dx <= DRAG_TREAD_TOLERANCE_CELLS; dx++) {
-        const x = cx + dx;
-        const y = cy + dy;
-        if (!inBounds(map, x, y)) continue;
-        if (hadCapAtBandBefore(cellIndex(map, x, y), band)) return true;
-      }
-    }
-    return false;
-  };
-
-  const band = topBand - 1;
-  if (band <= MIN_BAND || raisedAtBand.length === 0) return;
-  const level = clampHeight(bandLevelHeight(band));
-
-  const candidates: number[] = [];
-  const seen = new Set<number>();
-  for (const seed of raisedAtBand) {
-    const sx = cellX(map.size, seed);
-    const sy = cellY(map.size, seed);
-    for (let dy = -DRAG_TREAD_TOLERANCE_CELLS; dy <= DRAG_TREAD_TOLERANCE_CELLS; dy++) {
-      for (let dx = -DRAG_TREAD_TOLERANCE_CELLS; dx <= DRAG_TREAD_TOLERANCE_CELLS; dx++) {
-        const x = sx + dx;
-        const y = sy + dy;
-        if (!inBounds(map, x, y)) continue;
-        const i = cellIndex(map, x, y);
-        if (seen.has(i)) continue;
-        seen.add(i);
-        if (columnCoversBand(map, x, y, band)) continue;
-        if (!treadWasNear(x, y, band)) continue;
-        candidates.push(i);
-      }
-    }
-  }
-  if (candidates.length === 0) return;
-  candidates.sort((a, b) => a - b);
-
-  settleEachCellOnce(candidates, (i) => {
-    const x = cellX(map.size, i);
-    const y = cellY(map.size, i);
-    const fill = bandFillAt(map, x, y, band);
-    if (fill === null || fill.kind !== 'extend') return false;
-    if (!canSpreadBandTo(map, x, y, band)) return false;
-    record(i);
-    applyBandFill(map, x, y, fill, level);
-    changed.add(i);
-    return true;
-  });
 }
 
 function retreatHeightAt(
@@ -137,6 +68,7 @@ export function applyDragRegion(
   radius: number,
   raising: boolean,
   targetBand: number,
+  runFloorBand: number,
   profile: SculptProfile,
   sweepFrom: SweepOrigin | null,
   changed: Set<number>,
@@ -144,22 +76,6 @@ export function applyDragRegion(
   // Like anchoredTargetHeight: a drag-raise to the waterline breaks the surface.
   const targetHeight = clampHeight(bandLevelHeight(targetBand));
   const ragged = profile === 'soft';
-
-  const priorSpans = new Map<number, readonly Span[]>();
-  const record = (i: number): void => {
-    if (!priorSpans.has(i)) priorSpans.set(i, readSpans(map, cellX(map.size, i), cellY(map.size, i)));
-  };
-  const hadCapAtBandBefore = (i: number, band: number): boolean => {
-    const prior = priorSpans.get(i);
-    if (prior !== undefined) return spansHaveCapAtBand(prior, band);
-    const x = cellX(map.size, i);
-    const y = cellY(map.size, i);
-    const count = spanCount(map, x, y);
-    for (let k = 0; k < count; k++) {
-      if (isHeightInBand(spanAt(map, x, y, k).ceiling, band)) return true;
-    }
-    return false;
-  };
 
   const disc: number[] = [];
   const inDisc = new Set<number>();
@@ -206,19 +122,12 @@ export function applyDragRegion(
     return;
   }
 
-  const raised: number[] = [];
-  settleEachCellOnce(disc, (i) => {
+  // The run is the whole write: one slab per cell, nothing cascades off a
+  // neighbour and nothing descends in a second pass, so one plain sweep
+  // settles the disc.
+  for (const i of disc) {
     const x = cellX(map.size, i);
     const y = cellY(map.size, i);
-    const fill = bandFillAt(map, x, y, targetBand);
-    if (fill === null) return false;
-    if (!canSpreadBandTo(map, x, y, targetBand)) return false;
-    record(i);
-    applyBandFill(map, x, y, fill, targetHeight);
-    changed.add(i);
-    if (fill.kind === 'extend') raised.push(i);
-    return true;
-  });
-
-  if (raised.length > 0) pushLowerLayers(map, raised, targetBand, hadCapAtBandBefore, record, changed);
+    if (fillBandRun(map, x, y, runFloorBand, targetBand, targetHeight)) changed.add(i);
+  }
 }

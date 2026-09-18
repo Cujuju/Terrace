@@ -39,15 +39,14 @@ export {
 } from './columns/store.ts';
 
 export {
-  applyBandFill,
-  bandFillAt,
   canCarveBandAt,
   canSpreadBandToSpan,
   columnCoversBand,
+  columnHoldsRun,
   columnSampleAtBand,
+  fillBandRun,
   highestCeilingBelow,
-  overhangSlabAtBand,
+  runFloorBandAt,
   spanIndexBelowBand,
   spanIndexCoveringBand,
-  type BandFill,
 } from './columns/bandQueries.ts';

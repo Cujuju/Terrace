@@ -43,7 +43,7 @@ export const emitIntent = (s: StrokeState, origin: EmitOrigin): EmitOutcome => {
       return noteFlatSilent(s, origin);
     }
     s.descentFrozen = false;
-    return emitDragOutcome(s, to.x, to.y, action, s.strokeGrab);
+    return emitDragOutcome(s, to.x, to.y, action, s.strokeGrab, s.strokeGrabFloor ?? s.strokeGrab);
   }
   s.descentFrozen = false;
   let anchor: { x: number; y: number };

@@ -67,6 +67,7 @@ export interface SculptOptions {
   readonly spill?: SculptSpill;
   readonly anchor?: SculptAnchor;
   readonly targetBand?: number | null;
+  readonly runFloorBand?: number | null;
   readonly spanBand?: number | null;
   readonly sweepFrom?: SweepOrigin | null;
   readonly smoothLambda?: number;
@@ -84,6 +85,8 @@ export interface ResolvedSculptOptions {
   readonly spill: SculptSpill;
   readonly anchor: SculptAnchor;
   readonly targetBand: number | null;
+  /** Floor of the run the grabbed column named. None: the target band alone. */
+  readonly runFloorBand: number | null;
   readonly spanBand: number | null;
   readonly sweepFrom: SweepOrigin | null;
   readonly smoothLambda: number;
@@ -96,6 +99,7 @@ export const LIBRARY_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
   spill: 'free',
   anchor: 'free',
   targetBand: null,
+  runFloorBand: null,
   spanBand: null,
   sweepFrom: null,
   smoothLambda: SMOOTH_LAMBDA_DEFAULT,
