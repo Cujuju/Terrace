@@ -280,7 +280,7 @@ viewport.onFrame(() => {
       },
     );
   }
-  pickDebug?.update(pick, grabbedBand);
+  pickDebug?.update(pick, grabbedBand, world.aimBand(pick));
   setHoverPick(
     pick === null ? null : { x: pick.x, y: pick.y, face: pick.face, band: grabbedBand },
   );
