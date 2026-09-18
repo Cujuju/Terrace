@@ -21,15 +21,6 @@ import type { DrawnCap, DrawnRisers, TerrainRayPick, Vec3 } from './types.ts';
  */
 const ON_CAP_WORLD_SLACK = BAND_WORLD_HEIGHT / 1_000_000;
 
-/** Re-homing a hit onto a span moves its surface; a tread's hit point IS that surface. */
-function onSpanSurface(
-  hit: TerrainRayPick,
-  span: Span,
-): { surfaceY: number; hitY?: number } {
-  const surfaceY = drawnSpanCapHeight(span) * HEIGHT_WORLD_SCALE;
-  return hit.face === 'tread' ? { surfaceY, hitY: surfaceY } : { surfaceY };
-}
-
 export function terrainHitInCell(
   mirror: TerrainMirror,
   i: number,
@@ -118,7 +109,12 @@ export function terrainHitInCell(
       // The span covering the met band, not the column top: a layered column
       // meets a notch floor far below its own cap.
       hitSpan = spanAt(mirror.map, i, j, covering);
-      hit = { ...hit, spanIndex: covering, ...onSpanSurface(hit, hitSpan) };
+      // hitX/hitY/hitZ stay on the pointer ray: the crosshair rides them.
+      hit = {
+        ...hit,
+        spanIndex: covering,
+        surfaceY: drawnSpanCapHeight(hitSpan) * HEIGHT_WORLD_SCALE,
+      };
     } else if (direction.y < 0) {
       const found = columnOwningBand(mirror, i, j, hitMet.u, hitMet.v, hitMet.band, hit.hitY) ?? {
         x: i,
@@ -131,7 +127,7 @@ export function terrainHitInCell(
         x: found.x,
         y: found.y,
         spanIndex: found.spanIndex,
-        ...onSpanSurface(hit, hitSpan),
+        surfaceY: drawnSpanCapHeight(hitSpan) * HEIGHT_WORLD_SCALE,
       };
     } else {
       return null;

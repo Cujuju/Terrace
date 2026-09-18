@@ -53,10 +53,8 @@ export function resolvePick(map: Heightmap, pick: TerrainRayPick): ResolvedPick 
     return { face: 'riser', band: band + 0 };
   }
   // Drawn band at the hit point: a tread's solid is below, so the cap the ray
-  // met; an underside's is above, so its floor.
-  if (pick.face === 'tread') {
-    return { face: 'tread', band: drawnBandOfSample(pick.hitY / HEIGHT_WORLD_SCALE) };
-  }
+  // met, which is the named span's; an underside's is above, so its floor.
+  if (pick.face === 'tread') return { face: 'tread', band: spanCapBand(span) };
   return { face: 'underside', band: lowestDrawn };
 }
 
