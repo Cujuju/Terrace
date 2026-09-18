@@ -12,6 +12,7 @@ import {
   snapshotSolidUnits,
   strokeReachBox,
   type SculptIntent,
+  type SculptTool,
 } from '@terrace/shared';
 import { handleSculptIntent } from '../../../server/src/intent/pipeline.ts';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
@@ -124,8 +125,8 @@ function footprintCells(radius: number): number {
   return cells;
 }
 
-const expectedCharge = (units: number): number =>
-  displacementManaCost(units, MANA_PER_BAND_CELL);
+const expectedCharge = (units: number, tool: SculptTool = 'stamp'): number =>
+  displacementManaCost(units, MANA_PER_BAND_CELL, tool);
 
 describe('the charge is the material the stroke moved', () => {
   it('a raise out of the sea pays for one unit a cell, not a whole band', () => {
@@ -177,7 +178,7 @@ describe('the charge is the material the stroke moved', () => {
       if (carved.cells === 0) continue;
       opened++;
       expect(carved.units).toBe(carved.cells * CARVE_DEFAULT_DEPTH_BANDS * BAND_HEIGHT);
-      expect(carved.charged).toBe(expectedCharge(carved.units));
+      expect(carved.charged).toBe(expectedCharge(carved.units, 'carve'));
     }
     expect(opened).toBeGreaterThan(0);
   });

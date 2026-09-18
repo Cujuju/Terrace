@@ -1,5 +1,5 @@
-import { strokeSweep } from '@terrace/shared';
-import type { SculptIntent } from '@terrace/shared';
+import { sculptOptionsOf, strokeSweep } from '@terrace/shared';
+import type { SculptIntent, SculptTool } from '@terrace/shared';
 import {
   chunkUnlockFee,
   displacementManaCost,
@@ -40,9 +40,10 @@ export function manaChargeFor(
   playerId: string,
   displacementUnits: number,
   openedChunks: number,
+  tool: SculptTool,
 ): number {
   return (
-    displacementManaCost(displacementUnits, manaPerBandCellFor(playerId)) +
+    displacementManaCost(displacementUnits, manaPerBandCellFor(playerId), tool) +
     chunkUnlockFee(openedChunks)
   );
 }
@@ -87,7 +88,12 @@ export function commitCharge(intent: SculptIntent, ctx: AppliedIntentCtx): void 
 
   // Charge follows effect: a stroke that moved nothing displaced nothing.
   // Reveal opens the sweep whatever the diff, so the unlock fee still stands.
-  pool.balance -= manaChargeFor(ctx.player.id, ctx.displacementUnits, opened);
+  pool.balance -= manaChargeFor(
+    ctx.player.id,
+    ctx.displacementUnits,
+    opened,
+    sculptOptionsOf(intent).tool,
+  );
   sendBalance(world, ctx.player.id, pool);
 }
 

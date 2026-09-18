@@ -242,7 +242,7 @@ describe('the HUD quote says whether it measured or guessed', () => {
 
     const quote = state.currentBrushQuote();
     expect(quote.estimated).toBe(false);
-    expect(quote.cost).toBe(displacementManaCost(moved!, MANA_PER_BAND_CELL));
+    expect(quote.cost).toBe(displacementManaCost(moved!, MANA_PER_BAND_CELL, 'stamp'));
   });
 
   it('quotes a raise out of the sea for what it moves, far under the nominal', () => {
