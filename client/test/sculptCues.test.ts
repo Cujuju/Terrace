@@ -27,7 +27,7 @@ import {
   type SendOutcome,
 } from '../src/input/sculptInput.ts';
 import { applySnapshot, createTerrainMirror, type TerrainMirror } from '../src/terrain/mirror.ts';
-import { bandAtCellIn, graspSpanBandIn } from '../src/terrain/pickBand.ts';
+import { graspSpanBandIn } from '../src/terrain/pickBand.ts';
 import { createPredictionStore } from '../src/terrain/prediction.ts';
 import {
   CUE_BLINK_ON_MS,
@@ -91,7 +91,6 @@ interface DriveKnobs {
   pickCell?: (origin: Vec3, direction: Vec3) => TerrainRayPick | null;
   pickInColumn?: (x: number, y: number, origin: Vec3, direction: Vec3) => TerrainRayPick | null;
   riserBand?: (pick: TerrainRayPick | null) => number | null;
-  bandAtCell?: (x: number, y: number, spanBand: number | null) => number | null;
   runFloorBandAt?: (x: number, y: number, band: number) => number | null;
   graspSpanBand?: (pick: TerrainRayPick | null, atX: number, atY: number) => number | null;
   origin?: Vec3;
@@ -145,7 +144,6 @@ function driveInput(mirror: TerrainMirror, knobs: DriveKnobs = {}): {
     pickInColumn: knobs.pickInColumn ?? ((x, y, o, d) => pickTerrainInColumn(mirror, x, y, o, d)),
     worldSize: () => mirror.map.size,
     riserBand: knobs.riserBand ?? (() => null),
-    bandAtCell: knobs.bandAtCell ?? (() => null),
     runFloorBandAt: knobs.runFloorBandAt ?? (() => null),
     graspSpanBand: knobs.graspSpanBand ?? (() => null),
     carveBand: () => null,
@@ -389,25 +387,6 @@ describe('flat cue (posture refusals)', () => {
     }
   });
 
-  it('a seed that moves nothing blinks flat and grabs nothing', () => {
-    setBrushTool('drag');
-    const mirror = flatWorld();
-    const { input, attempts, fire, dispose } = driveInput(mirror, {
-      bandAtCell: () => 5,
-    });
-    try {
-      fire('pointerdown', {});
-      // The seed intent goes out (raise into flat ground moves nothing)...
-      expect(attempts).toHaveLength(1);
-      // ...so there is no band to grab and the flat cue blinks once.
-      expect(input.heldBand()).toBeNull();
-      expect(input.flatBlinks()).toBe(1);
-      expect(input.offlineHold()).toBe(false);
-    } finally {
-      dispose();
-    }
-  });
-
   it('a drag press that takes no hold blinks flat instead of going silent', () => {
     setBrushTool('drag');
     const mirror = flatWorld();
@@ -429,40 +408,6 @@ describe('flat cue (posture refusals)', () => {
     }
   });
 
-  it('a seed whose band cannot be read blinks flat too', () => {
-    setBrushTool('drag');
-    const mirror = flatWorld();
-    const { input, attempts, fire, dispose } = driveInput(mirror, {
-      bandAtCell: () => null,
-    });
-    try {
-      fire('pointerdown', {});
-      expect(attempts).toHaveLength(1);
-      expect(input.heldBand()).toBeNull();
-      expect(input.flatBlinks()).toBe(1);
-    } finally {
-      dispose();
-    }
-  });
-
-  it('lowers grab the pre-seed band', () => {
-    setBrushTool('drag');
-    const mirror = flatWorld();
-    let reads = 0;
-    const { input, fire, dispose } = driveInput(mirror, {
-      bandAtCell: () => {
-        reads++;
-        return reads === 1 ? 5 : 4;
-      },
-    });
-    try {
-      fire('pointerdown', { shiftKey: true });
-      expect(input.heldBand()).toBe(5);
-      expect(input.flatBlinks()).toBe(0);
-    } finally {
-      dispose();
-    }
-  });
 });
 
 describe('descent gate', () => {
@@ -521,7 +466,7 @@ describe('descent gate', () => {
     }
   });
 
-  it('a nack lets go of the grabbed band, so no leg targets a rolled-back seed', () => {
+  it('a nack lets go of the grabbed band, so no leg targets it', () => {
     setBrushTool('drag');
     const mirror = flatWorld();
     const { input, fire, dispose } = driveInput(mirror, { riserBand: () => 2 });
@@ -1180,79 +1125,6 @@ describe('a foot-anchored grasp on a layered column', () => {
 
 // A terrace wall cell: genesis steps walls by MAX_STEP, so its cap sits inside a
 // drawn band instead of on a canonical band level.
-const WALL_STEP_HEIGHT = 8;
-const WALL_STEP_DRAWN_BAND = 1;
-const WALL_STEP_RAISED_DRAWN_BAND = 2;
-
-function wallStepWorld(): TerrainMirror {
-  const mirror = flatWorld();
-  mirror.map.cells[cellIndex(mirror.map, 30, 30)] = WALL_STEP_HEIGHT;
-  return mirror;
-}
-
-function driveDragSeed(mirror: TerrainMirror, shiftKey: boolean): {
-  input: SculptInput;
-  attempts: SculptIntent[];
-  dispose: () => void;
-} {
-  const { input, attempts, fire, dispose } = driveInput(mirror, {
-    bandAtCell: (x, y, spanBand) => bandAtCellIn(mirror, x, y, spanBand),
-    send: (intent) => {
-      applySculpt(
-        mirror.map,
-        intent.x,
-        intent.y,
-        intent.radius,
-        DEFAULT_SCULPT_AMOUNT * intent.dir,
-        sculptOptionsOf(intent),
-      );
-      return 'sent';
-    },
-  });
-  fire('pointerdown', { shiftKey });
-  return { input, attempts, dispose };
-}
-
-describe('a drag seed on ground that is not at a canonical band level', () => {
-  const tool = brushTool();
-  const radius = brushRadius();
-  const mode = sculptMode();
-  afterEach(() => {
-    restoreHud(tool, radius);
-    setSculptMode(mode);
-    vi.useRealTimers();
-  });
-
-  it('a raise grabs the band the seed drew, not the band its raw height floors to', () => {
-    setBrushTool('drag');
-    setBrushRadius(1);
-    const mirror = wallStepWorld();
-    const { input, attempts, dispose } = driveDragSeed(mirror, false);
-    try {
-      expect(input.heldBand()).toBe(WALL_STEP_RAISED_DRAWN_BAND);
-      const leg = attempts.find((intent) => intent.tool === 'drag');
-      expect(leg?.targetBand).toBe(WALL_STEP_RAISED_DRAWN_BAND);
-    } finally {
-      dispose();
-    }
-  });
-
-  it('a lower grabs the starting band instead of blinking flat at a real drop', () => {
-    setBrushTool('drag');
-    setBrushRadius(1);
-    const mirror = wallStepWorld();
-    const { input, attempts, dispose } = driveDragSeed(mirror, true);
-    try {
-      expect(input.flatBlinks()).toBe(0);
-      expect(input.heldBand()).toBe(WALL_STEP_DRAWN_BAND);
-      const leg = attempts.find((intent) => intent.tool === 'drag');
-      expect(leg?.targetBand).toBe(WALL_STEP_DRAWN_BAND);
-    } finally {
-      dispose();
-    }
-  });
-});
-
 describe('a modifier change steers the leg it arrived on', () => {
   const tool = brushTool();
   const radius = brushRadius();

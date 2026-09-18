@@ -99,10 +99,9 @@ function driveInput(
     pickInColumn: (x, y, o, d) => pickTerrainInColumn(mirror, x, y, o, d),
     worldSize: () => mirror.map.size,
     riserBand: () => null,
-    bandAtCell: () => null,
     runFloorBandAt: () => null,
     graspSpanBand: () => null,
-    carveBand: (pick) => (pick === null ? null : carveBandOfPick(mirror.map, pick, () => false)),
+    carveBand: (pick) => (pick === null ? null : carveBandOfPick(mirror.map, pick)),
     carveReach: (o, d, band) => carveReachCell(mirror, o, d, band),
     send: (intent) => {
       sent.push(intent);
@@ -229,10 +228,8 @@ describe('hoverTarget pins the cell and re-derives the pick', () => {
 
       const next = input.hoverTarget();
       expect(next).not.toBeNull();
-      // F5: the carved-open column reads as open passage, so hover continues
-      // to the next ray-true surface instead of naming the tread below the
-      // cut. The #324 guarantee holds in the stronger form: the named band is
-      // the aimed band, never below it.
+      // F5: a carved-open column reads as open passage, so hover continues to
+      // the next ray-true surface. The named band is the aimed band, never below it.
       expect({ x: next!.x, y: next!.y }).toEqual({ x: struck!.x + 1, y: struck!.y });
       expect(next!.face).toBe('riser');
       const stillAimed = resolvePick(mirror.map, next!);

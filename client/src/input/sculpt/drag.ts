@@ -102,95 +102,21 @@ const emitDragLeg = (
   return 'sent';
 };
 
-const seedLayer = (
-  s: StrokeState,
-  cell: { x: number; y: number },
-  action: SculptAction,
-  spanBand: number | null,
-): SendOutcome =>
-  s.options.send({
-    type: 'sculpt',
-    x: cell.x,
-    y: cell.y,
-    radius: brushRadius(),
-    dir: sculptDirection(action),
-    tool: 'stamp',
-    profile: 'hard',
-    ...(spanBand !== null ? { spanBand } : {}),
-    seq: s.nextSeq++,
-  });
-
-/**
- * The seed-band reading takeHold compares before/after the seed intent. A null
- * spanBand reads the column top; a banded one reads that layer; null aborts
- * the grab.
- */
-type SeedBandReading =
-  | { readonly kind: 'top'; readonly band: number }
-  | { readonly kind: 'layer'; readonly band: number };
-
-const readSeedBand = (
-  s: StrokeState,
-  x: number,
-  y: number,
-  spanBand: number | null,
-): SeedBandReading | null => {
-  const band = s.options.bandAtCell(x, y, spanBand);
-  if (band === null) return null;
-  return spanBand === null ? { kind: 'top', band } : { kind: 'layer', band };
-};
-
 /** The run's floor, read once in the grabbed column and sent on every leg. */
 const holdRunFloor = (s: StrokeState, x: number, y: number, band: number): void => {
   s.strokeGrabFloor = s.options.runFloorBandAt(x, y, band);
 };
 
-export const takeHold = (s: StrokeState, action: SculptAction): void => {
+export const takeHold = (s: StrokeState): void => {
   s.strokeGrab = null;
   s.strokeGrabFloor = null;
   if (s.strokeTool !== 'drag') return;
   const hover = hoverTarget(s);
+  // The clicked band IS the hold: a press never seeds a band to grab.
   s.strokeGrab = s.options.riserBand(hover);
-  if (s.strokeGrab !== null) {
-    if (hover !== null) holdRunFloor(s, hover.x, hover.y, s.strokeGrab);
-    return;
-  }
-  // The seed cues its own send failures below; every other refusal to take
-  // hold blinks here, so a press is never silent.
-  if (hover === null || hover.face !== 'tread') {
+  if (s.strokeGrab === null) {
     blinkFlat(s);
     return;
   }
-  const spanBand = s.options.graspSpanBand(hover, hover.x, hover.y);
-  const before = readSeedBand(s, hover.x, hover.y, spanBand);
-  // A press-time seed failure latches offline and blinks once; a local veto
-  // is already red and never blinks grey.
-  const seeded = seedLayer(s, hover, action, spanBand);
-  if (seeded === 'offline') {
-    markUnsent(s);
-    return;
-  }
-  if (seeded === 'refused') return;
-  const after = readSeedBand(s, hover.x, hover.y, spanBand);
-  if (before === null || after === null) {
-    blinkFlat(s);
-    return;
-  }
-  if (action === 'raise') {
-    // The seed raised nothing: blink the flat cue once.
-    if (after.band <= before.band) {
-      blinkFlat(s);
-      return;
-    }
-    s.strokeGrab = after.band;
-    holdRunFloor(s, hover.x, hover.y, s.strokeGrab);
-  } else {
-    // Lowers grab the pre-seed band: the seed lowers it away, so the drag plane rides the starting band.
-    if (after.band >= before.band) {
-      blinkFlat(s);
-      return;
-    }
-    s.strokeGrab = before.band;
-    holdRunFloor(s, hover.x, hover.y, s.strokeGrab);
-  }
+  if (hover !== null) holdRunFloor(s, hover.x, hover.y, s.strokeGrab);
 };

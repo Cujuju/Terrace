@@ -187,9 +187,7 @@ const sculptInput = createSculptInput({
   pickCell: (origin, direction) => world.pickCell(origin, direction),
   pickInColumn: (x, y, origin, direction) => world.pickInColumn(x, y, origin, direction),
   worldSize: () => world.worldSize(),
-  riserBand: (pick) =>
-    world.highlightLayerEdge(pick, { litSpanWorldUnits: litLipSpan(), tool: brushTool() }),
-  bandAtCell: (x, y, spanBand) => world.bandAtCell(x, y, spanBand),
+  riserBand: (pick) => world.highlightLayerEdge(pick, { litSpanWorldUnits: litLipSpan() }),
   runFloorBandAt: (x, y, band) => world.runFloorBandAt(x, y, band),
   graspSpanBand: (pick, atX, atY) => world.graspSpanBand(pick, atX, atY),
   carveBand: (pick) => world.carveBand(pick),
@@ -259,7 +257,6 @@ viewport.onFrame(() => {
   const grabbedBand = world.highlightLayerEdge(pick, {
     litSpanWorldUnits: litLipSpan(),
     heldBand: tool === 'carve' ? sculptInput.carveHeldBand() : sculptInput.heldBand(),
-    tool,
   });
   // A camera gesture freezes the brush and its mark: the aim slides under a
   // still pointer while panning, so redrawing would churn for nothing.

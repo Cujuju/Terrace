@@ -115,7 +115,7 @@ describe('carveReachCell reaches from the cell the aim struck', () => {
     expect(aim).not.toBeNull();
     expect(aim!.x).toBeGreaterThanOrEqual(plateauX);
 
-    const band = carveBandOfPick(mirror.map, aim!, () => true);
+    const band = carveBandOfPick(mirror.map, aim!);
     expect(band).toBe(PLATEAU_BAND);
     // The ridge covers the grasped band as well — that is what made the reach ambiguous.
     expect(spanIndexCoveringBand(mirror.map, RIDGE_X, ROW, band!)).not.toBeNull();
@@ -133,7 +133,7 @@ describe('carveReachCell reaches from the cell the aim struck', () => {
       x >= firstX && x <= lastX ? bandLevelHeight(PLATEAU_BAND) : 0,
     );
     const aim = pickTerrainCellByRay(mirror, AIM_ORIGIN, AIM_DIRECTION);
-    const band = carveBandOfPick(mirror.map, aim!, () => true);
+    const band = carveBandOfPick(mirror.map, aim!);
     expect(band).toBe(PLATEAU_BAND);
 
     const cut: number[] = [];
@@ -167,7 +167,7 @@ describe('carveReachCell reaches from the cell the aim struck', () => {
     // The ray walks (11, 11); the pick names the diagonal owner.
     expect({ x: aim!.x, y: aim!.y }).toEqual({ x: 12, y: 12 });
 
-    const band = carveBandOfPick(mirror.map, aim!, () => true);
+    const band = carveBandOfPick(mirror.map, aim!);
     expect(band).toBe(PLATEAU_BAND);
     expect(carveReachCell(mirror, origin, down, band!)).toEqual({ x: 12, y: 12 });
   });
@@ -277,7 +277,6 @@ function driveCarve(
     pickInColumn: (x, y, o, d) => pickTerrainInColumn(mirror, x, y, o, d),
     worldSize: () => mirror.map.size,
     riserBand: () => null,
-    bandAtCell: () => null,
     runFloorBandAt: () => null,
     graspSpanBand: () => null,
     carveBand: knobs.carveBand ?? (() => PLATEAU_BAND),
@@ -602,7 +601,7 @@ describe('a carve aimed at a cave ceiling', () => {
       hitZ: worldX(ROW),
     };
 
-    const band = carveBandOfPick(mirror.map, underside, () => false);
+    const band = carveBandOfPick(mirror.map, underside);
     expect(band).toBe(PLATEAU_BAND);
 
     const floorBefore = spanAt(mirror.map, inside, ROW, 0);
