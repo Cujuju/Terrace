@@ -73,18 +73,33 @@ const MALFORMED: readonly MalformedCase[] = [
   },
   {
     why: 'a targetBand below the lowest band',
-    message: malformed({ ...AT, tool: 'drag', targetBand: MIN_BAND - 1 }),
+    message: malformed({ ...AT, tool: 'drag', targetBand: MIN_BAND - 1, floorBand: MIN_BAND }),
   },
   {
     why: 'a targetBand above the highest band',
-    message: malformed({ ...AT, tool: 'drag', targetBand: MAX_BAND + 1 }),
+    message: malformed({ ...AT, tool: 'drag', targetBand: MAX_BAND + 1, floorBand: MIN_BAND }),
   },
   {
     why: 'a fractional targetBand',
-    message: malformed({ ...AT, tool: 'drag', targetBand: 2.5 }),
+    message: malformed({ ...AT, tool: 'drag', targetBand: 2.5, floorBand: 2 }),
   },
   { why: 'a targetBand on a stamp', message: malformed({ ...AT, targetBand: 2 }) },
-  { why: 'a drag carrying no targetBand', message: malformed({ ...AT, tool: 'drag' }) },
+  {
+    why: 'a drag carrying no targetBand',
+    message: malformed({ ...AT, tool: 'drag', floorBand: 2 }),
+  },
+  {
+    why: 'a drag carrying no floorBand — the swept cell cannot derive the run',
+    message: malformed({ ...AT, tool: 'drag', targetBand: 2 }),
+  },
+  {
+    why: 'a floorBand above its own targetBand',
+    message: malformed({ ...AT, tool: 'drag', targetBand: 2, floorBand: 3 }),
+  },
+  {
+    why: 'a floorBand on a stamp',
+    message: malformed({ ...AT, floorBand: 2 }),
+  },
   {
     why: 'a spanBand below the lowest band',
     message: malformed({ ...AT, tool: 'carve', dir: -1, spanBand: MIN_BAND - 1 }),
@@ -208,7 +223,15 @@ describe('a carve names the span it grasps; a drag names the lip it holds', () =
 
     const step = scenario.send(
       SCULPTOR,
-      sculptMessage({ ...LIP_CELL, tool: 'drag', dir: 1, radius: 2, targetBand, seq: SEQ }),
+      sculptMessage({
+        ...LIP_CELL,
+        tool: 'drag',
+        dir: 1,
+        radius: 2,
+        targetBand,
+        floorBand: targetBand,
+        seq: SEQ,
+      }),
     );
 
     expect(step.outcome?.applied).toBe(true);

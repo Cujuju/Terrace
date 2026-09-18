@@ -878,6 +878,7 @@ describe('a contained sculpt fault leaves no client diverged', () => {
         seq: SEQ,
         tool: 'drag',
         targetBand: 1,
+        floorBand: 1,
         radius: 1,
         fromX: 4,
         fromY: 4,
