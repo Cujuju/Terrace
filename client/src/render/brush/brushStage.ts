@@ -68,12 +68,14 @@ function createWorldEdgeClip(): WorldEdgeClip {
 export interface BrushLiveGeometries {
   readonly ring: BufferGeometry;
   readonly hem: BufferGeometry;
+  readonly extra: BufferGeometry;
   readonly grid: BufferGeometry;
 }
 
 /** The scene objects the preview drives, plus the cue painting they answer to. */
 export interface BrushStage {
   readonly line: Line;
+  readonly extra: LineSegments;
   readonly hem: Mesh;
   readonly cellGrid: LineSegments;
   readonly crosshair: LineSegments;
@@ -105,12 +107,17 @@ export function createBrushStage(
   });
 
   const line = new Line(live.ring, material);
+  const extra = new LineSegments(live.extra, material);
   line.renderOrder = 999;
   line.visible = false;
   // The buffers are preallocated past the draw range, so the bounding sphere
   // reads the zeroed tail: never cull.
   line.frustumCulled = false;
   scene.add(line);
+  extra.renderOrder = 999;
+  extra.visible = false;
+  extra.frustumCulled = false;
+  scene.add(extra);
 
   const hemMaterial = new MeshBasicMaterial({
     color: 0xffffff,
@@ -202,6 +209,8 @@ export function createBrushStage(
     const flatMark = markOnly || flatPosture;
     const footprint = visible && !flatMark;
     line.visible = footprint || (visible && hollow && !flatMark);
+    // The extra loops are the same outline, so they follow the ring exactly.
+    extra.visible = line.visible;
     hem.visible = footprint && !hollow;
     cellGrid.visible = footprint && !hollow;
     crosshair.visible = visible;
@@ -235,6 +244,7 @@ export function createBrushStage(
 
   return {
     line,
+    extra,
     hem,
     cellGrid,
     crosshair,
@@ -246,6 +256,7 @@ export function createBrushStage(
     show,
     removeFromScene(): void {
       scene.remove(line);
+      scene.remove(extra);
       scene.remove(crosshair);
       scene.remove(hem);
       scene.remove(cellGrid);

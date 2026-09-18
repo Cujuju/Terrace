@@ -14,6 +14,7 @@ export interface BrushGround {
 export interface ConformedGeometry {
   readonly ring: BufferGeometry;
   readonly hem: BufferGeometry;
+  readonly extra: BufferGeometry;
   readonly grid: BufferGeometry;
   /** Rewrites all three if anything it depends on moved; cheap no-op otherwise.
    *  capY pins every vertex at or below the selected band (null = off). */
@@ -105,11 +106,13 @@ const sampleHeight = (
 export function createConformedGeometry(
   maxRingVerts: number,
   maxGridSegments: number,
+  maxExtraSegments: number,
 ): ConformedGeometry {
   // Exact draped maxima, computed per footprint at construction: no resizes.
   const ring = makeLive(maxRingVerts);
   const hem = makeLive(6 * (maxRingVerts - 1));
   const grid = makeLive(2 * maxGridSegments);
+  const extra = makeLive(2 * maxExtraSegments);
   // At most four mark cells touch one point; reused, never reallocated.
   const touchScratch = new Int32Array(8);
 
@@ -124,6 +127,7 @@ export function createConformedGeometry(
   return {
     ring: ring.geometry,
     hem: hem.geometry,
+    extra: extra.geometry,
     grid: grid.geometry,
     syncTo(footprint, footprintId, aimX, aimZ, fallbackY, ground, capY): void {
       const reach = footprint.reachCells;
@@ -192,6 +196,26 @@ export function createConformedGeometry(
         grid.array[s * 6 + 5] = bz * CELL_WORLD_SIZE;
       }
       commit(grid, gridCount * 2);
+
+      // Loops the ring strip cannot reach: their own segment pairs, draped the
+      // same way, so a disconnected mark still reads as one outline.
+      const extraCount =
+        footprint.extraCount > maxExtraSegments ? maxExtraSegments : footprint.extraCount;
+      for (let s2 = 0; s2 < extraCount; s2++) {
+        const ax = footprint.extraPoints[s2 * 4]!;
+        const az = footprint.extraPoints[s2 * 4 + 1]!;
+        const bx = footprint.extraPoints[s2 * 4 + 2]!;
+        const bz = footprint.extraPoints[s2 * 4 + 3]!;
+        const ya = sampleHeight(footprint, ax, az, aimX, aimZ, fallbackY, capY, ground, touchScratch);
+        const yb = sampleHeight(footprint, bx, bz, aimX, aimZ, fallbackY, capY, ground, touchScratch);
+        extra.array[s2 * 6] = ax * CELL_WORLD_SIZE;
+        extra.array[s2 * 6 + 1] = ya;
+        extra.array[s2 * 6 + 2] = az * CELL_WORLD_SIZE;
+        extra.array[s2 * 6 + 3] = bx * CELL_WORLD_SIZE;
+        extra.array[s2 * 6 + 4] = yb;
+        extra.array[s2 * 6 + 5] = bz * CELL_WORLD_SIZE;
+      }
+      commit(extra, extraCount * 2);
 
       for (let i = 0; i < ringCount - 1; i++) {
         const ax = ring.array[i * 3]!;

@@ -133,9 +133,15 @@ describe('world-edge clipping', () => {
   const stamp = { radius: BRUSH_RADII[0]!, tool: 'stamp', profile: 'hard', dir: 1 } as const;
 
   function footprintMaterials(scene: Scene): Material[] {
-    return scene.children
-      .filter((c): c is Line | LineSegments | Mesh => c instanceof Line || c instanceof Mesh)
-      .map((c) => c.material as Material);
+    // Deduplicated: the extra-loop object shares the ring's own material, and
+    // this asks about materials, not objects.
+    return [
+      ...new Set(
+        scene.children
+          .filter((c): c is Line | LineSegments | Mesh => c instanceof Line || c instanceof Mesh)
+          .map((c) => c.material as Material),
+      ),
+    ];
   }
 
   function cutAt(material: Material, nx: number, nz: number): number {

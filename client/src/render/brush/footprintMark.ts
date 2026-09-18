@@ -137,6 +137,33 @@ export function clampIntoMark(x: number, z: number, mark: Mark): [number, number
   return [bestX, bestZ];
 }
 
+/**
+ * Every closed loop the mark marches to, largest first. A carve's admitted
+ * cells are often disconnected, so more than one loop is ordinary there.
+ */
+export function markOutlineLoops(mark: Mark): ContourLoop[] {
+  loadSampleField(
+    (i, j) =>
+      mark.has(i - FOOTPRINT_LATTICE_CENTRE, j - FOOTPRINT_LATTICE_CENTRE)
+        ? FOOTPRINT_INSIDE
+        : FOOTPRINT_OUTSIDE,
+    FOOTPRINT_LATTICE_SPAN,
+  );
+  const origin = -FOOTPRINT_LATTICE_CENTRE;
+  const segmentCount = marchLevel(FOOTPRINT_INSIDE, origin, origin, FOOTPRINT_EDGE_CROSSING);
+  const loops = assembleLoops(segmentCount, origin, origin, false).map(simplifyLoop);
+  for (const loop of loops) {
+    for (const point of loop) {
+      const [x, z] = clampIntoMark(point.x, point.z, mark);
+      point.x = x;
+      point.z = z;
+    }
+  }
+  // Largest first so the ring strip always carries the dominant loop, and the
+  // order never depends on march order.
+  return loops.sort((a, b) => b.length - a.length);
+}
+
 export function markOutline(radius: number, mark: Mark): ContourLoop {
   loadSampleField(
     (i, j) =>

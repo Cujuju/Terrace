@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   applySculpt,
   bandFloorHeight,
+  carveAdmittedCells,
   bandLevelHeight,
   BAND_HEIGHT,
   BEDROCK_BAND,
@@ -9,6 +10,8 @@ import {
   CARVE_MAX_DEPTH_BANDS,
   CARVE_MIN_DEPTH_BANDS,
   cellIndex,
+  cellX,
+  cellY,
   columnCoversBand,
   createHeightmap,
   DEFAULT_SCULPT_AMOUNT,
@@ -375,5 +378,62 @@ describe('a wire-validated carve never throws, wherever the ground sits', () => 
       }
     }
     expect(faults).toEqual([]);
+  });
+});
+
+describe('carveAdmittedCells is the one admission the applier and the preview share', () => {
+  const SIZE = 24;
+  const GROUND_BAND = 6;
+  const LOW_BAND = 2;
+
+  // A cliff with a notch, so one brush covers exposed rim, buried interior and air.
+  const notchedCliff = (): Heightmap => {
+    const map = createHeightmap(SIZE);
+    for (let x = 0; x < SIZE; x++) {
+      for (let y = 0; y < SIZE; y++) {
+        const tall = x < 12 && !(x > 6 && x < 10 && y > 10 && y < 14);
+        setColumn(map, x, y, [
+          { floorBand: BEDROCK_BAND, ceiling: bandLevelHeight(tall ? GROUND_BAND : LOW_BAND) },
+        ]);
+      }
+    }
+    return map;
+  };
+
+  const cutCells = (map: Heightmap, cx: number, cy: number, radius: number): number[] => {
+    const before = new Map<number, string>();
+    for (let x = 0; x < SIZE; x++) {
+      for (let y = 0; y < SIZE; y++) {
+        before.set(cellIndex(map, x, y), JSON.stringify(readSpans(map, x, y)));
+      }
+    }
+    applySculpt(map, cx, cy, radius, -DEFAULT_SCULPT_AMOUNT, {
+      tool: 'carve',
+      spanBand: GROUND_BAND,
+      depthBands: 1,
+    });
+    const moved: number[] = [];
+    for (const [i, was] of before) {
+      const now = JSON.stringify(readSpans(map, cellX(map.size, i), cellY(map.size, i)));
+      if (now !== was) moved.push(i);
+    }
+    return moved.sort((a, b) => a - b);
+  };
+
+  it('names exactly the cells the stroke goes on to change', () => {
+    for (const radius of [1, 2, 3]) {
+      const map = notchedCliff();
+      const predicted = carveAdmittedCells(map, 11, 12, radius, GROUND_BAND, 1).sort(
+        (a, b) => a - b,
+      );
+      expect([radius, cutCells(map, 11, 12, radius)]).toEqual([radius, predicted]);
+    }
+  });
+
+  it('admits nothing where the stroke would cut nothing', () => {
+    const map = notchedCliff();
+    // Deep inside the mass: every neighbour covers the band.
+    expect(carveAdmittedCells(map, 2, 2, 2, GROUND_BAND, 1)).toEqual([]);
+    expect(cutCells(map, 2, 2, 2)).toEqual([]);
   });
 });

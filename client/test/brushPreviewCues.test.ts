@@ -44,19 +44,33 @@ function skirtOf(scene: Scene): Mesh {
   return found;
 }
 
-function segmentsOf(scene: Scene): { cellGrid: LineSegments; crosshair: LineSegments } {
+const EXPECTED_SEGMENT_OBJECTS = 3;
+
+function segmentsOf(scene: Scene): {
+  cellGrid: LineSegments;
+  crosshair: LineSegments;
+  extraLoops: LineSegments;
+} {
   const segments = scene.children.filter(
     (c): c is LineSegments => c instanceof LineSegments,
   );
-  if (segments.length !== 2) throw new Error(`expected 2 segments, saw ${segments.length}`);
+  if (segments.length !== EXPECTED_SEGMENT_OBJECTS) {
+    throw new Error(`expected ${EXPECTED_SEGMENT_OBJECTS} segments, saw ${segments.length}`);
+  }
+  // The extra-loop object shares the outline's own material; the cell grid has
+  // its own clipped one, and the crosshair is unclipped.
+  const outlineMaterial = ringOf(scene).material;
+  const extraLoops = segments.find((s) => s.material === outlineMaterial);
   const cellGrid = segments.find(
-    (s) => (s.material as Material).clippingPlanes !== null,
+    (s) => s.material !== outlineMaterial && (s.material as Material).clippingPlanes !== null,
   );
   const crosshair = segments.find(
     (s) => (s.material as Material).clippingPlanes === null,
   );
-  if (!cellGrid || !crosshair) throw new Error('cell grid / crosshair missing');
-  return { cellGrid, crosshair };
+  if (!cellGrid || !crosshair || !extraLoops) {
+    throw new Error('cell grid / crosshair / extra loops missing');
+  }
+  return { cellGrid, crosshair, extraLoops };
 }
 
 function colorOf(object: { material: unknown }): number {

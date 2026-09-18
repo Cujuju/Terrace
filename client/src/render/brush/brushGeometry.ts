@@ -2,7 +2,7 @@ import type { SculptProfile, SculptTool } from '@terrace/shared';
 import {
   cellGridSegments,
   clampIntoMark,
-  markOutline,
+  markOutlineLoops,
   oneClickMark,
   type Mark,
 } from './footprintMark.ts';
@@ -16,6 +16,9 @@ export interface BrushFootprint {
   readonly gridCount: number;
   /** max(|dx|,|dz|) over mark cells — the footprint's half-extent in cells. */
   readonly reachCells: number;
+  /** Loops past the first, as segment pairs: ax,az,bx,bz. Empty when connected. */
+  readonly extraPoints: Float32Array;
+  readonly extraCount: number;
   /** Mark occupancy over [-markExtent..markExtent] squared, row-major. */
   readonly markGrid: Uint8Array;
   readonly markExtent: number;
@@ -30,7 +33,22 @@ export function brushFootprint(
 }
 
 export function footprintFromMark(radius: number, mark: Mark): BrushFootprint {
-  const outline = markOutline(radius, mark);
+  const loops = markOutlineLoops(mark);
+  if (loops.length === 0) throw new RangeError('mark marched to no contour loop');
+  const outline = loops[0]!;
+  // A strip cannot leave one loop and enter another, so the rest are drawn as
+  // their own segment pairs.
+  const extra: number[] = [];
+  for (let k = 1; k < loops.length; k++) {
+    const loop = loops[k]!;
+    for (let i = 0; i < loop.length; i++) {
+      const a = loop[i]!;
+      const b = loop[(i + 1) % loop.length]!;
+      extra.push(a.x, a.z, b.x, b.z);
+    }
+  }
+  const extraPoints = new Float32Array(extra);
+  const extraCount = extra.length / 4;
 
   // Closed by repeating the first point: WebGPURenderer draws Line, not LineLoop.
   const closed = [...outline, outline[0]!];
@@ -78,6 +96,8 @@ export function footprintFromMark(radius: number, mark: Mark): BrushFootprint {
   return {
     ringPoints,
     ringCount,
+    extraPoints,
+    extraCount,
     gridPoints,
     gridCount,
     reachCells,
