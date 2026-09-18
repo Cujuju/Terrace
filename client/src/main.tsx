@@ -28,8 +28,8 @@ import {
   brushProfile,
   brushRadius,
   brushTool,
+  effectiveSculptMode,
   sculptDirection,
-  sculptMode,
   setConnectionStatus,
   setHoverPick,
   showDenialHint,
@@ -266,7 +266,7 @@ viewport.onFrame(() => {
       radius: brushRadius(),
       tool: brushTool(),
       profile: brushProfile(),
-      dir: sculptDirection(sculptMode()),
+      dir: sculptDirection(effectiveSculptMode()),
     },
   );
   pickDebug?.update(pick, grabbedBand);

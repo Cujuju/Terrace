@@ -4,7 +4,6 @@ import {
   brushProfile,
   brushRadius,
   sculptDirection,
-  setSculptMode,
   smoothLambda,
 } from '../../state/hudState.ts';
 import { footOfFaceCell } from '../../terrain/faceFoot.ts';
@@ -24,7 +23,6 @@ const TOOLS_WITH_FOOT_ANCHOR: readonly SculptTool[] = ['stamp', 'smooth'];
 
 export const emitIntent = (s: StrokeState, origin: EmitOrigin): EmitOutcome => {
   const action = currentStrokeAction(s);
-  if (!TOOLS_WITHOUT_DIRECTION.includes(s.strokeTool)) setSculptMode(action);
   // No grab, no stroke: the takeHold seed already cued any failure, so this stays silent.
   if (s.strokeTool === 'drag' && s.strokeGrab === null) return 'absent-silent';
   // Dead by construction — startStroke/currentStrokeAction never arm a

@@ -1,5 +1,5 @@
-import { resolvePress } from '../state/controlPrefs.ts';
-import { sculptMode } from '../state/hudState.ts';
+import { resolveSculptPress } from '../state/controlPrefs.ts';
+import { effectiveSculptMode } from '../state/hudState.ts';
 import type { TerrainRayPick } from '../terrain/picking.ts';
 import { hoverTarget } from './sculpt/aim.ts';
 import { clearRefused, refusedIsShowing } from './sculpt/cues.ts';
@@ -35,13 +35,13 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
         stopRepeat(s);
         return;
       }
-      startStroke(s, event, sculptMode());
+      startStroke(s, event, effectiveSculptMode());
       return;
     }
 
     syncMode(s, event);
-    const action = resolvePress(event.button, event);
-    if (action !== 'raise' && action !== 'lower') return;
+    const action = resolveSculptPress(event.button, event, effectiveSculptMode());
+    if (action === null) return;
     startStroke(s, event, action);
   };
 

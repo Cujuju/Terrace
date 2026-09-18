@@ -1,9 +1,7 @@
 import { Raycaster, Vector2 } from 'three';
-import { DEFAULT_BRUSH_TOOL } from '../../state/hudState.ts';
+import { DEFAULT_BRUSH_TOOL, effectiveSculptMode } from '../../state/hudState.ts';
 import {
-  modifierOf,
-  resolvePress,
-  type BindingModifier,
+  resolveSculptPress,
   type ModifierState,
   type SculptAction,
 } from '../../state/controlPrefs.ts';
@@ -33,9 +31,6 @@ export interface StrokeState {
 
   mods: ModifierState;
 
-  // The chord syncMode last ACTED ON. Seeded with the no-modifier resting state
-  // so the first unmodified move is not an edge.
-  lastModifier: BindingModifier | null;
 
   strokeButton: number | null;
   strokePointerId: number | null;
@@ -101,7 +96,6 @@ export function createStrokeState(options: SculptInputOptions): StrokeState {
     havePointer: false,
 
     mods,
-    lastModifier: modifierOf(mods),
 
     strokeButton: null,
     strokePointerId: null,
@@ -150,10 +144,8 @@ export function createStrokeState(options: SculptInputOptions): StrokeState {
 
 export const currentStrokeAction = (s: StrokeState): SculptAction => {
   if (s.strokeButton !== null && !s.strokeIsTouch && !TOOLS_WITHOUT_DIRECTION.includes(s.strokeTool)) {
-    const resolved = resolvePress(s.strokeButton, s.mods);
-    if (resolved === 'raise' || resolved === 'lower') {
-      s.strokeAction = resolved;
-    }
+    const resolved = resolveSculptPress(s.strokeButton, s.mods, effectiveSculptMode());
+    if (resolved !== null) s.strokeAction = resolved;
   }
   return s.strokeAction;
 };

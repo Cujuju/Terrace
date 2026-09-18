@@ -5,10 +5,9 @@ import {
   SCULPT_REPEAT_RAMP_FACTOR,
   TOUCH_STROKE_GRACE_MS,
 } from '../../config.ts';
-import { brushTool, setSculptMode } from '../../state/hudState.ts';
+import { brushTool, setSculptChord } from '../../state/hudState.ts';
 import {
-  controlBindings,
-  modifierOf,
+  chordDirection,
   type ModifierState,
   type SculptAction,
 } from '../../state/controlPrefs.ts';
@@ -97,7 +96,6 @@ export const startStroke = (
     s.strokeAction = 'lower';
   } else {
     s.strokeAction = action;
-    setSculptMode(action);
   }
   s.pointerClientX = event.clientX;
   s.pointerClientY = event.clientY;
@@ -121,18 +119,9 @@ export const syncMode = (s: StrokeState, state: ModifierState): void => {
     ctrlKey: state.ctrlKey,
     altKey: state.altKey,
   };
-  // Edge-triggered: only a CHANGE of chord previews a direction. Writing the
-  // mode on every move re-asserted the unmodified binding, so the HUD toggle
-  // lasted one frame.
-  if (s.strokeButton !== null) return;
-  if (TOOLS_WITHOUT_DIRECTION.includes(brushTool())) return;
-  // The edge is recorded only where it is acted on: one swallowed mid-stroke
-  // would leave the mode stale when the stroke ends with the chord still held.
-  const modifier = modifierOf(s.mods);
-  const changed = modifier !== s.lastModifier;
-  s.lastModifier = modifier;
-  if (!changed || modifier === null) return;
-  const bindings = controlBindings();
-  if (bindings.raise.modifier === modifier) setSculptMode('raise');
-  else if (bindings.lower.modifier === modifier) setSculptMode('lower');
+  // The chord overrides the mode rather than overwriting it, so re-asserting it
+  // every move is idempotent. A directionless tool holds no chord.
+  setSculptChord(
+    TOOLS_WITHOUT_DIRECTION.includes(brushTool()) ? null : chordDirection(s.mods),
+  );
 };
