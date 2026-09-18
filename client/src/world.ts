@@ -169,6 +169,8 @@ export interface World extends TerrainSink {
   bandAtCell(x: number, y: number, spanBand: number | null): number | null;
   graspSpanBand(pick: TerrainRayPick | null, atX: number, atY: number): number | null;
   carveBand(pick: TerrainRayPick | null): number | null;
+  /** Drawn band of the surface under the aim, for every face: what a stroke would edit there. */
+  aimBand(pick: TerrainRayPick | null): number | null;
   carveReach(origin: Vec3, direction: Vec3, band: number): { x: number; y: number } | null;
   terrainSampleAt(x: number, y: number): number | null;
   terrainRevisionAt(x: number, y: number): number;
@@ -666,6 +668,10 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
     carveBand(pick: TerrainRayPick | null): number | null {
       if (pick === null) return null;
       return carveBandOfPick(pick);
+    },
+    aimBand(pick: TerrainRayPick | null): number | null {
+      if (pick === null) return null;
+      return bandOfPick(pick);
     },
     carveReach(origin: Vec3, direction: Vec3, band: number): { x: number; y: number } | null {
       if (mirror === null) return null;

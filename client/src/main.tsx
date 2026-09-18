@@ -265,6 +265,7 @@ viewport.onFrame(() => {
           ...pick,
           grabbable: grabbedBand !== null && brushTool() === 'drag',
           band: grabbedBand,
+          aimBand: world.aimBand(pick),
         },
     {
       radius: brushRadius(),
