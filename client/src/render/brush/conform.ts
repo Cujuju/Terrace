@@ -2,6 +2,7 @@ import { BufferAttribute, BufferGeometry, DynamicDrawUsage } from 'three';
 import { CHUNK_SIZE } from '@terrace/shared';
 import { CELL_WORLD_SIZE } from '../../config.ts';
 import type { BrushFootprint } from './brushGeometry.ts';
+import { CELL_TOUCH_EPSILON } from './footprintMark.ts';
 import { OUTLINE_LIFT_WORLD_UNITS, RING_HEM_WORLD_UNITS } from './style.ts';
 
 export interface BrushGround {
@@ -49,21 +50,50 @@ function commit(live: LiveGeometry, vertexCount: number): void {
   live.attribute.needsUpdate = true;
 }
 
-const highestOf = (
-  cells: Int32Array,
-  from: number,
-  to: number,
+/** Mark cells touching x,z in cell space, written into out as dx,dz pairs. */
+const touchInto = (footprint: BrushFootprint, x: number, z: number, out: Int32Array): number => {
+  const x0 = Math.ceil(x - 0.5 - CELL_TOUCH_EPSILON);
+  const x1 = Math.floor(x + 0.5 + CELL_TOUCH_EPSILON);
+  const z0 = Math.ceil(z - 0.5 - CELL_TOUCH_EPSILON);
+  const z1 = Math.floor(z + 0.5 + CELL_TOUCH_EPSILON);
+  const width = 2 * footprint.markExtent + 1;
+  let n = 0;
+  for (let cz = z0; cz <= z1; cz++) {
+    for (let cx = x0; cx <= x1; cx++) {
+      const gx = cx + footprint.markExtent;
+      const gz = cz + footprint.markExtent;
+      if (gx < 0 || gz < 0 || gx >= width || gz >= width) continue;
+      if (footprint.markGrid[gz * width + gx] === 0) continue;
+      out[n * 2] = cx;
+      out[n * 2 + 1] = cz;
+      n++;
+    }
+  }
+  if (n === 0) {
+    out[0] = 0;
+    out[1] = 0;
+    n = 1;
+  }
+  return n;
+};
+
+const sampleHeight = (
+  footprint: BrushFootprint,
+  x: number,
+  z: number,
   aimX: number,
   aimZ: number,
   fallbackY: number,
   capY: number | null,
   ground: BrushGround,
+  scratch: Int32Array,
 ): number => {
   // capY pins the footprint to the selected band's cap: the ring never
   // rides higher than the surface being edited.
+  const touched = touchInto(footprint, x, z, scratch);
   let y = -Infinity;
-  for (let i = from; i < to; i += 2) {
-    const sample = ground.yAt(aimX + cells[i]!, aimZ + cells[i + 1]!);
+  for (let k = 0; k < touched; k++) {
+    const sample = ground.yAt(aimX + scratch[k * 2]!, aimZ + scratch[k * 2 + 1]!);
     if (sample === null) continue;
     const capped = capY === null ? sample : Math.min(sample, capY);
     if (capped > y) y = capped;
@@ -73,13 +103,15 @@ const highestOf = (
 };
 
 export function createConformedGeometry(
-  maxRingPoints: number,
+  maxRingVerts: number,
   maxGridSegments: number,
 ): ConformedGeometry {
-  // The x2 is headroom for the Commit 2 step joins, so that commit never resizes.
-  const ring = makeLive(2 * maxRingPoints);
-  const hem = makeLive(6 * 2 * (maxRingPoints - 1));
+  // Exact draped maxima, computed per footprint at construction: no resizes.
+  const ring = makeLive(maxRingVerts);
+  const hem = makeLive(6 * (maxRingVerts - 1));
   const grid = makeLive(2 * maxGridSegments);
+  // At most four mark cells touch one point; reused, never reallocated.
+  const touchScratch = new Int32Array(8);
 
   let lastFootprintId = -1;
   let lastAimX = Infinity;
@@ -121,43 +153,37 @@ export function createConformedGeometry(
       }
 
       // Y is absolute world Y, not local: the objects carry XZ only
-      // (position.y is 0; see brushPreview.ts).
+      // (position.y is 0; see brushPreview.ts). The runs arrive pre-draped,
+      // so every vertex melts onto the ground beneath it.
       for (let i = 0; i < footprint.ringCount; i++) {
-        const y = highestOf(
-          footprint.ringCells,
-          footprint.ringCellIndex[i]!,
-          footprint.ringCellIndex[i + 1]!,
-          aimX,
-          aimZ,
-          fallbackY,
-          capY,
-          ground,
+        const x = footprint.ringPoints[i * 2]!;
+        const z = footprint.ringPoints[i * 2 + 1]!;
+        ring.array[i * 3] = x * CELL_WORLD_SIZE;
+        ring.array[i * 3 + 1] = sampleHeight(
+          footprint, x, z, aimX, aimZ, fallbackY, capY, ground, touchScratch,
         );
-        ring.array[i * 3] = footprint.ringPoints[i * 2]! * CELL_WORLD_SIZE;
-        ring.array[i * 3 + 1] = y;
-        ring.array[i * 3 + 2] = footprint.ringPoints[i * 2 + 1]! * CELL_WORLD_SIZE;
+        ring.array[i * 3 + 2] = z * CELL_WORLD_SIZE;
       }
       commit(ring, footprint.ringCount);
 
       for (let s = 0; s < footprint.gridCount; s++) {
-        // One Y for both endpoints: the line lies flat on the higher of the
-        // two cells it separates.
-        const y = highestOf(
-          footprint.gridCells,
-          s * 4,
-          s * 4 + 4,
-          aimX,
-          aimZ,
-          fallbackY,
-          capY,
-          ground,
+        // Each end rides the ground beneath it: one-cell runs hug one step.
+        const ax = footprint.gridPoints[s * 4]!;
+        const az = footprint.gridPoints[s * 4 + 1]!;
+        const bx = footprint.gridPoints[s * 4 + 2]!;
+        const bz = footprint.gridPoints[s * 4 + 3]!;
+        const ya = sampleHeight(
+          footprint, ax, az, aimX, aimZ, fallbackY, capY, ground, touchScratch,
         );
-        grid.array[s * 6] = footprint.gridPoints[s * 4]! * CELL_WORLD_SIZE;
-        grid.array[s * 6 + 1] = y;
-        grid.array[s * 6 + 2] = footprint.gridPoints[s * 4 + 1]! * CELL_WORLD_SIZE;
-        grid.array[s * 6 + 3] = footprint.gridPoints[s * 4 + 2]! * CELL_WORLD_SIZE;
-        grid.array[s * 6 + 4] = y;
-        grid.array[s * 6 + 5] = footprint.gridPoints[s * 4 + 3]! * CELL_WORLD_SIZE;
+        const yb = sampleHeight(
+          footprint, bx, bz, aimX, aimZ, fallbackY, capY, ground, touchScratch,
+        );
+        grid.array[s * 6] = ax * CELL_WORLD_SIZE;
+        grid.array[s * 6 + 1] = ya;
+        grid.array[s * 6 + 2] = az * CELL_WORLD_SIZE;
+        grid.array[s * 6 + 3] = bx * CELL_WORLD_SIZE;
+        grid.array[s * 6 + 4] = yb;
+        grid.array[s * 6 + 5] = bz * CELL_WORLD_SIZE;
       }
       commit(grid, footprint.gridCount * 2);
 

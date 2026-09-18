@@ -59,7 +59,7 @@ export function createBrushPreview(
   const footprints = new Map<string, { footprint: BrushFootprint; id: number }>();
   const key = (radius: number, tool: SculptTool, profile: SculptProfile): string =>
     `${radius}|${tool}|${profile}`;
-  let maxRingPoints = 0;
+  let maxRingVerts = 0;
   let maxGridSegments = 0;
   let nextId = 0;
   for (const r of BRUSH_RADII) {
@@ -68,7 +68,7 @@ export function createBrushPreview(
       for (const profile of SCULPT_PROFILES) {
         const footprint = brushFootprint(r, tool, profile);
         footprints.set(key(r, tool, profile), { footprint, id: nextId++ });
-        if (footprint.ringCount > maxRingPoints) maxRingPoints = footprint.ringCount;
+        if (footprint.ringCount > maxRingVerts) maxRingVerts = footprint.ringCount;
         if (footprint.gridCount > maxGridSegments) maxGridSegments = footprint.gridCount;
       }
     }
@@ -78,7 +78,7 @@ export function createBrushPreview(
     throw new RangeError(`brush preview has no footprint for ${initialKey}`);
   }
 
-  const conformed = createConformedGeometry(maxRingPoints, maxGridSegments);
+  const conformed = createConformedGeometry(maxRingVerts, maxGridSegments);
   const stage = createBrushStage(scene, canvas, denial, {
     ring: conformed.ring,
     hem: conformed.hem,

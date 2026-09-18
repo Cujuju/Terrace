@@ -29,7 +29,7 @@ const SCULPT_DIRECTIONS: readonly SculptDir[] = [1, -1];
 
 const FOOTPRINT_EDGE_CROSSING = 0.5;
 
-const CELL_TOUCH_EPSILON = 1e-6;
+export const CELL_TOUCH_EPSILON = 1e-6;
 
 const FOOTPRINT_LATTICE_MARGIN_CELLS = 1;
 
@@ -110,7 +110,7 @@ export function oneClickMark(radius: number, tool: SculptTool, profile: SculptPr
   return { has: (dx, dy) => keys.has(`${dx},${dy}`), cells };
 }
 
-function clampIntoMark(x: number, z: number, mark: Mark): [number, number] {
+export function clampIntoMark(x: number, z: number, mark: Mark): [number, number] {
   if (mark.has(Math.round(x), Math.round(z))) return [x, z];
   let bestX = x;
   let bestZ = z;
@@ -162,43 +162,19 @@ export function markOutline(radius: number, mark: Mark): ContourLoop {
   return loops[0];
 }
 
-export function markCellsTouching(mark: Mark, x: number, z: number): [number, number][] {
-  const cells: [number, number][] = [];
-  const x0 = Math.ceil(x - 0.5 - CELL_TOUCH_EPSILON);
-  const x1 = Math.floor(x + 0.5 + CELL_TOUCH_EPSILON);
-  const z0 = Math.ceil(z - 0.5 - CELL_TOUCH_EPSILON);
-  const z1 = Math.floor(z + 0.5 + CELL_TOUCH_EPSILON);
-  for (let cz = z0; cz <= z1; cz++) {
-    for (let cx = x0; cx <= x1; cx++) {
-      if (mark.has(cx, cz)) cells.push([cx, cz]);
-    }
-  }
-  // clampIntoMark guarantees a hit; the aim cell is the safe floor if it ever does not.
-  if (cells.length === 0) cells.push([0, 0]);
-  return cells;
-}
-
 export interface GridSegment {
   readonly ax: number; readonly az: number;
   readonly bx: number; readonly bz: number;
-  readonly cellAx: number; readonly cellAz: number;
-  readonly cellBx: number; readonly cellBz: number;
 }
 
 export function cellGridSegments(mark: Mark): GridSegment[] {
   const segments: GridSegment[] = [];
   for (const [dx, dy] of mark.cells) {
     if (mark.has(dx + 1, dy)) {
-      segments.push({
-        ax: dx + 0.5, az: dy - 0.5, bx: dx + 0.5, bz: dy + 0.5,
-        cellAx: dx, cellAz: dy, cellBx: dx + 1, cellBz: dy,
-      });
+      segments.push({ ax: dx + 0.5, az: dy - 0.5, bx: dx + 0.5, bz: dy + 0.5 });
     }
     if (mark.has(dx, dy + 1)) {
-      segments.push({
-        ax: dx - 0.5, az: dy + 0.5, bx: dx + 0.5, bz: dy + 0.5,
-        cellAx: dx, cellAz: dy, cellBx: dx, cellBz: dy + 1,
-      });
+      segments.push({ ax: dx - 0.5, az: dy + 0.5, bx: dx + 0.5, bz: dy + 0.5 });
     }
   }
   return segments;
