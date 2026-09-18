@@ -2,11 +2,13 @@
 
 ## Status
 
-DONE but for the goldens. Typecheck clean workspace-wide. `shared` is
-526 passed / 5 failed — the 5 are the `golden-sculpt` snapshots, which move by
-design and need the owner's go-ahead to regenerate. `overhangs.md` rewritten.
+DONE. Typecheck clean workspace-wide. `shared` 531/531 green. `client`
+2 failed / 774 passed — same two as before this work, and better than the
+4 fail / 772 pass baseline the last handoff recorded. `overhangs.md` rewritten,
+goldens re-recorded with the owner's approval.
 
-Commits: 66fd1858 (code) · e414e23b, 7a58e3be (tests) · 7e0a53e6 (doc).
+Commits: 66fd1858 (code) · e414e23b, 7a58e3be, 9e50df5e (tests + goldens) ·
+7e0a53e6 (doc).
 
 ## The rule (unchanged from the spec)
 
@@ -85,15 +87,13 @@ untouched for stamp and `anchor: 'band'`.
 
 ## Pending
 
-1. THE ONLY REAL ONE: regenerate the 5 `golden-sculpt` snapshots. They move by
-   design — the drag writes a different shape now. Owner has not yet approved.
-2. Server suite not re-run this session. Prior-session baseline: 29 fail /
+1. Server suite not re-run this session. Prior-session baseline: 29 fail /
    441 pass, other agents' in-flight work. `pnpm test` bails at the first
    failing package — run `shared`, `client`, `server` separately.
-3. Untracked diagnostics in `server/` still call the deleted `bandFillAt`
+2. Untracked diagnostics in `server/` still call the deleted `bandFillAt`
    (`scratch-cliff-sim.ts`, `scratch-drag-hole.ts`, `scratch-void-mint.ts`,
    `scratch-drag-dead6.ts`). Not typechecked, safe to delete.
-4. A pre-commit hook caps comments at 30 words and flags PRE-EXISTING ones in
+3. A pre-commit hook caps comments at 30 words and flags PRE-EXISTING ones in
    `client/src/input/sculpt/contract.ts` (lines 6 and 26). Touching that file
    needs `SKIP_COMMENT_BUDGET=1` until someone trims them.
 
