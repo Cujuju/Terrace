@@ -99,7 +99,6 @@ function driveInput(
     pickInColumn: (x, y, o, d) => pickTerrainInColumn(mirror, x, y, o, d),
     worldSize: () => mirror.map.size,
     riserBand: () => null,
-    aimBand: () => null,
     runFloorBandAt: () => null,
     graspSpanBand: () => null,
     carveBand: (pick) => (pick === null ? null : carveBandOfPick(mirror.map, pick)),

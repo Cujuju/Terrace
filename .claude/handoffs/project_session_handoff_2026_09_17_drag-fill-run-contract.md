@@ -17,6 +17,8 @@ Commits, oldest first:
 | `2bdf1d24` | tread grab + `carveAdmittedCells` + live carve outline |
 | `8c7b6afd` | carve outline on riser aims too |
 | `12a82689` | disconnected carve outlines + tests |
+| `4ff8a8f1` | this handoff |
+| (below) | drop the unreachable tread fallback |
 
 ## The drag: the run contract
 
@@ -45,9 +47,17 @@ A press grabs the band under the aim and sends no seed — which is what
 `sculpt-tools.md` always said ("A drag press grabs the clicked band — no seed
 layer first"); the code had diverged.
 
-`riserBand` answers only on a riser, so once the seed was removed a tread press
-refused outright. `takeHold` now falls back to `options.aimBand(hover)`, a new
-member on `SculptInputOptions` wired to `world.aimBand`.
+`riserBand` used to answer only on a riser, so once the seed was removed a
+tread press refused outright. terrace-fd's `1e53edc5 feat(sculpt): select the
+band under the aim, whatever the brush` fixed that at the source:
+`world.highlightLayerEdge` is now `light.heldBand ?? bandOfPick(pick)` — no
+tool or face branching, and `lipNear` decides only what the overlay draws.
+
+So `takeHold` needs no fallback: `riserBand` names the band on every face.
+An `aimBand` member was briefly added to `SculptInputOptions` and then removed
+once terrace-fd pointed out the branch under it was unreachable — both paths
+bottom out in `resolvePick`, so it returned an identical number. Do NOT
+reintroduce face branching here; that is the bug 1e53edc5 removed.
 
 This is what lets a drag start anywhere on a flat surface and heal a hollow
 without hunting for its edge. Verified by simulation: grabbing flat ground at
