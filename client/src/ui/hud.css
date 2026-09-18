@@ -26,6 +26,10 @@
   --plugin-on-border: rgba(90, 196, 122, 0.55);
   --plugin-off-bg: rgba(200, 80, 70, 0.22);
   --plugin-off-border: rgba(200, 80, 70, 0.55);
+  /* The bottom strip's inset from the viewport edge, and the matching margin
+     the settings column keeps at the top. */
+  --hud-strip-inset: calc(12px + env(safe-area-inset-bottom, 0px));
+  --hud-strip-top-margin: 12px;
 }
 
 html,
@@ -105,7 +109,7 @@ body {
   left: 12px;
   right: 12px;
   /* Safe-area inset keeps the strip above an iPhone's home indicator. */
-  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  bottom: var(--hud-strip-inset);
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: end;
@@ -616,6 +620,9 @@ body {
   align-items: flex-end;
   gap: 8px;
   pointer-events: none; /* only the button/popup take events, like the centre stacks */
+  /* The COLUMN is what must fit, not the popup: the popup is its only
+     shrinkable child, so adding a button never needs a cap rewritten. */
+  max-height: calc(100vh - var(--hud-strip-inset) - var(--hud-strip-top-margin));
 }
 
 .hud-settings > * {
@@ -628,6 +635,8 @@ body {
   min-width: 0;
   width: 40px;
   height: 40px;
+  /* Never squeezed by a tall popup sharing the column. */
+  flex: none;
   padding: 0;
   display: inline-flex;
   align-items: center;
@@ -647,11 +656,11 @@ body {
 
 .hud-settings-popup {
   min-width: 230px;
-  /* Grows upward as far as the screen allows (owner 2026-09-05: no locked
-     size). Reserved: the strip's 12px bottom inset, the 40px gear, the 8px
-     column gap, and a 12px top margin matching the strip's edge. */
-  --settings-popup-reserve: calc(12px + 40px + 8px + 12px + env(safe-area-inset-bottom, 0px));
-  max-height: calc(100vh - var(--settings-popup-reserve));
+  /* Grows upward as far as the column allows (owner 2026-09-05: no locked
+     size). The column carries the cap; this takes whatever the buttons leave
+     and scrolls inside it. min-height 0 is what lets a flex item shrink. */
+  flex: 0 1 auto;
+  min-height: 0;
   overflow-y: auto;
 }
 
@@ -680,6 +689,7 @@ body {
   max-width: min(260px, calc(100vw - 24px));
   max-height: none;
   overflow-y: visible;
+  flex: none;
 }
 
 /* The invite line inside the connection popup: the URL is long, so let it
