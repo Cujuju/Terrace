@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  CARVE_DEFAULT_DEPTH_BANDS,
   MAX_BRUSH_RADIUS,
+  SMOOTH_LAMBDA_DEFAULT,
   WIRE_DEFAULT_SCULPT_OPTIONS,
   WORLD_UNIT_CELLS,
 } from '@terrace/shared';
@@ -77,6 +79,8 @@ describe('defaults', () => {
       brushTool: WIRE_DEFAULT_SCULPT_OPTIONS.tool,
       brushProfile: DEFAULT_PROFILE,
       sculptMode: 'raise',
+      smoothLambda: SMOOTH_LAMBDA_DEFAULT,
+      carveDepthBands: CARVE_DEFAULT_DEPTH_BANDS,
       showControls: false,
       panelOpen: true,
     });
@@ -170,6 +174,8 @@ describe('write-through', () => {
       brushTool: 'smooth',
       brushProfile: 'hard',
       sculptMode: 'lower',
+      smoothLambda: SMOOTH_LAMBDA_DEFAULT,
+      carveDepthBands: CARVE_DEFAULT_DEPTH_BANDS,
       showControls: true,
       panelOpen: true,
     });
@@ -304,6 +310,8 @@ describe('fallback on corrupt storage', () => {
       brushTool: 'smooth',
       brushProfile: 'hard',
       sculptMode: 'lower',
+      smoothLambda: SMOOTH_LAMBDA_DEFAULT,
+      carveDepthBands: CARVE_DEFAULT_DEPTH_BANDS,
       showControls: true,
       panelOpen: true,
     });

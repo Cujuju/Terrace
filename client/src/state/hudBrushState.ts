@@ -1,5 +1,8 @@
 import { createSignal } from 'solid-js';
 import {
+  CARVE_DEFAULT_DEPTH_BANDS,
+  CARVE_MAX_DEPTH_BANDS,
+  CARVE_MIN_DEPTH_BANDS,
   CELL_WORLD_SIZE,
   FULL_BRUSH_RADIUS,
   MAX_BRUSH_RADIUS,
@@ -12,6 +15,7 @@ import {
   WIRE_DEFAULT_SCULPT_OPTIONS,
   WORLD_UNIT_CELLS,
   forEachFootprintOffset,
+  isValidCarveDepth,
   type SculptProfile,
   type SculptTool,
 } from '@terrace/shared';
@@ -62,6 +66,8 @@ export const DEFAULT_SCULPT_MODE: SculptMode = 'raise';
 
 export const DEFAULT_SMOOTH_LAMBDA = SMOOTH_LAMBDA_DEFAULT;
 
+export const DEFAULT_CARVE_DEPTH_BANDS = CARVE_DEFAULT_DEPTH_BANDS;
+
 export const DEFAULT_SHOW_CONTROLS = false;
 
 export const DEFAULT_PANEL_OPEN: boolean =
@@ -73,6 +79,7 @@ export interface PersistedHudState {
   readonly brushProfile: SculptProfile;
   readonly sculptMode: SculptMode;
   readonly smoothLambda: number;
+  readonly carveDepthBands: number;
   readonly showControls: boolean;
   readonly panelOpen: boolean;
 }
@@ -83,6 +90,7 @@ export const DEFAULT_HUD_STATE: PersistedHudState = {
   brushProfile: DEFAULT_BRUSH_PROFILE,
   sculptMode: DEFAULT_SCULPT_MODE,
   smoothLambda: DEFAULT_SMOOTH_LAMBDA,
+  carveDepthBands: DEFAULT_CARVE_DEPTH_BANDS,
   showControls: DEFAULT_SHOW_CONTROLS,
   panelOpen: DEFAULT_PANEL_OPEN,
 };
@@ -118,6 +126,13 @@ function readSmoothLambda(value: unknown): number {
     : DEFAULT_SMOOTH_LAMBDA;
 }
 
+/** The wire predicate is the one depth authority; the HUD never re-states it. */
+function readCarveDepthBands(value: unknown): number {
+  return typeof value === 'number' && isValidCarveDepth(value)
+    ? value
+    : DEFAULT_CARVE_DEPTH_BANDS;
+}
+
 function readShowControls(value: unknown): boolean {
   return typeof value === 'boolean' ? value : DEFAULT_SHOW_CONTROLS;
 }
@@ -142,6 +157,7 @@ export function parseHudState(raw: string | null): PersistedHudState {
     brushProfile: readProfile(record['brushProfile']),
     sculptMode: readMode(record['sculptMode']),
     smoothLambda: readSmoothLambda(record['smoothLambda']),
+    carveDepthBands: readCarveDepthBands(record['carveDepthBands']),
     showControls: readShowControls(record['showControls']),
     panelOpen: readPanelOpen(record['panelOpen']),
   };
@@ -178,6 +194,10 @@ const [smoothLambda, setSmoothLambdaSignal] = createSignal<number>(
   stored.smoothLambda,
 );
 
+const [carveDepthBands, setCarveDepthBandsSignal] = createSignal<number>(
+  stored.carveDepthBands,
+);
+
 const [showControls, setShowControlsSignal] = createSignal<boolean>(
   stored.showControls,
 );
@@ -193,6 +213,7 @@ function persist(): void {
     brushProfile: brushProfile(),
     sculptMode: sculptMode(),
     smoothLambda: smoothLambda(),
+    carveDepthBands: carveDepthBands(),
     showControls: showControls(),
     panelOpen: panelOpen(),
   };
@@ -245,6 +266,16 @@ export function setSmoothLambda(lambda: number): void {
   persist();
 }
 
+export function setCarveDepthBands(bands: number): void {
+  const clamped = Math.min(
+    CARVE_MAX_DEPTH_BANDS,
+    Math.max(CARVE_MIN_DEPTH_BANDS, Math.trunc(bands)),
+  );
+  if (clamped === carveDepthBands()) return;
+  setCarveDepthBandsSignal(clamped);
+  persist();
+}
+
 export function setShowControls(show: boolean): void {
   if (show === showControls()) return;
   setShowControlsSignal(show);
@@ -263,6 +294,7 @@ export {
   brushProfile,
   sculptMode,
   smoothLambda,
+  carveDepthBands,
   showControls,
   panelOpen,
 };

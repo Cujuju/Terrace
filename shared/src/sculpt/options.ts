@@ -1,5 +1,5 @@
 import { BEDROCK_BAND } from '../columns.ts';
-import { MAX_HEIGHT, MIN_HEIGHT, TERRACE_BAND_COUNT } from '../constants.ts';
+import { MAX_HEIGHT, MIN_HEIGHT } from '../constants.ts';
 import { bandOf } from '../grid.ts';
 
 export const MIN_BAND = bandOf(MIN_HEIGHT);
@@ -37,13 +37,8 @@ export const CARVE_MIN_DEPTH_BANDS = 1;
 
 export const CARVE_DEFAULT_DEPTH_BANDS = CARVE_MIN_DEPTH_BANDS;
 
-/**
- * The deepest one stroke may cut: a quarter of the bands above the shore is the
- * most a single act should remove; beyond it a carve is world-editing.
- */
-const CARVE_MAX_DEPTH_SHORE_BAND_FRACTION = 4;
-
-export const CARVE_MAX_DEPTH_BANDS = TERRACE_BAND_COUNT / CARVE_MAX_DEPTH_SHORE_BAND_FRACTION;
+/** The deepest one stroke may cut. The HUD ladder and the wire share it. */
+export const CARVE_MAX_DEPTH_BANDS = 10;
 
 /** The one depth predicate: the wire validator and applyCarve both ask it. */
 export function isValidCarveDepth(depthBands: number): boolean {
