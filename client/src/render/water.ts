@@ -109,16 +109,38 @@ const SHORE_CAP_WORLD_Y = SEA_SURFACE_WORLD_Y - WATER_SURFACE_LIFT;
 // An eye at the surface sees the plane edge-on; below this the correction is meaningless.
 const MIN_EYE_LIFT_ABOVE_SEA = WATER_SURFACE_LIFT;
 
+// The cap plane stands in for terrain only near the shore. Past this the fragment is
+// open sea, whose field is nowhere near the threshold, so capping changes nothing.
+const MAX_SHORE_PARALLAX_CELLS = 8;
+const MAX_SHORE_PARALLAX_WORLD_UNITS = MAX_SHORE_PARALLAX_CELLS * CELL_WORLD_SIZE;
+
+// Coverage changes between pixels only at the wet/dry edge, so its derivative is
+// that edge at any view angle. The gain lights a partial step fully.
+const SHORE_OUTLINE_GAIN = 3;
+const SHORE_OUTLINE_COLOUR: readonly [number, number, number] = [1, 0, 0.85];
+
+const shoreOutline = uniform(0);
+
+/** Debug overlay: light the water's own wet/dry edge, to read against the land cap's. */
+export function setShoreOutlineVisible(visible: boolean): void {
+  shoreOutline.value = visible ? 1 : 0;
+}
+
 // Where the view ray reaches band 0's cap. The sea plane sits above it, so a
 // grazing ray meets the plane cells seaward of the land it covers.
 function shoreCapXZ() {
   const eyeLift = max(cameraPosition.y.sub(SEA_SURFACE_WORLD_Y), MIN_EYE_LIFT_ABOVE_SEA);
   const toCap = float(SEA_SURFACE_WORLD_Y - SHORE_CAP_WORLD_Y).div(eyeLift);
-  return positionWorld.xz.add(positionWorld.xz.sub(cameraPosition.xz).mul(toCap));
+  const shift = positionWorld.xz.sub(cameraPosition.xz).mul(toCap);
+  const reach = shift.length();
+  return positionWorld.xz.add(
+    shift.mul(float(MAX_SHORE_PARALLAX_WORLD_UNITS).div(max(reach, MAX_SHORE_PARALLAX_WORLD_UNITS))),
+  );
 }
 
 // The shared drawn field: corner samples blended bilinearly, as drawnCornerNumerator does.
-function shoreCoverage(
+// Returns the signed distance to the shore in screen pixels; positive is wet.
+function shoreEdgeDistance(
   fieldTexture: DataTexture,
   worldSizeCells: UniformNode<'float', number>,
 ) {
@@ -131,7 +153,7 @@ function shoreCoverage(
   const field = mix(mix(tap(0, 0), tap(1, 0), t.x), mix(tap(0, 1), tap(1, 1), t.x), t.y);
   // Wet below the threshold; one screen pixel of fade on the wet side keeps the exact shore dry.
   const wetDepth = float(SHORE_FIELD_THRESHOLD).sub(field);
-  return wetDepth.div(max(fwidth(wetDepth), MIN_SHORE_EDGE_WIDTH)).clamp(0, 1);
+  return wetDepth.div(max(fwidth(wetDepth), MIN_SHORE_EDGE_WIDTH));
 }
 
 function tintOf(shadeMix: ReturnType<typeof texture>['b']) {
@@ -160,10 +182,12 @@ function makeDepthAware(
     .div(worldSizeCells);
   const curves = texture(curveTexture, depthUv);
   compose(material, 'color', (previous) => previous.mul(tintOf(curves.b)));
-  const coverage = shoreCoverage(fieldTexture, worldSizeCells);
-  compose(material, 'opacity', (previous) => previous.mul(curves.r).mul(coverage));
+  const edgeDistance = shoreEdgeDistance(fieldTexture, worldSizeCells);
+  const coverage = edgeDistance.clamp(0, 1);
+  const edge = fwidth(coverage).mul(SHORE_OUTLINE_GAIN).clamp(0, 1).mul(shoreOutline);
+  compose(material, 'opacity', (previous) => max(previous.mul(curves.r).mul(coverage), edge));
   compose(material, 'emissive', (previous) =>
-    previous.add(diffuseColor.rgb.mul(WATER_SELF_LIGHT_RADIANCE)),
+    previous.add(diffuseColor.rgb.mul(WATER_SELF_LIGHT_RADIANCE)).add(vec3(...SHORE_OUTLINE_COLOUR).mul(edge)),
   );
   // The GLSL scaled totalSpecular, which has no slot; F0 is the nearest hook.
   material.specularColorNode = vec3(curves.g);
