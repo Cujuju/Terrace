@@ -16,6 +16,7 @@ import {
   DRAWN_SHORE_HEIGHT,
   heightAt,
   isGapDrawn,
+  spanCapBand,
   isValidCarveDepth,
   isValidHeight,
   MAX_BAND,
@@ -248,7 +249,7 @@ describe('applySculpt — the carve clears the slabs it names and is priced at t
   });
 });
 
-describe('a dragged band never fills the carve under it (issue #224)', () => {
+describe('a drag never reaches below its run’s floor (supersedes issue #224)', () => {
   const CELLS_INWARD = 5;
   const INSIDE_X = FACE_X + 2;
   const DRAG_RAISE = { tool: 'drag', profile: 'hard', anchor: 'band' } as const;
@@ -261,18 +262,32 @@ describe('a dragged band never fills the carve under it (issue #224)', () => {
     return map;
   };
 
-  it('leaves the tunnel byte-untouched whichever band in it is dragged', () => {
-    for (const targetBand of [LIP_BAND - 1, LIP_BAND, LIP_BAND + 1]) {
-      const map = tunnelledCliff();
-      const before = readSpans(map, INSIDE_X, ROW);
-      expect(before).toHaveLength(2);
-      const diff = applySculpt(map, INSIDE_X, ROW, 1, DEFAULT_SCULPT_AMOUNT, {
-        ...DRAG_RAISE,
-        targetBand,
-      });
-      expect([targetBand, diff]).toEqual([targetBand, []]);
-      expect([targetBand, readSpans(map, INSIDE_X, ROW)]).toEqual([targetBand, before]);
-    }
+  it('leaves the tunnel byte-untouched when the run floors in the roof above it', () => {
+    const map = tunnelledCliff();
+    const before = readSpans(map, INSIDE_X, ROW);
+    expect(before).toHaveLength(2);
+    const roof = before[1]!;
+    const diff = applySculpt(map, INSIDE_X, ROW, 1, DEFAULT_SCULPT_AMOUNT, {
+      ...DRAG_RAISE,
+      targetBand: spanCapBand(roof),
+      runFloorBand: roof.floorBand,
+    });
+    expect(diff).toEqual([]);
+    expect(readSpans(map, INSIDE_X, ROW)).toEqual(before);
+  });
+
+  it('fills the tunnel when the run IS the tunnel’s own air', () => {
+    // #224 forbade this. The run contract allows it: grabbing the void's band
+    // runs down to that void's floor, and the slab welds where it lands.
+    const map = tunnelledCliff();
+    const before = readSpans(map, INSIDE_X, ROW);
+    const void_ = spanCapBand(before[0]!) + 1;
+    applySculpt(map, INSIDE_X, ROW, 1, DEFAULT_SCULPT_AMOUNT, {
+      ...DRAG_RAISE,
+      targetBand: void_,
+      runFloorBand: void_,
+    });
+    expect(readSpans(map, INSIDE_X, ROW)).not.toEqual(before);
   });
 });
 
