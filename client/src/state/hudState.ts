@@ -15,6 +15,7 @@ export {
   brushNominalWidthWorldUnits,
   brushWidthWorldUnits,
   parseHudState,
+  oppositeSculptMode,
   sculptDirection,
   setBrushRadius,
   setBrushTool,

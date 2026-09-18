@@ -171,11 +171,8 @@ const [sculptMode, setSculptModeSignal] = createSignal<SculptMode>(
   stored.sculptMode,
 );
 
-/**
- * The direction a held chord names, for as long as it is held. The toggle is
- * the mode; a chord only overrides it, so this is never persisted.
- */
-const [sculptChord, setSculptChordSignal] = createSignal<SculptMode | null>(null);
+/** Whether a chord is held. It inverts the toggle, so it is never persisted. */
+const [sculptChord, setSculptChordSignal] = createSignal<boolean>(false);
 
 const [smoothLambda, setSmoothLambdaSignal] = createSignal<number>(
   stored.smoothLambda,
@@ -229,13 +226,13 @@ export function setSculptMode(mode: SculptMode): void {
   persist();
 }
 
-export function setSculptChord(mode: SculptMode | null): void {
-  if (mode !== sculptChord()) setSculptChordSignal(mode);
+export function setSculptChord(held: boolean): void {
+  if (held !== sculptChord()) setSculptChordSignal(held);
 }
 
-/** What a press sculpts right now: the chord it holds, else the HUD mode. */
+/** What a press sculpts right now: the toggle, inverted while a chord is held. */
 export function effectiveSculptMode(): SculptMode {
-  return sculptChord() ?? sculptMode();
+  return sculptChord() ? oppositeSculptMode(sculptMode()) : sculptMode();
 }
 
 export function setSmoothLambda(lambda: number): void {
@@ -272,4 +269,8 @@ export {
 
 export function sculptDirection(mode: SculptMode): 1 | -1 {
   return mode === 'raise' ? 1 : -1;
+}
+
+export function oppositeSculptMode(mode: SculptMode): SculptMode {
+  return mode === 'raise' ? 'lower' : 'raise';
 }

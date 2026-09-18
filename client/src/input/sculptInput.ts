@@ -40,7 +40,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
     }
 
     syncMode(s, event);
-    const action = resolveSculptPress(event.button, event, effectiveSculptMode());
+    const action = resolveSculptPress(event.button, event);
     if (action === null) return;
     startStroke(s, event, action);
   };
