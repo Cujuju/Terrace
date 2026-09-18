@@ -247,7 +247,6 @@ const pickDebug = new URLSearchParams(window.location.search).has(PICK_DEBUG_QUE
   : null;
 let frozenCursorShown = false;
 viewport.onFrame(() => {
-  const pick = activeToolId() === SCULPT_TOOL_ID ? sculptInput.hoverTarget() : null;
   world.setBrushRefused(denialCue.isRed());
   // While the drag plane is off the ray the stroke is frozen: show a crosshair.
   // Lane E greys the held highlight via sculptInput.dragDescentFrozen().
@@ -258,32 +257,32 @@ viewport.onFrame(() => {
     frozenCursorShown = false;
     canvas.style.cursor = armedAction() === null ? '' : 'crosshair';
   }
+  // A camera gesture freezes the aim: the pointer holds still while the world
+  // slides under it, so every aim-derived overlay keeps its last value.
+  if (cameraGesture.active()) return;
+  const pick = activeToolId() === SCULPT_TOOL_ID ? sculptInput.hoverTarget() : null;
   const tool = brushTool();
   const grabbedBand = world.highlightLayerEdge(pick, {
     litSpanWorldUnits: litLipSpan(),
     heldBand: tool === 'carve' ? sculptInput.carveHeldBand() : sculptInput.heldBand(),
   });
-  // A camera gesture freezes the brush and its mark: the aim slides under a
-  // still pointer while panning, so redrawing would churn for nothing.
-  if (!cameraGesture.active()) {
-    brushPreview.update(
-      pick === null
-        ? null
-        : {
-            ...pick,
-            grabbable: grabbedBand !== null && brushTool() === 'drag',
-            band: grabbedBand,
-            aimBand: world.aimBand(pick),
-            carveBand: world.carveBand(pick),
-          },
-      {
-        radius: brushRadius(),
-        tool: brushTool(),
-        profile: brushProfile(),
-        dir: sculptDirection(effectiveSculptMode()),
-      },
-    );
-  }
+  brushPreview.update(
+    pick === null
+      ? null
+      : {
+          ...pick,
+          grabbable: grabbedBand !== null && brushTool() === 'drag',
+          band: grabbedBand,
+          aimBand: world.aimBand(pick),
+          carveBand: world.carveBand(pick),
+        },
+    {
+      radius: brushRadius(),
+      tool: brushTool(),
+      profile: brushProfile(),
+      dir: sculptDirection(effectiveSculptMode()),
+    },
+  );
   pickDebug?.update(pick, grabbedBand, world.aimBand(pick));
   setHoverPick(
     pick === null ? null : { x: pick.x, y: pick.y, face: pick.face, band: grabbedBand },
