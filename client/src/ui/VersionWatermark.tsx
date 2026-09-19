@@ -110,6 +110,11 @@ export function VersionWatermark(): JSX.Element {
           return (
           <>
           <div class="hud-version__perf-panel">
+            <Show when={stat().duplicateRunners.length > 0}>
+              <span class="hud-version__flag">
+                runner leak: {stat().duplicateRunners.join(', ')} — remount
+              </span>
+            </Show>
             <PerfRow label="pick" value={pickValue(hoverPick())} />
             <div class="hud-version__perf-gap" />
             {
