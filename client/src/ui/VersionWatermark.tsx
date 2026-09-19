@@ -173,8 +173,8 @@ export function VersionWatermark(): JSX.Element {
               <hr class="hud-version__perf-rule" />
               <span class="hud-version__plugin-row hud-version__plugin-head">
                 <span>plugin</span>
-                <span>frame</span>
-                <span>run</span>
+                <span>frames</span>
+                <span>runs</span>
                 <span>share</span>
                 <span>draws</span>
               </span>
