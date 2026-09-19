@@ -1468,6 +1468,13 @@ button.world-header {
   color: rgb(255 255 255 / 32%);
 }
 
+.hud-version__perf-rule {
+  align-self: stretch;
+  border: none;
+  border-top: 1px solid var(--hud-border);
+  margin: 3px 0;
+}
+
 /* ─────────────────────────────────────────────────────────────────────────────
    RESTORE POINTS (world rollback, 2026-08-21). A scrim overlay like the
    chart's — an open document covers the instruments — reusing .chart-button so

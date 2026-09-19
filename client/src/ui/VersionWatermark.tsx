@@ -155,7 +155,11 @@ export function VersionWatermark(): JSX.Element {
               <PerfRow
                 label="up kinds"
                 value={activeUploadKinds()
-                  .map((row) => `${row.kind} ${(row.bytes / 1024).toFixed(1)} KB`)
+                  .map((row) => {
+                    const kind =
+                      row.kind === 'writeBuffer' ? 'wrBuf' : row.kind === 'writeTexture' ? 'wrTex' : row.kind;
+                    return `${kind} ${(row.bytes / 1024).toFixed(1)} KB`;
+                  })
                   .join(' · ')}
               />
             </Show>
@@ -164,6 +168,10 @@ export function VersionWatermark(): JSX.Element {
                 label="up unsized"
                 value={`${stat().uploadUnparsedCallsPerFrame.toFixed(1)} calls/frame`}
               />
+            </Show>
+            <Show when={stat().plugins.length > 0}>
+              <hr class="hud-version__perf-rule" />
+              <PerfRow label="plugin" value="ms/f · ms/r · share · draws" />
             </Show>
             {
 
