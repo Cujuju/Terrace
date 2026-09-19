@@ -558,7 +558,15 @@ export function createClientPluginHost(
           let elapsedMs = 0;
           try {
             for (const deferred of deferredFrameHandlers) {
-              if (!deferred.cancelled) deferred.handler(effectiveDt);
+              if (deferred.cancelled) continue;
+              try {
+                deferred.handler(effectiveDt);
+              } catch (handlerError) {
+                console.error(
+                  `[terrace] client plugin "${name}" frame handler threw`,
+                  handlerError,
+                );
+              }
             }
           } finally {
             elapsedMs = performance.now() - startMs;
