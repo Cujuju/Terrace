@@ -214,9 +214,11 @@ async function main(): Promise<void> {
   const trees = sceneName === 'single' ? SINGLE_SCENE : STAND_SCENE;
   const onlyIndex = readOnlyIndex(params, trees.length);
   const flora = createFloraModels();
-  const placements: TreePlacement[] = trees.map((tree) => ({
+  const placements: TreePlacement[] = trees.map((tree, index) => ({
     x: tree.x,
     z: tree.z,
+    cellX: index,
+    cellY: 0,
     groundY: tree.groundY,
     kind: tree.kind,
     scale: tree.scale,

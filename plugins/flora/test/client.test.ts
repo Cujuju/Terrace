@@ -120,17 +120,19 @@ describe('placement', () => {
   const groundAt = (x: number, y: number): number | null => groundOf.get(`${x},${y}`) ?? null;
 
   it('puts a tree on the rendered surface at its own cell, holds back one whose ground has not arrived, and never invents a floor', () => {
-    const { placements, pendingGround } = placementsFor(
+    const { placements, pendingCells } = placementsFor(
       cells([3, 4], [9, 9], [50, 50], [60, 1]),
       groundAt,
     );
-    expect(pendingGround).toBe(2);
+    expect(pendingCells).toEqual([treeKey(50, 50), treeKey(60, 1)]);
     expect(placements).toHaveLength(2);
 
     const variation = treeVariation(3, 4);
     expect(placements[0]).toEqual({
       x: worldUnitsAcross(3),
       z: worldUnitsAcross(4),
+      cellX: 3,
+      cellY: 4,
       groundY: 5,
       kind: variation.kind,
       scale: variation.scale,
@@ -148,6 +150,8 @@ describe('flora models contract', () => {
       const placements: TreePlacement[] = FLORA_TREE_KINDS.map((kind, index) => ({
         x: index,
         z: 0,
+        cellX: index,
+        cellY: 0,
         groundY: 0,
         kind,
         scale: 1,
