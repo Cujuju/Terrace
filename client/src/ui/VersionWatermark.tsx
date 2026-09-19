@@ -115,7 +115,7 @@ export function VersionWatermark(): JSX.Element {
             {
 
 }
-            <PerfRow label="up" value={`${Math.round(stat().uptimeS)}s`} />
+            <PerfRow label="uptime" value={`${Math.round(stat().uptimeS)}s`} />
             <PerfRow label="frames" value={String(stat().frames)} />
             <PerfRow
               label="pixels"
