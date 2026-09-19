@@ -20,6 +20,8 @@ export interface PluginFrameCost {
   readonly msPerRun: number;
   /** Non-frame plugin time in the window (messages, timers); a total, not a mean. */
   readonly asyncMs: number;
+  /** Slowest single frame run in the window; names spikers means cannot. */
+  readonly msMaxRun: number;
   readonly shareOfFrame: number;
 }
 
@@ -91,6 +93,7 @@ let gpuMs: number[] = [];
 
 const pluginMs = new Map<string, number>();
 const pluginRuns = new Map<string, number>();
+const pluginMaxMs = new Map<string, number>();
 const pluginAsyncMs = new Map<string, number>();
 
 export function setFrameCounterSource(read: () => FrameCounters): void {
@@ -161,10 +164,12 @@ function closeWindow(nowMs: number): void {
   for (const name of pluginNames) {
     const totalMs = pluginMs.get(name) ?? 0;
     const runs = pluginRuns.get(name) ?? 0;
+    const maxMs = pluginMaxMs.get(name) ?? 0;
     const asyncMs = pluginAsyncMs.get(name) ?? 0;
     if (runs === 0 && asyncMs === 0) {
       pluginMs.delete(name);
       pluginRuns.delete(name);
+      pluginMaxMs.delete(name);
       pluginAsyncMs.delete(name);
       continue;
     }
@@ -174,10 +179,12 @@ function closeWindow(nowMs: number): void {
       msPerFrame,
       msPerRun: runs === 0 ? 0 : totalMs / runs,
       asyncMs,
+      msMaxRun: maxMs,
       shareOfFrame: meanFrameMs === 0 ? 0 : msPerFrame / meanFrameMs,
     });
     pluginMs.set(name, 0);
     pluginRuns.set(name, 0);
+    pluginMaxMs.set(name, 0);
     pluginAsyncMs.set(name, 0);
   }
   plugins.sort((a, b) => b.msPerFrame - a.msPerFrame);
@@ -240,6 +247,7 @@ export function recordFrame(startMs: number, renderStartMs: number, endMs: numbe
 export function recordPluginFrame(name: string, ms: number): void {
   pluginMs.set(name, (pluginMs.get(name) ?? 0) + ms);
   pluginRuns.set(name, (pluginRuns.get(name) ?? 0) + 1);
+  if (ms > (pluginMaxMs.get(name) ?? 0)) pluginMaxMs.set(name, ms);
 }
 
 /** Non-frame plugin work (message handlers, timers); reported as a window total. */
@@ -265,6 +273,7 @@ export function resetFrameStats(): void {
   typicalIntervalMs = 0;
   pluginMs.clear();
   pluginRuns.clear();
+  pluginMaxMs.clear();
   pluginAsyncMs.clear();
   gpuMs = [];
 }

@@ -187,6 +187,7 @@ export function VersionWatermark(): JSX.Element {
                 <span class="hud-version__plugin-head">share</span>
                 <span class="hud-version__plugin-head">draws</span>
                 <span class="hud-version__plugin-head">async/ms</span>
+                <span class="hud-version__plugin-head">max</span>
                 <For each={stat().plugins}>
                   {(row) => {
                     const objects = drawObjects().get(row.name);
@@ -198,6 +199,7 @@ export function VersionWatermark(): JSX.Element {
                         <span>{`${String(Math.round(row.shareOfFrame * 100))}%`}</span>
                         <span>{objects === undefined || objects === 0 ? '' : `~${String(objects)}`}</span>
                         <span>{row.asyncMs < 0.005 ? '' : row.asyncMs.toFixed(2)}</span>
+                        <span>{row.msMaxRun < 0.005 ? '' : row.msMaxRun.toFixed(1)}</span>
                       </>
                     );
                   }}

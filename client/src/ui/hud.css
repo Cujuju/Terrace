@@ -1482,15 +1482,16 @@ button.world-header {
 .hud-version__plugin-table {
   align-self: stretch;
   display: grid;
-  grid-template-columns: var(--perf-label-column) repeat(5, auto);
+  grid-template-columns: var(--perf-label-column) repeat(6, auto);
   gap: 1px 0.5em;
 }
 
-.hud-version__plugin-table > span:nth-child(6n + 2),
-.hud-version__plugin-table > span:nth-child(6n + 3),
-.hud-version__plugin-table > span:nth-child(6n + 4),
-.hud-version__plugin-table > span:nth-child(6n + 5),
-.hud-version__plugin-table > span:nth-child(6n) {
+.hud-version__plugin-table > span:nth-child(7n + 2),
+.hud-version__plugin-table > span:nth-child(7n + 3),
+.hud-version__plugin-table > span:nth-child(7n + 4),
+.hud-version__plugin-table > span:nth-child(7n + 5),
+.hud-version__plugin-table > span:nth-child(7n + 6),
+.hud-version__plugin-table > span:nth-child(7n) {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
