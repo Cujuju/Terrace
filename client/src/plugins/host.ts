@@ -537,10 +537,8 @@ export function createClientPluginHost(
         const name = plugin.name;
         const phase: FramePhase =
           moverLookups.has(name) || groundShadeLookups.has(name) ? 'pose' : 'draw';
-        // One runner per plugin per frame: the budget, skip counter and frameStats
-        // sample are per plugin, however many handlers it registered. The list stays
-        // live, so handlers registered after attach join the same runner. Catch-up
-        // dt is best-effort and clamped to the engine's own cap (see scene.ts).
+        // One runner per plugin: shared budget, skip counter and sample.
+        // The list stays live; catch-up dt is clamped (see scene.ts).
         const throttle: PluginFrameThrottle = {
           skipRemaining: 0,
           pendingDt: 0,
@@ -551,9 +549,7 @@ export function createClientPluginHost(
           if (throttle.skipRemaining > 0) {
             throttle.skipRemaining -= 1;
             throttle.pendingDt += dt;
-            // A skipped frame costs nothing; the average dilutes toward zero,
-            // which is the honest shape of "this plugin did nothing this frame".
-            recordPluginFrame(name, 0);
+            // No sample on skips: msPerRun keeps the demand, msPerFrame the impact.
             return;
           }
           const effectiveDt = Math.min(throttle.pendingDt + dt, FRAME_DELTA_CAP_S);
