@@ -98,15 +98,6 @@ export function VersionWatermark(): JSX.Element {
 }
       <Show when={perfOpen() ? frameStats() : null}>
         {(stat) => {
-          // Per-draw share of the CPU render wall left after GPU time — an
-          // estimate, not measured submission cost. Null without draws or
-          // GPU data.
-          const cpuRenderMsPerDraw = createMemo<number | null>(() => {
-            const draws = stat().counters.drawCalls;
-            const gpuMs = stat().gpuMsP50;
-            if (draws === 0 || gpuMs === null) return null;
-            return Math.max(0, stat().renderMsP50 - gpuMs) / draws;
-          });
           // Visible drawables per layer ≈ draws owned (InstancedMesh draws
           // once; culled objects still count, so this is an upper bound).
           const drawObjects = createMemo(
@@ -117,6 +108,7 @@ export function VersionWatermark(): JSX.Element {
             stat().uploadByKind.filter((row) => row.bytes > 0),
           );
           return (
+          <>
           <div class="hud-version__perf-panel">
             <PerfRow label="pick" value={pickValue(hoverPick())} />
             {
@@ -153,6 +145,8 @@ export function VersionWatermark(): JSX.Element {
             <PerfRow label="geometries" value={String(stat().counters.geometries)} />
             <PerfRow label="textures" value={String(stat().counters.textures)} />
             <PerfRow label="programs" value={String(stat().counters.programs)} />
+          </div>
+          <div class="hud-version__perf-panel">
             <PerfRow
               label="queue.write*"
               value={`~${uploadKbPerFrame().toFixed(1)} KB/frame (${stat().uploadCallsPerFrame.toFixed(1)} calls)`}
@@ -176,23 +170,19 @@ export function VersionWatermark(): JSX.Element {
 }
             <For each={stat().plugins}>
               {(row) => {
-                const attributed = (): string => {
-                  const objects = drawObjects().get(row.name);
-                  if (objects === undefined) return '';
-                  const msPerDraw = cpuRenderMsPerDraw();
-                  const draws = ` · ~${String(objects)} draws`;
-                  if (msPerDraw === null) return draws;
-                  return `${draws} · est. ${(objects * msPerDraw).toFixed(2)} ms cpu-render share`;
-                };
+                const objects = drawObjects().get(row.name);
+                const draws =
+                  objects === undefined || objects === 0 ? '' : ` · ~${String(objects)} draws`;
                 return (
                   <PerfRow
                     label={row.name}
-                    value={`${row.msPerRun.toFixed(2)} ms/run · ${row.msPerFrame.toFixed(2)} ms/frame (${String(Math.round(row.shareOfFrame * 100))}%)${attributed()}`}
+                    value={`${row.msPerFrame.toFixed(2)} ms/f · ${row.msPerRun.toFixed(2)} ms/r (${String(Math.round(row.shareOfFrame * 100))}%)${draws}`}
                   />
                 );
               }}
             </For>
           </div>
+          </>
           );
         }}
       </Show>
