@@ -91,7 +91,8 @@ export interface ViewportOptions {
 const MSAA_SAMPLES = 4;
 const NO_MSAA_SAMPLES = 0;
 
-const FRAME_DELTA_CAP_S = 0.1;
+/** Catch-up clamp for skipped plugin frame handlers (reused by the plugin host). */
+export const FRAME_DELTA_CAP_S = 0.1;
 const MS_PER_S = 1000;
 
 const scene0Holder: { scene: unknown } = { scene: null };
