@@ -392,6 +392,8 @@ export function createClientPluginHost(
           const startMs = performance.now();
           try {
             handler();
+          } catch (error) {
+            console.error(`[terrace] client plugin "${name}" threw in onTerrainChanged`, error);
           } finally {
             recordPluginAsync(name, performance.now() - startMs);
           }
