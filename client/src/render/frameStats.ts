@@ -154,6 +154,11 @@ function closeWindow(nowMs: number): void {
   const plugins: PluginFrameCost[] = [];
   for (const [name, totalMs] of pluginMs) {
     const runs = pluginRuns.get(name) ?? 0;
+    if (runs === 0) {
+      pluginMs.delete(name);
+      pluginRuns.delete(name);
+      continue;
+    }
     const msPerFrame = kept === 0 ? 0 : totalMs / kept;
     plugins.push({
       name,
