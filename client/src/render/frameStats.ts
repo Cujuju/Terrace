@@ -42,6 +42,8 @@ export interface FrameStatsSample {
   readonly outsideMsP50: number;
   /** Mean outside time minus attributed plugin impact; the unexplained remainder. */
   readonly unattributedMs: number;
+  /** Plugins whose runner fired more often than frames ran: duplicate runners. */
+  readonly duplicateRunners: readonly string[];
   readonly intervalMsP50: number;
   readonly gpuMsP50: number | null;
   readonly counters: FrameCounters;
@@ -160,6 +162,7 @@ function closeWindow(nowMs: number): void {
   gpuMs = [];
   const meanFrameMs = kept === 0 ? 0 : sumOf(frameMs, kept) / kept;
   const plugins: PluginFrameCost[] = [];
+  const duplicateRunners: string[] = [];
   const pluginNames = new Set([...pluginMs.keys(), ...pluginAsyncMs.keys()]);
   for (const name of pluginNames) {
     const totalMs = pluginMs.get(name) ?? 0;
@@ -174,6 +177,7 @@ function closeWindow(nowMs: number): void {
       continue;
     }
     const msPerFrame = kept === 0 ? 0 : totalMs / kept;
+    if (runs > windowFrames) duplicateRunners.push(name);
     plugins.push({
       name,
       msPerFrame,
@@ -216,6 +220,7 @@ function closeWindow(nowMs: number): void {
     gpuMsP50,
     counters: readCounters?.() ?? EMPTY_COUNTERS,
     plugins,
+    duplicateRunners,
     uploadBytesPerFrame: kept === 0 ? 0 : upload.bytes / kept,
     uploadCallsPerFrame: kept === 0 ? 0 : upload.calls / kept,
     uploadUnparsedCallsPerFrame: kept === 0 ? 0 : upload.unparsedCalls / kept,
