@@ -37,7 +37,7 @@ function logSample(sample: FrameStatsSample): void {
       `draws=${sample.counters.drawCalls} geo=${sample.counters.geometries} ` +
       `tex=${sample.counters.textures} prog=${sample.counters.programs} ` +
       `up=${(sample.uploadBytesPerFrame / 1024).toFixed(1)}KB` +
-      sample.plugins.map((p) => ` ${p.name}=${p.msPerFrame.toFixed(2)}`).join(''),
+      sample.plugins.map((p) => ` ${p.name}=${p.msPerRun.toFixed(2)}/${p.msPerFrame.toFixed(2)}`).join(''),
   );
 }
 

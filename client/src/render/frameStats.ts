@@ -14,7 +14,10 @@ export interface FrameCounters {
 
 export interface PluginFrameCost {
   readonly name: string;
+  /** Mean impact per frame in the window, counting skipped frames as zero. */
   readonly msPerFrame: number;
+  /** Mean cost per executed run — what the plugin wants when it actually runs. */
+  readonly msPerRun: number;
   readonly shareOfFrame: number;
 }
 
@@ -83,6 +86,7 @@ let drainGpu: (() => number[]) | null = null;
 let gpuMs: number[] = [];
 
 const pluginMs = new Map<string, number>();
+const pluginRuns = new Map<string, number>();
 
 export function setFrameCounterSource(read: () => FrameCounters): void {
   readCounters = read;
@@ -149,13 +153,16 @@ function closeWindow(nowMs: number): void {
   const meanFrameMs = kept === 0 ? 0 : sumOf(frameMs, kept) / kept;
   const plugins: PluginFrameCost[] = [];
   for (const [name, totalMs] of pluginMs) {
+    const runs = pluginRuns.get(name) ?? 0;
     const msPerFrame = kept === 0 ? 0 : totalMs / kept;
     plugins.push({
       name,
       msPerFrame,
+      msPerRun: runs === 0 ? 0 : totalMs / runs,
       shareOfFrame: meanFrameMs === 0 ? 0 : msPerFrame / meanFrameMs,
     });
     pluginMs.set(name, 0);
+    pluginRuns.set(name, 0);
   }
   plugins.sort((a, b) => b.msPerFrame - a.msPerFrame);
   for (let i = 0; i < kept; i++) outsideMs[i] = (frameMs[i] ?? 0) - (renderMs[i] ?? 0);
@@ -211,6 +218,7 @@ export function recordFrame(startMs: number, renderStartMs: number, endMs: numbe
 
 export function recordPluginFrame(name: string, ms: number): void {
   pluginMs.set(name, (pluginMs.get(name) ?? 0) + ms);
+  pluginRuns.set(name, (pluginRuns.get(name) ?? 0) + 1);
 }
 
 export function flushFrameStats(): void {
@@ -230,5 +238,6 @@ export function resetFrameStats(): void {
   latestSample = null;
   typicalIntervalMs = 0;
   pluginMs.clear();
+  pluginRuns.clear();
   gpuMs = [];
 }

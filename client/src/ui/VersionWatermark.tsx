@@ -186,7 +186,7 @@ export function VersionWatermark(): JSX.Element {
                 return (
                   <PerfRow
                     label={row.name}
-                    value={`${row.msPerFrame.toFixed(2)} ms (${String(Math.round(row.shareOfFrame * 100))}%)${attributed()}`}
+                    value={`${row.msPerRun.toFixed(2)} ms/run · ${row.msPerFrame.toFixed(2)} ms/frame (${String(Math.round(row.shareOfFrame * 100))}%)${attributed()}`}
                   />
                 );
               }}
