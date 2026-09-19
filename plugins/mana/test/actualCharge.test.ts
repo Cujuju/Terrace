@@ -135,12 +135,14 @@ describe('the charge is the material the stroke moved', () => {
     const onSea = sculpt(harness, press(radius, 'hard'));
 
     expect(onSea.applied).toBe(true);
-    expect(onSea.units).toBe(footprintCells(radius) * DRAWN_SHORE_HEIGHT);
+    expect(onSea.units).toBe(footprintCells(radius) * bandLevelHeight(0));
     expect(onSea.charged).toBe(expectedCharge(onSea.units));
 
     const onLand = sculpt(boot(bandLevelHeight(GROUND_BAND)), press(radius, 'hard'));
-    expect(onLand.units).toBe(onSea.units * BAND_HEIGHT);
-    expect(onSea.units * BAND_HEIGHT).toBe(footprintCells(radius) * DEFAULT_SCULPT_AMOUNT);
+    expect(onLand.units).toBe((onSea.units / bandLevelHeight(0)) * BAND_HEIGHT);
+    expect(onSea.units * BAND_HEIGHT).toBe(
+      footprintCells(radius) * DEFAULT_SCULPT_AMOUNT * bandLevelHeight(0),
+    );
   });
 
   it('a soft stamp levels the core a hard one does, and pays the same fill', () => {

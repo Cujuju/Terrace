@@ -5,6 +5,7 @@ import {
   BEDROCK_BAND,
   CHUNK_SIZE,
   applySculpt,
+  bandLevelHeight,
   setColumn,
   spanIndexCoveringBand,
   type ChunkPayload,
@@ -165,7 +166,7 @@ describe('hoverTarget pins the cell and re-derives the pick', () => {
       const cell = { x: before!.x, y: before!.y };
 
       setColumn(mirror.map, cell.x, cell.y, [
-        { floorBand: BEDROCK_BAND, ceiling: BAND_HEIGHT * 3 },
+        { floorBand: BEDROCK_BAND, ceiling: bandLevelHeight(3) },
       ]);
       const after = input.hoverTarget();
       expect(after).not.toBeNull();
@@ -283,7 +284,7 @@ describe('the aimed-cell pin is released when the stroke ends (#349)', () => {
       const cell = { x: before!.x, y: before!.y };
       fire('pointerdown', {});
       setColumn(mirror.map, cell.x, cell.y, [
-        { floorBand: BEDROCK_BAND, ceiling: BAND_HEIGHT * 3 },
+        { floorBand: BEDROCK_BAND, ceiling: bandLevelHeight(3) },
       ]);
       expect({ x: input.hoverTarget()!.x, y: input.hoverTarget()!.y }).toEqual(cell);
     } finally {

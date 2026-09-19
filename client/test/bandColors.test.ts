@@ -174,9 +174,10 @@ describe('bandPaletteIndex', () => {
     expect(bandPaletteIndex(SEA_LEVEL)).toBe(SEABED_PALETTE_INDEX);
   });
 
-  it('colours the dry remainder of band 0 as land (drawn band 0: heights 1..7)', () => {
+  it('colours the dry remainder of band 0 as land (drawn band 0: heights 1..16)', () => {
     expect(bandPaletteIndex(1)).toBe(FIRST_LAND_PALETTE_INDEX);
-    expect(bandPaletteIndex(BAND_HEIGHT - 1)).toBe(FIRST_LAND_PALETTE_INDEX + 1);
+    expect(bandPaletteIndex(BAND_HEIGHT - 1)).toBe(FIRST_LAND_PALETTE_INDEX);
+    expect(bandPaletteIndex(BAND_HEIGHT + 1)).toBe(FIRST_LAND_PALETTE_INDEX + 1);
   });
 
   it('advances one palette step per terrace band', () => {

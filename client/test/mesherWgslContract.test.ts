@@ -3,6 +3,7 @@ import {
   BAND_HEIGHT,
   BEDROCK_BAND,
   DRAWN_GROUND_BAND_BIAS,
+  DRAWN_SHORE_HEIGHT,
   OPEN_COLUMN_SAMPLE,
   drawnLevelThreshold,
 } from '@terrace/shared';
@@ -19,9 +20,8 @@ import {
  */
 const COVERAGE = 'return spanFloorBand(local, k) <= band && band <= spanCapBand(local, k);';
 const CAP_BAND = 'return drawnBandOfSample(spanCeiling(local, k));';
-const SHIFT_NOT_DIVIDE = 'let band = (h + BAND_BIAS) >> BAND_HEIGHT_SHIFT;';
-const SHORE_EXCEPTION =
-  'return select(band, -1, band == 0 && h + BAND_BIAS < SHORE_THRESHOLD);';
+const SHIFT_NOT_DIVIDE = 'return (h - SHORE_HEIGHT) >> BAND_HEIGHT_SHIFT;';
+const LEVEL_THRESHOLD = 'return level * BAND_HEIGHT + SHORE_THRESHOLD;';
 const SAMPLE_BELOW = 'if (spanCapBand(local, k) < band) { below = spanCeiling(local, k); }';
 
 /** Reads `const NAME : type = value;` out of the emitted shader. */
@@ -42,9 +42,9 @@ describe('the shipped mesher WGSL', () => {
     expect(SPAN_BAND_WGSL).toContain(SAMPLE_BELOW);
   });
 
-  it('bands a sample by an arithmetic shift, with the shore exception', () => {
+  it('bands a sample by an arithmetic shift against the shore height', () => {
     expect(SPAN_BAND_WGSL).toContain(SHIFT_NOT_DIVIDE);
-    expect(SPAN_BAND_WGSL).toContain(SHORE_EXCEPTION);
+    expect(SPAN_BAND_WGSL).toContain(LEVEL_THRESHOLD);
   });
 
   it('is generated from the same constants the TypeScript side uses', () => {
@@ -53,6 +53,7 @@ describe('the shipped mesher WGSL', () => {
     expect(emittedConstant(source, 'BAND_HEIGHT_SHIFT')).toBe(Math.log2(BAND_HEIGHT));
     expect(emittedConstant(source, 'BAND_BIAS')).toBe(DRAWN_GROUND_BAND_BIAS);
     expect(emittedConstant(source, 'SHORE_THRESHOLD')).toBe(drawnLevelThreshold(0));
+    expect(emittedConstant(source, 'SHORE_HEIGHT')).toBe(DRAWN_SHORE_HEIGHT);
     expect(emittedConstant(source, 'BEDROCK_BAND')).toBe(BEDROCK_BAND);
     expect(emittedConstant(source, 'OPEN_COLUMN_SAMPLE')).toBe(OPEN_COLUMN_SAMPLE);
     expect(emittedConstant(source, 'SPAN_COUNT_SHIFT')).toBe(SPAN_COUNT_SHIFT);

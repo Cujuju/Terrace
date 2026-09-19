@@ -13,9 +13,9 @@ import {
   Vector3,
   type Scene,
 } from 'three';
-import { BAND_HEIGHT } from '@terrace/shared';
 import { CELL_WORLD_SIZE } from '../../config.ts';
 import { bandColorOf } from '../../terrain/bandColors.ts';
+import { levelPaletteHeight } from '../../terrain/capEmission.ts';
 import { DENIED_COLOR, GHOST_OPACITY_SCALE, OFFLINE_COLOR, type DenialCue } from '../denialCue.ts';
 import {
   CELL_GRID_COLOR,
@@ -186,7 +186,7 @@ export function createBrushStage(
       return;
     }
     markColor.setHex(MARK_COLOR_RISER, SRGBColorSpace);
-    const [r, g, b] = bandColorOf(band * BAND_HEIGHT);
+    const [r, g, b] = bandColorOf(levelPaletteHeight(band));
     bandTint.setRGB(r, g, b, SRGBColorSpace);
     crosshairMaterial.color.copy(markColor.lerp(bandTint, MARK_BAND_TINT_MIX));
     crosshairMaterial.opacity = CROSSHAIR_OPACITY;

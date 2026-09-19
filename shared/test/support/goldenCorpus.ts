@@ -1,5 +1,7 @@
 import {
   applySculpt,
+  BEDROCK_BAND,
+  BEDROCK_FLOOR,
   drawnBandOfSample,
   floorBandOfHeight,
   heightAt,
@@ -36,12 +38,9 @@ export function fnv1aOfInt32s(values: Iterable<number>): string {
   return hash.toString(16).padStart(HASH_HEX_DIGITS, '0');
 }
 
-/**
- * The one place this corpus writes a span. A packed pair is
- * `[floorBand, ceiling]`; callers still name the floor as a raw height.
- */
+/** Packed pair is `[floorBand, ceiling]`; floor input is raw height. */
 export function packedSpanPair(floor: number, ceiling: number): [number, number] {
-  return [floorBandOfHeight(floor), ceiling];
+  return [floor <= BEDROCK_FLOOR ? BEDROCK_BAND : floorBandOfHeight(floor), ceiling];
 }
 
 /**

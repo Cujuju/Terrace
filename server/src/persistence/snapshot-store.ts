@@ -27,7 +27,10 @@ import {
 import { timePhase } from '../tick-timing.ts';
 
 /** Version 2 packs a span as [floorBand, ceiling]; version 1 packed a raw floor. */
-export const SNAPSHOT_SCHEMA_VERSION = 2;
+export const SNAPSHOT_SCHEMA_VERSION = 3;
+
+/** Schemas 2 and below predate the regular band scheme; decode migrates their heights. */
+export const LEGACY_BAND_SCHEME_VERSION = 2;
 
 /** The oldest schema this server still reads. `decodeColumnSpans` reinterprets its floors. */
 export const OLDEST_READABLE_SCHEMA_VERSION = 1;
@@ -93,6 +96,7 @@ interface HistoryRow {
   created_at: number;
   world_size: number;
   pinned: number;
+  schema_version: number;
   heightmap: Uint8Array;
 }
 
@@ -332,7 +336,7 @@ export class SnapshotStore {
     this.selectLatest = db.prepare('SELECT * FROM snapshots ORDER BY id DESC LIMIT 1');
     this.selectById = db.prepare('SELECT * FROM snapshots WHERE id = ?');
     this.selectHistory = db.prepare(
-      `SELECT id, created_at, world_size, ${PINNED_COLUMN}, heightmap
+      `SELECT id, created_at, world_size, ${PINNED_COLUMN}, schema_version, heightmap
          FROM snapshots ORDER BY id ASC`,
     );
     this.selectSlices = db.prepare(
@@ -465,7 +469,7 @@ export class SnapshotStore {
       );
     }
 
-    const cells = decodeHeights(row.heightmap, row.world_size * row.world_size);
+    const cells = decodeHeights(row.heightmap, row.world_size * row.world_size, row.schema_version);
     let migrated = 0;
     let deepestMigrated = 0;
     for (let i = 0; i < cells.length; i++) {
@@ -547,7 +551,7 @@ export class SnapshotStore {
       const expectedCells = row.world_size * row.world_size;
       let current: Int16Array | null = null;
       try {
-        current = decodeHeights(row.heightmap, expectedCells);
+        current = decodeHeights(row.heightmap, expectedCells, row.schema_version);
       } catch {
         current = null;
       }

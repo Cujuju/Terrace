@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   applySculpt,
+  bandLevelHeight,
   BAND_HEIGHT,
   BEDROCK_BAND,
   BEDROCK_FLOOR,
@@ -29,17 +30,17 @@ describe('the clicked-cell anchor (owner decision 2026-08-19)', () => {
 
   function unevenLedge(): { map: Heightmap; lower: number[]; higher: number[] } {
     const map = createHeightmap(32);
-    map.cells.fill(6 * BAND_HEIGHT + LEDGE_MID_OFFSET);
+    map.cells.fill(bandLevelHeight(6) + LEDGE_MID_OFFSET);
     const lower: number[] = [];
     const higher: number[] = [];
     forEachFootprintOffset(3, (dx, dy) => {
       if (dy < -1) {
         const i = cellIndex(map, 16 + dx, 16 + dy);
-        map.cells[i] = 5 * BAND_HEIGHT + LEDGE_LOW_OFFSET;
+        map.cells[i] = bandLevelHeight(5) + LEDGE_LOW_OFFSET;
         lower.push(i);
       } else if (dy > 1) {
         const i = cellIndex(map, 16 + dx, 16 + dy);
-        map.cells[i] = 7 * BAND_HEIGHT + LEDGE_FLOOR_OFFSET;
+        map.cells[i] = bandLevelHeight(7) + LEDGE_FLOOR_OFFSET;
         higher.push(i);
       }
     });
@@ -49,7 +50,7 @@ describe('the clicked-cell anchor (owner decision 2026-08-19)', () => {
   it('raising never lifts ANY footprint cell past the level above the clicked cell', () => {
     const { map, higher } = unevenLedge();
     const before = Int16Array.from(map.cells);
-    const target = 7 * BAND_HEIGHT;
+    const target = bandLevelHeight(7);
 
     applySculpt(map, 16, 16, 3, DEFAULT_SCULPT_AMOUNT, STAMP_SOFT_ANCHORED);
 
@@ -62,7 +63,7 @@ describe('the clicked-cell anchor (owner decision 2026-08-19)', () => {
 
   it('the periphery never ends above the centre when the ground under it started lower', () => {
     const map = createHeightmap(32);
-    map.cells.fill(6 * BAND_HEIGHT);
+    map.cells.fill(bandLevelHeight(6));
     for (let s = 0; s < 4; s++) {
       applySculpt(map, 16, 16, 3, DEFAULT_SCULPT_AMOUNT, STAMP_SOFT_ANCHORED);
       const centre = heightAt(map, 16, 16);
@@ -70,13 +71,13 @@ describe('the clicked-cell anchor (owner decision 2026-08-19)', () => {
         expect(heightAt(map, 16 + dx, 16 + dy)).toBeLessThanOrEqual(centre);
       });
     }
-    expect(heightAt(map, 16, 16)).toBe((6 + 4) * BAND_HEIGHT);
+    expect(heightAt(map, 16, 16)).toBe(bandLevelHeight(6 + 4));
   });
 
   it('lowering mirrors: nothing under the brush drops past the level below the clicked cell', () => {
     const { map, lower } = unevenLedge();
     const before = Int16Array.from(map.cells);
-    const floor = 5 * BAND_HEIGHT;
+    const floor = bandLevelHeight(5);
 
     applySculpt(map, 16, 16, 3, -DEFAULT_SCULPT_AMOUNT, STAMP_SOFT_ANCHORED);
 
@@ -90,7 +91,7 @@ describe('the clicked-cell anchor (owner decision 2026-08-19)', () => {
   it('hard + clicked anchors the level fill to the clicked band, not the footprint minimum', () => {
     const { map, lower, higher } = unevenLedge();
     const before = Int16Array.from(map.cells);
-    const target = 7 * BAND_HEIGHT;
+    const target = bandLevelHeight(7);
 
     applySculpt(map, 16, 16, 3, DEFAULT_SCULPT_AMOUNT, STAMP_HARD_ANCHORED);
 
@@ -109,7 +110,7 @@ describe('the clicked-cell anchor (owner decision 2026-08-19)', () => {
   it('smooth+soft lowering: the higher terrace under the brush survives the RELAXATION too', () => {
     const { map, higher } = unevenLedge();
     const before = Int16Array.from(map.cells);
-    const target = 7 * BAND_HEIGHT;
+    const target = bandLevelHeight(7);
 
     applySculpt(map, 16, 16, 3, -DEFAULT_SCULPT_AMOUNT, WIRE_SMOOTH_SOFT);
 
@@ -123,11 +124,11 @@ describe('the clicked-cell anchor (owner decision 2026-08-19)', () => {
     const { map, lower } = unevenLedge();
     const deepened: number[] = [];
     for (const i of lower) {
-      map.cells[i] = 4 * BAND_HEIGHT + 8;
+      map.cells[i] = bandLevelHeight(4) + 8;
       deepened.push(i);
     }
     const before = Int16Array.from(map.cells);
-    const floor = 5 * BAND_HEIGHT;
+    const floor = bandLevelHeight(5);
 
     applySculpt(map, 16, 16, 3, DEFAULT_SCULPT_AMOUNT, WIRE_SMOOTH_SOFT);
 
