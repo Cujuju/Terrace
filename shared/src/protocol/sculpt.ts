@@ -1,11 +1,11 @@
 import { MAX_BRUSH_RADIUS, MAX_DRAG_SWEEP_CELLS, MIN_BRUSH_RADIUS } from '../constants.ts';
+import { BEDROCK_BAND } from '../columns.ts';
 import { chebyshevDistance } from '../grid.ts';
 import {
   CARVE_DEFAULT_DEPTH_BANDS,
   isValidCarveDepth,
   LOWEST_CARVEABLE_BAND,
   MAX_BAND,
-  MIN_BAND,
   SCULPT_PROFILES,
   SCULPT_TOOLS,
   SMOOTH_LAMBDA_DEFAULT,
@@ -145,7 +145,7 @@ export function validateSculptIntent(
   if (
     targetBand !== undefined &&
     (!Number.isInteger(targetBand) ||
-      (targetBand as number) < MIN_BAND ||
+      (targetBand as number) < BEDROCK_BAND ||
       (targetBand as number) > MAX_BAND)
   ) {
     return null;
@@ -162,7 +162,7 @@ export function validateSculptIntent(
   if (
     floorBand !== undefined &&
     (!Number.isInteger(floorBand) ||
-      (floorBand as number) < MIN_BAND ||
+      (floorBand as number) < BEDROCK_BAND ||
       (floorBand as number) > (targetBand as number))
   ) {
     return null;
@@ -171,7 +171,7 @@ export function validateSculptIntent(
   // A carve grasps a band it can open; bedrock is not one, and acking a stroke
   // the applier always refuses would promise a cut that never happens.
   const { spanBand } = m;
-  const lowestGraspableBand = tool === 'carve' ? LOWEST_CARVEABLE_BAND : MIN_BAND;
+  const lowestGraspableBand = tool === 'carve' ? LOWEST_CARVEABLE_BAND : BEDROCK_BAND;
   if (
     spanBand !== undefined &&
     (!Number.isInteger(spanBand) ||

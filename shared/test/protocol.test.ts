@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BEDROCK_BAND,
   CARVE_DEFAULT_DEPTH_BANDS,
   CARVE_MAX_DEPTH_BANDS,
   EDGELESS_SCULPT_PROFILE,
@@ -301,7 +302,7 @@ describe('targetBand — the drag field on the wire', () => {
   });
 
   it('rejects a band outside the range the world can hold', () => {
-    for (const targetBand of [MIN_BAND - 1, MAX_BAND + 1, 10_000]) {
+    for (const targetBand of [BEDROCK_BAND - 1, MAX_BAND + 1, 10_000]) {
       expect(validateSculptIntent({ ...drag, targetBand, floorBand: MIN_BAND }, WORLD)).toBeNull();
     }
   });
@@ -445,7 +446,7 @@ describe('spanBand — the grasp on the wire', () => {
   });
 
   it('rejects a band outside the range, or one that is not a band at all', () => {
-    for (const spanBand of [MIN_BAND - 1, MAX_BAND + 1, 1.5, Number.NaN, Infinity, '3', null, {}]) {
+    for (const spanBand of [BEDROCK_BAND - 1, MAX_BAND + 1, 1.5, Number.NaN, Infinity, '3', null, {}]) {
       expect(validateSculptIntent({ ...base, spanBand }, WORLD)).toBeNull();
     }
   });

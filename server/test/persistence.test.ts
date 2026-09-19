@@ -14,6 +14,7 @@ import {
   spanCapBand,
 } from '@terrace/shared';
 import { decodeHeights, encodeHeights } from '../src/persistence/codec.ts';
+import { legacyLevelHeight } from '../src/persistence/band-scheme-migration.ts';
 import {
   OLDEST_READABLE_SCHEMA_VERSION,
   SNAPSHOT_RETENTION,
@@ -53,13 +54,13 @@ function counterPlugin(initial: number): TerracePlugin & { value: number } {
 describe('heightmap codec', () => {
   it('round-trips negative and positive heights', () => {
     const cells = new Int16Array([0, 1, -1, 1024, -1024, 32767, -32768]);
-    const decoded = decodeHeights(encodeHeights(cells), cells.length);
+    const decoded = decodeHeights(encodeHeights(cells), cells.length, SNAPSHOT_SCHEMA_VERSION);
     expect(Array.from(decoded)).toEqual(Array.from(cells));
   });
 
   it('rejects a blob whose length does not match the world', () => {
     const blob = encodeHeights(new Int16Array(10));
-    expect(() => decodeHeights(blob, 11)).toThrow(RangeError);
+    expect(() => decodeHeights(blob, 11, SNAPSHOT_SCHEMA_VERSION)).toThrow(RangeError);
   });
 });
 
@@ -483,13 +484,15 @@ describe('reading a schema 1 world under the band-floor rule', () => {
 
   const ROOF_CEILING = bandLevelHeight(ROOF_CEILING_BAND);
   const FLOOR_CEILING = bandLevelHeight(FLOOR_CEILING_BAND);
+  const V1_FLOOR_CEILING = legacyLevelHeight(1);
+  const V1_ROOF_CEILING = legacyLevelHeight(8);
   const EXACT_RAW_FLOOR = bandLevelHeight(EXACT_FLOOR_BAND);
   const RAISED_RAW_FLOOR = EXACT_RAW_FLOOR + 1;
 
   function v1Column(rawFloor: number): readonly RawFloorSpan[] {
     return [
-      { floor: BEDROCK_FLOOR, ceiling: FLOOR_CEILING },
-      { floor: rawFloor, ceiling: ROOF_CEILING },
+      { floor: BEDROCK_FLOOR, ceiling: V1_FLOOR_CEILING },
+      { floor: rawFloor, ceiling: V1_ROOF_CEILING },
     ];
   }
 
@@ -628,6 +631,11 @@ describe('reading a schema 1 world under the band-floor rule', () => {
   const NO_GAP_SLAB_RAW_FLOOR = NO_GAP_SLAB_CEILING - V1_OVERHANG_SLAB_DEPTH;
   const MERGED_CELL = 4 * WORLD_SIZE + 4;
 
+  const V1_NO_GAP_COLUMN: readonly RawFloorSpan[] = [
+    { floor: BEDROCK_FLOOR, ceiling: legacyLevelHeight(-1) },
+    { floor: legacyLevelHeight(0) - V1_OVERHANG_SLAB_DEPTH, ceiling: legacyLevelHeight(0) },
+  ];
+
   const NO_GAP_COLUMN: readonly RawFloorSpan[] = [
     { floor: BEDROCK_FLOOR, ceiling: NO_GAP_GROUND_CEILING },
     { floor: NO_GAP_SLAB_RAW_FLOOR, ceiling: NO_GAP_SLAB_CEILING },
@@ -647,7 +655,7 @@ describe('reading a schema 1 world under the band-floor rule', () => {
   it('merges a schema 1 pair with no drawn gap and drops the column that leaves', () => {
     plantV1Columns(
       new Map([
-        [MERGED_CELL, NO_GAP_COLUMN],
+        [MERGED_CELL, V1_NO_GAP_COLUMN],
         [EXACT_CELL, v1Column(EXACT_RAW_FLOOR)],
       ]),
     );

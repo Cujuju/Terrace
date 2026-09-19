@@ -16,6 +16,7 @@ import {
   CONTOUR_CELL_CENTRE_GUARD,
   DRAWN_GROUND_BAND_BIAS,
   ISOLINE_SAMPLES_PER_CELL,
+  bandLevelHeight,
   drawnBandOfSample,
   type ChunkPayload,
   type SculptAnchor,
@@ -402,7 +403,7 @@ function worstSculptedChunk(strokes: readonly Stroke[], base = 8 * BAND_HEIGHT) 
 
 describe('flat terrain', () => {
   it('draws a whole-chunk cap for the one band present, and nothing else', () => {
-    const { counts, triangles } = writeEdge(() => BAND_HEIGHT);
+    const { counts, triangles } = writeEdge(() => bandLevelHeight(1));
     expect(counts.skirtTriangleCount).toBe(0);
     expect(counts.capTriangleCount).toBe(2);
     for (const cap of capsOf(triangles)) {
@@ -413,7 +414,7 @@ describe('flat terrain', () => {
   });
 
   it('covers the chunk domain exactly: cell centres in, the next chunk out', () => {
-    const { triangles } = writeEdge(() => BAND_HEIGHT);
+    const { triangles } = writeEdge(() => bandLevelHeight(1));
     expect(topmostCapY(triangles, EDGE_ORIGIN, EDGE_ORIGIN)).toBeCloseTo(
       BAND_WORLD_HEIGHT,
     );
@@ -529,9 +530,9 @@ describe('single-cell features', () => {
   it('renders a one-cell spire as a small rounded column', () => {
     const spire = { i: 5, j: 6 };
     const mirror = mirrorWith([
-      edgeChunk((i, j) => (i === spire.i && j === spire.j ? BAND_HEIGHT : 0)),
+      edgeChunk((i, j) => (i === spire.i && j === spire.j ? bandLevelHeight(1) : 0)),
     ]);
-    const loops = chunkContourLoops(mirror, EDGE_CHUNK, EDGE_CHUNK, BAND_HEIGHT);
+    const loops = chunkContourLoops(mirror, EDGE_CHUNK, EDGE_CHUNK, bandLevelHeight(1));
     expect(loops).toHaveLength(1);
     const centreX = EDGE_ORIGIN + spire.i;
     const centreZ = EDGE_ORIGIN + spire.j;
@@ -616,7 +617,7 @@ describe('honesty — the render never lies about the heightmap', () => {
 
   it('holds over a whole guard disc around each centre, not just the point', () => {
     expectHonest(
-      (i, j) => (((i * 7 + j * 3) % 3) + 1) * BAND_HEIGHT,
+      (i, j) => bandLevelHeight((((i * 7 + j * 3) % 3) + 1)),
       CONTOUR_CELL_CENTRE_GUARD / 2,
     );
   });
@@ -890,7 +891,7 @@ describe('skirt picking', () => {
 
   it('resolves every point of a spire wall to the spire itself', () => {
     const { triangles } = writeEdge((i, j) =>
-      i === 5 && j === 6 ? 2 * BAND_HEIGHT : BAND_HEIGHT,
+      i === 5 && j === 6 ? bandLevelHeight(2) : bandLevelHeight(1),
     );
     expect(cellsUnderSkirts(triangles)).toEqual([
       `${EDGE_ORIGIN + 5},${EDGE_ORIGIN + 6}`,
@@ -921,7 +922,7 @@ describe('skirt picking', () => {
   });
 
   it('breaks an exact tie toward the HIGHER side, which is what the inset is for', () => {
-    const { triangles } = writeEdge((i) => (i < 8 ? 0 : BAND_HEIGHT));
+    const { triangles } = writeEdge((i) => (i < 8 ? 0 : bandLevelHeight(1)));
     const band1Skirts = skirtsOf(triangles).filter(
       (t) => Math.max(t.a.y, t.b.y, t.c.y) === BAND_WORLD_HEIGHT,
     );
@@ -950,17 +951,17 @@ describe('colour attribution', () => {
       (t) => Math.abs(t.a.y - 4 * BAND_WORLD_HEIGHT) < 1e-6,
     );
     expect(highCaps.length).toBeGreaterThan(0);
-    expectColor(highCaps[0].color, TERRAIN_PALETTE[bandPaletteIndex(4 * BAND_HEIGHT)]);
+    expectColor(highCaps[0].color, TERRAIN_PALETTE[bandPaletteIndex(bandLevelHeight(4))]);
 
     const topSkirts = skirtsOf(triangles).filter(
       (t) => Math.abs(Math.max(t.a.y, t.b.y, t.c.y) - 4 * BAND_WORLD_HEIGHT) < 1e-6,
     );
     expect(topSkirts.length).toBeGreaterThan(0);
-    expectColor(topSkirts[0].color, CLIFF_PALETTE[bandPaletteIndex(4 * BAND_HEIGHT)]);
+    expectColor(topSkirts[0].color, CLIFF_PALETTE[bandPaletteIndex(bandLevelHeight(4))]);
   });
 
   it('splits each underwater riser into a next-band-down border sliver over a lightened-tread face (owner, 2026-08-19)', () => {
-    const { triangles } = writeEdge((i) => (i < 8 ? -3 * BAND_HEIGHT : -BAND_HEIGHT));
+    const { triangles } = writeEdge((i) => (i < 8 ? bandLevelHeight(-3) : bandLevelHeight(-1)));
     const skirts = skirtsOf(triangles);
 
     const shelfTop = -1 * BAND_WORLD_HEIGHT;
@@ -975,7 +976,7 @@ describe('colour attribution', () => {
     );
     expect(borders.length).toBeGreaterThan(0);
     for (const border of borders) {
-      expectColor(border.color, TERRAIN_PALETTE[bandPaletteIndex(-2 * BAND_HEIGHT)]);
+      expectColor(border.color, TERRAIN_PALETTE[bandPaletteIndex(bandLevelHeight(-2))]);
       expect(border.selfLit).toBe(SELF_LIT_ALPHA_BYTE);
     }
 
@@ -988,7 +989,7 @@ describe('colour attribution', () => {
         BAND_WORLD_HEIGHT - SEABED_RISER_BORDER_WORLD_HEIGHT,
         6,
       );
-      expectColor(face.color, CLIFF_PALETTE[bandPaletteIndex(-BAND_HEIGHT)]);
+      expectColor(face.color, CLIFF_PALETTE[bandPaletteIndex(bandLevelHeight(-1))]);
       expect(face.selfLit).toBe(SELF_LIT_ALPHA_BYTE);
     }
   });

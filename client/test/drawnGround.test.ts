@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  BAND_HEIGHT,
   CHUNK_SIZE,
+  bandLevelHeight,
   bandOf,
   chunkIndex,
   drawnBandOfSample,
@@ -33,8 +33,9 @@ function groundOf(mirror: TerrainMirror): DrawnGround {
 
 const WORLD_SIZE = CHUNK_SIZE * 2;
 
-/** Off every isoline the fixture has: band k crossings sit at uv = 1/2, the shoreline at uv = 1/16. */
-const OFF_CONTOUR = 1 / 3;
+/** Off every isoline the fixture has: level-to-level crossings sit at uv = 1/2
+ * and the shore sliver hugs the sea corner, so fifths clear them all. */
+const OFF_CONTOUR = 1 / 5;
 
 function ringOf(x: number, z: number): number {
   const centre = WORLD_SIZE / 2 - 0.5;
@@ -47,11 +48,11 @@ function terracedMirror(): TerrainMirror {
     for (let x = 0; x < WORLD_SIZE; x++) {
       mirror.map.cells[z * WORLD_SIZE + x] =
         ringOf(x, z) <= 4
-          ? 3 * BAND_HEIGHT
+          ? bandLevelHeight(3)
           : ringOf(x, z) <= 8
-            ? 2 * BAND_HEIGHT
+            ? bandLevelHeight(2)
             : ringOf(x, z) <= 12
-              ? BAND_HEIGHT
+              ? bandLevelHeight(1)
               : 0;
     }
   }
@@ -121,7 +122,7 @@ describe('drawnGround', () => {
   it('a basin enclosed inside a higher band reports its own lower band (the hole rule)', () => {
     const mirror = terracedMirror();
     for (let z = 14; z <= 17; z++) {
-      for (let x = 14; x <= 17; x++) mirror.map.cells[z * WORLD_SIZE + x] = BAND_HEIGHT;
+      for (let x = 14; x <= 17; x++) mirror.map.cells[z * WORLD_SIZE + x] = bandLevelHeight(1);
     }
 
     const ground = groundOf(mirror);

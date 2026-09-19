@@ -13,6 +13,7 @@ import {
   SEA_COLUMN_DEPTH,
   SEA_LEVEL,
   SNOW_LINE_HEIGHT as WORLD_SNOW_LINE_HEIGHT,
+  bandLevelHeight,
   bandOf,
   drawnBandOfSample,
   isWater,
@@ -157,11 +158,11 @@ function buildPalette(): Rgb[] {
   const stops: Rgb[] = [];
   for (const regime of SEABED_REGIMES) {
     for (let i = 0; i < regime.stops; i++) {
-      stops.push(sampleAnchors(regime.anchors, -stops.length * BAND_HEIGHT));
+      stops.push(sampleAnchors(regime.anchors, bandLevelHeight(-stops.length)));
     }
   }
   for (let band = 0; band <= LAND_RAMP_BANDS; band++) {
-    stops.push(sampleAnchors(LAND_RAMP_ANCHORS, band * BAND_HEIGHT));
+    stops.push(sampleAnchors(LAND_RAMP_ANCHORS, bandLevelHeight(band)));
   }
   return stops;
 }
@@ -177,9 +178,7 @@ export function bandPaletteIndex(height: number): number {
     const depth = 0 - bandOf(height);
     return depth >= SEABED_DEPTH_STOPS ? SEABED_DEPTH_STOPS - 1 : depth;
   }
-  // Drawn land: the cap a height renders on is its drawn band, not its raw band.
-  // Heights 8..15 draw on band 1 (height + bias crosses the threshold), so they
-  // take band 1's palette entry. Water keeps raw depth stops (see SEABED tests).
+  // Land palette uses drawn band. Water uses raw depth stops.
   const drawn = drawnBandOfSample(height);
   const band = drawn < 0 ? 0 : drawn;
   const index = FIRST_LAND_PALETTE_INDEX + band;

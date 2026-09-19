@@ -7,9 +7,9 @@ import {
 } from 'three';
 import type { MeshStandardNodeMaterial } from 'three/webgpu';
 import {
-  BAND_HEIGHT,
   CHUNK_SIZE,
   NEIGHBOURHOOD_CELLS,
+  bandLevelHeight,
   chunkIndex,
   type ChunkPayload,
 } from '@terrace/shared';
@@ -281,21 +281,21 @@ describe('createTerrainMeshes', () => {
     const built = setup(chunks);
 
     const history = [
-      { type: 'terrainDiff' as const, cells: [{ x: 2, y: 3, h: 4 * BAND_HEIGHT }] },
+      { type: 'terrainDiff' as const, cells: [{ x: 2, y: 3, h: bandLevelHeight(4) }] },
       { type: 'terrainDiff' as const, cells: [{ x: 2, y: 3, h: 0 }] },
       {
         type: 'terrainDiff' as const,
         cells: [
-          { x: 2, y: 3, h: 6 * BAND_HEIGHT },
-          { x: CHUNK_SIZE + 4, y: 5, h: 5 * BAND_HEIGHT },
-          { x: 2 * CHUNK_SIZE + 6, y: 7, h: 3 * BAND_HEIGHT },
+          { x: 2, y: 3, h: bandLevelHeight(6) },
+          { x: CHUNK_SIZE + 4, y: 5, h: bandLevelHeight(5) },
+          { x: 2 * CHUNK_SIZE + 6, y: 7, h: bandLevelHeight(3) },
         ],
       },
       {
         type: 'terrainDiff' as const,
         cells: [
           { x: 2, y: 3, h: 0 },
-          { x: CHUNK_SIZE + 4, y: 5, h: 8 * BAND_HEIGHT },
+          { x: CHUNK_SIZE + 4, y: 5, h: bandLevelHeight(8) },
         ],
       },
     ];
@@ -388,7 +388,7 @@ describe('createTerrainMeshes', () => {
     meshes.update(
       applyTerrainDiff(mirror, {
         type: 'terrainDiff',
-        cells: [{ x: 2, y: 3, h: 4 * BAND_HEIGHT }],
+        cells: [{ x: 2, y: 3, h: bandLevelHeight(4) }],
       }),
     );
 

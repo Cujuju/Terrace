@@ -4,28 +4,25 @@ import { BAND_HEIGHT, DRAWN_SHORE_HEIGHT } from './constants.ts';
 // with the biased field. Integer-only throughout, so server and client match.
 // Full contract and its determinism argument: docs/decisions/terrain-relief.md.
 
-/** Half a band. The biased field `height + DRAWN_GROUND_BAND_BIAS` is what the isolines read. */
 export const DRAWN_GROUND_BAND_BIAS = BAND_HEIGHT / 2;
 
-/** Band k's threshold in the biased field (`height + DRAWN_GROUND_BAND_BIAS`). */
-export function drawnLevelThreshold(band: number): number {
-  return band === 0 ? DRAWN_SHORE_HEIGHT + DRAWN_GROUND_BAND_BIAS : band * BAND_HEIGHT;
-}
-
-/** Drawn band of a raw height sample. Sea (at or below the waterline) draws as band -1, never 0. */
-export function drawnBandOfSample(height: number): number {
-  const band = Math.floor((height + DRAWN_GROUND_BAND_BIAS) / BAND_HEIGHT);
-  return band === 0 && height + DRAWN_GROUND_BAND_BIAS < drawnLevelThreshold(0) ? -1 : band;
-}
-
-/** Lowest raw height that draws as band k. Band 0 starts at the shore; every other band spans 16 heights. */
+/** Lowest raw height that draws as band k. Band 0 starts at the shore. */
 export function bandFloorHeight(band: number): number {
-  return band === 0 ? DRAWN_SHORE_HEIGHT : band * BAND_HEIGHT - DRAWN_GROUND_BAND_BIAS;
+  return band * BAND_HEIGHT + DRAWN_SHORE_HEIGHT;
 }
 
-/** Canonical write level for band k: the raw level the sculpt pipeline writes (raw k*16, 1 at the shore). */
+/** Canonical write level: the band's midpoint. */
 export function bandLevelHeight(band: number): number {
-  return band === 0 ? DRAWN_SHORE_HEIGHT : band * BAND_HEIGHT;
+  return bandFloorHeight(band) + DRAWN_GROUND_BAND_BIAS;
+}
+
+/** Band k's threshold in the biased field. Equals the canonical level. */
+export function drawnLevelThreshold(band: number): number {
+  return bandLevelHeight(band);
+}
+
+export function drawnBandOfSample(height: number): number {
+  return Math.floor((height - DRAWN_SHORE_HEIGHT) / BAND_HEIGHT);
 }
 
 /** Drawn-equality: height draws as band k. Equivalent to `drawnBandOfSample(height) === band`. */

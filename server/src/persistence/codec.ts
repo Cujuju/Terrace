@@ -5,6 +5,11 @@ import {
   SPAN_STRIDE,
   type Span,
 } from '@terrace/shared';
+import {
+  LEGACY_BAND_SCHEME_VERSION,
+  migrateFloorBand,
+  migrateHeight,
+} from './band-scheme-migration.ts';
 
 const BYTES_PER_HEIGHT = 2;
 
@@ -24,7 +29,11 @@ export function encodeHeights(cells: Int16Array): Buffer {
   return buffer;
 }
 
-export function decodeHeights(blob: Uint8Array, expectedCells: number): Int16Array {
+export function decodeHeights(
+  blob: Uint8Array,
+  expectedCells: number,
+  schemaVersion: number,
+): Int16Array {
   const expectedBytes = expectedCells * BYTES_PER_HEIGHT;
   if (blob.byteLength !== expectedBytes) {
     throw new RangeError(
@@ -35,7 +44,11 @@ export function decodeHeights(blob: Uint8Array, expectedCells: number): Int16Arr
   const bytes = new Uint8Array(expectedBytes);
   bytes.set(blob);
   if (!HOST_IS_LITTLE_ENDIAN) swapBytesInPlace(bytes);
-  return new Int16Array(bytes.buffer, 0, expectedCells);
+  const cells = new Int16Array(bytes.buffer, 0, expectedCells);
+  if (schemaVersion <= LEGACY_BAND_SCHEME_VERSION) {
+    for (let i = 0; i < cells.length; i++) cells[i] = migrateHeight(cells[i]!);
+  }
+  return cells;
 }
 
 const VALUES_PER_SPAN = SPAN_STRIDE;
@@ -165,14 +178,22 @@ export function decodeColumnSpans(
       if (repaired.length < MIN_SPANS_PER_RECORD) continue;
       packed = repaired.flatMap((span) => [span.floorBand, span.ceiling]);
     }
-    const spans = parsePackedSpans(packed);
-    if (spans === null) {
+    const parsed = parsePackedSpans(packed);
+    if (parsed === null) {
       throw new RangeError(
         `${context}: span table holds a malformed ${spanCount}-span list for cell ` +
           `${cellIndex}; refusing to restore a corrupt world`,
       );
     }
-    spansByCell.set(cellIndex, spans);
+    spansByCell.set(
+      cellIndex,
+      schemaVersion <= LEGACY_BAND_SCHEME_VERSION
+        ? parsed.map((span) => ({
+            floorBand: migrateFloorBand(span.floorBand),
+            ceiling: migrateHeight(span.ceiling),
+          }))
+        : parsed,
+    );
   }
   return spansByCell;
 }

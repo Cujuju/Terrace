@@ -87,7 +87,7 @@ describe('handleSculptIntent', () => {
     // shore level while a lower lands on band -2's canonical level.
     expect(lowered).toBe(bandLevelHeight(-2));
     expect(drawnBandOfSample(lowered)).toBe(-2);
-    expect(raised.heightAt(UNLOCKED_CELL.x, UNLOCKED_CELL.y)).toBe(DRAWN_SHORE_HEIGHT);
+    expect(raised.heightAt(UNLOCKED_CELL.x, UNLOCKED_CELL.y)).toBe(bandLevelHeight(0));
     expect(lowered).toBe(stepTowardBand(SEA_LEVEL, false));
   });
 
@@ -395,7 +395,7 @@ describe('brush tool and edge profile passthrough (decision 2026-08-14)', () => 
   it('an intent naming NO tool is applied as a stamp (the wire default)', () => {
     handleSculptIntent(makeDeps(world, []), PLAYER, sculptMessage());
 
-    expect(world.heightAt(UNLOCKED_CELL.x, UNLOCKED_CELL.y)).toBe(DRAWN_SHORE_HEIGHT);
+    expect(world.heightAt(UNLOCKED_CELL.x, UNLOCKED_CELL.y)).toBe(bandLevelHeight(0));
     expect(neighbourHeights(world, UNLOCKED_CELL.x, UNLOCKED_CELL.y)).toEqual([0, 0, 0, 0]);
   });
 

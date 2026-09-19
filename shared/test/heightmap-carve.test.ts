@@ -301,11 +301,12 @@ describe('a wire-validated carve never throws, wherever the ground sits', () => 
   const ROOF_BANDS = 2;
   const DEPTHS = [CARVE_MIN_DEPTH_BANDS, CARVE_MAX_DEPTH_BANDS];
   // Every legal extreme a heightmap can hold: both limits and a band edge.
+  // The top drawn band is MAX_BAND - 1: bandFloorHeight(MAX_BAND) sits above MAX_HEIGHT.
   const GROUNDS = [
     MAX_HEIGHT,
     MAX_HEIGHT - 1,
     MAX_HEIGHT - BAND_HEIGHT,
-    bandFloorHeight(MAX_BAND),
+    bandLevelHeight(MAX_BAND - 1),
     MIN_HEIGHT + 1,
     MIN_HEIGHT + BAND_HEIGHT,
     bandFloorHeight(MIN_BAND + 1),
@@ -341,7 +342,7 @@ describe('a wire-validated carve never throws, wherever the ground sits', () => 
     }
     for (const packed of map.columnSpans.values()) {
       for (let k = 0; k < packed.length; k += 2) {
-        if (packed[k]! < MIN_BAND || packed[k]! > MAX_BAND) return false;
+        if (packed[k]! < BEDROCK_BAND || packed[k]! > MAX_BAND) return false;
         if (packed[k + 1]! < MIN_HEIGHT || packed[k + 1]! > MAX_HEIGHT) return false;
       }
     }

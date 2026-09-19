@@ -38,9 +38,9 @@ import {
 // re-point the functions here and every invariant below follows.
 // ---------------------------------------------------------------------------
 
-/** `floor` is a raw height: the band it stands in is what the span records. */
+/** Floor input is raw height; span records its band. */
 export function makeSpan(floor: number, ceiling: number): Span {
-  return { floorBand: floorBandOfHeight(floor), ceiling };
+  return { floorBand: floor <= BEDROCK_FLOOR ? BEDROCK_BAND : floorBandOfHeight(floor), ceiling };
 }
 
 /** Raw height the span's material starts at: the bottom of its floor band. */
@@ -366,9 +366,7 @@ function airRemainsBetween(spans: readonly Span[], lo: number, hi: number): bool
 }
 
 /**
- * Shielding: a drag never reaches air below the run's floor. Gaps ABOVE it may
- * close — the slab lands and welds — but nothing under the grasped material
- * can be touched.
+ * Drag never reaches air below the run floor.
  */
 export function expectGapsBelowRunSurvive(
   map: Heightmap,

@@ -7,6 +7,7 @@ import {
   DRAWN_GROUND_COORD_DENOM,
   DRAWN_GROUND_CROSSING_MIDPOINT,
   DRAWN_GROUND_SIMPLIFY_EPSILON,
+  DRAWN_SHORE_HEIGHT,
   ISOLINE_SAMPLES_PER_CELL,
   ISOLINE_SOLVE_DENOM,
   OPEN_COLUMN_SAMPLE,
@@ -133,11 +134,10 @@ function bandHeightShift(): number {
  * instead of a transcription of it. `buildMesherWgsl` interpolates it verbatim.
  */
 export const SPAN_BAND_WGSL = `fn drawnBandOfSample(h : i32) -> i32 {
-  let band = (h + BAND_BIAS) >> BAND_HEIGHT_SHIFT;
-  return select(band, -1, band == 0 && h + BAND_BIAS < SHORE_THRESHOLD);
+  return (h - SHORE_HEIGHT) >> BAND_HEIGHT_SHIFT;
 }
 fn levelThreshold(level : i32) -> i32 {
-  return select(level * BAND_HEIGHT, SHORE_THRESHOLD, level == 0);
+  return level * BAND_HEIGHT + SHORE_THRESHOLD;
 }
 
 fn spanCountOf(local : i32) -> i32 {
@@ -210,6 +210,7 @@ const CELL_WORLD_SIZE : f32 = ${wgslF32(CELL_WORLD_SIZE)};
 const BAND_WORLD_HEIGHT : f32 = ${wgslF32(BAND_WORLD_HEIGHT)};
 const SEABED_RIM_HEIGHT : f32 = ${wgslF32(SEABED_RISER_BORDER_WORLD_HEIGHT)};
 const SHORE_THRESHOLD : i32 = ${wgslI32(drawnLevelThreshold(0))};
+const SHORE_HEIGHT : i32 = ${wgslI32(DRAWN_SHORE_HEIGHT)};
 const CEILING_EDGE_CROSSING : f32 = ${wgslF32(CEILING_EDGE_CROSSING)};
 const CEILING_INSIDE : i32 = ${wgslI32(CEILING_INSIDE)};
 const CEILING_OUTSIDE : i32 = ${wgslI32(CEILING_OUTSIDE)};

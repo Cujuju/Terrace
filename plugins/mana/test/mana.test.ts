@@ -38,7 +38,7 @@ import {
   worldWithUnlockedChunks,
 } from '../../../server/test/support/harness.ts';
 import { plugin as revealPlugin } from '../../reveal/server/index.ts';
-import { CHUNK_UNLOCK_MANA, chunkUnlockFee, openedChunkCount, sculptManaCost } from '../pricing.ts';
+import { CHUNK_UNLOCK_MANA, chunkUnlockFee, displacementManaCost, openedChunkCount, sculptManaCost } from '../pricing.ts';
 import { MANA_PLUGIN_NAME } from '../protocol.ts';
 import {
   FULL_POOL_MAX_RADIUS_HARD_STAMPS,
@@ -1142,7 +1142,7 @@ describe('charge follows effect — a stroke that changes nothing costs nothing'
     }
   });
 
-  it('a stroke that moves even one cell still costs the full nominal price', () => {
+  it('a stroke that moves even one cell is charged for what it moved', () => {
     const harness = bootAtWorldFloor();
     const outcome = handleSculptIntent(
       { world: harness.world, interceptors: harness.host },
@@ -1158,8 +1158,14 @@ describe('charge follows effect — a stroke that changes nothing costs nothing'
       },
     );
     expect(outcome.applied).toBe(true);
-    if (outcome.applied) expect(outcome.diff.length).toBeGreaterThan(0);
-    expect(manaBalanceOf(PLAYER.id)).toBe(MANA_CAPACITY - MANA_COST_PER_MIN_RADIUS_SCULPT);
+    const diff = outcome.applied ? outcome.diff : [];
+    expect(diff.length).toBeGreaterThan(0);
+    // The floor raise moves one cell a partial band, so the charge follows
+    // the effect instead of the nominal point price.
+    const units = diff.reduce((sum, cell) => sum + (cell.h - MIN_HEIGHT), 0);
+    expect(manaBalanceOf(PLAYER.id)).toBe(
+      MANA_CAPACITY - displacementManaCost(units, MANA_PER_BAND_CELL, 'stamp'),
+    );
   });
 });
 

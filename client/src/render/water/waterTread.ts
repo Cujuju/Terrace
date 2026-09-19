@@ -4,6 +4,7 @@ import {
   cellIndex,
   chunksPerEdge,
   drawnBandOfSample,
+  drawnLevelThreshold,
 } from '@terrace/shared';
 import { CELL_WORLD_SIZE } from '../../config.ts';
 import { sampleHeight, type TerrainMirror } from '../../terrain/mirror.ts';
@@ -79,12 +80,9 @@ export function appendRegionTile(
   surfaceY: number,
   out: number[],
 ): ContourLoop[] {
-  // Surface band 0 is the ocean's own level: the sea plane already draws
-  // every below-sea surface, so a region sheet here can only double-draw
-  // the sea (or float above it on cap+lift) — never add water at band 0.
-  // Higher-band curtains still fall to the sea; only region emission stops.
+  // Band 0 emits no region sheet; the sea plane covers it.
   if (region.surfaceBand === 0) return [];
-  const threshold = region.surfaceBand * BAND_HEIGHT;
+  const threshold = drawnLevelThreshold(region.surfaceBand);
   const fieldAt = regionFieldAt(mirror, region, threshold);
 
   const tilesPerEdge = chunksPerEdge(mirror.map.size);

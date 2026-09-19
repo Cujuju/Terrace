@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  BAND_HEIGHT,
   CHUNK_SIZE,
+  bandLevelHeight,
   bandOf,
   cellIndex,
   cellX,
@@ -30,7 +30,7 @@ function groundOf(mirror: TerrainMirror): DrawnGround {
 
 const WORLD_SIZE = CHUNK_SIZE * 4;
 
-const PLATEAU_HEIGHT = 3 * BAND_HEIGHT;
+const PLATEAU_HEIGHT = bandLevelHeight(3);
 const PIT_HEIGHT = 0;
 const PIT_FLOOR_BAND = drawnBandOfSample(PIT_HEIGHT);
 const bandCapY = (band: number): number => band * BAND_WORLD_HEIGHT;

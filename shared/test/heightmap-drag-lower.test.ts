@@ -35,7 +35,7 @@ describe('a drag-lower on a tall face is cut back at the grabbed band (2026-09-0
     const map = createHeightmap(SIZE);
     for (let y = CY - POLE_REACH; y <= CY + POLE_REACH; y++) {
       for (let x = CX - POLE_REACH; x <= CX + POLE_REACH; x++) {
-        map.cells[cellIndex(map, x, y)] = CAP_BAND * BAND_HEIGHT;
+        map.cells[cellIndex(map, x, y)] = bandLevelHeight(CAP_BAND);
       }
     }
     return map;
@@ -62,7 +62,7 @@ describe('a drag-lower on a tall face is cut back at the grabbed band (2026-09-0
     const map = poleOnPlain();
     pullIn(map, CAP_BAND);
     expect(eastEdgeBand(map)).toBe(CAP_BAND - 1);
-    expect(heightAt(map, CX + POLE_REACH, CY)).toBe((CAP_BAND - 1) * BAND_HEIGHT);
+    expect(heightAt(map, CX + POLE_REACH, CY)).toBe(bandLevelHeight(CAP_BAND - 1));
   });
 
   it('the cut sweeps the footprint at the grabbed band and stops at its edge', () => {
@@ -87,7 +87,7 @@ describe('a lower seed on a plateau interior leaves a lip a lower pull can widen
 
   it('digs one band at the cursor, then a lower drag grabbing the old band eats the rim', () => {
     const map = createHeightmap(SIZE);
-    map.cells.fill(PLATEAU_BAND * BAND_HEIGHT);
+    map.cells.fill(bandLevelHeight(PLATEAU_BAND));
 
     applySculpt(map, CX, CY, RADIUS, -DEFAULT_SCULPT_AMOUNT, LOWER_SEED);
     const before = PLATEAU_BAND;
@@ -180,7 +180,7 @@ describe('a drag-lower retreats one drawn band and never reaches for bedrock', (
   const CY = 16;
   const REACH = 3;
   const RADIUS = 4;
-  const GRABS = [MIN_BAND + 2, -8, 0, 1, 20, MAX_BAND];
+  const GRABS = [MIN_BAND + 2, -8, 0, 1, 20, MAX_BAND - 1];
   const DRAG_LOWER = { tool: 'drag', profile: 'hard', anchor: 'band' } as const;
 
   const towerAt = (band: number): Heightmap => {

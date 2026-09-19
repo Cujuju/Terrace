@@ -81,7 +81,9 @@ const RIDGE_X = 20;
 const RIDGE_BAND = 12;
 const PLATEAU_BAND = 10;
 const AIM_ORIGIN_CELL = 4;
-const AIM_ORIGIN_BAND = 20;
+/** High enough to clear the ridge, low enough to strike the plateau riser
+ * just under its lip, so the walk starts at the edge cell. */
+const AIM_ORIGIN_BAND = 19;
 /** ~20 degrees of pitch: the aim clears the ridge and lands well past it. */
 const AIM_SLOPE = -0.36;
 
