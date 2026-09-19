@@ -171,33 +171,30 @@ export function VersionWatermark(): JSX.Element {
             </Show>
             <Show when={stat().plugins.length > 0}>
               <hr class="hud-version__perf-rule" />
-              <span class="hud-version__plugin-row hud-version__plugin-head">
-                <span>plugin</span>
-                <span>frames/s</span>
-                <span>runs/s</span>
-                <span>share</span>
-                <span>draws</span>
-                <span>async/ms</span>
-              </span>
+              <div class="hud-version__plugin-table">
+                <span class="hud-version__plugin-head">plugin</span>
+                <span class="hud-version__plugin-head">frames/s</span>
+                <span class="hud-version__plugin-head">runs/s</span>
+                <span class="hud-version__plugin-head">share</span>
+                <span class="hud-version__plugin-head">draws</span>
+                <span class="hud-version__plugin-head">async/ms</span>
+                <For each={stat().plugins}>
+                  {(row) => {
+                    const objects = drawObjects().get(row.name);
+                    return (
+                      <>
+                        <span class="hud-version__perf-label">{row.name}</span>
+                        <span>{row.msPerFrame.toFixed(2)}</span>
+                        <span>{row.msPerRun.toFixed(2)}</span>
+                        <span>{`${String(Math.round(row.shareOfFrame * 100))}%`}</span>
+                        <span>{objects === undefined || objects === 0 ? '' : `~${String(objects)}`}</span>
+                        <span>{row.asyncMs < 0.005 ? '' : row.asyncMs.toFixed(2)}</span>
+                      </>
+                    );
+                  }}
+                </For>
+              </div>
             </Show>
-            {
-
-}
-            <For each={stat().plugins}>
-              {(row) => {
-                const objects = drawObjects().get(row.name);
-                return (
-                  <span class="hud-version__plugin-row">
-                    <span class="hud-version__perf-label">{row.name}</span>
-                    <span>{row.msPerFrame.toFixed(2)}</span>
-                    <span>{row.msPerRun.toFixed(2)}</span>
-                    <span>{`${String(Math.round(row.shareOfFrame * 100))}%`}</span>
-                    <span>{objects === undefined || objects === 0 ? '' : `~${String(objects)}`}</span>
-                    <span>{row.asyncMs < 0.005 ? '' : row.asyncMs.toFixed(2)}</span>
-                  </span>
-                );
-              }}
-            </For>
           </div>
           </>
           );
