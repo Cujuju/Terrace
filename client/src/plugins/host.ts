@@ -103,6 +103,9 @@ export const PLUGIN_FRAME_BUDGET_MS = 1.0;
 /** Frames skipped after one over-budget sample; catch-up dt stays under plugin clamps. */
 export const PLUGIN_FRAME_SKIP_FRAMES = 2;
 
+/** Single runs past this log immediately; the window max column keeps the rest. */
+export const PLUGIN_SLOW_RUN_MS = 10;
+
 interface PluginFrameThrottle {
   skipRemaining: number;
   pendingDt: number;
@@ -607,6 +610,11 @@ export function createClientPluginHost(
           } finally {
             elapsedMs = performance.now() - startMs;
             recordPluginFrame(name, elapsedMs);
+          }
+          if (elapsedMs > PLUGIN_SLOW_RUN_MS) {
+            console.warn(
+              `[terrace] client plugin "${name}" slow run: ${elapsedMs.toFixed(2)} ms`,
+            );
           }
           if (elapsedMs > PLUGIN_FRAME_BUDGET_MS) {
             throttle.skipRemaining = PLUGIN_FRAME_SKIP_FRAMES;
