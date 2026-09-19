@@ -115,21 +115,16 @@ export interface KrakenTarget {
 
 export const BOAT_PERSONAL_SPACE_CELLS = cellsAcross(0.5);
 
-/** Cruiser legs split into hops of at most this span. Short hops fit one
- * budgeted trial search AND keep the search box hugging the leg, so coastal
- * detours stay inside the box instead of exhausting it. Short legs route
- * cheap and arrive; arrival draws the next leg from where the fleet sits. */
+/** Cruiser legs split into hops of at most this span. Short hops keep one
+ * budgeted trial search inside its box; arrival draws the next leg. */
 const FLEET_HOP_LENGTH_CELLS = 16;
 
-/** Cap for one leg-level route search when a fleet (re)builds its chain.
- * One routed leg subdivides into walkable-by-construction hops, so this
- * single search amortizes over the whole leg lifetime. One attempt per tick. */
+/** Cap for one leg-level search per fleet chain rebuild. One routed leg
+ * subdivides into hops, amortizing the search; one attempt per tick. */
 const LEG_ROUTE_NODE_CAP = 32768;
 
-/** Seconds a flagship goes without holding any route before its cruising
- * leg is declared blocked and re-planned from where it sits. Some legs
- * point across water that only connects via detours no boxed search can
- * fit; facing another spoke beats retrying the same span forever. */
+/** Seconds a flagship holds no route before its leg is declared blocked and
+ * re-planned. Facing another spoke beats retrying an unboxable span. */
 const SQUADRON_LEG_STALE_SECONDS = 60;
 
 /** Lattice spacing between station slots around a fleet hop. Rank 0 is the
@@ -140,18 +135,12 @@ const FLEET_FORMATION_SPACING_CELLS = 3 * BOAT_PERSONAL_SPACE_CELLS;
  * every shared cell fall back to their own search. */
 const FLEET_ROUTE_REJOIN_CELLS = 8;
 
-/** Snap radius for blind chain points and formation slots: hops and berths
- * land on the nearest sailable cell within this many cells, so a leg drawn
- * across a peninsula still aims at water. Anything farther out keeps the old
- * direct-steer fallback rather than dragging the aim across the map. */
+/** Snap radius for chain points and slots: hops land on the nearest sailable
+ * cell nearby, so peninsula legs still aim at water. */
 const FLEET_SNAP_RADIUS_CELLS = 12;
 
-/** Cohesion margin around the flagship: members this far ahead slow down to
- * let the fleet catch up, and the flagship slows when its worst straggler
- * trails beyond it. Never a full hold (see the floor below): zero stride is
- * a freeze no timeout clears — a member past twice the margin during muster
- * would sit forever while the flagship waits on it. Sized to clear formation
- * slots plus snap drift, so holding station never reads as straggling. */
+/** Cohesion margin: members ahead slow down, the flagship waits for
+ * stragglers. Never zero — a full hold is a freeze no timeout clears. */
 const FLEET_COHESION_MARGIN_CELLS = 24;
 
 /** Floor under the cohesion slowdown: a fleet slows together, never to zero. */
@@ -163,9 +152,8 @@ function cohesionSlowdown(offsetCells: number): number {
   return 1 - (offsetCells - FLEET_COHESION_MARGIN_CELLS) / FLEET_COHESION_MARGIN_CELLS;
 }
 
-/** Speed factor keeping a fleet together. Members ahead of the flagship along
- * the fleet bearing ease off; the flagship eases off for stragglers behind.
- * No hard gate: one stuck boat slows its fleet, never freezes it. */
+/** Speed factor keeping a fleet together: leaders ease off for stragglers
+ * and vice versa. Slows stuck boats' fleets, never freezes them. */
 function fleetCohesion(boat: Boat, squadronId: number, goalX: number, goalY: number): number {
   const members = squadronMembers(squadronId);
   if (members.length < 2) return 1;
@@ -206,16 +194,12 @@ interface FleetChain {
 
 const fleetChains = new Map<number, FleetChain>();
 
-/** Last successful hop search per squadron, shared fleet-wide across ticks.
- * The flagship writes it when its search lands; every member adopts from it
- * instead of searching. Keyed by squadron; entries die with their chain, so
- * a hop change can never serve a previous hop's cells. */
+/** Last landed hop search per squadron, shared fleet-wide. Members adopt
+ * instead of searching; entries die with their chain. */
 const fleetSharedRoutes = new Map<number, { hopX: number; hopY: number; cells: RouteCell[] }>();
 
-/** Last searched hop route per squadron, for the `?waypoints` overlay's sailed
- * lines. Written at the end of every tick from that tick's shared searches;
- * entries for dissolved squadrons are pruned alongside the chains. Debug
- * only: steering reads voyage routes, never this map. */
+/** Last searched hop routes per squadron, for the debug overlay's sailed
+ * lines. Debug only; steering never reads this map. */
 const lastSailedBySquadron = new Map<number, readonly RouteCell[] | null>();
 
 function nearestRouteIndex(
@@ -359,10 +343,8 @@ interface Voyage {
   goalX: number;
   goalY: number;
   noProgressSeconds: number;
-  /** Seconds with no route AND no net motion. Per-tick movement lies:
-   * dithering boats take full strides that sum to zero, and resync
-   * reports progress without displacement. Only a multi-tick window of
-   * net displacement is honest, so this accrues in whole windows. */
+  /** Seconds with no route AND no net motion. Per-tick strides lie
+   * (dithering sums to zero), so this accrues in whole windows only. */
   nullSeconds: number;
   poolTried: boolean;
   slot: number | null;
@@ -370,12 +352,8 @@ interface Voyage {
   heldTicks: number;
   sailedFrom: { x: number; y: number } | null;
   restSeconds: number;
-  /** Goal-closure window: range to the goal and route progress at the
-   * window start, plus its age in ticks. A routed boat progresses by
-   * following its route (index advances); a routeless boat progresses by
-   * closing on the goal. Orbiting a slot advances neither: the index sits
-   * at zero while the boat circles off-route. Displacement alone lies
-   * (dithering takes full strides summing to zero). */
+  /** Goal-closure window: range and route progress at its start, plus age.
+   * Orbiting advances neither; displacement alone lies, so both are tracked. */
   anchorRange: number;
   anchorRouteIndex: number;
   anchorTicks: number;
@@ -713,9 +691,8 @@ export function advanceShipyards(world: BoatWorld, dt: number): void {
   }
 }
 
-/** A kraken within one patrol range of a village answers with the nearest
- * fleet: that fleet returns to attack it. Boats the kraken is already on
- * top of fight back in self-defence whether or not a village is near. */
+/** A kraken within patrol range of a village is answered by the nearest
+ * fleet. Boats it sits on fight back regardless. */
 function krakenNearVillage(kraken: KrakenTarget): boolean {
   for (const village of villages.values()) {
     if (distance(village.x, village.y, kraken.x, kraken.y) <= VILLAGE_PATROL_RANGE_CELLS) {
@@ -767,9 +744,8 @@ function assignStationGoals(
 ): Map<number, StationGoal> {
   const goals = new Map<number, StationGoal>();
   if (kraken === null) return goals;
-  // Boats answering the kraken: any boat it is already on top of, plus the
-  // whole of the nearest fleet when a village is threatened. No boat is
-  // recalled by home: fleets stay together and answer as fleets.
+  // Boats answering the kraken: those it sits on, plus the whole nearest
+  // fleet when a village is threatened. Fleets answer as fleets.
   const answering = new Set<number>();
   for (let index = 0; index < boats.length; index++) {
     if (
@@ -900,21 +876,16 @@ const FULL_TURN_RADIANS = 2 * Math.PI;
 
 const TICK_ROUTE_SEARCH_CAP = 8;
 
-/** Trial expansions per sail search (~2ms). Near and open-water routes complete
- * far below this (probes show 3-15); maze searches that would eat the whole
- * pool exhaust the trial instead and defer, retrying as the boat moves. */
+/** Trial expansions per sail search. Open-water routes finish far below
+ * it; maze searches exhaust it and defer instead. */
 const TRIAL_NODE_BUDGET = 1024;
 
-/** Rescue budget for stuck boats: a capped draw from the shared tick pool.
- * Whole-journey spans (a boat 300 cells from home) can never fit a trial;
- * one capped pool search per stuck episode either brings it home or proves
- * the span needs subdivision. Capped (not the whole pool) so one rescue
- * cannot eat the tick; once-per-episode so failures cannot burn it yearly. */
+/** Rescue budget for stuck boats: one capped pool search per stuck episode.
+ * Capped so one rescue cannot eat the tick. */
 const STUCK_POOL_NODES = 8192;
 
-/** Beyond this chebyshev distance A* boxes dwarf the node pool, so boats steer
- * direct (today's null-route behavior) until they close within range. Far
- * open-water legs need no route; far maze legs cannot fit the pool anyway. */
+/** Beyond this chebyshev distance A* boxes dwarf the pool, so boats steer
+ * direct until they close within range. */
 const ROUTE_DIRECT_RANGE_CELLS = 300;
 
 const UNREACHABLE_CACHE_CAP = 4096;
@@ -931,9 +902,8 @@ function noteTerrainChanged(): void {
 
 const unreachableCache = new Map<string, number>();
 
-/** Spans that exhausted the trial, keyed like unreachableCache. A span that
- * fills the box once fills it every tick until the terrain or the endpoints
- * move; re-spending trials on it starves routable searches. Same cap. */
+/** Spans that exhausted the trial, keyed like the unreachable cache.
+ * Re-spending trials on them starves routable searches. */
 const exhaustedCache = new Map<string, number>();
 
 function rememberExhausted(key: string): void {
@@ -1097,10 +1067,8 @@ function squadronNavigator(
       seed: number,
       attempt: number,
     ): SquadronWaypoint | null {
-      // Pose-only draw: the fleet subdivides the leg into short hops and
-      // pathfinds once per hop, so no long A* runs here. Legs stay inside
-      // the departure sea region: a leg no boat can sail only builds chains
-      // whose hops sit on land.
+      // Pose-only draw: the leg subdivides into short hops pathed once each,
+      // and stays in the departure sea region.
       const regions = currentSeaRegions();
       const fromRegion =
         regions === null ? 0 : regionAt(regions, world.worldSize, fromX, fromY);
@@ -1141,10 +1109,8 @@ function villageRanks(): number[] {
   return ranks;
 }
 
-/** Route a fleet leg once and stride the route into hops. Returns null
- * when the leg won't route (different sea regions, no pool left, search
- * fails) so the caller falls back to straight subdivision. Hops sampled
- * from route cells are walkable by construction. */
+/** Route a fleet leg once, stride the route into hops. Null when the leg
+ * won't route; the caller falls back to subdivision. */
 function routeLegPoints(
   world: BoatWorld,
   eroded: TerrainSampler,
@@ -1242,11 +1208,8 @@ function assignSquadronGoals(
   for (const squadronId of [...fleetSharedRoutes.keys()]) {
     if (!fleetChains.has(squadronId)) fleetSharedRoutes.delete(squadronId);
   }
-  // One shared chain per fleet: the squadron draws the coarse leg, the
-  // fleet routes it once around barriers, and the flagship cursor drives
-  // every member along the subdivided route. Hops sampled from route cells
-  // are walkable by construction; straight subdivision is only the fallback
-  // when the leg itself won't route.
+  // One shared chain per fleet: the squadron draws the leg, the flagship
+  // cursor drives members along it. Straight subdivision is the fallback.
   const arrivalSquared = SQUADRON_MUSTER_RADIUS_CELLS * SQUADRON_MUSTER_RADIUS_CELLS;
   const hops = new Map<number, SquadronWaypoint>();
   let legRoutedThisTick = false;
@@ -1371,9 +1334,8 @@ interface SailTick {
   debug: FleetRouteDebug;
   searchesLeft: number;
   fleetRoutes: Map<number, { hopX: number; hopY: number; cells: RouteCell[] | null }>;
-  /** Squadrons with a shared route this tick: members hold once anyone
-   * has shared. Failed attempts do NOT mark, so a fleet whose flagship
-   * cannot bridge its span still sails when any member can. */
+  /** Squadrons with a shared route this tick. Failed attempts do not mark,
+   * so any member's bridge still sails the fleet. */
   fleetSearched: Set<number>;
   berths: readonly Occupant[];
   krakenOccupant: Occupant | null;
@@ -1403,9 +1365,8 @@ function refloat(world: BoatWorld, eroded: TerrainSampler, boat: Boat, step: num
 
 const CELL_CENTRE_OFFSET = 0.5;
 
-/** One capped rescue search from the shared tick pool for a stuck boat. The
- * caller gates this to once per stuck episode; the cap keeps one rescue from
- * eating the tick. Deducts what it spends so later searches see the pool. */
+/** One capped rescue search from the shared tick pool. Deducts what it
+ * spends so later searches see the remainder. */
 function rescueRoute(
   tick: SailTick,
   eroded: TerrainSampler,
@@ -1432,11 +1393,8 @@ function rescueRoute(
   return outcome.plan;
 }
 
-/** Rescue is due when a cruising boat is definitionally failing: physically
- * stuck, or chronically routeless (creeping without a route never clears
- * this). Station approaches never rescue: shuffling into engagement is
- * tactical crowd behavior, and a pool route to a drifting station slot
- * changes combat dynamics. */
+/** Rescue is due when cruising is definitionally failing: stuck, or
+ * chronically routeless. Station approaches never rescue. */
 function rescueDue(tick: SailTick, voyage: Voyage, cruising: boolean): boolean {
   return (
     cruising &&
@@ -1529,12 +1487,8 @@ function sailBoat(tick: SailTick, index: number): void {
     squadronRank = rank < 0 ? 0 : rank;
   }
   if (squadron !== undefined) {
-    // Fleet station: flagship takes the hop, members fan out on lattice
-    // slots. Member slots snap to sailable water: a lattice offset past a
-    // shoreline is an unreachable search goal, which is how boats park on
-    // beaches. The flagship takes the hop raw — chain points are walkable
-    // by construction, and re-snapping here can drift its goal outside the
-    // chain-arrival radius, freezing the cursor (and the fleet) forever.
+    // Fleet station: flagship takes the hop, members fan out on snapped
+    // lattice slots. Re-snapping the flagship could drift it outside arrival.
     const slot = waypointForMember(squadron, squadronRank, FLEET_FORMATION_SPACING_CELLS);
     const berth =
       slot.x === squadron.x && slot.y === squadron.y
@@ -1657,9 +1611,8 @@ function sailBoat(tick: SailTick, index: number): void {
       live.hopX === squadron.x &&
       live.hopY === squadron.y;
     if (fresh) {
-      // Pathfound once per fleet: the flagship searched this hop (this tick
-      // or an earlier one) and everyone adopts its cells at their nearest
-      // index, steering to their own station slots from there.
+      // Pathfound once per fleet: members adopt the flagship's cells at
+      // their nearest index and steer to their own slots.
       debug.fleetShared++;
       if (live.cells !== null) {
         voyage.route = [...live.cells];
@@ -1687,11 +1640,8 @@ function sailBoat(tick: SailTick, index: number): void {
       squadronRank !== 0 &&
       (tick.fleetSearched.has(squadronId) || tick.searchesLeft <= 0)
     ) {
-      // Fleet members never search: the flagship pathfinds once per hop and
-      // the fleet adopts. Hold formation on the current route; null it only
-      // when the hop moved on (goal drift), so a stale route never leads a
-      // member at the previous hop. A failed flagship search stays local
-      // instead of nulling the whole fleet for a tick.
+      // Fleet members never search: they hold formation on the flagship's
+      // route, nulling only when the hop moves on.
       debug.fleetHold++;
       if (distance(goalX, goalY, voyage.goalX, voyage.goalY) > REPLAN_GOAL_DRIFT_CELLS) {
         voyage.route = null;
@@ -1838,10 +1788,8 @@ function sailBoat(tick: SailTick, index: number): void {
     const probeX = boat.x + ((goalX - boat.x) / range) * stride;
     const probeY = boat.y + ((goalY - boat.y) / range) * stride;
     if (!isHullPose(world, eroded, probeX, probeY, boat.heading)) {
-      // Blocked, not arrived: adopt the goal (so drift tracking stays
-      // honest) but hold position WITHOUT settling. Starvation is judged
-      // by the net-motion window at the top of sailBoat, which already ran
-      // this tick, so a persistent block escalates to rescue / re-plan.
+      // Blocked, not arrived: adopt the goal but hold without settling.
+      // Persistent blocks escalate to rescue via the net-motion window.
       adoptGoal(goalX, goalY);
       tick.debug.tmpProbe++;
       return;
@@ -1887,9 +1835,8 @@ function sailBoat(tick: SailTick, index: number): void {
   if (stride < 0.001) tick.debug.tmpStrideZero++;
   if (voyage.route !== null) tick.debug.tmpRoute++;
   else tick.debug.tmpDirect++;
-  // Only a genuine replan resets the stuck clock: resync "progress" without
-  // displacement is the lie that hid dithering fleets. Net motion is judged
-  // by the window at the top of sailBoat.
+  // Only genuine replans reset the stuck clock: resync progress without
+  // displacement hid dithering fleets.
   if (result.replanned) {
     voyage.noProgressSeconds = 0;
     voyage.poolTried = false;
@@ -2185,11 +2132,8 @@ export function boatStates(worldSize: number): BoatState[] {
   }));
 }
 
-/** Debug-only snapshot of every live fleet chain for the `?waypoints` overlay.
- * Read-only over the chains `assignSquadronGoals` already maintains: the
- * anchor is the flagship's current position (what the chain was built from),
- * `hops` are the subdivided points ending at the leg goal, and `cursor` is
- * the flagship's hop. Never read back; visualisation only. */
+/** Debug snapshot of live fleet chains for the overlay. Read-only; anchor
+ * is the flagship's position, cursor its hop. */
 export function fleetWaypointDebug(): WaypointDebugFrame {
   const chains: WaypointChainSnapshot[] = [];
   for (const [squadronId, chain] of fleetChains) {
