@@ -6,6 +6,7 @@ import { BOOT_MARKS, bootMarked } from '../bootMarks.ts';
 import { createAudioEngine } from '../audio/audioEngine.ts';
 import type { Connection } from '../net/connection.ts';
 import type { FramePhase, Viewport } from '../render/scene.ts';
+import { FRAME_DELTA_CAP_S } from '../render/scene.ts';
 import { rendererBackendName } from '../render/rendererBackend.ts';
 import { loadRigAsset } from '../render/rigAsset.ts';
 import { frameStatsSample, recordPluginFrame } from '../render/frameStats.ts';
@@ -94,6 +95,19 @@ export function stepDrawBudgetBreach(
   return lowSamples >= DRAW_BUDGET_CLEAR_SAMPLES
     ? NO_DRAW_BUDGET_BREACH
     : { breached: true, lowSamples };
+}
+
+/** Per-plugin frame-time budget: one overrun rests the plugin, protecting the frame. */
+export const PLUGIN_FRAME_BUDGET_MS = 1.0;
+
+/** Frames skipped after one over-budget sample; catch-up dt stays under plugin clamps. */
+export const PLUGIN_FRAME_SKIP_FRAMES = 2;
+
+interface PluginFrameThrottle {
+  skipRemaining: number;
+  pendingDt: number;
+  breachNotified: boolean;
+  lowSamples: number;
 }
 
 export interface ClientPluginHost {
@@ -312,9 +326,8 @@ export function createClientPluginHost(
     }
   };
 
-  interface DeferredFrameHandler {
+  interface FrameHandler {
     readonly handler: (dt: number) => void;
-    unregister: (() => void) | null;
     cancelled: boolean;
   }
 
@@ -350,7 +363,7 @@ export function createClientPluginHost(
       undo.push(unregister);
       return unregister;
     };
-    const deferredFrameHandlers: DeferredFrameHandler[] = [];
+    const deferredFrameHandlers: FrameHandler[] = [];
     const layer = new Group();
     layer.name = `plugin:${plugin.name}`;
     viewport.scene.add(layer);
@@ -388,12 +401,12 @@ export function createClientPluginHost(
         });
       },
       onFrame(handler) {
-        const deferred: DeferredFrameHandler = { handler, unregister: null, cancelled: false };
+        const deferred: FrameHandler = { handler, cancelled: false };
         deferredFrameHandlers.push(deferred);
         return track(() => {
           deferred.cancelled = true;
-          deferred.unregister?.();
-          deferred.unregister = null;
+          const index = deferredFrameHandlers.indexOf(deferred);
+          if (index !== -1) deferredFrameHandlers.splice(index, 1);
         });
       },
       registerHudPanel(
@@ -521,22 +534,61 @@ export function createClientPluginHost(
       try {
         plugin.attach(ctx);
 
+        const name = plugin.name;
         const phase: FramePhase =
-          moverLookups.has(plugin.name) || groundShadeLookups.has(plugin.name)
-            ? 'pose'
-            : 'draw';
-        for (const deferred of deferredFrameHandlers) {
-          if (deferred.cancelled) continue;
-          const handler = deferred.handler;
-          const name = plugin.name;
-          const timed = (dt: number): void => {
-            const startMs = performance.now();
-            handler(dt);
-            recordPluginFrame(name, performance.now() - startMs);
-          };
-          deferred.unregister = viewport.onFrame(timed, phase);
-        }
-        deferredFrameHandlers.length = 0;
+          moverLookups.has(name) || groundShadeLookups.has(name) ? 'pose' : 'draw';
+        // One runner per plugin per frame: the budget, skip counter and frameStats
+        // sample are per plugin, however many handlers it registered. The list stays
+        // live, so handlers registered after attach join the same runner. Catch-up
+        // dt is best-effort and clamped to the engine's own cap (see scene.ts).
+        const throttle: PluginFrameThrottle = {
+          skipRemaining: 0,
+          pendingDt: 0,
+          breachNotified: false,
+          lowSamples: 0,
+        };
+        const runner = (dt: number): void => {
+          if (throttle.skipRemaining > 0) {
+            throttle.skipRemaining -= 1;
+            throttle.pendingDt += dt;
+            // A skipped frame costs nothing; the average dilutes toward zero,
+            // which is the honest shape of "this plugin did nothing this frame".
+            recordPluginFrame(name, 0);
+            return;
+          }
+          const effectiveDt = Math.min(throttle.pendingDt + dt, FRAME_DELTA_CAP_S);
+          throttle.pendingDt = 0;
+          const startMs = performance.now();
+          let elapsedMs = 0;
+          try {
+            for (const deferred of deferredFrameHandlers) {
+              if (!deferred.cancelled) deferred.handler(effectiveDt);
+            }
+          } finally {
+            elapsedMs = performance.now() - startMs;
+            recordPluginFrame(name, elapsedMs);
+          }
+          if (elapsedMs > PLUGIN_FRAME_BUDGET_MS) {
+            throttle.skipRemaining = PLUGIN_FRAME_SKIP_FRAMES;
+            throttle.lowSamples = 0;
+            if (!throttle.breachNotified) {
+              throttle.breachNotified = true;
+              console.error(
+                `[terrace] client plugin "${name}" exceeded its frame budget: ` +
+                  `${elapsedMs.toFixed(2)} ms against a budget of ` +
+                  `${PLUGIN_FRAME_BUDGET_MS.toFixed(2)} ms; ` +
+                  `skipping the next ${String(PLUGIN_FRAME_SKIP_FRAMES)} frames`,
+              );
+            }
+          } else if (throttle.breachNotified) {
+            throttle.lowSamples += 1;
+            if (throttle.lowSamples >= DRAW_BUDGET_CLEAR_SAMPLES) {
+              throttle.breachNotified = false;
+              throttle.lowSamples = 0;
+            }
+          }
+        };
+        track(viewport.onFrame(runner, phase));
       } catch (error) {
         console.error(`[terrace] client plugin "${plugin.name}" threw in attach`, error);
       }
