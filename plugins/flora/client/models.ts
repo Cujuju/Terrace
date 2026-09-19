@@ -8,10 +8,11 @@ import {
   Quaternion,
   SphereGeometry,
   Vector3,
+  type BufferAttribute,
   type BufferGeometry,
   type Material,
 } from 'three';
-import { FLORA_TREE_CAP, FLORA_TREE_SCALE_MAX, type FloraTreeKind } from '../protocol.ts';
+import { FLORA_TREE_CAP, FLORA_TREE_SCALE_MAX, treeKey, type FloraTreeKind, type TreeCell } from '../protocol.ts';
 import { bakeSolidColor } from '../../../client/src/render/bakeSolidColor.ts';
 import {
   MATRIX_FLOATS_PER_INSTANCE,
@@ -21,6 +22,7 @@ import {
   includePlacement,
   scaledReach,
   uploadAllInstances,
+  uploadInstanceRun,
   writeInstanceSphere,
   type InstanceReach,
 } from './instanceBounds.ts';
@@ -56,6 +58,8 @@ const BROADLEAF_CROWN_COLOR = 0x3d6b2c;
 export interface TreePlacement {
   readonly x: number;
   readonly z: number;
+  readonly cellX: number;
+  readonly cellY: number;
   readonly groundY: number;
   readonly kind: FloraTreeKind;
   readonly scale: number;
@@ -65,6 +69,7 @@ export interface TreePlacement {
 export interface FloraModels {
   readonly root: Group;
   apply(placements: readonly TreePlacement[]): void;
+  applyDelta(sprouted: readonly TreePlacement[], felled: readonly TreeCell[]): void;
   dispose(): void;
 }
 
@@ -140,48 +145,147 @@ export function createFloraModels(): FloraModels {
     (geometry): InstanceReach => scaledReach(geometryReach(geometry), FLORA_TREE_SCALE_MAX),
   );
 
+  const kindMeshIndex = (kind: FloraTreeKind): number =>
+    kind === 'conifer' ? 1 : kind === 'pine' ? 2 : 3;
+
+  const trunkOfCell = new Map<number, number>();
+  const cellOfTrunk: number[] = [];
+  const kindOfTrunk: FloraTreeKind[] = [];
+  const kindSlotOfTrunk: number[] = [];
+  const cellOfKindSlot: Record<FloraTreeKind, number[]> = {
+    conifer: [],
+    pine: [],
+    broadleaf: [],
+  };
+  const kindCounts: Record<FloraTreeKind, number> = { conifer: 0, pine: 0, broadleaf: 0 };
+  let trunkCount = 0;
+
+  const moveInstances = (
+    attribute: BufferAttribute,
+    from: number,
+    to: number,
+    count: number,
+  ): void => {
+    attribute.array.copyWithin(
+      to * MATRIX_FLOATS_PER_INSTANCE,
+      from * MATRIX_FLOATS_PER_INSTANCE,
+      (from + count) * MATRIX_FLOATS_PER_INSTANCE,
+    );
+  };
+
+  const insertCell = (key: number, placement: TreePlacement): boolean => {
+    if (trunkCount >= FLORA_TREE_CAP) return false;
+    const kind = placement.kind;
+    const trunkSlot = trunkCount++;
+    const kindSlot = kindCounts[kind]!++;
+
+    position.set(placement.x, placement.groundY, placement.z);
+    rotation.setFromAxisAngle(UP, placement.yaw);
+    scale.setScalar(placement.scale);
+    matrix.compose(position, rotation, scale);
+    trunks.setMatrixAt(trunkSlot, matrix);
+    meshes[kindMeshIndex(kind)]!.setMatrixAt(kindSlot, matrix);
+    includePlacement(extents[0]!, placement.x, placement.groundY, placement.z);
+    includePlacement(extents[kindMeshIndex(kind)]!, placement.x, placement.groundY, placement.z);
+
+    trunkOfCell.set(key, trunkSlot);
+    cellOfTrunk[trunkSlot] = key;
+    kindOfTrunk[trunkSlot] = kind;
+    kindSlotOfTrunk[trunkSlot] = kindSlot;
+    cellOfKindSlot[kind][kindSlot] = key;
+    return true;
+  };
+
+  const removeCell = (key: number): void => {
+    const trunkSlot = trunkOfCell.get(key);
+    if (trunkSlot === undefined) return;
+    trunkOfCell.delete(key);
+
+    const kind = kindOfTrunk[trunkSlot]!;
+    const kindSlot = kindSlotOfTrunk[trunkSlot]!;
+    const kindMesh = meshes[kindMeshIndex(kind)]!;
+
+    const kindLast = kindCounts[kind]! - 1;
+    if (kindSlot !== kindLast) {
+      moveInstances(kindMesh.instanceMatrix, kindLast, kindSlot, 1);
+      const movedKey = cellOfKindSlot[kind][kindLast]!;
+      cellOfKindSlot[kind][kindSlot] = movedKey;
+      kindSlotOfTrunk[trunkOfCell.get(movedKey)!] = kindSlot;
+      uploadInstanceRun(kindMesh.instanceMatrix, kindSlot, 1, MATRIX_FLOATS_PER_INSTANCE);
+    }
+    kindCounts[kind] = kindLast;
+    cellOfKindSlot[kind].length = kindLast;
+
+    const trunkLast = trunkCount - 1;
+    if (trunkSlot !== trunkLast) {
+      moveInstances(trunks.instanceMatrix, trunkLast, trunkSlot, 1);
+      const movedKey = cellOfTrunk[trunkLast]!;
+      cellOfTrunk[trunkSlot] = movedKey;
+      trunkOfCell.set(movedKey, trunkSlot);
+      kindOfTrunk[trunkSlot] = kindOfTrunk[trunkLast]!;
+      kindSlotOfTrunk[trunkSlot] = kindSlotOfTrunk[trunkLast]!;
+      uploadInstanceRun(trunks.instanceMatrix, trunkSlot, 1, MATRIX_FLOATS_PER_INSTANCE);
+    }
+    trunkCount = trunkLast;
+    cellOfTrunk.length = trunkLast;
+    kindOfTrunk.length = trunkLast;
+    kindSlotOfTrunk.length = trunkLast;
+  };
+
+  const publish = (): void => {
+    trunks.count = trunkCount;
+    conifers.count = kindCounts.conifer;
+    pines.count = kindCounts.pine;
+    broadleaves.count = kindCounts.broadleaf;
+    for (let i = 0; i < meshes.length; i++) {
+      writeInstanceSphere(meshes[i]!, extents[i]!, reaches[i]!);
+    }
+  };
+
   return {
     root,
 
     apply(placements: readonly TreePlacement[]): void {
-      let trunkCount = 0;
-      let coniferCount = 0;
-      let pineCount = 0;
-      let broadleafCount = 0;
+      trunkOfCell.clear();
+      cellOfTrunk.length = 0;
+      kindOfTrunk.length = 0;
+      kindSlotOfTrunk.length = 0;
+      cellOfKindSlot.conifer.length = 0;
+      cellOfKindSlot.pine.length = 0;
+      cellOfKindSlot.broadleaf.length = 0;
+      kindCounts.conifer = 0;
+      kindCounts.pine = 0;
+      kindCounts.broadleaf = 0;
+      trunkCount = 0;
       for (const extent of extents) clearPlacementExtent(extent);
 
       for (const placement of placements) {
-        if (trunkCount >= FLORA_TREE_CAP) break;
-
-        position.set(placement.x, placement.groundY, placement.z);
-        rotation.setFromAxisAngle(UP, placement.yaw);
-        scale.setScalar(placement.scale);
-        matrix.compose(position, rotation, scale);
-
-        trunks.setMatrixAt(trunkCount++, matrix);
-        includePlacement(extents[0]!, placement.x, placement.groundY, placement.z);
-        if (placement.kind === 'conifer') {
-          conifers.setMatrixAt(coniferCount++, matrix);
-          includePlacement(extents[1]!, placement.x, placement.groundY, placement.z);
-        } else if (placement.kind === 'pine') {
-          pines.setMatrixAt(pineCount++, matrix);
-          includePlacement(extents[2]!, placement.x, placement.groundY, placement.z);
-        } else {
-          broadleaves.setMatrixAt(broadleafCount++, matrix);
-          includePlacement(extents[3]!, placement.x, placement.groundY, placement.z);
-        }
+        if (!insertCell(treeKey(placement.cellX, placement.cellY), placement)) break;
       }
 
-      trunks.count = trunkCount;
-      conifers.count = coniferCount;
-      pines.count = pineCount;
-      broadleaves.count = broadleafCount;
-
-      for (let i = 0; i < meshes.length; i++) {
-        const mesh = meshes[i]!;
+      publish();
+      for (const mesh of meshes) {
         uploadAllInstances(mesh.instanceMatrix, mesh.count, MATRIX_FLOATS_PER_INSTANCE);
-        writeInstanceSphere(mesh, extents[i]!, reaches[i]!);
       }
+    },
+
+    applyDelta(sprouted: readonly TreePlacement[], felled: readonly TreeCell[]): void {
+      for (const cell of felled) removeCell(treeKey(cell.x, cell.y));
+      for (const placement of sprouted) {
+        const key = treeKey(placement.cellX, placement.cellY);
+        removeCell(key);
+        if (!insertCell(key, placement)) continue;
+        const trunkSlot = trunkOfCell.get(key)!;
+        uploadInstanceRun(trunks.instanceMatrix, trunkSlot, 1, MATRIX_FLOATS_PER_INSTANCE);
+        const kind = kindOfTrunk[trunkSlot]!;
+        uploadInstanceRun(
+          meshes[kindMeshIndex(kind)]!.instanceMatrix,
+          kindSlotOfTrunk[trunkSlot]!,
+          1,
+          MATRIX_FLOATS_PER_INSTANCE,
+        );
+      }
+      publish();
     },
 
     dispose(): void {

@@ -5,6 +5,7 @@ import {
   MeshLambertMaterial,
   Quaternion,
   Vector3,
+  type BufferAttribute,
   type BufferGeometry,
   type Material,
 } from 'three';
@@ -17,7 +18,9 @@ import {
   CROP_STALK_JITTER_IN_CLUSTER_SPANS,
   CROP_STALK_OFFSETS,
   FLORA_CROP_CAP,
+  cropKey,
   cropStalkVariation,
+  type CropCell,
 } from '../protocol.ts';
 import {
   MATRIX_FLOATS_PER_INSTANCE,
@@ -28,6 +31,7 @@ import {
   includePlacement,
   scaledReach,
   uploadAllInstances,
+  uploadInstanceRun,
   writeInstanceSphere,
   type InstanceReach,
 } from './instanceBounds.ts';
@@ -57,6 +61,7 @@ export interface CropModels {
   readonly root: Group;
   readonly plotReach: InstanceReach;
   apply(placements: readonly CropPlacement[]): void;
+  applyDelta(sprouted: readonly CropPlacement[], withered: readonly CropCell[]): void;
   dispose(): void;
 }
 
@@ -123,51 +128,122 @@ export function createCropModels(): CropModels {
     down: Math.max(...reaches.map((r) => r.down)),
   };
 
+  const slotOfCell = new Map<number, number>();
+  const cellOfSlot: number[] = [];
+  let plotCount = 0;
+
+  const writePlot = (slot: number, placement: CropPlacement): void => {
+    position.set(placement.x, placement.groundY, placement.z);
+    plotRotation.setFromAxisAngle(UP, placement.yaw);
+
+    const spread = cells(CLUSTER_SPAN_IN_CELLS) * placement.scale;
+    let stalkCount = slot * CROP_STALKS_PER_PLOT;
+
+    for (let index = 0; index < CROP_STALKS_PER_PLOT; index++) {
+      const [ox, oz] = CROP_STALK_OFFSETS[index]!;
+      const stalk = cropStalkVariation(placement.cellX, placement.cellY, index);
+
+      stalkOffset
+        .set((ox + stalk.jitterX) * spread, 0, (oz + stalk.jitterZ) * spread)
+        .applyQuaternion(plotRotation);
+      stalkPosition.copy(position).add(stalkOffset);
+
+      stalkRotation.setFromAxisAngle(UP, stalk.yaw);
+
+      stalkScale.set(placement.scale, placement.scale * stalk.height, placement.scale);
+
+      matrix.compose(stalkPosition, stalkRotation, stalkScale);
+      stalks.setMatrixAt(stalkCount, matrix);
+      ears.setMatrixAt(stalkCount++, matrix);
+    }
+
+    includePlacement(extent, placement.x, placement.groundY, placement.z);
+  };
+
+  const moveInstances = (
+    attribute: BufferAttribute,
+    from: number,
+    to: number,
+    count: number,
+  ): void => {
+    attribute.array.copyWithin(
+      to * MATRIX_FLOATS_PER_INSTANCE,
+      from * MATRIX_FLOATS_PER_INSTANCE,
+      (from + count) * MATRIX_FLOATS_PER_INSTANCE,
+    );
+  };
+
+  const insertCell = (key: number, placement: CropPlacement): boolean => {
+    if (plotCount >= FLORA_CROP_CAP) return false;
+    const slot = plotCount++;
+    writePlot(slot, placement);
+    slotOfCell.set(key, slot);
+    cellOfSlot[slot] = key;
+    return true;
+  };
+
+  const removeCell = (key: number): void => {
+    const slot = slotOfCell.get(key);
+    if (slot === undefined) return;
+    slotOfCell.delete(key);
+
+    const last = plotCount - 1;
+    const run = CROP_STALKS_PER_PLOT;
+    if (slot !== last) {
+      moveInstances(stalks.instanceMatrix, last * run, slot * run, run);
+      moveInstances(ears.instanceMatrix, last * run, slot * run, run);
+      const movedKey = cellOfSlot[last]!;
+      cellOfSlot[slot] = movedKey;
+      slotOfCell.set(movedKey, slot);
+      uploadInstanceRun(stalks.instanceMatrix, slot * run, run, MATRIX_FLOATS_PER_INSTANCE);
+      uploadInstanceRun(ears.instanceMatrix, slot * run, run, MATRIX_FLOATS_PER_INSTANCE);
+    }
+    plotCount = last;
+    cellOfSlot.length = last;
+  };
+
+  const publish = (): void => {
+    const stalkCount = plotCount * CROP_STALKS_PER_PLOT;
+    stalks.count = stalkCount;
+    ears.count = stalkCount;
+  };
+
   return {
     root,
     plotReach,
 
     apply(placements: readonly CropPlacement[]): void {
-      let plotCount = 0;
-      let stalkCount = 0;
+      slotOfCell.clear();
+      cellOfSlot.length = 0;
+      plotCount = 0;
       clearPlacementExtent(extent);
 
       for (const placement of placements) {
-        if (plotCount >= FLORA_CROP_CAP) break;
-        plotCount++;
-        includePlacement(extent, placement.x, placement.groundY, placement.z);
-
-        position.set(placement.x, placement.groundY, placement.z);
-        plotRotation.setFromAxisAngle(UP, placement.yaw);
-
-        const spread = cells(CLUSTER_SPAN_IN_CELLS) * placement.scale;
-
-        for (let index = 0; index < CROP_STALKS_PER_PLOT; index++) {
-          const [ox, oz] = CROP_STALK_OFFSETS[index]!;
-          const stalk = cropStalkVariation(placement.cellX, placement.cellY, index);
-
-          stalkOffset
-            .set((ox + stalk.jitterX) * spread, 0, (oz + stalk.jitterZ) * spread)
-            .applyQuaternion(plotRotation);
-          stalkPosition.copy(position).add(stalkOffset);
-
-          stalkRotation.setFromAxisAngle(UP, stalk.yaw);
-
-          stalkScale.set(placement.scale, placement.scale * stalk.height, placement.scale);
-
-          matrix.compose(stalkPosition, stalkRotation, stalkScale);
-          stalks.setMatrixAt(stalkCount, matrix);
-          ears.setMatrixAt(stalkCount++, matrix);
-        }
+        if (!insertCell(cropKey(placement.cellX, placement.cellY), placement)) break;
       }
 
-      stalks.count = stalkCount;
-      ears.count = stalkCount;
-
+      publish();
       for (let i = 0; i < meshes.length; i++) {
         const mesh = meshes[i]!;
         uploadAllInstances(mesh.instanceMatrix, mesh.count, MATRIX_FLOATS_PER_INSTANCE);
         writeInstanceSphere(mesh, extent, reaches[i]!);
+      }
+    },
+
+    applyDelta(sprouted: readonly CropPlacement[], withered: readonly CropCell[]): void {
+      for (const cell of withered) removeCell(cropKey(cell.x, cell.y));
+      for (const placement of sprouted) {
+        const key = cropKey(placement.cellX, placement.cellY);
+        removeCell(key);
+        if (!insertCell(key, placement)) continue;
+        const run = CROP_STALKS_PER_PLOT;
+        const slot = slotOfCell.get(key)!;
+        uploadInstanceRun(stalks.instanceMatrix, slot * run, run, MATRIX_FLOATS_PER_INSTANCE);
+        uploadInstanceRun(ears.instanceMatrix, slot * run, run, MATRIX_FLOATS_PER_INSTANCE);
+      }
+      publish();
+      for (let i = 0; i < meshes.length; i++) {
+        writeInstanceSphere(meshes[i]!, extent, reaches[i]!);
       }
     },
 
