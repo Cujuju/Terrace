@@ -177,6 +177,7 @@ export function VersionWatermark(): JSX.Element {
                 <span>runs</span>
                 <span>share</span>
                 <span>draws</span>
+                <span>async</span>
               </span>
             </Show>
             {
@@ -192,6 +193,7 @@ export function VersionWatermark(): JSX.Element {
                     <span>{row.msPerRun.toFixed(2)}</span>
                     <span>{`${String(Math.round(row.shareOfFrame * 100))}%`}</span>
                     <span>{objects === undefined || objects === 0 ? '' : `~${String(objects)}`}</span>
+                    <span>{row.asyncMs < 0.005 ? '' : row.asyncMs.toFixed(2)}</span>
                   </span>
                 );
               }}

@@ -247,14 +247,32 @@ function createEngine(
   };
 }
 
+/** Clock the host can time and auto-clear; defaults to globals. */
+export interface ComposerClock {
+  setInterval(handler: () => void, ms: number): () => void;
+  setTimeout(handler: () => void, ms: number): () => void;
+}
+
+const GLOBAL_CLOCK: ComposerClock = {
+  setInterval: (handler, ms) => {
+    const id = setInterval(handler, ms);
+    return () => clearInterval(id);
+  },
+  setTimeout: (handler, ms) => {
+    const id = setTimeout(handler, ms);
+    return () => clearTimeout(id);
+  },
+};
+
 export function createComposer(
   context: AudioContext,
   destination: AudioNode,
   seed: number,
   tuning: ComposerTuning = DEFAULT_TUNING,
+  clock: ComposerClock = GLOBAL_CLOCK,
 ): Composer {
   const engine = createEngine(context, destination, seed, DEFAULT_MOOD, tuning);
-  let timer: ReturnType<typeof setInterval> | null = null;
+  let cancelTimer: (() => void) | null = null;
   let stopped = false;
   let lastTickMilliseconds = 0;
 
@@ -266,22 +284,22 @@ export function createComposer(
 
   return {
     start(): void {
-      if (timer !== null || stopped) return;
+      if (cancelTimer !== null || stopped) return;
       engine.begin(context.currentTime + START_LEAD_SECONDS);
       tick();
-      timer = setInterval(tick, SCHEDULER_TICK_MS);
+      cancelTimer = clock.setInterval(tick, SCHEDULER_TICK_MS);
     },
     stop(fadeSeconds: number): void {
       if (stopped) return;
       stopped = true;
-      if (timer !== null) {
-        clearInterval(timer);
-        timer = null;
+      if (cancelTimer !== null) {
+        cancelTimer();
+        cancelTimer = null;
       }
       const stopTime = engine.end(context.currentTime, fadeSeconds);
       const disposeDelayMs =
         (stopTime - context.currentTime + TEARDOWN_SLACK_SECONDS) * MILLISECONDS_PER_SECOND;
-      setTimeout(() => engine.dispose(), disposeDelayMs);
+      clock.setTimeout(() => engine.dispose(), disposeDelayMs);
     },
     setMood(mood: ComposerMood): void {
       engine.setMood(mood, context.currentTime);

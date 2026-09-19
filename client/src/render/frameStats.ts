@@ -18,6 +18,8 @@ export interface PluginFrameCost {
   readonly msPerFrame: number;
   /** Mean cost per executed run — what the plugin wants when it actually runs. */
   readonly msPerRun: number;
+  /** Non-frame plugin time in the window (messages, timers); a total, not a mean. */
+  readonly asyncMs: number;
   readonly shareOfFrame: number;
 }
 
@@ -89,6 +91,7 @@ let gpuMs: number[] = [];
 
 const pluginMs = new Map<string, number>();
 const pluginRuns = new Map<string, number>();
+const pluginAsyncMs = new Map<string, number>();
 
 export function setFrameCounterSource(read: () => FrameCounters): void {
   readCounters = read;
@@ -154,11 +157,15 @@ function closeWindow(nowMs: number): void {
   gpuMs = [];
   const meanFrameMs = kept === 0 ? 0 : sumOf(frameMs, kept) / kept;
   const plugins: PluginFrameCost[] = [];
-  for (const [name, totalMs] of pluginMs) {
+  const pluginNames = new Set([...pluginMs.keys(), ...pluginAsyncMs.keys()]);
+  for (const name of pluginNames) {
+    const totalMs = pluginMs.get(name) ?? 0;
     const runs = pluginRuns.get(name) ?? 0;
-    if (runs === 0) {
+    const asyncMs = pluginAsyncMs.get(name) ?? 0;
+    if (runs === 0 && asyncMs === 0) {
       pluginMs.delete(name);
       pluginRuns.delete(name);
+      pluginAsyncMs.delete(name);
       continue;
     }
     const msPerFrame = kept === 0 ? 0 : totalMs / kept;
@@ -166,10 +173,12 @@ function closeWindow(nowMs: number): void {
       name,
       msPerFrame,
       msPerRun: runs === 0 ? 0 : totalMs / runs,
+      asyncMs,
       shareOfFrame: meanFrameMs === 0 ? 0 : msPerFrame / meanFrameMs,
     });
     pluginMs.set(name, 0);
     pluginRuns.set(name, 0);
+    pluginAsyncMs.set(name, 0);
   }
   plugins.sort((a, b) => b.msPerFrame - a.msPerFrame);
   for (let i = 0; i < kept; i++) outsideMs[i] = (frameMs[i] ?? 0) - (renderMs[i] ?? 0);
@@ -233,6 +242,11 @@ export function recordPluginFrame(name: string, ms: number): void {
   pluginRuns.set(name, (pluginRuns.get(name) ?? 0) + 1);
 }
 
+/** Non-frame plugin work (message handlers, timers); reported as a window total. */
+export function recordPluginAsync(name: string, ms: number): void {
+  pluginAsyncMs.set(name, (pluginAsyncMs.get(name) ?? 0) + ms);
+}
+
 export function flushFrameStats(): void {
   if (windowFrames > 0) {
     closeWindow(performance.now());
@@ -251,5 +265,6 @@ export function resetFrameStats(): void {
   typicalIntervalMs = 0;
   pluginMs.clear();
   pluginRuns.clear();
+  pluginAsyncMs.clear();
   gpuMs = [];
 }
