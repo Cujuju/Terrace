@@ -984,7 +984,7 @@ let sailCursor = 0;
 
 let routeLogCooldownMs = 0;
 
-const ROUTE_LOG_INTERVAL_MS = 2000;
+const ROUTE_LOG_INTERVAL_MS = 10_000;
 
 /** Per-tick route-search counters, emitted to perf.log when perf logging is on. */
 interface FleetRouteDebug {
