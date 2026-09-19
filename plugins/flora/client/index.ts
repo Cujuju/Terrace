@@ -49,8 +49,6 @@ import { placementsFor } from './placement.ts';
 import { createStumpModels, type StumpModels } from './stumpModels.ts';
 import { stumpPlacementsFor } from './stumpPlacement.ts';
 
-export const FLORA_GROUND_RETRY_SECONDS = 0.5;
-
 let models: FloraModels | null = null;
 let cropModels: CropModels | null = null;
 let grassModels: GrassModels | null = null;
@@ -58,7 +56,7 @@ let fringeModels: FringeModels | null = null;
 let stumpModels: StumpModels | null = null;
 let unsubscribeMessages: Array<() => void> = [];
 let unmarkPickable: Array<() => void> = [];
-let unsubscribeFrames: (() => void) | null = null;
+let unsubscribeTerrain: (() => void) | null = null;
 
 const trees = new Map<number, TreeCell>();
 
@@ -70,23 +68,35 @@ const fringe = new Map<number, FringeSpecies>();
 
 const stumps = new Map<number, StumpCell>();
 
-let pendingGround = 0;
-let sinceRetrySeconds = 0;
+const pendingTrees = new Set<number>();
 
-let pendingCropGround = 0;
+const pendingCrops = new Set<number>();
 
 const pendingGrassGround = new Set<number>();
 
 const pendingFringeGround = new Set<number>();
 
-let pendingStumpGround = 0;
+const pendingStumps = new Set<number>();
 
 function rebuild(ctx: ClientPluginCtx): void {
   if (models === null) return;
   const result = placementsFor(trees.values(), (x, y) => ctx.drawnGroundYAt(x, y));
   models.apply(result.placements);
-  pendingGround = result.pendingGround;
-  sinceRetrySeconds = 0;
+  pendingTrees.clear();
+  for (const key of result.pendingCells) pendingTrees.add(key);
+}
+
+function retryTrees(ctx: ClientPluginCtx): void {
+  if (models === null || pendingTrees.size === 0) return;
+  const cells: TreeCell[] = [];
+  for (const key of pendingTrees) {
+    const cell = trees.get(key);
+    if (cell !== undefined) cells.push(cell);
+  }
+  const result = placementsFor(cells, (x, y) => ctx.drawnGroundYAt(x, y));
+  pendingTrees.clear();
+  for (const key of result.pendingCells) pendingTrees.add(key);
+  models.applyDelta(result.placements, []);
 }
 
 function groundLookup(ctx: ClientPluginCtx): (x: number, y: number) => number | null {
@@ -99,7 +109,19 @@ function rebuildGrass(ctx: ClientPluginCtx): void {
   grassModels.apply(result.placements);
   pendingGrassGround.clear();
   for (const key of result.pendingCells) pendingGrassGround.add(key);
-  sinceRetrySeconds = 0;
+}
+
+function retryGrassGround(ctx: ClientPluginCtx): void {
+  if (grassModels === null || pendingGrassGround.size === 0) return;
+  const cells: GrassCell[] = [];
+  for (const key of pendingGrassGround) {
+    const cell = grass.get(key);
+    if (cell !== undefined) cells.push(cell);
+  }
+  const result = grassPlacementsFor(cells, groundLookup(ctx));
+  pendingGrassGround.clear();
+  for (const key of result.pendingCells) pendingGrassGround.add(key);
+  grassModels.applyDelta(result.placements, []);
 }
 
 function applyGrassDelta(
@@ -117,7 +139,6 @@ function applyGrassDelta(
   for (const key of result.pendingCells) pendingGrassGround.add(key);
 
   grassModels.applyDelta(result.placements, withered);
-  sinceRetrySeconds = 0;
 }
 
 function rebuildFringe(ctx: ClientPluginCtx): void {
@@ -126,7 +147,19 @@ function rebuildFringe(ctx: ClientPluginCtx): void {
   fringeModels.apply(result.placements);
   pendingFringeGround.clear();
   for (const key of result.pendingCells) pendingFringeGround.add(key);
-  sinceRetrySeconds = 0;
+}
+
+function retryFringeGround(ctx: ClientPluginCtx): void {
+  if (fringeModels === null || pendingFringeGround.size === 0) return;
+  const plants: Array<readonly [number, FringeSpecies]> = [];
+  for (const key of pendingFringeGround) {
+    const species = fringe.get(key);
+    if (species !== undefined) plants.push([key, species]);
+  }
+  const result = fringePlacementsFor(plants, groundLookup(ctx));
+  pendingFringeGround.clear();
+  for (const key of result.pendingCells) pendingFringeGround.add(key);
+  fringeModels.applyDelta(result.placements, []);
 }
 
 function applyFringeDelta(
@@ -148,23 +181,56 @@ function applyFringeDelta(
   for (const key of result.pendingCells) pendingFringeGround.add(key);
 
   fringeModels.applyDelta(result.placements, withered);
-  sinceRetrySeconds = 0;
 }
 
 function rebuildStumps(ctx: ClientPluginCtx): void {
   if (stumpModels === null) return;
   const result = stumpPlacementsFor(stumps.values(), (x, y) => ctx.drawnGroundYAt(x, y));
   stumpModels.apply(result.placements);
-  pendingStumpGround = result.pendingGround;
-  sinceRetrySeconds = 0;
+  pendingStumps.clear();
+  for (const key of result.pendingCells) pendingStumps.add(key);
+}
+
+function retryStumps(ctx: ClientPluginCtx): void {
+  if (stumpModels === null || pendingStumps.size === 0) return;
+  const cells: StumpCell[] = [];
+  for (const key of pendingStumps) {
+    const cell = stumps.get(key);
+    if (cell !== undefined) cells.push(cell);
+  }
+  const result = stumpPlacementsFor(cells, (x, y) => ctx.drawnGroundYAt(x, y));
+  pendingStumps.clear();
+  for (const key of result.pendingCells) pendingStumps.add(key);
+  stumpModels.applyDelta(result.placements, []);
 }
 
 function rebuildCrops(ctx: ClientPluginCtx): void {
   if (cropModels === null) return;
   const result = cropPlacementsFor(crops.values(), (x, y) => ctx.drawnGroundYAt(x, y));
   cropModels.apply(result.placements);
-  pendingCropGround = result.pendingGround;
-  sinceRetrySeconds = 0;
+  pendingCrops.clear();
+  for (const key of result.pendingCells) pendingCrops.add(key);
+}
+
+function retryCrops(ctx: ClientPluginCtx): void {
+  if (cropModels === null || pendingCrops.size === 0) return;
+  const cells: CropCell[] = [];
+  for (const key of pendingCrops) {
+    const cell = crops.get(key);
+    if (cell !== undefined) cells.push(cell);
+  }
+  const result = cropPlacementsFor(cells, (x, y) => ctx.drawnGroundYAt(x, y));
+  pendingCrops.clear();
+  for (const key of result.pendingCells) pendingCrops.add(key);
+  cropModels.applyDelta(result.placements, []);
+}
+
+function retryPendingGround(ctx: ClientPluginCtx): void {
+  if (pendingTrees.size !== 0) retryTrees(ctx);
+  if (pendingCrops.size !== 0) retryCrops(ctx);
+  if (pendingGrassGround.size !== 0) retryGrassGround(ctx);
+  if (pendingFringeGround.size !== 0) retryFringeGround(ctx);
+  if (pendingStumps.size !== 0) retryStumps(ctx);
 }
 
 function replaceForest(cells: readonly TreeCell[]): void {
@@ -240,12 +306,11 @@ export const clientPlugin: TerraceClientPlugin = {
     grass.clear();
     fringe.clear();
     stumps.clear();
-    pendingGround = 0;
-    pendingCropGround = 0;
+    pendingTrees.clear();
+    pendingCrops.clear();
     pendingGrassGround.clear();
     pendingFringeGround.clear();
-    pendingStumpGround = 0;
-    sinceRetrySeconds = 0;
+    pendingStumps.clear();
 
     models = createFloraModels();
     ctx.layer.add(models.root);
@@ -343,23 +408,8 @@ export const clientPlugin: TerraceClientPlugin = {
       }),
     ];
 
-    unsubscribeFrames = ctx.onFrame((dt) => {
-      if (
-        pendingGround === 0 &&
-        pendingCropGround === 0 &&
-        pendingGrassGround.size === 0 &&
-        pendingFringeGround.size === 0 &&
-        pendingStumpGround === 0
-      ) {
-        return;
-      }
-      sinceRetrySeconds += dt;
-      if (sinceRetrySeconds < FLORA_GROUND_RETRY_SECONDS) return;
-      if (pendingGround !== 0) rebuild(ctx);
-      if (pendingCropGround !== 0) rebuildCrops(ctx);
-      if (pendingGrassGround.size !== 0) rebuildGrass(ctx);
-      if (pendingFringeGround.size !== 0) rebuildFringe(ctx);
-      if (pendingStumpGround !== 0) rebuildStumps(ctx);
+    unsubscribeTerrain = ctx.onTerrainChanged(() => {
+      retryPendingGround(ctx);
     });
   },
 
@@ -368,20 +418,19 @@ export const clientPlugin: TerraceClientPlugin = {
     unsubscribeMessages = [];
     for (const unmark of unmarkPickable) unmark();
     unmarkPickable = [];
-    unsubscribeFrames?.();
-    unsubscribeFrames = null;
+    unsubscribeTerrain?.();
+    unsubscribeTerrain = null;
 
     trees.clear();
     crops.clear();
     grass.clear();
     fringe.clear();
     stumps.clear();
-    pendingGround = 0;
-    pendingCropGround = 0;
+    pendingTrees.clear();
+    pendingCrops.clear();
     pendingGrassGround.clear();
     pendingFringeGround.clear();
-    pendingStumpGround = 0;
-    sinceRetrySeconds = 0;
+    pendingStumps.clear();
 
     stumpModels?.dispose();
     stumpModels = null;
