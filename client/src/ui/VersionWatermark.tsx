@@ -132,6 +132,7 @@ export function VersionWatermark(): JSX.Element {
 }
             <PerfMsRow label="render" ms={stat().renderMsP50} />
             <PerfMsRow label="outside" ms={stat().outsideMsP50} />
+            <PerfRow label="unattributed" value={`${stat().unattributedMs.toFixed(2)} ms`} />
             <PerfMsRow label="frame" ms={stat().frameMsP50} />
             <PerfMsRow label="p99" ms={stat().frameMsP99} />
             <PerfMsRow label="max" ms={stat().frameMsMax} />

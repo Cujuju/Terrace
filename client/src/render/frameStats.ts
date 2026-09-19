@@ -36,6 +36,8 @@ export interface FrameStatsSample {
   readonly renderMsP50: number;
   readonly renderMsP99: number;
   readonly outsideMsP50: number;
+  /** Mean outside time minus attributed plugin impact; the unexplained remainder. */
+  readonly unattributedMs: number;
   readonly intervalMsP50: number;
   readonly gpuMsP50: number | null;
   readonly counters: FrameCounters;
@@ -171,6 +173,10 @@ function closeWindow(nowMs: number): void {
   }
   plugins.sort((a, b) => b.msPerFrame - a.msPerFrame);
   for (let i = 0; i < kept; i++) outsideMs[i] = (frameMs[i] ?? 0) - (renderMs[i] ?? 0);
+  // Means, not medians: only means subtract. Clamped, timer slop can overshoot.
+  const meanOutsideMs = kept === 0 ? 0 : sumOf(outsideMs, kept) / kept;
+  const attributedMs = plugins.reduce((sum, plugin) => sum + plugin.msPerFrame, 0);
+  const unattributedMs = Math.max(0, meanOutsideMs - attributedMs);
   const upload = drainUploadMeter();
   const uploadByKind: UploadKindCost[] =
     kept === 0
@@ -189,6 +195,7 @@ function closeWindow(nowMs: number): void {
     renderMsP50: summarise(renderMs, kept, 0.5),
     renderMsP99: summarise(renderMs, kept, 0.99),
     outsideMsP50: summarise(outsideMs, kept, 0.5),
+    unattributedMs,
     intervalMsP50: summarise(intervalMs, kept, 0.5),
     gpuMsP50,
     counters: readCounters?.() ?? EMPTY_COUNTERS,
