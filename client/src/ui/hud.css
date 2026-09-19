@@ -1475,19 +1475,23 @@ button.world-header {
   margin: 3px 0;
 }
 
-.hud-version__plugin-row {
+.hud-version__plugin-table {
   align-self: stretch;
   display: grid;
-  grid-template-columns: var(--perf-label-column) repeat(5, minmax(2.5em, auto));
-  gap: 0.5em;
+  grid-template-columns: var(--perf-label-column) repeat(5, auto);
+  gap: 1px 0.5em;
 }
 
-.hud-version__plugin-row > span:nth-child(n + 2) {
+.hud-version__plugin-table > span:nth-child(6n + 2),
+.hud-version__plugin-table > span:nth-child(6n + 3),
+.hud-version__plugin-table > span:nth-child(6n + 4),
+.hud-version__plugin-table > span:nth-child(6n + 5),
+.hud-version__plugin-table > span:nth-child(6n) {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
 
-.hud-version__plugin-head > span {
+.hud-version__plugin-head {
   color: rgb(255 255 255 / 32%);
 }
 
