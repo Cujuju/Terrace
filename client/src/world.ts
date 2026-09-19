@@ -190,6 +190,8 @@ export interface World extends TerrainSink {
   terrainSampleAt(x: number, y: number): number | null;
   terrainRevisionAt(x: number, y: number): number;
   drawnGroundYAt(cellX: number, cellZ: number): number | null;
+  /** Fires when drawn ground may have arrived or moved: chunk drawn, snapshot, unlock, sculpt. */
+  onTerrainChanged(handler: () => void): () => void;
   chartSource(): ChartSource | null;
   drawBudget(): number;
   terrainLoadTrace(): TerrainLoadTrace | null;
@@ -270,11 +272,14 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
   let chunkRevisions: Int32Array | null = null;
   let terrainEpoch = 0;
 
+  const terrainChangedHandlers = new Set<() => void>();
+
   const noteTerrainRevisions = (dirty: ReadonlySet<number>): void => {
     if (chunkRevisions === null) return;
     for (const idx of dirty) {
       if (idx >= 0 && idx < chunkRevisions.length) chunkRevisions[idx]++;
     }
+    for (const handler of terrainChangedHandlers) handler();
   };
 
   let framedWorldSize = 0;
@@ -638,6 +643,13 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
       if (southChunk && !cellDrawn(mirror, drawnGround, x0, z1)) return null;
       if (eastChunk && southChunk && !cellDrawn(mirror, drawnGround, x1, z1)) return null;
       return drawnGround.capYAt(cellX, cellZ);
+    },
+
+    onTerrainChanged(handler: () => void): () => void {
+      terrainChangedHandlers.add(handler);
+      return () => {
+        terrainChangedHandlers.delete(handler);
+      };
     },
 
     highlightLayerEdge(pick: TerrainRayPick | null, light: LayerEdgeLight): number | null {

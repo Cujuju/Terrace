@@ -386,6 +386,18 @@ export function createClientPluginHost(
       terrainSampleAt: (x, y) => world.terrainSampleAt(x, y),
       terrainRevisionAt: (x, y) => world.terrainRevisionAt(x, y),
       drawnGroundYAt: (cellX, cellZ) => world.drawnGroundYAt(cellX, cellZ),
+      onTerrainChanged(handler) {
+        const name = plugin.name;
+        const wrapped = (): void => {
+          const startMs = performance.now();
+          try {
+            handler();
+          } finally {
+            recordPluginAsync(name, performance.now() - startMs);
+          }
+        };
+        return track(world.onTerrainChanged(wrapped));
+      },
       onMessage(type, handler) {
         const key = `${plugin.name}:${type}`;
         let set = handlers.get(key);
