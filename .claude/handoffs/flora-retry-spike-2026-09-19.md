@@ -4,6 +4,9 @@ Date: 2026-09-19. Status: diagnosed, not implemented. Handoff for another agent.
 Related: plugin frame-budget (#1, on `main`) + perf HUD (`max` column,
 `async/ms`, per-plugin table) that exposed this.
 
+> The proposed fix below is a starting sketch, not a decision — discuss the
+> approach with the owner before implementing.
+
 ## Problem
 
 At idle, one frame in ~every stats window takes 35–45ms (HUD `max`), dragging
