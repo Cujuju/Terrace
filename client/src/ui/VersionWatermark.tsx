@@ -171,7 +171,13 @@ export function VersionWatermark(): JSX.Element {
             </Show>
             <Show when={stat().plugins.length > 0}>
               <hr class="hud-version__perf-rule" />
-              <PerfRow label="plugin" value="ms/f · ms/r · share · draws" />
+              <span class="hud-version__plugin-row hud-version__plugin-head">
+                <span>plugin</span>
+                <span>frame</span>
+                <span>run</span>
+                <span>share</span>
+                <span>draws</span>
+              </span>
             </Show>
             {
 
@@ -179,13 +185,14 @@ export function VersionWatermark(): JSX.Element {
             <For each={stat().plugins}>
               {(row) => {
                 const objects = drawObjects().get(row.name);
-                const draws =
-                  objects === undefined || objects === 0 ? '' : ` · ~${String(objects)} draws`;
                 return (
-                  <PerfRow
-                    label={row.name}
-                    value={`${row.msPerFrame.toFixed(2)} ms/f · ${row.msPerRun.toFixed(2)} ms/r (${String(Math.round(row.shareOfFrame * 100))}%)${draws}`}
-                  />
+                  <span class="hud-version__plugin-row">
+                    <span class="hud-version__perf-label">{row.name}</span>
+                    <span>{row.msPerFrame.toFixed(2)}</span>
+                    <span>{row.msPerRun.toFixed(2)}</span>
+                    <span>{`${String(Math.round(row.shareOfFrame * 100))}%`}</span>
+                    <span>{objects === undefined || objects === 0 ? '' : `~${String(objects)}`}</span>
+                  </span>
                 );
               }}
             </For>
