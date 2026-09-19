@@ -93,6 +93,12 @@ export interface ClientPluginCtx {
 
   onFrame(handler: (dt: number) => void): () => void;
 
+  /** Host-timed and auto-cleared on unmount; prefer over globals. */
+  setInterval(handler: () => void, ms: number): () => void;
+
+  /** Host-timed and auto-cleared on unmount; prefer over globals. */
+  setTimeout(handler: () => void, ms: number): () => void;
+
   onWorldReset(handler: () => void): () => void;
 
   registerHudPanel(

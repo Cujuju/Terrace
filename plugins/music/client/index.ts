@@ -32,7 +32,7 @@ const FALLBACK_TENSION = 0;
 const MOOD_LOG_STEP = 0.05;
 
 let composer: Composer | null = null;
-let moodTimer: ReturnType<typeof setInterval> | null = null;
+let cancelMoodTimer: (() => void) | null = null;
 let lastLoggedMood: { dayPhase: number; weather: number; tension: number } | null = null;
 
 let disposeTuningEffect: (() => void) | null = null;
@@ -99,13 +99,13 @@ export const clientPlugin: TerraceClientPlugin = {
   attach(ctx: ClientPluginCtx): void {
     audio = ctx.audio;
     ctx.audio.setMusicGenerator((outlet) => {
-      const running = createComposer(outlet.context, outlet.destination, MUSIC_SEED, musicTuning());
+      const running = createComposer(outlet.context, outlet.destination, MUSIC_SEED, musicTuning(), ctx);
       composer = running;
       lastLoggedMood = null;
       lastLoggedTempoAnchor = null;
       running.start();
       sampleMood(ctx);
-      moodTimer = setInterval(() => {
+      cancelMoodTimer = ctx.setInterval(() => {
         sampleMood(ctx);
       }, MOOD_SAMPLE_MS);
       disposeTuningEffect = createRoot((disposeRoot) => {
@@ -116,8 +116,8 @@ export const clientPlugin: TerraceClientPlugin = {
       });
       return {
         stop: (fadeSeconds: number): void => {
-          if (moodTimer !== null) clearInterval(moodTimer);
-          moodTimer = null;
+          if (cancelMoodTimer !== null) cancelMoodTimer();
+          cancelMoodTimer = null;
           disposeTuningEffect?.();
           disposeTuningEffect = null;
           composer = null;

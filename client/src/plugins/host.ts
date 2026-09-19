@@ -9,7 +9,7 @@ import type { FramePhase, Viewport } from '../render/scene.ts';
 import { FRAME_DELTA_CAP_S } from '../render/scene.ts';
 import { rendererBackendName } from '../render/rendererBackend.ts';
 import { loadRigAsset } from '../render/rigAsset.ts';
-import { frameStatsSample, recordPluginFrame } from '../render/frameStats.ts';
+import { frameStatsSample, recordPluginAsync, recordPluginFrame } from '../render/frameStats.ts';
 import { applySkyRig, skyRigEquals, type SkyRigState } from '../render/skyRig.ts';
 import { warmHiddenDrawables, type SideFlip } from '../render/settleWarmup.ts';
 import {
@@ -388,9 +388,18 @@ export function createClientPluginHost(
           set = new Set();
           handlers.set(key, set);
         }
-        set.add(handler);
+        const name = plugin.name;
+        const wrapped = (payload: unknown): void => {
+          const startMs = performance.now();
+          try {
+            handler(payload);
+          } finally {
+            recordPluginAsync(name, performance.now() - startMs);
+          }
+        };
+        set.add(wrapped);
         return track(() => {
-          set.delete(handler);
+          set.delete(wrapped);
           if (set.size === 0) handlers.delete(key);
         });
       },
@@ -411,6 +420,30 @@ export function createClientPluginHost(
           const index = deferredFrameHandlers.indexOf(deferred);
           if (index !== -1) deferredFrameHandlers.splice(index, 1);
         });
+      },
+      setInterval(handler, ms) {
+        const name = plugin.name;
+        const id = setInterval(() => {
+          const startMs = performance.now();
+          try {
+            handler();
+          } finally {
+            recordPluginAsync(name, performance.now() - startMs);
+          }
+        }, ms);
+        return track(() => clearInterval(id));
+      },
+      setTimeout(handler, ms) {
+        const name = plugin.name;
+        const id = setTimeout(() => {
+          const startMs = performance.now();
+          try {
+            handler();
+          } finally {
+            recordPluginAsync(name, performance.now() - startMs);
+          }
+        }, ms);
+        return track(() => clearTimeout(id));
       },
       registerHudPanel(
         component: Component,
