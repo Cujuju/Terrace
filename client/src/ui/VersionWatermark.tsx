@@ -125,7 +125,9 @@ export function VersionWatermark(): JSX.Element {
             <PerfMsRow label="render" ms={stat().renderMsP50} />
             <PerfMsRow label="outside" ms={stat().outsideMsP50} />
             <PerfRow label="unattributed" value={`${stat().unattributedMs.toFixed(2)} ms`} />
+            <hr class="hud-version__perf-rule" />
             <PerfMsRow label="frame" ms={stat().frameMsP50} />
+            <div class="hud-version__perf-gap" />
             <PerfMsRow label="p99" ms={stat().frameMsP99} />
             <PerfMsRow label="max" ms={stat().frameMsMax} />
             <PerfMsRow label="interval" ms={stat().intervalMsP50} />
