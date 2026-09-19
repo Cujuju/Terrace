@@ -111,6 +111,7 @@ export function VersionWatermark(): JSX.Element {
           <>
           <div class="hud-version__perf-panel">
             <PerfRow label="pick" value={pickValue(hoverPick())} />
+            <div class="hud-version__perf-gap" />
             {
 
 }
@@ -122,8 +123,13 @@ export function VersionWatermark(): JSX.Element {
             />
             {
 }
+            <div class="hud-version__perf-gap" />
             <PerfMsRow label="render" ms={stat().renderMsP50} />
             <PerfMsRow label="outside" ms={stat().outsideMsP50} />
+            <PerfRow
+              label="plugins"
+              value={`${stat().plugins.reduce((sum, plugin) => sum + plugin.msPerFrame, 0).toFixed(2)} ms`}
+            />
             <PerfRow label="unattributed" value={`${stat().unattributedMs.toFixed(2)} ms`} />
             <hr class="hud-version__perf-rule" />
             <PerfMsRow label="frame" ms={stat().frameMsP50} />
@@ -136,6 +142,7 @@ export function VersionWatermark(): JSX.Element {
             <Show when={stat().gpuMsP50 !== null} fallback={<PerfRow label="gpu" value="unavailable" />}>
               <PerfMsRow label="gpu" ms={stat().gpuMsP50 ?? 0} />
             </Show>
+            <div class="hud-version__perf-gap" />
             {
 }
             <PerfRow label="camera" value={stat().counters.cameraDistance.toFixed(0)} />
