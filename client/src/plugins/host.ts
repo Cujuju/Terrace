@@ -358,6 +358,9 @@ export function createClientPluginHost(
   };
 
   const mountPlugin = (plugin: TerraceClientPlugin): void => {
+    if (mounted.has(plugin.name) || pendingMounts.has(plugin.name)) {
+      console.error(`[terrace] client plugin "${plugin.name}" mounted twice; leaking runners`);
+    }
     const undo: (() => void)[] = [];
     const track = (unregister: () => void): (() => void) => {
       undo.push(unregister);
