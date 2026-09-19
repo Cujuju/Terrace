@@ -177,7 +177,7 @@ export function VersionWatermark(): JSX.Element {
                 <span>runs/s</span>
                 <span>share</span>
                 <span>draws</span>
-                <span>async</span>
+                <span>async/ms</span>
               </span>
             </Show>
             {
