@@ -167,11 +167,11 @@ describe('applySculpt — banded spill containment (issue #26)', () => {
 
   const SMOOTH_HARD_BANDED = { tool: 'smooth', profile: 'hard', spill: 'banded' } as const;
 
-  it('pins the standing residual of the #12 plateau scenario: 988 units of excess', () => {
+  it('pins the standing residual of the #12 plateau scenario: 997 units of excess', () => {
     const map = createHeightmap(128);
     stampPlateau(map, 64, 64, CEILING_BANDS - 1);
     applySculpt(map, 64, 64, 4, DEFAULT_SCULPT_AMOUNT, SMOOTH_HARD_BANDED);
-    expect(maxExcess(map)).toBe(988);
+    expect(maxExcess(map)).toBe(997);
   });
 
   it('banded strokes can NEVER repair the standing ring — the excess does not fall', () => {

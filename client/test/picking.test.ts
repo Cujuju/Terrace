@@ -4,14 +4,16 @@ import {
   BEDROCK_BAND,
   CHUNK_SIZE,
   MAX_HEIGHT,
+  bandLevelHeight,
   drawnBandOfSample,
   quantizeToBand,
   setColumn,
+  spanUndersideLevel,
   type ChunkPayload,
   type JoinSnapshotMessage,
 } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../src/config.ts';
-import { drawnBandAtY } from '../src/terrain/capEmission.ts';
+import { drawnBandAtY, drawnBandCapY } from '../src/terrain/capEmission.ts';
 import {
   pickTerrainCellByRay,
   pickTerrainInColumn,
@@ -154,7 +156,7 @@ describe('pickTerrainCellByRay', () => {
   });
 
   it('reports the RENDERED surface — the band cap, not the raw height', () => {
-    const raw = BAND_HEIGHT * 3 + BAND_HEIGHT / 2;
+    const raw = bandLevelHeight(4);
     const mirror = world(() => raw);
     const hit = pickTerrainCellByRay(mirror, above(4, 4), DOWN);
     expect(hit!.surfaceY).toBe(drawnBandOfSample(raw) * BAND_HEIGHT * HEIGHT_WORLD_SCALE);
@@ -185,7 +187,7 @@ describe('pickTerrainCellByRay', () => {
   });
 
   it('picks the tall cell when a shallow ray strikes its riser', () => {
-    const TOP = BAND_HEIGHT * 10;
+    const TOP = bandLevelHeight(10);
     const mirror = world((x) => (x >= 32 ? TOP : 0));
     const rayY = (BAND_HEIGHT * 5) * HEIGHT_WORLD_SCALE;
     const hit = pickTerrainCellByRay(
@@ -196,7 +198,7 @@ describe('pickTerrainCellByRay', () => {
     expect(hit).toEqual({
       x: 32,
       y: 20,
-      surfaceY: TOP * HEIGHT_WORLD_SCALE,
+      surfaceY: drawnBandCapY(10),
       face: 'riser',
       band: drawnBandAtY(rayY),
       hitY: rayY,
@@ -209,7 +211,7 @@ describe('pickTerrainCellByRay', () => {
   it('walks over a lower plateau to land on the higher ground behind it', () => {
     const NEAR_TOP_Y = BAND_HEIGHT * HEIGHT_WORLD_SCALE;
     const FAR_TOP_Y = BAND_HEIGHT * 8 * HEIGHT_WORLD_SCALE;
-    const mirror = world((x) => (x >= 40 ? BAND_HEIGHT * 8 : BAND_HEIGHT));
+    const mirror = world((x) => (x >= 40 ? bandLevelHeight(8) : bandLevelHeight(1)));
 
     const startX = 10 * CELL_WORLD_SIZE;
     const wallX = 40 * CELL_WORLD_SIZE;
@@ -233,7 +235,7 @@ describe('pickTerrainCellByRay', () => {
 
   it('lands on revealed terrain BEHIND an unrevealed gap', () => {
     const heightOf = (x: number): number =>
-      x >= 32 ? BAND_HEIGHT * 4 : x >= 16 ? BAND_HEIGHT * 8 : 0;
+      x >= 32 ? bandLevelHeight(4) : x >= 16 ? bandLevelHeight(8) : 0;
     const HIGH_Y = BAND_HEIGHT * 8 * HEIGHT_WORLD_SCALE;
 
     const START_CELL = 2;
@@ -370,8 +372,8 @@ describe('pickTerrainInColumn', () => {
   it('reports the tread of the ground still under the ray after the column is lowered', () => {
     const CELL_X = 30;
     const CELL_Z = 30;
-    const HIGH = BAND_HEIGHT * 8;
-    const LOW = BAND_HEIGHT * 2;
+    const HIGH = bandLevelHeight(8);
+    const LOW = bandLevelHeight(2);
     const mirror = world((x, y) => (x === CELL_X && y === CELL_Z ? HIGH : LOW));
     const origin = {
       x: (CELL_X - 4) * CELL_WORLD_SIZE,
@@ -392,7 +394,7 @@ describe('pickTerrainInColumn', () => {
     expect(after!.x).toBe(CELL_X);
     expect(after!.y).toBe(CELL_Z);
     expect(after!.face).toBe('tread');
-    expect(after!.surfaceY).toBe(LOW * HEIGHT_WORLD_SCALE);
+    expect(after!.surfaceY).toBe(drawnBandCapY(2));
     expect(after!.hitY).toBe(after!.surfaceY);
     expect(Math.abs(after!.hitX / CELL_WORLD_SIZE - CELL_X)).toBeLessThanOrEqual(0.5);
     expect(Math.abs(after!.hitZ / CELL_WORLD_SIZE - CELL_Z)).toBeLessThanOrEqual(0.5);
@@ -401,18 +403,17 @@ describe('pickTerrainInColumn', () => {
   it('answers the FLOOR piece through a carved gap', () => {
     const CELL_X = 30;
     const CELL_Z = 30;
-    const FLOOR_TOP = BAND_HEIGHT * 3;
+    const FLOOR_TOP = bandLevelHeight(3);
     const ROOF_BAND = 6;
-    const ROOF_BASE = BAND_HEIGHT * ROOF_BAND;
     const ROOF_TOP = BAND_HEIGHT * 9;
     const mirror = world(() => ROOF_TOP);
+    const ROOF = { floorBand: ROOF_BAND, ceiling: ROOF_TOP };
     setColumn(mirror.map, CELL_X, CELL_Z, [
       { floorBand: BEDROCK_BAND, ceiling: FLOOR_TOP },
-      { floorBand: ROOF_BAND, ceiling: ROOF_TOP },
+      ROOF,
     ]);
-    // F5: a horizontal ray through the gap passes over the floor, so the pinned
-    // column misses. Descend through the gap to prove the floor is still pickable.
-    const gapY = ((FLOOR_TOP + ROOF_BASE) / 2) * HEIGHT_WORLD_SCALE;
+    // F5: level ray misses; descending ray hits floor tread.
+    const gapY = ((FLOOR_TOP + spanUndersideLevel(ROOF)) / 2) * HEIGHT_WORLD_SCALE;
     const origin = { x: (CELL_X - 3) * CELL_WORLD_SIZE, y: gapY, z: CELL_Z * CELL_WORLD_SIZE };
     const level = { x: 1, y: 0, z: 0 };
     expect(pickTerrainInColumn(mirror, CELL_X, CELL_Z, origin, level)).toBeNull();
@@ -421,7 +422,7 @@ describe('pickTerrainInColumn', () => {
     expect(pick).not.toBeNull();
     expect(pick!.spanIndex).toBe(0);
     expect(pick!.face).toBe('tread');
-    expect(pick!.surfaceY).toBe(FLOOR_TOP * HEIGHT_WORLD_SCALE);
+    expect(pick!.surfaceY).toBe(drawnBandCapY(3));
     expect(pick!.hitY).toBe(pick!.surfaceY);
   });
 
@@ -511,7 +512,7 @@ describe('lane D drawn-band probes (F1-F8)', () => {
     // Orthogonal neighbours are water, the south-east diagonal is a tower.
     // Only the 8-neighbour search can name (12, 12); the old 4-neighbour
     // search returned null here.
-    const TOWER = BAND_HEIGHT * 10;
+    const TOWER = bandLevelHeight(10);
     const mirror = world(() => 0);
     setColumn(mirror.map, 12, 12, [{ floorBand: BEDROCK_BAND, ceiling: TOWER }]);
     const owner = columnOwningBand(
@@ -521,7 +522,7 @@ describe('lane D drawn-band probes (F1-F8)', () => {
       11.9,
       11.9,
       drawnBandOfSample(TOWER),
-      TOWER * HEIGHT_WORLD_SCALE,
+      drawnBandCapY(drawnBandOfSample(TOWER)),
     );
     expect(owner).toEqual({ x: 12, y: 12, spanIndex: 0 });
     // And the never-null fallback keeps a top-down cap strike on the entered
@@ -539,12 +540,12 @@ describe('lane D drawn-band probes (F1-F8)', () => {
     expect(hit!.surfaceY).toBe(-BAND_HEIGHT * HEIGHT_WORLD_SCALE);
   });
 
-  it('F3+P1 bias ceilings: a half-band height names the drawn band above', () => {
-    // 8 is half a band: blocky bandOf says 0, drawn bias says 1.
-    const mirror = world(() => BAND_HEIGHT / 2);
+  it('F3+P1 bias ceilings: a band-floor height names its own drawn band', () => {
+    // 16 is band 1 to the blocky bandOf, but draws on band 0.
+    const mirror = world(() => BAND_HEIGHT);
     const hit = pickTerrainCellByRay(mirror, above(4, 4), DOWN);
     expect(hit).not.toBeNull();
-    expect(hit!.surfaceY).toBe(BAND_HEIGHT * HEIGHT_WORLD_SCALE);
+    expect(hit!.surfaceY).toBe(0);
   });
 
   it('F4+F6 slab corner and dy=0 rim: an underside cue snaps to the drawn ceiling', () => {
@@ -611,7 +612,7 @@ describe('lane D drawn-band probes (F1-F8)', () => {
     };
     expect(resolvePick(mirror.map, skirtHit)?.band).toBe(0);
     // Control: a skirt hit on a span that itself draws water still maps to -1.
-    const sea = world(() => -20);
+    const sea = world(() => bandLevelHeight(-1));
     const seaHit = {
       ...skirtHit,
       x: 4,
@@ -632,7 +633,7 @@ describe('lane D drawn-band probes (F1-F8)', () => {
     const fromSky = pickTerrainCellByRay(mirror, above(20, 20), DOWN);
     expect(fromSky).not.toBeNull();
     expect(fromSky!.face).toBe('tread');
-    expect(fromSky!.hitY).toBe(capY);
+    expect(fromSky!.hitY).toBe(drawnBandCapY(topBand));
     expect(resolvePick(mirror.map, fromSky!)).toEqual({ face: 'tread', band: topBand });
 
     const onPlane = pickTerrainCellByRay(
@@ -642,7 +643,7 @@ describe('lane D drawn-band probes (F1-F8)', () => {
     );
     expect(onPlane).not.toBeNull();
     expect(onPlane!.face).toBe('tread');
-    expect(onPlane!.hitY).toBe(capY);
+    expect(onPlane!.hitY).toBe(drawnBandCapY(topBand));
 
     const pinned = pickTerrainInColumn(mirror, 20, 20, above(20, 20), DOWN);
     expect(pinned!.face).toBe('tread');

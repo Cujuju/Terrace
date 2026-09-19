@@ -1,4 +1,4 @@
-import { BAND_HEIGHT } from './constants.ts';
+import { BAND_HEIGHT, DRAWN_SHORE_HEIGHT } from './constants.ts';
 import {
   BEDROCK_FLOOR,
   columnSampleAtBand,
@@ -16,7 +16,7 @@ export {
   drawnBandOfSample,
   drawnLevelThreshold,
 } from './bands.ts';
-import { DRAWN_GROUND_BAND_BIAS, drawnBandOfSample, drawnLevelThreshold } from './bands.ts';
+import { DRAWN_GROUND_BAND_BIAS, bandLevelHeight, drawnBandOfSample } from './bands.ts';
 
 export const DRAWN_GROUND_COORD_DENOM = 1024;
 
@@ -34,9 +34,7 @@ const WEIGHT_TOTAL = DRAWN_GROUND_COORD_DENOM * DRAWN_GROUND_COORD_DENOM;
 
 const BAND_NUMERATOR = BAND_HEIGHT * WEIGHT_TOTAL;
 
-const BIAS_NUMERATOR = DRAWN_GROUND_BAND_BIAS * WEIGHT_TOTAL;
-
-const SHORE_NUMERATOR = drawnLevelThreshold(0) * WEIGHT_TOTAL;
+const SHORE_NUMERATOR = DRAWN_SHORE_HEIGHT * WEIGHT_TOTAL;
 
 const TOP_CEILING_FIELD = null;
 
@@ -178,8 +176,7 @@ export function drawnIsolineAt(
 }
 
 function bandOfNumerator(numerator: number): number {
-  const band = Math.floor((numerator + BIAS_NUMERATOR) / BAND_NUMERATOR);
-  return band === 0 && numerator + BIAS_NUMERATOR < SHORE_NUMERATOR ? -1 : band;
+  return Math.floor((numerator - SHORE_NUMERATOR) / BAND_NUMERATOR);
 }
 
 function lowestDrawnBandNear(map: Heightmap, qx: number, qz: number): number {
@@ -256,5 +253,5 @@ export function drawnLayerCapAt(
 }
 
 export function drawnHeightAt(map: Heightmap, x: number, z: number): number {
-  return drawnBandAt(map, x, z) * BAND_HEIGHT;
+  return bandLevelHeight(drawnBandAt(map, x, z));
 }

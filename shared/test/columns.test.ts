@@ -107,11 +107,11 @@ describe('the span contract — floors in bands, ceilings raw', () => {
 
   it('adjacent means no band of air, and only a gap of air draws', () => {
     const lower: Span = { floorBand: BEDROCK_BAND, ceiling: 32 };
-    expect(spanCapBand(lower)).toBe(2);
-    expect(spansAdjacent(lower, { floorBand: 3, ceiling: 64 })).toBe(true);
-    expect(isGapDrawn(lower, { floorBand: 3, ceiling: 64 })).toBe(false);
-    expect(spansAdjacent(lower, { floorBand: 4, ceiling: 64 })).toBe(false);
-    expect(isGapDrawn(lower, { floorBand: 4, ceiling: 64 })).toBe(true);
+    expect(spanCapBand(lower)).toBe(1);
+    expect(spansAdjacent(lower, { floorBand: 2, ceiling: 64 })).toBe(true);
+    expect(isGapDrawn(lower, { floorBand: 2, ceiling: 64 })).toBe(false);
+    expect(spansAdjacent(lower, { floorBand: 3, ceiling: 64 })).toBe(false);
+    expect(isGapDrawn(lower, { floorBand: 3, ceiling: 64 })).toBe(true);
   });
 });
 
@@ -133,7 +133,7 @@ describe('canonicaliseColumn', () => {
     expect(
       canonicaliseColumn([
         { floorBand: BEDROCK_BAND, ceiling: 32 },
-        { floorBand: 3, ceiling: 64 },
+        { floorBand: 2, ceiling: 64 },
       ]),
     ).toEqual([{ floorBand: BEDROCK_BAND, ceiling: 64 }]);
   });
@@ -141,7 +141,7 @@ describe('canonicaliseColumn', () => {
   it('keeps spans that a whole band of air separates', () => {
     const spans = canonicaliseColumn([
       { floorBand: BEDROCK_BAND, ceiling: 32 },
-      { floorBand: 4, ceiling: 64 },
+      { floorBand: 4, ceiling: bandLevelHeight(4) },
     ]);
     expect(spans).toHaveLength(2);
     expect(isGapDrawn(spans[0]!, spans[1]!)).toBe(true);
@@ -154,9 +154,9 @@ describe('canonicaliseColumn', () => {
   });
 
   it('leaves a bedrock floor under a span that still clears it', () => {
-    expect(canonicaliseColumn([{ floorBand: 4, ceiling: 64 }])).toEqual([
+    expect(canonicaliseColumn([{ floorBand: 4, ceiling: bandLevelHeight(4) }])).toEqual([
       { floorBand: BEDROCK_BAND, ceiling: BEDROCK_FLOOR },
-      { floorBand: 4, ceiling: 64 },
+      { floorBand: 4, ceiling: bandLevelHeight(4) },
     ]);
   });
 
@@ -252,7 +252,7 @@ describe('packed spans round-trip', () => {
     // Second span draws nothing.
     expect(parsePackedSpans([BEDROCK_BAND, 32, 9, 100])).toBeNull();
     // No band of air between the two.
-    expect(parsePackedSpans([BEDROCK_BAND, 32, 3, 64])).toBeNull();
+    expect(parsePackedSpans([BEDROCK_BAND, 32, 2, 64])).toBeNull();
     // Floor below the bedrock band.
     expect(parsePackedSpans([BEDROCK_BAND - 1, 32, 4, 70])).toBeNull();
   });

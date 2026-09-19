@@ -10,7 +10,6 @@ import {
   MAX_BRUSH_RADIUS,
   MIN_BRUSH_RADIUS,
   CARVE_DEFAULT_DEPTH_BANDS,
-  DRAWN_SHORE_HEIGHT,
   MAX_DRAG_SWEEP_CELLS,
   bandLevelHeight,
   columnSolidUnits,
@@ -31,7 +30,7 @@ function observedDisplacement(
 ): number {
   const size = 64;
   const map = createHeightmap(size);
-  const start = 128;
+  const start = bandLevelHeight(8);
   map.cells.fill(start);
 
   const options = { tool: 'stamp', profile, anchor: 'clicked' } as const;
@@ -104,12 +103,12 @@ describe('sculptDisplacementUnits', () => {
     const size = 64;
     const stampedCells = new Set<number>();
     const stamped = createHeightmap(size);
-    stamped.cells.fill(8 * BAND_HEIGHT);
+    stamped.cells.fill(bandLevelHeight(8));
     applyBrush(stamped, 32, 32, 4, DEFAULT_SCULPT_AMOUNT, stampedCells, 'hard');
     applyBrush(stamped, 32, 32, 4, DEFAULT_SCULPT_AMOUNT, stampedCells, 'hard');
 
     const slumped = createHeightmap(size);
-    slumped.cells.fill(8 * BAND_HEIGHT);
+    slumped.cells.fill(bandLevelHeight(8));
     applySculpt(slumped, 32, 32, 4, DEFAULT_SCULPT_AMOUNT, { tool: 'stamp', profile: 'hard' });
     const slumpedDiff = applySculpt(slumped, 32, 32, 4, DEFAULT_SCULPT_AMOUNT, {
       tool: 'smooth',
@@ -233,8 +232,8 @@ describe('displacementOf — what a stroke actually moved', () => {
     forEachFootprintOffset(radius, () => {
       footprint++;
     });
-    expect(measured.units).toBe(footprint * DRAWN_SHORE_HEIGHT);
-    expect(measured.units * BAND_HEIGHT).toBe(
+    expect(measured.units).toBe(footprint * bandLevelHeight(0));
+    expect((measured.units / bandLevelHeight(0)) * BAND_HEIGHT).toBe(
       sculptDisplacementUnits(radius, 'stamp', 'hard', CARVE_DEFAULT_DEPTH_BANDS),
     );
   });

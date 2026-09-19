@@ -3,6 +3,7 @@ import {
   BAND_HEIGHT,
   BEDROCK_BAND,
   BEDROCK_FLOOR,
+  bandLevelHeight,
   createHeightmap,
   setColumn,
   spanIndexCoveringBand,
@@ -48,7 +49,8 @@ function pickAt(
 
 describe('resolvePick / bandOfPick', () => {
   const CAP_BAND = 10;
-  const CAP = BAND_HEIGHT * CAP_BAND;
+  const CAP = bandLevelHeight(CAP_BAND);
+  const CAP_RAW = BAND_HEIGHT * CAP_BAND;
   const oneSpan = (): Heightmap => mapWith([{ floorBand: BEDROCK_BAND, ceiling: CAP }]);
 
   it('names the band whose slab a riser hit landed in', () => {
@@ -72,7 +74,7 @@ describe('resolvePick / bandOfPick', () => {
 
   it('gives a tread hit the cap band of the struck span', () => {
     const map = oneSpan();
-    expect(resolvePick(map, pickAt(0, 'tread', CAP, CAP))).toEqual({
+    expect(resolvePick(map, pickAt(0, 'tread', CAP_RAW, CAP_RAW))).toEqual({
       face: 'tread',
       band: CAP_BAND,
     });
@@ -94,7 +96,7 @@ describe('resolvePick / bandOfPick', () => {
   it('is NULL — not a clamped band — when the struck height is outside the span', () => {
     const map = oneSpan();
     const aboveCap = CAP + BAND_HEIGHT;
-    const belowUnderside = BEDROCK_FLOOR - BAND_HEIGHT * 2;
+    const belowUnderside = BEDROCK_FLOOR - BAND_HEIGHT * 3;
     expect(bandOfPick(map, pickAt(0, 'riser', aboveCap, CAP))).toBeNull();
     expect(bandOfPick(map, pickAt(0, 'riser', belowUnderside, CAP))).toBeNull();
   });
@@ -109,7 +111,8 @@ describe('resolvePick / bandOfPick', () => {
 
 describe('carveBandOfPick', () => {
   const CAP_BAND = 10;
-  const CAP = BAND_HEIGHT * CAP_BAND;
+  const CAP = bandLevelHeight(CAP_BAND);
+  const CAP_RAW = BAND_HEIGHT * CAP_BAND;
   const oneSpan = (): Heightmap => mapWith([{ floorBand: BEDROCK_BAND, ceiling: CAP }]);
 
   it('carves the band of the face on a riser hit — the SIDE FACE', () => {
@@ -120,7 +123,7 @@ describe('carveBandOfPick', () => {
 
   it('carves the cap band on a tread hit — the CORNER EDGE', () => {
     const map = oneSpan();
-    expect(carveBandOfPick(map, pickAt(0, 'tread', CAP, CAP))).toBe(CAP_BAND);
+    expect(carveBandOfPick(map, pickAt(0, 'tread', CAP_RAW, CAP_RAW))).toBe(CAP_BAND);
   });
 
   it('never answers a band no span covers — the server-side belt', () => {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   BEDROCK_BAND,
   applySculpt,
+  bandLevelHeight,
   bandOf,
   BAND_HEIGHT,
   canSpreadBandTo,
@@ -32,7 +33,7 @@ function mapWithPlateau(
 
 describe('canSpreadBandTo — the drag anchor’s adjacency rule', () => {
   const BAND = 3;
-  const HIGH = BAND * BAND_HEIGHT;
+  const HIGH = bandLevelHeight(BAND);
 
   it('is true beside ground already at the band, in all eight directions', () => {
     for (const [dx, dy] of [
@@ -86,7 +87,7 @@ describe('canSpreadBandTo — the drag anchor’s adjacency rule', () => {
 
 describe('applySculpt with the drag anchor — a band extends sideways', () => {
   const BAND = 3;
-  const HIGH = BAND * BAND_HEIGHT;
+  const HIGH = bandLevelHeight(BAND);
   const DRAG = { tool: 'stamp', profile: 'hard', spill: 'banded', anchor: 'band' } as const;
 
   it('pulls the grabbed band onto the cell beside it, and stops AT it', () => {
@@ -119,7 +120,7 @@ describe('applySculpt with the drag anchor — a band extends sideways', () => {
 
   it('never touches ground already at or above the grabbed band', () => {
     const map = mapWithPlateau(16, 0, HIGH, 0, 0, 7, 15);
-    const tall = (BAND + 4) * BAND_HEIGHT;
+    const tall = bandLevelHeight(BAND + 4);
     map.cells[cellIndex(map, 8, 8)] = tall;
     const diff = applySculpt(map, 8, 8, MIN_BRUSH_RADIUS, DEFAULT_SCULPT_AMOUNT, {
       ...DRAG,
@@ -133,16 +134,16 @@ describe('applySculpt with the drag anchor — a band extends sideways', () => {
     const grabbed = 6;
     const map = createHeightmap(16);
     map.cells.fill(0);
-    for (let y = 0; y < 16; y++) map.cells[cellIndex(map, 7, y)] = grabbed * BAND_HEIGHT;
+    for (let y = 0; y < 16; y++) map.cells[cellIndex(map, 7, y)] = bandLevelHeight(grabbed);
     applySculpt(map, 8, 8, MIN_BRUSH_RADIUS, DEFAULT_SCULPT_AMOUNT, {
       ...DRAG,
       targetBand: grabbed,
     });
-    expect(map.cells[cellIndex(map, 8, 8)]).toBe(grabbed * BAND_HEIGHT);
+    expect(map.cells[cellIndex(map, 8, 8)]).toBe(bandLevelHeight(grabbed));
 
     const clicked = createHeightmap(16);
     clicked.cells.fill(0);
-    for (let y = 0; y < 16; y++) clicked.cells[cellIndex(clicked, 7, y)] = grabbed * BAND_HEIGHT;
+    for (let y = 0; y < 16; y++) clicked.cells[cellIndex(clicked, 7, y)] = bandLevelHeight(grabbed);
     for (let i = 0; i < 20; i++) {
       applySculpt(clicked, 8, 8, MIN_BRUSH_RADIUS, DEFAULT_SCULPT_AMOUNT, {
         tool: 'stamp', profile: 'hard', spill: 'banded', anchor: 'clicked',
@@ -177,7 +178,7 @@ describe('a soft drag bites its rim at the disc diagonals too (issue #152)', () 
   it('leaves a refused boundary cell bitten rather than filling it as an enclave', () => {
     const map = createHeightmap(SIZE);
     for (let y = 0; y < SIZE; y++) {
-      for (let x = PLATEAU_X; x < SIZE; x++) map.cells[cellIndex(map, x, y)] = BAND_HEIGHT;
+      for (let x = PLATEAU_X; x < SIZE; x++) map.cells[cellIndex(map, x, y)] = bandLevelHeight(TARGET_BAND);
     }
 
     applySculpt(map, CX, CY, RADIUS, DEFAULT_SCULPT_AMOUNT, {
@@ -186,7 +187,7 @@ describe('a soft drag bites its rim at the disc diagonals too (issue #152)', () 
       targetBand: TARGET_BAND,
     });
 
-    expect(heightAt(map, CX, CY)).toBe(BAND_HEIGHT);
+    expect(heightAt(map, CX, CY)).toBe(bandLevelHeight(TARGET_BAND));
     expect(heightAt(map, CX + BOUNDARY_DX, CY + BOUNDARY_DY)).toBe(0);
   });
 });

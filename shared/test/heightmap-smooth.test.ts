@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   applyBrush,
   applySculpt,
+  bandLevelHeight,
   BAND_HEIGHT,
   cellIndex,
   createHeightmap,
@@ -135,8 +136,7 @@ describe('a player stroke is never undone by its own relaxation (2026-08-22)', (
   for (const radius of LADDER) {
     for (const dir of [1, -1] as const) {
       it(`one click moves the clicked cell by at most two bands at radius ${radius}`, () => {
-        // The 2026-08-22 pin retired with the deposit it guarded: pure smooth
-        // deposits nothing, so the click drifts inside its clamp window instead.
+        // Pure smooth deposits nothing.
         for (let t = 0; t < 60; t++) {
           const map = rollingHills();
           const cx = 30 + ((t * 11) % 68);
@@ -197,7 +197,7 @@ describe('an anchored smooth moves a wall, it never manufactures one', () => {
   const SIZE = 64;
   const WALL_X = 32;
   const ROW = 32;
-  const LOW = 320;
+  const LOW = bandLevelHeight(20);
   const RADIUS = 4;
   const PRESSES = 10;
   const REACHING_CLICKS = [WALL_X, WALL_X + 1, WALL_X + 2];
@@ -256,9 +256,7 @@ describe('an anchored smooth moves a wall, it never manufactures one', () => {
       expect(last).toBe(0);
 
       expect(Math.abs(mapTotal(map) - total)).toBeLessThanOrEqual(touched * 2 * BAND_HEIGHT);
-      // Tips of the brush circle freeze between the target cap and the spill
-      // band clamp; re-aimed strokes re-grade them (measured 7 -> 2), so the
-      // reach box holds one band while the interior holds the limit.
+      // Brush tips freeze between target cap and spill clamp.
       for (let y = ROW - smoothCascadeReachCells(RADIUS); y <= ROW + smoothCascadeReachCells(RADIUS); y++) {
         for (let x = cx - smoothCascadeReachCells(RADIUS); x <= cx + smoothCascadeReachCells(RADIUS); x++) {
           expect(Math.abs(heightAt(map, x, y) - heightAt(map, x + 1, y))).toBeLessThanOrEqual(BAND_HEIGHT);
@@ -276,9 +274,7 @@ describe('an anchored smooth moves a wall, it never manufactures one', () => {
   for (const bands of PAST_TARGET_BANDS) {
     it(`a ${bands}-band step is past the target: lowering freezes it`, () => {
       const high = LOW + bands * BAND_HEIGHT;
-      // Walking targets free edge clicks over a session, so the session
-      // contract is a grind bound; per-stroke freeze is pinned exactly by
-      // the ledge tests. Wall columns fully off the feature never move.
+      // Wall columns off the feature never move.
       for (const cx of REACHING_CLICKS) {
         const map = wall(bands);
         const total = mapTotal(map);

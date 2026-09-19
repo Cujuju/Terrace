@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   applySculpt,
   bandFloorHeight,
+  bandLevelHeight,
   BAND_HEIGHT,
   BEDROCK_BAND,
   cellIndex,
@@ -134,7 +135,7 @@ describe('relaxation conserves height exactly (issue #108)', () => {
         const gy = Math.floor(y / LATTICE_CELLS);
         let h = (gx * 73856093) ^ (gy * 19349663);
         h = (h ^ (h >>> 13)) >>> 0;
-        map.cells[cellIndex(map, x, y)] = ((h % BAND_SPREAD) + LOWEST_BAND) * BAND_HEIGHT;
+        map.cells[cellIndex(map, x, y)] = bandLevelHeight((h % BAND_SPREAD) + LOWEST_BAND);
       }
     }
     return map;
@@ -199,7 +200,7 @@ describe('relaxation conserves height exactly (issue #108)', () => {
     }
     // The melt proceeds in waves: each stroke's walking targets free new
     // cells, so later strokes bite harder before the ground goes quiet.
-    expect(counts).toEqual([96, 154, 125, 129]);
+    expect(counts).toEqual([96, 152, 119, 129]);
 
     let tail = 0;
     while (tail < CASCADE_TAIL_LIMIT) {
