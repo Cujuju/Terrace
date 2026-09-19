@@ -110,6 +110,8 @@ interface PluginFrameThrottle {
   skipRemaining: number;
   pendingDt: number;
   breachNotified: boolean;
+  breachLogged: boolean;
+  slowLogged: boolean;
   lowSamples: number;
 }
 
@@ -582,6 +584,8 @@ export function createClientPluginHost(
           skipRemaining: 0,
           pendingDt: 0,
           breachNotified: false,
+          breachLogged: false,
+          slowLogged: false,
           lowSamples: 0,
         };
         const runner = (dt: number): void => {
@@ -611,7 +615,8 @@ export function createClientPluginHost(
             elapsedMs = performance.now() - startMs;
             recordPluginFrame(name, elapsedMs);
           }
-          if (elapsedMs > PLUGIN_SLOW_RUN_MS) {
+          if (elapsedMs > PLUGIN_SLOW_RUN_MS && !throttle.slowLogged) {
+            throttle.slowLogged = true;
             console.warn(
               `[terrace] client plugin "${name}" slow run: ${elapsedMs.toFixed(2)} ms`,
             );
@@ -621,12 +626,15 @@ export function createClientPluginHost(
             throttle.lowSamples = 0;
             if (!throttle.breachNotified) {
               throttle.breachNotified = true;
-              console.error(
-                `[terrace] client plugin "${name}" exceeded its frame budget: ` +
-                  `${elapsedMs.toFixed(2)} ms against a budget of ` +
-                  `${PLUGIN_FRAME_BUDGET_MS.toFixed(2)} ms; ` +
-                  `skipping the next ${String(PLUGIN_FRAME_SKIP_FRAMES)} frames`,
-              );
+              if (!throttle.breachLogged) {
+                throttle.breachLogged = true;
+                console.error(
+                  `[terrace] client plugin "${name}" exceeded its frame budget: ` +
+                    `${elapsedMs.toFixed(2)} ms against a budget of ` +
+                    `${PLUGIN_FRAME_BUDGET_MS.toFixed(2)} ms; ` +
+                    `skipping the next ${String(PLUGIN_FRAME_SKIP_FRAMES)} frames`,
+                );
+              }
             }
           } else if (throttle.breachNotified) {
             throttle.lowSamples += 1;
