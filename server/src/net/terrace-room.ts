@@ -61,11 +61,23 @@ export type {
 const UNREGISTERED_MESSAGE_REASON_PREFIX = 'room onMessage for ';
 const HITCH_PREFIX = '[hitch]';
 const HITCH_MS_DECIMALS = 1;
+/** Hitch lines share the main perf-stamp cadence; per-event would flood. */
+const HITCH_REPORT_INTERVAL_MS = 10_000;
+
+interface HitchSummary {
+  count: number;
+  worstMs: number;
+  typicalMs: number;
+}
 
 export class TerraceRoom extends Room<{ client: TerraceClient }> {
   private context!: RoomContext;
 
   private readonly sculptRate = new SculptRateLimiter();
+
+  private readonly hitchByPlayer = new Map<string, HitchSummary>();
+
+  private hitchReport: ReturnType<typeof setInterval> | undefined;
 
   private readonly pluginRewriteLog = new LogThrottle(ROOM_FAILURE_LOG_INTERVAL_MS);
 
@@ -150,10 +162,15 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
       if (hitch === null) return;
       const player = client.userData?.player;
       if (!player) return;
-      perfLogLine(
-        `${HITCH_PREFIX} ${player.name} frame gap ${hitch.intervalMs.toFixed(HITCH_MS_DECIMALS)}ms` +
-          ` (typical ${hitch.typicalMs.toFixed(HITCH_MS_DECIMALS)}ms)`,
-      );
+      const summary = this.hitchByPlayer.get(player.name) ?? {
+        count: 0,
+        worstMs: 0,
+        typicalMs: hitch.typicalMs,
+      };
+      summary.count += 1;
+      summary.worstMs = Math.max(summary.worstMs, hitch.intervalMs);
+      summary.typicalMs = hitch.typicalMs;
+      this.hitchByPlayer.set(player.name, summary);
     });
 
     const adminDeps = { manager: this.context.manager, admin: this.context.admin };
@@ -260,6 +277,19 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
   override onDispose(): void {
     this.context.manager.detachRoom(NULL_SINK);
     this.context.restart.detachRoom();
+    if (this.hitchReport !== undefined) clearInterval(this.hitchReport);
+    this.hitchReport = undefined;
+  }
+
+  private reportHitches(): void {
+    for (const [name, summary] of this.hitchByPlayer) {
+      perfLogLine(
+        `${HITCH_PREFIX} ${name} ${summary.count} gaps, ` +
+          `worst ${summary.worstMs.toFixed(HITCH_MS_DECIMALS)}ms ` +
+          `(typical ${summary.typicalMs.toFixed(HITCH_MS_DECIMALS)}ms)`,
+      );
+    }
+    this.hitchByPlayer.clear();
   }
 
   private roster(): readonly Player[] {
