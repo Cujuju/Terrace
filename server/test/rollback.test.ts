@@ -23,6 +23,7 @@ import {
   worldWithUnlockedChunks,
 } from './support/harness.ts';
 import { makeTempRoot, removeTempRoot } from './support/tempRoot.ts';
+import { legacyLevelHeight } from '../src/persistence/band-scheme-migration.ts';
 
 const WORLD_SIZE = 64;
 const KEY = 'correct-horse-battery';
@@ -261,7 +262,7 @@ describe('a restore point older than the current schema', () => {
   it('rolls back under the band-floor rule, and every row it writes is the current schema', () => {
     const dbPath = join(dir, 'world.db');
     const seed = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
-    seed.map.cells[LAYERED_CELL] = ROOF_CEILING;
+    seed.map.cells[LAYERED_CELL] = legacyLevelHeight(8);
     const target = store.saveSnapshot({
       worldSize: seed.size,
       name: TEST_WORLD_NAME,
@@ -281,8 +282,8 @@ describe('a restore point older than the current schema', () => {
             [
               LAYERED_CELL,
               [
-                { floor: BEDROCK_FLOOR, ceiling: FLOOR_CEILING },
-                { floor: ROOF_RAW_FLOOR, ceiling: ROOF_CEILING },
+                { floor: BEDROCK_FLOOR, ceiling: legacyLevelHeight(1) },
+                { floor: ROOF_RAW_FLOOR, ceiling: legacyLevelHeight(8) },
               ],
             ],
           ]),

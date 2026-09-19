@@ -1,6 +1,7 @@
 import { createEffect, type JSX } from 'solid-js';
-import { BAND_HEIGHT, WORLD_THUMBNAIL_SIZE } from '@terrace/shared';
+import { WORLD_THUMBNAIL_SIZE } from '@terrace/shared';
 import { bandColorOf } from '../terrain/bandColors.ts';
+import { levelPaletteHeight } from '../terrain/capEmission.ts';
 
 const SHADE_BANDS = 3;
 
@@ -46,7 +47,7 @@ export function WorldThumbnail(props: {
       for (let x = 0; x < WORLD_THUMBNAIL_SIZE; x++) {
         const index = y * WORLD_THUMBNAIL_SIZE + x;
         const band = bands[index];
-        const [r, g, b] = bandColorOf(band * BAND_HEIGHT);
+        const [r, g, b] = bandColorOf(levelPaletteHeight(band));
 
         const up = bands[Math.max(0, y - 1) * WORLD_THUMBNAIL_SIZE + Math.max(0, x - 1)];
         const raw = 1 + (band - up) / SHADE_BANDS;

@@ -1,11 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   applySculpt,
-  BAND_HEIGHT,
+  bandLevelHeight,
   createHeightmap,
   DEFAULT_SCULPT_AMOUNT,
   drawnBandOfSample,
-  DRAWN_SHORE_HEIGHT,
   heightAt,
   smooth,
 } from '../src/index.ts';
@@ -26,10 +25,10 @@ describe('applySculpt — edge profiles', () => {
     });
 
     // Flat sea reads as drawn band -1, so one hard raise lands the footprint
-    // on the shore (band 0's level), not on raw 16 (which would skip the beach).
-    for (const i of footprint) expect(map.cells[i]).toBe(DRAWN_SHORE_HEIGHT);
-    expect(heightAt(map, 24 + (radius - 1), 24)).toBe(DRAWN_SHORE_HEIGHT);
-    expect(heightAt(map, 24, 24 - (radius - 1))).toBe(DRAWN_SHORE_HEIGHT);
+    // on the shore band's level (9), not on raw 16 (which would skip the beach).
+    for (const i of footprint) expect(map.cells[i]).toBe(bandLevelHeight(0));
+    expect(heightAt(map, 24 + (radius - 1), 24)).toBe(bandLevelHeight(0));
+    expect(heightAt(map, 24, 24 - (radius - 1))).toBe(bandLevelHeight(0));
     expect(heightAt(map, 24 + radius, 24)).toBe(0);
   });
 
@@ -47,9 +46,9 @@ describe('applySculpt — edge profiles', () => {
   it('radius 1 makes the two profiles identical on band-aligned ground', () => {
     const soft = createHeightmap(16);
     const hard = createHeightmap(16);
-    // 16 is drawn band 1's level, so both profiles step cleanly to band 2's.
-    soft.cells.fill(BAND_HEIGHT);
-    hard.cells.fill(BAND_HEIGHT);
+    // bandLevelHeight(1) is drawn band 1's level, so both profiles step cleanly to band 2's.
+    soft.cells.fill(bandLevelHeight(1));
+    hard.cells.fill(bandLevelHeight(1));
     applySculpt(soft, 8, 8, 1, DEFAULT_SCULPT_AMOUNT, { tool: 'stamp', profile: 'soft' });
     applySculpt(hard, 8, 8, 1, DEFAULT_SCULPT_AMOUNT, { tool: 'stamp', profile: 'hard' });
     expect(soft.cells).toEqual(hard.cells);
@@ -60,12 +59,12 @@ describe('applySculpt — edge profiles', () => {
     const down = createHeightmap(32);
     applySculpt(up, 16, 16, 3, 64, { tool: 'stamp', profile: 'hard' });
     applySculpt(down, 16, 16, 3, -64, { tool: 'stamp', profile: 'hard' });
-    // Flat sea is drawn band -1: a raise lands on the shore (band 0), a lower
-    // two raw bands down (band -2). The mirror holds in drawn bands.
+    // Flat sea is drawn band -1: a raise lands on the shore band's level,
+    // a lower on band -2's level. The mirror holds in drawn bands.
     const fp = footprintOf(32, 16, 16, 3);
     for (const i of fp) {
-      expect(up.cells[i]).toBe(DRAWN_SHORE_HEIGHT);
-      expect(down.cells[i]).toBe(-2 * BAND_HEIGHT);
+      expect(up.cells[i]).toBe(bandLevelHeight(0));
+      expect(down.cells[i]).toBe(bandLevelHeight(-2));
       expect(drawnBandOfSample(up.cells[i])).toBe(0);
       expect(drawnBandOfSample(down.cells[i])).toBe(-2);
     }
@@ -83,7 +82,7 @@ describe('applySculpt — tools and profiles are orthogonal', () => {
     applySculpt(slumped, 32, 32, 4, DEFAULT_SCULPT_AMOUNT, STAMP_HARD_OPTS);
     applySculpt(slumped, 32, 32, 4, DEFAULT_SCULPT_AMOUNT, { tool: 'smooth', profile: 'hard' });
 
-    expect(heightAt(stamped, 35, 32)).toBe(DEFAULT_SCULPT_AMOUNT);
+    expect(heightAt(stamped, 35, 32)).toBe(bandLevelHeight(1));
     expect(heightAt(stamped, 36, 32)).toBe(0);
     expect(heightAt(slumped, 36, 32)).toBeGreaterThan(0);
     expectGradientLimitHolds(slumped);

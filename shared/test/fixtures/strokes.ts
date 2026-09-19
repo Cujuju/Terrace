@@ -54,8 +54,7 @@ const COMMON: readonly StrokeScriptStep[] = [
     anchor: 'band',
     targetBand: { fromClick: 0 },
     cx: 18,
-    // Aimed one cell south of the arch flank: the Laplacian crest-smooth
-    // leaves the old aim with no band to spread (2026-09-16).
+    // Aimed one cell south of arch flank.
     cy: 23,
     radius: 3,
     amount: 16,
@@ -307,7 +306,7 @@ const PLAYED: readonly StrokeScriptStep[] = [
   {
     name: 'played-carve-under-roof',
     tool: 'carve',
-    spanBand: 17,
+    spanBand: 16,
     cx: 17,
     cy: 9,
     radius: 2,
@@ -316,7 +315,7 @@ const PLAYED: readonly StrokeScriptStep[] = [
   {
     name: 'played-drag-into-gap',
     tool: 'drag',
-    targetBand: 18,
+    targetBand: 17,
     cx: 17,
     cy: 9,
     radius: 2,

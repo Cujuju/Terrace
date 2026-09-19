@@ -1022,14 +1022,14 @@ describe('the host wiring turns every cue into something the brush can read', ()
 const FOOT_COLUMN_X = 29;
 const WALL_COLUMN_X = 30;
 const LAYERED_ROW = 30;
-const FOOT_TREAD_CEILING = 48;
+const FOOT_TREAD_CEILING = bandLevelHeight(3);
 const FOOT_TREAD_BAND = 3;
-const FOOT_TREAD_RAISED_CEILING = 64;
+const FOOT_TREAD_RAISED_CEILING = bandLevelHeight(4);
 const FOOT_ROOF_BAND = 10;
-const FOOT_ROOF_CEILING = 208;
-const WALL_TREAD_CEILING = 112;
+const FOOT_ROOF_CEILING = bandLevelHeight(13);
+const WALL_TREAD_CEILING = bandLevelHeight(7);
 const WALL_ROOF_BAND = 19;
-const WALL_ROOF_CEILING = 340;
+const WALL_ROOF_CEILING = bandLevelHeight(21);
 const WALL_RISER_BAND = 5;
 
 const WALL_RISER_PICK: TerrainRayPick = {

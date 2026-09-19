@@ -4,6 +4,7 @@ import {
   DEEP_STRATA_BANDS,
   SEA_COLUMN_BANDS,
   SEA_LEVEL,
+  bandLevelHeight,
   chunksPerEdge,
   drawnBandOfSample,
   seabedHeight,
@@ -39,7 +40,7 @@ const SHALLOWEST_WET_BAND = drawnBandOfSample(SEA_LEVEL);
 // Depth to the drawn cap. Dry cells read as the shallowest wet band; the shore field decides wetness.
 export function bandFloorWaterDepthWorldUnits(height: number): number {
   const band = Math.min(drawnBandOfSample(height), SHALLOWEST_WET_BAND);
-  return waterDepthWorldUnits(band * BAND_HEIGHT);
+  return waterDepthWorldUnits(bandLevelHeight(band));
 }
 
 export function depthToWaterAlpha(depthWorldUnits: number): number {

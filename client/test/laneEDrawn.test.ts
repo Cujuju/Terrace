@@ -3,6 +3,7 @@ import {
   BAND_HEIGHT,
   BEDROCK_BAND,
   DRAWN_SHORE_HEIGHT,
+  bandLevelHeight,
   chunkIndex,
   drawnBandOfSample,
   drawnLevelThreshold,
@@ -34,11 +35,11 @@ function receiveAll(mirror: ReturnType<typeof createTerrainMirror>): void {
 
 describe('lane E: drawn palette index', () => {
   it('colours dry heights by their drawn band, not their raw band', () => {
-    // Heights 8..15 sit in raw band 0 but draw on band 1 (height + bias crosses).
-    for (let h = 1; h <= 7; h++) {
+    // Heights 1..16 draw on band 0; 17..32 draw on band 1.
+    for (let h = 1; h <= 16; h++) {
       expect(bandPaletteIndex(h)).toBe(FIRST_LAND_PALETTE_INDEX);
     }
-    for (let h = 8; h <= 15; h++) {
+    for (let h = 17; h <= 32; h++) {
       expect(bandPaletteIndex(h)).toBe(FIRST_LAND_PALETTE_INDEX + 1);
     }
     expect(bandPaletteIndex(BAND_HEIGHT + 1)).toBe(FIRST_LAND_PALETTE_INDEX + 1);
@@ -51,16 +52,16 @@ describe('lane E: drawn palette index', () => {
   });
 
   it('starts band 0 at the drawn shore', () => {
-    expect(levelPaletteHeight(0)).toBe(DRAWN_SHORE_HEIGHT);
+    expect(levelPaletteHeight(0)).toBe(bandLevelHeight(0));
     expect(drawnBandOfSample(DRAWN_SHORE_HEIGHT)).toBe(0);
   });
 });
 
 describe('lane E: blocky fallback colours by cap Y', () => {
-  it('caps height 15 on band 1 with band 1’s palette entry', () => {
-    expect(blockyCellCapY(15)).toBe(drawnBandCapY(1));
+  it('caps height 15 on band 0 with band 0’s palette entry', () => {
+    expect(blockyCellCapY(15)).toBe(drawnBandCapY(0));
     expect(bandPaletteIndex(levelPaletteHeight(drawnBandOfSample(15)))).toBe(
-      FIRST_LAND_PALETTE_INDEX + 1,
+      FIRST_LAND_PALETTE_INDEX,
     );
   });
 });

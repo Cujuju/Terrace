@@ -3,13 +3,13 @@ import {
   applyBrush,
   applyLevelFillBrush,
   applySculpt,
-  bandFloorHeight,
+  bandLevelHeight,
   bandOf,
   BAND_HEIGHT,
   cellIndex,
   createHeightmap,
   DEFAULT_SCULPT_AMOUNT,
-  DRAWN_SHORE_HEIGHT,
+  drawnBandOfSample,
   forEachFootprintOffset,
   heightAt,
   MAX_BRUSH_RADIUS,
@@ -30,7 +30,7 @@ import {
 describe('applySculpt — the level-fill brush (stamp + hard)', () => {
   it('fills the LOWEST band flat before it starts the next one', () => {
     const map = createHeightmap(16);
-    paintFootprintPlus(map, 8, 8, { n: 0, w: 1, c: 1, e: 2, s: 0 });
+    paintFootprintPlus(map, 8, 8, { n: 0, w: 2, c: 2, e: 3, s: 0 });
 
     // Painted raw levels read as drawn bands {-1, 1, 1, 2, -1}; each stroke
     // fills the lowest drawn band flat (sea cells land on the shore first).
@@ -52,22 +52,22 @@ describe('applySculpt — the level-fill brush (stamp + hard)', () => {
 
   it('never lifts a cell THROUGH the level being filled', () => {
     const map = createHeightmap(16);
-    map.cells.fill(BAND_HEIGHT);
-    map.cells[cellIndex(map, 8, 8)] = BAND_HEIGHT - 1;
+    map.cells.fill(bandLevelHeight(0));
+    map.cells[cellIndex(map, 8, 8)] = bandLevelHeight(0) - 1;
 
     applySculpt(map, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
 
-    // The footprint's lowest drawn band is 1, so the fill targets band 2's
+    // The footprint's lowest drawn band is 0, so the fill targets band 1's
     // level: the laggard advances one drawn band and nothing passes the target.
-    expect(heightAt(map, 8, 8)).toBe(2 * BAND_HEIGHT - 1);
-    expect(heightAt(map, 7, 8)).toBe(2 * BAND_HEIGHT);
+    expect(heightAt(map, 8, 8)).toBe(bandLevelHeight(1) - 1);
+    expect(heightAt(map, 7, 8)).toBe(bandLevelHeight(1));
   });
 
   it('advances at most ONE band per stroke, whatever the amount', () => {
     const map = createHeightmap(16);
     applySculpt(map, 8, 8, 2, 4 * BAND_HEIGHT, LEVEL_FILL);
     expect(readDrawnFootprint3x3(map, 8, 8)).toEqual([-1, 0, -1, 0, 0, 0, -1, 0, -1]);
-    expect(heightAt(map, 8, 8)).toBe(DRAWN_SHORE_HEIGHT);
+    expect(heightAt(map, 8, 8)).toBe(bandLevelHeight(0));
   });
 
   it('on a FLAT footprint is exactly the old flat stamp: one band, uniformly', () => {
@@ -76,32 +76,38 @@ describe('applySculpt — the level-fill brush (stamp + hard)', () => {
     for (const band of [-3, -2, 2, 5]) {
       const levelled = createHeightmap(16);
       const flatDelta = createHeightmap(16);
-      levelled.cells.fill(band * BAND_HEIGHT);
-      flatDelta.cells.fill(band * BAND_HEIGHT);
+      levelled.cells.fill(bandLevelHeight(band));
+      flatDelta.cells.fill(bandLevelHeight(band));
 
       applySculpt(levelled, 8, 8, 3, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
       applyBrush(flatDelta, 8, 8, 3, DEFAULT_SCULPT_AMOUNT, new Set<number>(), 'hard');
 
       expect(levelled.cells).toEqual(flatDelta.cells);
-      expect(heightAt(levelled, 8, 8)).toBe((band + 1) * BAND_HEIGHT);
+      expect(heightAt(levelled, 8, 8)).toBe(bandLevelHeight(band + 1));
     }
   });
 
-  it('lowering is the same operation mirrored: the HIGHEST band, one level down', () => {
+  it('lowering is the same operation mirrored about the shore: the HIGHEST band, one level down', () => {
     const up = createHeightmap(16);
     const down = createHeightmap(16);
-    // Painted away from the shore so drawn bands and raw bands agree.
-    paintFootprint3x3(up, 8, 8, [2, 3, 4,
-                                 2, 3, 3,
-                                 4, 2, 3]);
-    paintFootprint3x3(down, 8, 8, [2, 3, 4,
-                                   2, 3, 3,
-                                   4, 2, 3].map((b) => -b));
+    // Shore-mirrored paints: up reads bands 2-4 throughout, down reads the
+    // mirror bands -3..-5, so the two strokes are the same operation mirrored.
+    const UP_BANDS = [2, 3, 4,
+                      2, 3, 3,
+                      4, 2, 3];
+    down.cells.fill(2);
+    for (let k = 0; k < UP_BANDS.length; k++) {
+      const dx = (k % 3) - 1;
+      const dy = Math.floor(k / 3) - 1;
+      const level = bandLevelHeight(UP_BANDS[k]!);
+      up.cells[cellIndex(up, 8 + dx, 8 + dy)] = level;
+      down.cells[cellIndex(down, 8 + dx, 8 + dy)] = 2 - level;
+    }
 
     for (let stroke = 0; stroke < 3; stroke++) {
       applySculpt(up, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
       applySculpt(down, 8, 8, 2, -DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
-      for (let i = 0; i < up.cells.length; i++) expect(down.cells[i]).toBe(-up.cells[i] | 0);
+      for (let i = 0; i < up.cells.length; i++) expect(down.cells[i]).toBe(2 - up.cells[i]);
     }
   });
 
@@ -132,7 +138,7 @@ describe('applySculpt — the level-fill brush (stamp + hard)', () => {
     const map = createHeightmap(16);
     paintFootprintPlus(map, 8, 8, { n: 0, w: 1, c: 1, e: 1, s: 1 });
     expect(applySculpt(map, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL)).toEqual([
-      { x: 8, y: 7, h: DRAWN_SHORE_HEIGHT },
+      { x: 8, y: 7, h: bandLevelHeight(0) },
     ]);
   });
 
@@ -147,9 +153,9 @@ describe('applySculpt — the level-fill brush (stamp + hard)', () => {
       if (footprint.has(i)) continue;
       expect(map.cells[i]).toBe(before[i]);
     }
-    let lowestBand = Number.POSITIVE_INFINITY;
-    for (const i of footprint) lowestBand = Math.min(lowestBand, bandOf(before[i]));
-    const target = bandFloorHeight(lowestBand + 1);
+    let lowestDrawn = Number.POSITIVE_INFINITY;
+    for (const i of footprint) lowestDrawn = Math.min(lowestDrawn, drawnBandOfSample(before[i]));
+    const target = bandLevelHeight(lowestDrawn + 1);
     for (const i of footprint) {
       const expected =
         before[i] >= target ? before[i] : Math.min(before[i] + DEFAULT_SCULPT_AMOUNT, target);
@@ -160,28 +166,28 @@ describe('applySculpt — the level-fill brush (stamp + hard)', () => {
   it('surveys only in-bounds cells when the brush overhangs the map edge', () => {
     const map = createHeightmap(16);
     const corner = [[0, 0], [1, 0], [0, 1]] as const;
-    for (const [x, y] of corner) map.cells[cellIndex(map, x, y)] = BAND_HEIGHT;
-    map.cells[cellIndex(map, 1, 1)] = BAND_HEIGHT;
+    for (const [x, y] of corner) map.cells[cellIndex(map, x, y)] = bandLevelHeight(1);
+    map.cells[cellIndex(map, 1, 1)] = bandLevelHeight(1);
 
     applySculpt(map, 0, 0, 2, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
 
-    for (const [x, y] of corner) expect(heightAt(map, x, y)).toBe(2 * BAND_HEIGHT);
-    expect(heightAt(map, 1, 1)).toBe(BAND_HEIGHT);
+    for (const [x, y] of corner) expect(heightAt(map, x, y)).toBe(bandLevelHeight(2));
+    expect(heightAt(map, 1, 1)).toBe(bandLevelHeight(1));
   });
 
   it('at radius 1 snaps an off-grid cell onto the band boundary', () => {
     const map = createHeightmap(16);
-    map.cells[cellIndex(map, 8, 8)] = BAND_HEIGHT + 4;
+    map.cells[cellIndex(map, 8, 8)] = bandLevelHeight(1) + 4;
     applySculpt(map, 8, 8, 1, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
-    expect(heightAt(map, 8, 8)).toBe(2 * BAND_HEIGHT);
+    expect(heightAt(map, 8, 8)).toBe(bandLevelHeight(2));
   });
 
   it('lowering an off-grid cell drops it a RENDERED band, not to its own floor', () => {
     const OFF_BAND_FLOOR = 6;
     const map = createHeightmap(16);
-    map.cells[cellIndex(map, 8, 8)] = BAND_HEIGHT + OFF_BAND_FLOOR;
+    map.cells[cellIndex(map, 8, 8)] = bandLevelHeight(1) + OFF_BAND_FLOOR;
     applySculpt(map, 8, 8, 1, -DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
-    expect(heightAt(map, 8, 8)).toBe(OFF_BAND_FLOOR);
+    expect(heightAt(map, 8, 8)).toBe(bandLevelHeight(1) + OFF_BAND_FLOOR - DEFAULT_SCULPT_AMOUNT);
     expect(bandOf(heightAt(map, 8, 8))).toBe(0);
   });
 

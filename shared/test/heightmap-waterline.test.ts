@@ -37,10 +37,10 @@ describe('applySculpt — raises out of the sea break the surface', () => {
     sweepFrom: null,
   };
 
-  it('a stamp raise from h=-7 lands at the shore height, not at 0', () => {
+  it('a stamp raise from h=-7 lands at the shore band level, not at 0', () => {
     const map = flat(-7);
     applySculpt(map, CX, CY, 2, DEFAULT_SCULPT_AMOUNT, STAMP_RAISE);
-    expect(at(map)).toBe(DRAWN_SHORE_HEIGHT);
+    expect(at(map)).toBe(bandLevelHeight(0));
   });
 
   it('the raised cell draws as beach (band 0), not sea (band -1)', () => {
@@ -49,16 +49,16 @@ describe('applySculpt — raises out of the sea break the surface', () => {
     expect(drawnBandOfSample(at(map))).toBe(0);
   });
 
-  it('a stamp raise from the waterline reaches the shore, not raw 16', () => {
+  it('a stamp raise from the waterline reaches the shore band level, not raw 16', () => {
     const map = flat(0);
     applySculpt(map, CX, CY, 2, DEFAULT_SCULPT_AMOUNT, STAMP_RAISE);
-    expect(at(map)).toBe(DRAWN_SHORE_HEIGHT);
+    expect(at(map)).toBe(bandLevelHeight(0));
   });
 
-  it('a stamp raise from the beach still reaches the next raw band', () => {
+  it('a stamp raise from the beach still reaches the next band level', () => {
     const map = flat(2);
     applySculpt(map, CX, CY, 2, DEFAULT_SCULPT_AMOUNT, STAMP_RAISE);
-    expect(at(map)).toBe(BAND_HEIGHT);
+    expect(at(map)).toBe(bandLevelHeight(1));
   });
 
   it('a stamp lower from the waterline lands on band -2, at its canonical level', () => {
@@ -111,7 +111,7 @@ describe('applySculpt — raises out of the sea break the surface', () => {
       spanBand: null,
       sweepFrom: null,
     });
-    expect(at(map)).toBe(DRAWN_SHORE_HEIGHT);
+    expect(at(map)).toBe(bandLevelHeight(0));
     expect(drawnBandOfSample(at(map))).toBe(0);
   });
 });
@@ -120,13 +120,13 @@ describe('band coverage agrees with drawing at the waterline (2026-09-12)', () =
   const NEAR_BANDS = 2;
   const HEIGHT_REACH = 3 * BAND_HEIGHT;
 
-  it('band floors are drawn floors: the shore, then 8 below every raw level', () => {
+  it('band floors are uniform: band k starts at 16k+1; levels are band midpoints', () => {
     expect(bandFloorHeight(0)).toBe(DRAWN_SHORE_HEIGHT);
     for (const band of [-NEAR_BANDS, -1, 1, NEAR_BANDS]) {
-      expect(bandFloorHeight(band)).toBe(band * BAND_HEIGHT - BAND_HEIGHT / 2);
+      expect(bandFloorHeight(band)).toBe(band * BAND_HEIGHT + DRAWN_SHORE_HEIGHT);
     }
     for (const band of [-NEAR_BANDS, -1, 0, 1, NEAR_BANDS]) {
-      expect(bandLevelHeight(band)).toBe(band === 0 ? DRAWN_SHORE_HEIGHT : band * BAND_HEIGHT);
+      expect(bandLevelHeight(band)).toBe(band * BAND_HEIGHT + DRAWN_SHORE_HEIGHT + BAND_HEIGHT / 2);
     }
   });
 
@@ -162,7 +162,7 @@ describe('band coverage agrees with drawing at the waterline (2026-09-12)', () =
       sweepFrom: { x: SHORE_EDGE_X, y: ROW },
     });
     for (let x = SHORE_EDGE_X; x <= END_X; x++) {
-      expect(heightAt(map, x, ROW)).toBe(DRAWN_SHORE_HEIGHT);
+      expect(heightAt(map, x, ROW)).toBe(bandLevelHeight(0));
       expect(drawnBandOfSample(heightAt(map, x, ROW))).toBe(0);
     }
   });
