@@ -1,48 +1,40 @@
 # Overhangs
 
-The span column, and what the drag and the carve do to it.
-Tools: `sculpt-tools.md`. Picking: `picking.md`.
+Span columns; what drag and carve do. Tools: `sculpt-tools.md`. Picking:
+`picking.md`.
 
 ## The model
 
-A cell is a column of solid spans, not one height: empty below, solid above.
-Overhang = a span floored above its neighbour's ceiling. Arch = two spans.
-Cave = a connected region of gaps.
+- Cell = column of solid spans; empty below, solid above. Overhang: span
+  floored above neighbour ceiling. Arch: two spans. Cave: connected gaps.
+- `heightAt` = topmost span top. Read by rivers, pathing, farmland, traversal,
+  flora, boats, water, fog; redefining it reopens all eight.
+- Mesher asks "solid at band k?": contouring, triangulation, skirts unchanged.
+  Addition: ceiling cap — spans ENDING at k, reversed, lit below.
 
-`heightAt` is the top of the topmost span. Rivers, pathing, farmland,
-traversal, flora, boats, water and fog read it; changing its meaning reopens
-all of them.
-
-The mesher already asks "solid at band k?", so contouring, triangulation and
-skirts are unchanged. The one addition is the ceiling cap: the same pass over
-spans ENDING at band k, wound in reverse and lit from below.
-
-2026-08-24 (#129), over sparse voxels, SDF / dual contouring and authored
+2026-08-24 (#129): spans over sparse voxels, SDF / dual contouring, authored
 overhang props.
 
 ## Span shape
 
-`Span { floorBand, ceiling }` — `shared/src/columns/span.ts`. Floor is a band
-index, ceiling a raw height. Packed `[floorBand, ceiling]`, `SPAN_STRIDE = 2`.
+`Span { floorBand, ceiling }` (`columns/span.ts`): band floor, raw-height
+ceiling. Packed `[floorBand, ceiling]`, `SPAN_STRIDE = 2`.
 
-- `spanCapBand` = `drawnBandOfSample(ceiling)`, the ground's own rule and the
-  only rounding in the model. Floors are bands already.
-- `spanUndersideLevel` = `bandLevelHeight(floorBand - 1)`. Exact: no
-  clearance, no tolerance, no offset.
+- `spanCapBand` = `drawnBandOfSample(ceiling)`: the only rounding. Floors are
+  bands already.
+- `spanUndersideLevel` = `bandLevelHeight(floorBand - 1)`: exact, no tolerance.
 - Drawn iff `floorBand <= spanCapBand`. Covers k iff
   `floorBand <= k <= spanCapBand`.
-- `isGapDrawn(lower, upper)` iff `upper.floorBand > spanCapBand(lower) + 1`.
-- `BEDROCK_BAND` floors every canonical column's bottom span.
-- `canonicaliseColumn`: drop undrawn, merge what is not gap-separated, floor
-  at bedrock. Throws on a column that does not ascend — it repairs in place,
-  never sorts.
-- An overhang needs two slabs of air: its own, plus one to see under it.
+- Gap iff `upper.floorBand > spanCapBand(lower) + 1`.
+- `BEDROCK_BAND` floors every canonical bottom span.
+- `canonicaliseColumn`: drop undrawn, merge non-gaps, floor at bedrock. Throws
+  non-ascending; repairs in place, never sorts.
+- Overhang needs two slabs of air: its own, one to see under.
 
 ## Storage
 
-Nothing migrates. An old snapshot is reinterpreted at load: `floorBand` is the
-lowest slab whose bottom level is at or above the raw stored floor. The next
-save bumps `SNAPSHOT_SCHEMA_VERSION`.
+No migration. Load reinterprets: `floorBand` = lowest slab floored at/above
+the stored floor. Next save bumps `SNAPSHOT_SCHEMA_VERSION`.
 
 ## The drag writes the run down from the band it grabbed
 
@@ -72,14 +64,13 @@ the run IS the descent.
 
 ## The carve opens the band it is grasped at
 
-- Grasped at band S, it clears `S … S + depthBands - 1`, asking
-  `canCarveBandAt` of each (`shared/src/sculpt/carve.ts`). Depth from the
-  intent, default one band.
-- The opening a cut leaves is exactly the band the next pick inside it names,
-  so a tunnel walks inward one cell per intent without limit.
-- `bandOfPick` is shared with the drag: a riser pick names the band whose
-  drawn slab contains the struck height.
-- `applyCarve` refuses at the bottom of the world.
+- Grasped S clears `S … S + depthBands - 1`, each via `canCarveBandAt`
+  (`sculpt/carve.ts`). Depth on intent, default one.
+- Cut leaves the band the next inside pick names: tunnels walk one cell per
+  intent, unbounded.
+- `bandOfPick` shared with drag: riser pick names the band whose drawn slab
+  holds the struck height.
+- Refuses at world bottom.
 
 2026-09-02, from "it will just stop … it only goes so far": the cut and the
 next pick were one band out of alignment, so every cut after the first was
