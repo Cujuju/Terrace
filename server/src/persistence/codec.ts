@@ -9,6 +9,7 @@ import {
   LEGACY_BAND_SCHEME_VERSION,
   migrateFloorBand,
   migrateHeight,
+  migrateSpan,
 } from './band-scheme-migration.ts';
 
 const BYTES_PER_HEIGHT = 2;
@@ -172,11 +173,21 @@ export function decodeColumnSpans(
       flat.push(rawFloors ? floorBandOfHeight(floor) : floor, ceiling);
     }
     let packed: readonly number[] = flat;
+    let premigrated = false;
     if (rawFloors) {
       const repaired = repairRawFloorColumn(flat, context, cellIndex);
       // One span at bedrock is not layered; the heightmap already holds its ceiling.
       if (repaired.length < MIN_SPANS_PER_RECORD) continue;
       packed = repaired.flatMap((span) => [span.floorBand, span.ceiling]);
+    } else if (schemaVersion <= LEGACY_BAND_SCHEME_VERSION) {
+      // Old rows store old bands and levels; migrate before the strict parse.
+      const migrated: number[] = [];
+      for (let k = 0; k < flat.length; k += SPAN_STRIDE) {
+        const span = migrateSpan(flat[k]!, flat[k + 1]!);
+        migrated.push(span.floorBand, span.ceiling);
+      }
+      packed = migrated;
+      premigrated = true;
     }
     const parsed = parsePackedSpans(packed);
     if (parsed === null) {
@@ -187,7 +198,7 @@ export function decodeColumnSpans(
     }
     spansByCell.set(
       cellIndex,
-      schemaVersion <= LEGACY_BAND_SCHEME_VERSION
+      schemaVersion <= LEGACY_BAND_SCHEME_VERSION && !premigrated
         ? parsed.map((span) => ({
             floorBand: migrateFloorBand(span.floorBand),
             ceiling: migrateHeight(span.ceiling),

@@ -1,9 +1,11 @@
-import { bandLevelHeight, BEDROCK_BAND, MAX_HEIGHT, MIN_HEIGHT } from '@terrace/shared';
+import { bandLevelHeight, BEDROCK_BAND, MAX_HEIGHT, MIN_HEIGHT, spanCapBand, type Span } from '@terrace/shared';
 
 const LEGACY_BAND_HEIGHT = 16;
 const LEGACY_BIAS = 8;
 const LEGACY_SHORE_HEIGHT = 1;
 export const LEGACY_BEDROCK_BAND = -96;
+
+export const LEGACY_TOP_BAND = 64;
 
 export const LEGACY_BAND_SCHEME_VERSION = 2;
 
@@ -28,4 +30,12 @@ export function migrateHeight(h: number): number {
 
 export function migrateFloorBand(band: number): number {
   return band === LEGACY_BEDROCK_BAND ? BEDROCK_BAND : band;
+}
+
+/** Old span -> new scheme. A floor above the migrated cap drops to it. */
+export function migrateSpan(floorBand: number, ceiling: number): Span {
+  const migratedCeiling = migrateHeight(ceiling);
+  const migratedFloor = migrateFloorBand(floorBand);
+  const cap = spanCapBand({ floorBand: migratedFloor, ceiling: migratedCeiling });
+  return { floorBand: migratedFloor > cap ? cap : migratedFloor, ceiling: migratedCeiling };
 }

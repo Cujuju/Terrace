@@ -14,7 +14,7 @@ import {
   spanCapBand,
 } from '@terrace/shared';
 import { decodeHeights, encodeHeights } from '../src/persistence/codec.ts';
-import { legacyLevelHeight } from '../src/persistence/band-scheme-migration.ts';
+import { legacyLevelHeight, LEGACY_BAND_SCHEME_VERSION, LEGACY_BEDROCK_BAND, LEGACY_TOP_BAND } from '../src/persistence/band-scheme-migration.ts';
 import {
   OLDEST_READABLE_SCHEMA_VERSION,
   SNAPSHOT_RETENTION,
@@ -690,6 +690,64 @@ describe('reading a schema 1 world under the band-floor rule', () => {
       expect(() => store.loadLatest()).toThrow(/malformed 2-span list for cell/);
       store.close();
     }
+  });
+});
+
+describe('reading a schema 2 world under the regular band scheme', () => {
+  let dir: string;
+  let dbPath: string;
+
+  beforeEach(() => {
+    dir = makeTempRoot('terrace-v2-');
+    dbPath = join(dir, 'world.db');
+  });
+
+  afterEach(() => {
+    removeTempRoot(dir);
+  });
+
+  const TOP_CELL = 8 * WORLD_SIZE + 8;
+  const V2_COLUMN: readonly RawFloorSpan[] = [
+    { floor: LEGACY_BEDROCK_BAND, ceiling: legacyLevelHeight(-6) },
+    { floor: LEGACY_TOP_BAND, ceiling: legacyLevelHeight(LEGACY_TOP_BAND) },
+  ];
+
+  function plantV2Columns(columns: ReadonlyMap<number, readonly RawFloorSpan[]>): void {
+    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0]]);
+    for (const [cellIndex, spans] of columns) {
+      world.map.cells[cellIndex] = spans[spans.length - 1]!.ceiling;
+    }
+
+    const store = SnapshotStore.open(dbPath);
+    store.saveSnapshot({
+      worldSize: world.size,
+      name: world.name,
+      cells: world.map.cells,
+      mask: world.mask,
+      pluginSlices: {},
+    });
+    store.close();
+
+    const raw = new DatabaseConstructor(dbPath);
+    raw
+      .prepare('UPDATE snapshots SET schema_version = ?, column_spans = ?')
+      .run(LEGACY_BAND_SCHEME_VERSION, packRawFloorColumnSpans(columns));
+    raw.close();
+  }
+
+  it('migrates old bands and drops the lost top-band floor to the new cap', () => {
+    plantV2Columns(new Map([[TOP_CELL, V2_COLUMN]]));
+
+    const store = SnapshotStore.open(dbPath);
+    const snapshot = store.loadLatest();
+    expect(snapshot).not.toBeNull();
+    if (snapshot === null) return;
+    expect(snapshot.columnSpans.get(TOP_CELL)).toEqual([
+      { floorBand: BEDROCK_BAND, ceiling: bandLevelHeight(-6) },
+      { floorBand: LEGACY_TOP_BAND - 1, ceiling: legacyLevelHeight(LEGACY_TOP_BAND) },
+    ]);
+    expect(snapshot.cells[TOP_CELL]).toBe(legacyLevelHeight(LEGACY_TOP_BAND));
+    store.close();
   });
 });
 
