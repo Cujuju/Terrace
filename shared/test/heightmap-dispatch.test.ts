@@ -133,6 +133,7 @@ describe('applySculpt options — compatibility with the pre-2026-08-14 contract
       anchor: 'free',
       targetBand: null,
       runFloorBand: null,
+      dragAlt: false,
       spanBand: null,
       sweepFrom: null,
       smoothLambda: 50,

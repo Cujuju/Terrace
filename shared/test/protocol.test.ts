@@ -135,7 +135,7 @@ describe('sculptOptionsOf — the normalisation contract', () => {
   const base = { type: 'sculpt', x: 10, y: 20, radius: 2, dir: 1 } as const;
 
   it('resolves an intent that names neither to the wire default (stamp + soft)', () => {
-    const wireDefault = { tool: 'stamp', depthBands: CARVE_DEFAULT_DEPTH_BANDS, profile: 'soft', spill: 'banded', anchor: 'clicked', targetBand: null, runFloorBand: null, spanBand: null, sweepFrom: null, smoothLambda: 50 };
+    const wireDefault = { tool: 'stamp', depthBands: CARVE_DEFAULT_DEPTH_BANDS, profile: 'soft', spill: 'banded', anchor: 'clicked', targetBand: null, runFloorBand: null, dragAlt: false, spanBand: null, sweepFrom: null, smoothLambda: 50 };
     expect(sculptOptionsOf(base)).toEqual(wireDefault);
     expect(WIRE_DEFAULT_SCULPT_OPTIONS).toEqual(wireDefault);
   });
@@ -149,6 +149,7 @@ describe('sculptOptionsOf — the normalisation contract', () => {
       anchor: 'clicked',
       targetBand: null,
       runFloorBand: null,
+      dragAlt: false,
       spanBand: null,
       sweepFrom: null,
       smoothLambda: 50,
@@ -163,6 +164,7 @@ describe('sculptOptionsOf — the normalisation contract', () => {
       anchor: 'clicked',
       targetBand: null,
       runFloorBand: null,
+      dragAlt: false,
       spanBand: null,
       sweepFrom: null,
       smoothLambda: 50,
@@ -175,6 +177,7 @@ describe('sculptOptionsOf — the normalisation contract', () => {
       anchor: 'clicked',
       targetBand: null,
       runFloorBand: null,
+      dragAlt: false,
       spanBand: null,
       sweepFrom: null,
       smoothLambda: 50,

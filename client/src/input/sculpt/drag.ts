@@ -19,6 +19,7 @@ export const emitDragOutcome = (
   action: SculptAction,
   band: number,
   floorBand: number,
+  dragAlt = false,
 ): EmitOutcome => {
   const dir = sculptDirection(action);
   const radius = brushRadius();
@@ -27,12 +28,13 @@ export const emitDragOutcome = (
     toX === s.lastDragToX &&
     toY === s.lastDragToY &&
     dir === s.lastDragDir &&
-    radius === s.lastDragRadius
+    radius === s.lastDragRadius &&
+    dragAlt === s.lastDragAlt
   ) {
     return 'absent-silent';
   }
   if (!s.haveDragTo || (s.lastDragToX === toX && s.lastDragToY === toY)) {
-    const firstLeg = emitDragLeg(s, toX, toY, dir, radius, band, floorBand, null);
+    const firstLeg = emitDragLeg(s, toX, toY, dir, radius, band, floorBand, dragAlt, null);
     if (firstLeg !== 'sent') {
       // A dropped first leg is one offline blink for the whole sweep; a local
       // veto is already red and never blinks grey.
@@ -52,7 +54,7 @@ export const emitDragOutcome = (
   for (let leg = 1; leg <= legs; leg++) {
     const legX = fromX + Math.round(((toX - fromX) * leg) / span);
     const legY = fromY + Math.round(((toY - fromY) * leg) / span);
-    const legOutcome = emitDragLeg(s, legX, legY, dir, radius, band, floorBand, {
+    const legOutcome = emitDragLeg(s, legX, legY, dir, radius, band, floorBand, dragAlt, {
       x: s.lastDragToX,
       y: s.lastDragToY,
     });
@@ -79,6 +81,7 @@ const emitDragLeg = (
   radius: number,
   band: number,
   floorBand: number,
+  dragAlt: boolean,
   from: { x: number; y: number } | null,
 ): SendOutcome => {
   const outcome = s.options.send({
@@ -90,6 +93,7 @@ const emitDragLeg = (
     tool: 'drag',
     targetBand: band,
     floorBand,
+    ...(dragAlt ? { dragAlt: true as const } : {}),
     ...(from !== null ? { fromX: from.x, fromY: from.y } : {}),
     seq: s.nextSeq++,
   });
@@ -98,6 +102,7 @@ const emitDragLeg = (
   s.lastDragToY = toY;
   s.lastDragDir = dir;
   s.lastDragRadius = radius;
+  s.lastDragAlt = dragAlt;
   s.haveDragTo = true;
   return 'sent';
 };

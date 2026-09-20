@@ -18,6 +18,7 @@ import {
   type ControlBindings,
   type MouseButtonName,
   type SculptAction,
+  type AltAction,
   type TwoFingerGesture,
   type WheelBehaviour,
 } from '../state/controlPrefs.ts';
@@ -131,25 +132,28 @@ const HINT_VERB: Record<CameraAction, string> = {
   pan: 'pans',
 };
 
-const isSculpt = (action: ControlAction): action is SculptAction =>
-  action === 'raise' || action === 'lower';
+const isSculpt = (action: ControlAction): action is SculptAction | AltAction =>
+  action === 'raise' || action === 'lower' || action === 'alt';
 
 /** A sculpt press is named by its role, since no binding names a direction. */
 function actionLabel(action: ControlAction, binding: ControlBinding): string {
   if (!isSculpt(action)) return CAMERA_LABEL[action];
+  if (action === 'alt') return 'Sculpt, alt';
   return binding.modifier === 'none' ? 'Sculpt' : 'Sculpt, inverted';
 }
 
 function actionEffect(action: ControlAction, binding: ControlBinding): string {
   if (!isSculpt(action)) return CAMERA_EFFECT[action];
+  if (action === 'alt') return 'drag only the grabbed band whichever way the HUD toggle points';
   return binding.modifier === 'none'
     ? 'sculpt whichever way the HUD toggle points'
     : 'sculpt the other way';
 }
 
-/** Neither sculpt binding names a direction: the HUD toggle does, chords invert it. */
-function sculptHint(b: ControlBinding): string {
+/** Neither sculpt binding names a direction: the HUD toggle does, chords invert it. Alt narrows the drag to one band. */
+function sculptHint(action: ControlAction, b: ControlBinding): string {
   const press = `${HINT_MODIFIER[b.modifier]}${BUTTON_LABEL[b.button]}-drag`;
+  if (action === 'alt') return `${press} sculpts the HUD direction, current band only`;
   return b.modifier === 'none'
     ? `${press} sculpts the HUD direction`
     : `${press} sculpts the other way`;
@@ -158,7 +162,7 @@ function sculptHint(b: ControlBinding): string {
 function hintText(bindings: ControlBindings, wheel: WheelBehaviour): string {
   const parts = ACTION_PRECEDENCE.map((action) => {
     const b = bindings[action];
-    if (isSculpt(action)) return sculptHint(b);
+    if (isSculpt(action)) return sculptHint(action, b);
     return `${HINT_MODIFIER[b.modifier]}${BUTTON_LABEL[b.button]}-drag ${HINT_VERB[action]}`;
   });
   const wheelVerb = wheel === 'zoom' ? 'zooms' : 'pans';

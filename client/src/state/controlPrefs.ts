@@ -12,7 +12,8 @@ export type BindingModifier = 'none' | 'shift' | 'ctrl' | 'alt';
 
 export type SculptAction = 'raise' | 'lower';
 export type CameraAction = 'orbit' | 'pan';
-export type ControlAction = SculptAction | CameraAction;
+export type AltAction = 'alt';
+export type ControlAction = SculptAction | AltAction | CameraAction;
 
 export interface ControlBinding {
   readonly button: MouseButtonName;
@@ -24,6 +25,7 @@ export type ControlBindings = Readonly<Record<ControlAction, ControlBinding>>;
 export const ACTION_PRECEDENCE: readonly ControlAction[] = [
   'raise',
   'lower',
+  'alt',
   'orbit',
   'pan',
 ];
@@ -31,6 +33,7 @@ export const ACTION_PRECEDENCE: readonly ControlAction[] = [
 export const DEFAULT_BINDINGS: ControlBindings = {
   raise: { button: 'left', modifier: 'none' },
   lower: { button: 'left', modifier: 'shift' },
+  alt: { button: 'left', modifier: 'ctrl' },
   orbit: { button: 'right', modifier: 'none' },
   pan: { button: 'middle', modifier: 'none' },
 };
@@ -89,13 +92,18 @@ function loadBindings(): ControlBindings {
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== 'object' || parsed === null) return DEFAULT_BINDINGS;
     const record = parsed as Record<string, unknown>;
-    const all = ACTION_PRECEDENCE.every((action) => isBinding(record[action]));
-    if (!all) return DEFAULT_BINDINGS;
+    // Missing or invalid actions fall back individually, so stored bindings
+    // from before the alt row arrived keep the user's other four rows.
+    const read = (action: ControlAction): ControlBinding =>
+      isBinding(record[action])
+        ? (record[action] as ControlBinding)
+        : DEFAULT_BINDINGS[action];
     return {
-      raise: record['raise'] as ControlBinding,
-      lower: record['lower'] as ControlBinding,
-      orbit: record['orbit'] as ControlBinding,
-      pan: record['pan'] as ControlBinding,
+      raise: read('raise'),
+      lower: read('lower'),
+      alt: read('alt'),
+      orbit: read('orbit'),
+      pan: read('pan'),
     };
   } catch {
     return DEFAULT_BINDINGS;
@@ -246,19 +254,25 @@ export function resolvePress(
 }
 
 /**
- * Which way a press sculpts: the toggle, inverted when the press is chorded. It
- * reads the toggle rather than taking it, so no caller can pass an inverted one.
+ * Which way a press sculpts: the toggle, inverted when chorded. Alt
+ * sculpts the toggle; it narrows the drag, never the direction.
  */
 export function resolveSculptPress(
   eventButton: number,
   mods: ModifierState,
 ): SculptAction | null {
   const action = resolvePress(eventButton, mods);
-  if (action !== 'raise' && action !== 'lower') return null;
+  if (action !== 'raise' && action !== 'lower' && action !== 'alt') return null;
   const toggle = sculptMode();
+  if (action === 'alt') return toggle;
   return controlBindings()[action].modifier === 'none'
     ? toggle
     : oppositeSculptMode(toggle);
+}
+
+/** True when the press names the alt sculpt: a drag of one band only. */
+export function isAltSculptPress(eventButton: number, mods: ModifierState): boolean {
+  return resolvePress(eventButton, mods) === 'alt';
 }
 
 /** Whether the held modifiers are a sculpt chord, which inverts the toggle. */

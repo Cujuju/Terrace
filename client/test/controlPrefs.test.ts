@@ -67,10 +67,11 @@ describe('buttonName', () => {
 });
 
 describe('resolvePress with default bindings', () => {
-  it('resolves the Phase 1 scheme exactly', async () => {
+  it('resolves the Phase 1 scheme exactly, plus alt on Ctrl+Left', async () => {
     const { prefs } = await freshPrefs();
     expect(prefs.resolvePress(0, NO_MODS)).toBe('raise');
     expect(prefs.resolvePress(0, SHIFT)).toBe('lower');
+    expect(prefs.resolvePress(0, CTRL)).toBe('alt');
     expect(prefs.resolvePress(2, NO_MODS)).toBe('orbit');
     expect(prefs.resolvePress(1, NO_MODS)).toBe('pan');
   });
@@ -78,7 +79,6 @@ describe('resolvePress with default bindings', () => {
   it('returns null for unbound combinations — the press must be inert', async () => {
     const { prefs } = await freshPrefs();
     expect(prefs.resolvePress(2, SHIFT)).toBeNull();
-    expect(prefs.resolvePress(0, CTRL)).toBeNull();
     expect(prefs.resolvePress(0, { shiftKey: true, ctrlKey: true, altKey: false })).toBeNull();
     expect(prefs.resolvePress(4, NO_MODS)).toBeNull();
   });
@@ -87,8 +87,8 @@ describe('resolvePress with default bindings', () => {
 describe('rebinding and precedence', () => {
   it('a rebound action resolves on its new binding and not its old one', async () => {
     const { prefs } = await freshPrefs();
-    prefs.setBinding('orbit', { button: 'left', modifier: 'ctrl' });
-    expect(prefs.resolvePress(0, CTRL)).toBe('orbit');
+    prefs.setBinding('orbit', { button: 'left', modifier: 'alt' });
+    expect(prefs.resolvePress(0, { shiftKey: false, ctrlKey: false, altKey: true })).toBe('orbit');
     expect(prefs.resolvePress(2, NO_MODS)).toBeNull();
   });
 

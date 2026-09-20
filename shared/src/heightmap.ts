@@ -134,6 +134,7 @@ export function applySculpt(
       // No grabbed column named a run, so the slab is the target band alone.
       const runFloorBand =
         options?.runFloorBand ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.runFloorBand ?? targetBand;
+      const dragAlt = options?.dragAlt ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.dragAlt;
       applyDragRegion(
         map,
         cx,
@@ -145,6 +146,7 @@ export function applySculpt(
         profile,
         sweepFrom,
         dragChanged,
+        dragAlt,
       );
     }
     return diffOf(map, dragChanged);

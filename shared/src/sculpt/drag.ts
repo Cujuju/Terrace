@@ -1,6 +1,8 @@
 import { bandLevelHeight } from '../bands.ts';
 import {
+  BEDROCK_BAND,
   bandFloorHeight,
+  carveBands,
   fillBandRun,
   highestCeilingBelow,
   isSpanDrawn,
@@ -72,6 +74,7 @@ export function applyDragRegion(
   profile: SculptProfile,
   sweepFrom: SweepOrigin | null,
   changed: Set<number>,
+  dragAlt = false,
 ): void {
   // Like anchoredTargetHeight: a drag-raise to the waterline breaks the surface.
   const targetHeight = clampHeight(bandLevelHeight(targetBand));
@@ -101,6 +104,21 @@ export function applyDragRegion(
   if (refused.size > 0) admitRimEnclaves(map, targetBand, refused, inDisc, disc);
 
   if (!raising) {
+    // Alt: one band only. Carve it where a retreat exists; the edge gate
+    // holds, no interior holes.
+    if (dragAlt) {
+      if (targetBand <= BEDROCK_BAND) return;
+      settleEachCellOnce(disc, (i) => {
+        const x = cellX(map.size, i);
+        const y = cellY(map.size, i);
+        if (spanIndexCoveringBand(map, x, y, targetBand) === null) return false;
+        if (retreatHeightAt(map, x, y, targetBand) === null) return false;
+        carveBands(map, x, y, targetBand, targetBand);
+        changed.add(i);
+        return true;
+      });
+      return;
+    }
     settleEachCellOnce(disc, (i) => {
       const x = cellX(map.size, i);
       const y = cellY(map.size, i);
@@ -122,12 +140,12 @@ export function applyDragRegion(
     return;
   }
 
-  // The run is the whole write: one slab per cell, nothing cascades off a
-  // neighbour and nothing descends in a second pass, so one plain sweep
-  // settles the disc.
+  // One slab per cell in a single sweep, no cascade. Alt narrows it to
+  // the grabbed band.
+  const floor = dragAlt ? targetBand : runFloorBand;
   for (const i of disc) {
     const x = cellX(map.size, i);
     const y = cellY(map.size, i);
-    if (fillBandRun(map, x, y, runFloorBand, targetBand, targetHeight)) changed.add(i);
+    if (fillBandRun(map, x, y, floor, targetBand, targetHeight)) changed.add(i);
   }
 }

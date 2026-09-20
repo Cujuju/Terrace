@@ -52,6 +52,7 @@ export interface StrokeState {
   lastDragToY: number;
   lastDragDir: 1 | -1;
   lastDragRadius: number;
+  lastDragAlt: boolean;
   haveDragTo: boolean;
 
   repeatTimer: ReturnType<typeof setTimeout> | null;
@@ -118,6 +119,7 @@ export function createStrokeState(options: SculptInputOptions): StrokeState {
     lastDragToY: 0,
     lastDragDir: 1,
     lastDragRadius: 0,
+    lastDragAlt: false,
     haveDragTo: false,
 
     repeatTimer: null,

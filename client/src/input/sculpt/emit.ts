@@ -8,6 +8,7 @@ import {
   smoothLambda,
 } from '../../state/hudState.ts';
 import { footOfFaceCell } from '../../terrain/faceFoot.ts';
+import { isAltSculptPress } from '../../state/controlPrefs.ts';
 import { dragPlaneCell, hoverTarget } from './aim.ts';
 import {
   isCarveWithoutSpan,
@@ -43,7 +44,21 @@ export const emitIntent = (s: StrokeState, origin: EmitOrigin): EmitOutcome => {
       return noteFlatSilent(s, origin);
     }
     s.descentFrozen = false;
-    return emitDragOutcome(s, to.x, to.y, action, s.strokeGrab, s.strokeGrabFloor ?? s.strokeGrab);
+    // Alt drags one band only. Live per leg, so the chord switches later
+    // legs; the run floor is kept.
+    const dragAlt =
+      s.strokeButton !== null &&
+      !s.strokeIsTouch &&
+      isAltSculptPress(s.strokeButton, s.mods);
+    return emitDragOutcome(
+      s,
+      to.x,
+      to.y,
+      action,
+      s.strokeGrab,
+      s.strokeGrabFloor ?? s.strokeGrab,
+      dragAlt,
+    );
   }
   s.descentFrozen = false;
   let anchor: { x: number; y: number };

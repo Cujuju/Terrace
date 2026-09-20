@@ -30,6 +30,7 @@ export interface SculptIntent {
   profile?: SculptProfile;
   targetBand?: number;
   floorBand?: number;
+  dragAlt?: boolean;
   spanBand?: number;
   smoothLambda?: number;
   depthBands?: number;
@@ -52,6 +53,7 @@ export const WIRE_DEFAULT_SCULPT_OPTIONS: ResolvedWireSculptOptions = {
   spanBand: null,
   anchor: 'clicked',
   runFloorBand: null,
+  dragAlt: false,
   sweepFrom: null,
   smoothLambda: SMOOTH_LAMBDA_DEFAULT,
 };
@@ -75,6 +77,7 @@ export function sculptOptionsOf(intent: SculptIntent): ResolvedWireSculptOptions
     targetBand,
     runFloorBand:
       tool === 'drag' ? (intent.floorBand ?? null) : WIRE_DEFAULT_SCULPT_OPTIONS.runFloorBand,
+    dragAlt: tool === 'drag' ? (intent.dragAlt ?? false) : false,
     spanBand: intent.spanBand ?? null,
     sweepFrom:
       tool === 'drag' && intent.fromX !== undefined && intent.fromY !== undefined
@@ -168,6 +171,14 @@ export function validateSculptIntent(
     return null;
   }
 
+  // Alt narrows a drag to the grabbed band alone. Rides with a drag and
+  // only a drag; anything else carrying one promises a cut nothing reads.
+  const { dragAlt } = m;
+  if (dragAlt !== undefined) {
+    if (typeof dragAlt !== 'boolean') return null;
+    if (tool !== 'drag') return null;
+  }
+
   // A carve grasps a band it can open; bedrock is not one, and acking a stroke
   // the applier always refuses would promise a cut that never happens.
   const { spanBand } = m;
@@ -230,6 +241,7 @@ export function validateSculptIntent(
     ...(profile !== undefined ? { profile: profile as SculptProfile } : {}),
     ...(targetBand !== undefined ? { targetBand: targetBand as number } : {}),
     ...(floorBand !== undefined ? { floorBand: floorBand as number } : {}),
+    ...(dragAlt !== undefined ? { dragAlt: dragAlt as boolean } : {}),
     ...(spanBand !== undefined ? { spanBand: spanBand as number } : {}),
     ...(smoothLambda !== undefined ? { smoothLambda: smoothLambda as number } : {}),
     ...(depthBands !== undefined ? { depthBands: depthBands as number } : {}),
