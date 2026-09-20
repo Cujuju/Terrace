@@ -76,6 +76,8 @@ export const DEFAULT_SMOOTH_FEATHER = SMOOTH_FEATHER_DEFAULT;
 
 export const DEFAULT_SMOOTH_RIM = SMOOTH_RIM_DEFAULT;
 
+export const DEFAULT_SMOOTH_GAUSS = false;
+
 export const DEFAULT_CARVE_DEPTH_BANDS = CARVE_DEFAULT_DEPTH_BANDS;
 
 export const DEFAULT_SHOW_CONTROLS = false;
@@ -91,6 +93,7 @@ export interface PersistedHudState {
   readonly smoothLambda: number;
   readonly smoothFeather: number;
   readonly smoothRim: number;
+  readonly smoothGauss: boolean;
   readonly carveDepthBands: number;
   readonly showControls: boolean;
   readonly panelOpen: boolean;
@@ -104,6 +107,7 @@ export const DEFAULT_HUD_STATE: PersistedHudState = {
   smoothLambda: DEFAULT_SMOOTH_LAMBDA,
   smoothFeather: DEFAULT_SMOOTH_FEATHER,
   smoothRim: DEFAULT_SMOOTH_RIM,
+  smoothGauss: DEFAULT_SMOOTH_GAUSS,
   carveDepthBands: DEFAULT_CARVE_DEPTH_BANDS,
   showControls: DEFAULT_SHOW_CONTROLS,
   panelOpen: DEFAULT_PANEL_OPEN,
@@ -158,6 +162,10 @@ function readSmoothRim(value: unknown): number {
     : DEFAULT_SMOOTH_RIM;
 }
 
+function readSmoothGauss(value: unknown): boolean {
+  return typeof value === 'boolean' ? value : DEFAULT_SMOOTH_GAUSS;
+}
+
 /** The wire predicate is the one depth authority; the HUD never re-states it. */
 function readCarveDepthBands(value: unknown): number {
   return typeof value === 'number' && isValidCarveDepth(value)
@@ -191,6 +199,7 @@ export function parseHudState(raw: string | null): PersistedHudState {
     smoothLambda: readSmoothLambda(record['smoothLambda']),
     smoothFeather: readSmoothFeather(record['smoothFeather']),
     smoothRim: readSmoothRim(record['smoothRim']),
+    smoothGauss: readSmoothGauss(record['smoothGauss']),
     carveDepthBands: readCarveDepthBands(record['carveDepthBands']),
     showControls: readShowControls(record['showControls']),
     panelOpen: readPanelOpen(record['panelOpen']),
@@ -239,6 +248,10 @@ const [smoothRim, setSmoothRimSignal] = createSignal<number>(
   stored.smoothRim,
 );
 
+const [smoothGauss, setSmoothGaussSignal] = createSignal<boolean>(
+  stored.smoothGauss,
+);
+
 const [carveDepthBands, setCarveDepthBandsSignal] = createSignal<number>(
   stored.carveDepthBands,
 );
@@ -260,6 +273,7 @@ function persist(): void {
     smoothLambda: smoothLambda(),
     smoothFeather: smoothFeather(),
     smoothRim: smoothRim(),
+    smoothGauss: smoothGauss(),
     carveDepthBands: carveDepthBands(),
     showControls: showControls(),
     panelOpen: panelOpen(),
@@ -337,6 +351,12 @@ export function setSmoothRim(rim: number): void {
   persist();
 }
 
+export function setSmoothGauss(gauss: boolean): void {
+  if (gauss === smoothGauss()) return;
+  setSmoothGaussSignal(gauss);
+  persist();
+}
+
 export function setCarveDepthBands(bands: number): void {
   const clamped = Math.min(
     CARVE_MAX_DEPTH_BANDS,
@@ -366,6 +386,7 @@ export {
   sculptMode,
   sculptAlt,
   smoothFeather,
+  smoothGauss,
   smoothLambda,
   smoothRim,
   carveDepthBands,

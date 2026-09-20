@@ -41,6 +41,7 @@ export interface SculptIntent {
   smoothLambda?: number;
   smoothFeather?: number;
   smoothRim?: number;
+  smoothGauss?: boolean;
   depthBands?: number;
   fromX?: number;
   fromY?: number;
@@ -66,6 +67,7 @@ export const WIRE_DEFAULT_SCULPT_OPTIONS: ResolvedWireSculptOptions = {
   smoothLambda: SMOOTH_LAMBDA_DEFAULT,
   smoothFeather: SMOOTH_FEATHER_DEFAULT,
   smoothRim: SMOOTH_RIM_DEFAULT,
+  smoothGauss: false,
 };
 
 export const EDGELESS_SCULPT_PROFILE: SculptProfile = 'hard';
@@ -103,6 +105,7 @@ export function sculptOptionsOf(intent: SculptIntent): ResolvedWireSculptOptions
         : SMOOTH_FEATHER_DEFAULT,
     smoothRim:
       tool === 'smooth' ? (intent.smoothRim ?? SMOOTH_RIM_DEFAULT) : SMOOTH_RIM_DEFAULT,
+    smoothGauss: tool === 'smooth' ? (intent.smoothGauss ?? false) : false,
   };
 }
 
@@ -251,6 +254,13 @@ export function validateSculptIntent(
     if (tool !== 'smooth') return null;
   }
 
+  // The Gaussian kernel reshapes the smooth average and only the smooth average.
+  const { smoothGauss } = m;
+  if (smoothGauss !== undefined) {
+    if (typeof smoothGauss !== 'boolean') return null;
+    if (tool !== 'smooth') return null;
+  }
+
   // A carve cuts the band it grasps: without one it names nothing to open and
   // would apply as a silent, acked no-op. Optional on a stamp or smooth.
   if (spanBand === undefined && tool === 'carve') return null;
@@ -288,6 +298,7 @@ export function validateSculptIntent(
     ...(smoothLambda !== undefined ? { smoothLambda: smoothLambda as number } : {}),
     ...(smoothFeather !== undefined ? { smoothFeather: smoothFeather as number } : {}),
     ...(smoothRim !== undefined ? { smoothRim: smoothRim as number } : {}),
+    ...(smoothGauss !== undefined ? { smoothGauss: smoothGauss as boolean } : {}),
     ...(depthBands !== undefined ? { depthBands: depthBands as number } : {}),
     ...(fromX !== undefined ? { fromX: fromX as number, fromY: fromY as number } : {}),
     ...(seq !== undefined ? { seq: seq as number } : {}),

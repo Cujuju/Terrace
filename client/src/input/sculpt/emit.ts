@@ -6,6 +6,7 @@ import {
   carveDepthBands,
   sculptDirection,
   smoothFeather,
+  smoothGauss,
   smoothLambda,
   smoothRim,
 } from '../../state/hudState.ts';
@@ -118,6 +119,7 @@ export const emitIntent = (s: StrokeState, origin: EmitOrigin): EmitOutcome => {
       : { profile: brushProfile() }),
     ...(s.strokeTool === 'smooth' ? { smoothLambda: smoothLambda() } : {}),
     ...(s.strokeTool === 'smooth' ? { smoothFeather: smoothFeather() } : {}),
+    ...(s.strokeTool === 'smooth' ? { smoothGauss: smoothGauss() } : {}),
     ...(s.strokeTool === 'smooth' ? { smoothRim: smoothRim() } : {}),
     ...(s.strokeTool === 'carve' ? { depthBands: carveDepthBands() } : {}),
     ...(spanBand !== null ? { spanBand } : {}),

@@ -21,9 +21,11 @@ import {
   setCarveDepthBands,
   setSculptMode,
   setSmoothFeather,
+  setSmoothGauss,
   setSmoothLambda,
   setSmoothRim,
   smoothFeather,
+  smoothGauss,
   smoothLambda,
   smoothRim,
   type DenialHint,
@@ -407,6 +409,19 @@ export function BrushModeler(): JSX.Element {
             />
             <span class="brush-slider__value">{smoothRim()}%</span>
           </div>
+        </div>
+        <div class="hud-row">
+          <span class="controls-label">Gauss</span>
+          <input
+            type="checkbox"
+            class="controls-check"
+            aria-label="Use the Gaussian smooth kernel"
+            title="Gauss: 3x3 binomial kernel instead of the 4-cross average. Smooths along contours; off by default."
+            checked={smoothGauss()}
+            onChange={(event) =>
+              setSmoothGauss(event.currentTarget.checked)
+            }
+          />
         </div>
       </Show>
       <Show when={brushTool() === 'carve'}>

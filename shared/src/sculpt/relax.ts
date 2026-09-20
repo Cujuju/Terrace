@@ -117,31 +117,74 @@ function laplacianCell(
   boundsOf: SpillBoundsOf | null,
   spanCaps: ReadonlyMap<number, SpillBand> | null,
   falloff: SmoothFalloff | null = null,
+  gauss = false,
 ): boolean {
   // Red-black Gauss-Seidel: even cells read odd neighbours untouched this
   // pass, then odd cells read the new evens. No snapshot copy is allocated.
   const i = y * size + x;
   const k = i - viewBase;
-  let sum = 0;
-  let count = 0;
-  if (x > 0) {
-    sum += cells[k - 1];
-    count++;
+  let avg: number;
+  if (gauss) {
+    // 3x3 binomial: centre 4, cardinals 2, diagonals 1, divisor 16.
+    // Missing edge neighbours drop out; the divisor renormalizes over the
+    // remaining voters, keeping the average exact in integer math.
+    let num = 4 * cells[k];
+    let den = 4;
+    if (x > 0) {
+      num += 2 * cells[k - 1];
+      den += 2;
+    }
+    if (x < size - 1) {
+      num += 2 * cells[k + 1];
+      den += 2;
+    }
+    if (y > 0) {
+      num += 2 * cells[k - size];
+      den += 2;
+    }
+    if (y < size - 1) {
+      num += 2 * cells[k + size];
+      den += 2;
+    }
+    if (x > 0 && y > 0) {
+      num += cells[k - size - 1];
+      den += 1;
+    }
+    if (x < size - 1 && y > 0) {
+      num += cells[k - size + 1];
+      den += 1;
+    }
+    if (x > 0 && y < size - 1) {
+      num += cells[k + size - 1];
+      den += 1;
+    }
+    if (x < size - 1 && y < size - 1) {
+      num += cells[k + size + 1];
+      den += 1;
+    }
+    avg = Math.trunc(num / den);
+  } else {
+    let sum = 0;
+    let count = 0;
+    if (x > 0) {
+      sum += cells[k - 1];
+      count++;
+    }
+    if (x < size - 1) {
+      sum += cells[k + 1];
+      count++;
+    }
+    if (y > 0) {
+      sum += cells[k - size];
+      count++;
+    }
+    if (y < size - 1) {
+      sum += cells[k + size];
+      count++;
+    }
+    if (count === 0) return false;
+    avg = Math.trunc(sum / count);
   }
-  if (x < size - 1) {
-    sum += cells[k + 1];
-    count++;
-  }
-  if (y > 0) {
-    sum += cells[k - size];
-    count++;
-  }
-  if (y < size - 1) {
-    sum += cells[k + size];
-    count++;
-  }
-  if (count === 0) return false;
-  const avg = Math.trunc(sum / count);
   if (avg === cells[k]) return false;
   const eff = falloff === null ? pct : falloffStrength(pct, falloff, x, y);
   if (eff <= 0) return false;
@@ -179,13 +222,14 @@ function laplacianPass(
   boundsOf: SpillBoundsOf | null,
   layer: LayerView | null,
   falloff: SmoothFalloff | null = null,
+  gauss = false,
 ): boolean {
   let moved = false;
   for (let parity = 0; parity < 2; parity++) {
     for (let y = minY; y <= maxY; y++) {
       const startX = minX + (((minX + y + parity) & 1) === 0 ? 0 : 1);
       for (let x = startX; x <= maxX; x += 2) {
-        if (laplacianCell(cells, viewBase, size, x, y, pct, changed, boundsOf, layer === null ? null : layer.spanCaps, falloff)) {
+        if (laplacianCell(cells, viewBase, size, x, y, pct, changed, boundsOf, layer === null ? null : layer.spanCaps, falloff, gauss)) {
           moved = true;
         }
       }
@@ -204,6 +248,7 @@ export function smooth(
   reachCells: number | null = null,
   laplacePct: number | null = null,
   falloff: SmoothFalloff | null = null,
+  gauss = false,
 ): number {
   const seed = bboxSeed ?? changed;
   if (seed.size === 0) return 0;
@@ -332,6 +377,7 @@ export function smooth(
         boundsOf,
         layer,
         falloff,
+        gauss,
       );
     }
 

@@ -87,6 +87,8 @@ export interface SculptOptions {
   readonly smoothFeather?: number;
   /** Tighten the smooth rim clamp: full band inside, freezing at the reach. */
   readonly smoothRim?: number;
+  /** Use the 3x3 binomial kernel instead of the 4-cross average. */
+  readonly smoothGauss?: boolean;
 }
 
 export interface SweepOrigin {
@@ -110,6 +112,7 @@ export interface ResolvedSculptOptions {
   readonly smoothLambda: number;
   readonly smoothFeather: number;
   readonly smoothRim: number;
+  readonly smoothGauss: boolean;
 }
 
 export const LIBRARY_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
@@ -126,4 +129,5 @@ export const LIBRARY_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
   smoothLambda: SMOOTH_LAMBDA_DEFAULT,
   smoothFeather: SMOOTH_FEATHER_DEFAULT,
   smoothRim: SMOOTH_RIM_DEFAULT,
+  smoothGauss: false,
 };
