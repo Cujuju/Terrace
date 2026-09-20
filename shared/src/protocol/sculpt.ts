@@ -8,6 +8,9 @@ import {
   MAX_BAND,
   SCULPT_PROFILES,
   SCULPT_TOOLS,
+  SMOOTH_FEATHER_DEFAULT,
+  SMOOTH_FEATHER_MAX,
+  SMOOTH_FEATHER_MIN,
   SMOOTH_LAMBDA_DEFAULT,
   SMOOTH_LAMBDA_MAX,
   SMOOTH_LAMBDA_MIN,
@@ -33,7 +36,7 @@ export interface SculptIntent {
   dragAlt?: boolean;
   spanBand?: number;
   smoothLambda?: number;
-  smoothFalloff?: boolean;
+  smoothFeather?: number;
   depthBands?: number;
   fromX?: number;
   fromY?: number;
@@ -57,7 +60,7 @@ export const WIRE_DEFAULT_SCULPT_OPTIONS: ResolvedWireSculptOptions = {
   dragAlt: false,
   sweepFrom: null,
   smoothLambda: SMOOTH_LAMBDA_DEFAULT,
-  smoothFalloff: false,
+  smoothFeather: SMOOTH_FEATHER_DEFAULT,
 };
 
 export const EDGELESS_SCULPT_PROFILE: SculptProfile = 'hard';
@@ -89,7 +92,10 @@ export function sculptOptionsOf(intent: SculptIntent): ResolvedWireSculptOptions
       tool === 'smooth'
         ? (intent.smoothLambda ?? SMOOTH_LAMBDA_DEFAULT)
         : SMOOTH_LAMBDA_DEFAULT,
-    smoothFalloff: tool === 'smooth' ? (intent.smoothFalloff ?? false) : false,
+    smoothFeather:
+      tool === 'smooth'
+        ? (intent.smoothFeather ?? SMOOTH_FEATHER_DEFAULT)
+        : SMOOTH_FEATHER_DEFAULT,
   };
 }
 
@@ -213,9 +219,15 @@ export function validateSculptIntent(
   }
 
   // Feathering softens the smooth rim and only the smooth rim.
-  const { smoothFalloff } = m;
-  if (smoothFalloff !== undefined) {
-    if (typeof smoothFalloff !== 'boolean') return null;
+  const { smoothFeather } = m;
+  if (smoothFeather !== undefined) {
+    if (
+      !Number.isInteger(smoothFeather) ||
+      (smoothFeather as number) < SMOOTH_FEATHER_MIN ||
+      (smoothFeather as number) > SMOOTH_FEATHER_MAX
+    ) {
+      return null;
+    }
     if (tool !== 'smooth') return null;
   }
 
@@ -254,7 +266,7 @@ export function validateSculptIntent(
     ...(dragAlt !== undefined ? { dragAlt: dragAlt as boolean } : {}),
     ...(spanBand !== undefined ? { spanBand: spanBand as number } : {}),
     ...(smoothLambda !== undefined ? { smoothLambda: smoothLambda as number } : {}),
-    ...(smoothFalloff !== undefined ? { smoothFalloff: smoothFalloff as boolean } : {}),
+    ...(smoothFeather !== undefined ? { smoothFeather: smoothFeather as number } : {}),
     ...(depthBands !== undefined ? { depthBands: depthBands as number } : {}),
     ...(fromX !== undefined ? { fromX: fromX as number, fromY: fromY as number } : {}),
     ...(seq !== undefined ? { seq: seq as number } : {}),

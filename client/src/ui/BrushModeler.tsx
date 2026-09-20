@@ -20,9 +20,9 @@ import {
   setBrushTool,
   setCarveDepthBands,
   setSculptMode,
-  setSmoothFalloff,
+  setSmoothFeather,
   setSmoothLambda,
-  smoothFalloff,
+  smoothFeather,
   smoothLambda,
   type DenialHint,
   type SculptMode,
@@ -45,6 +45,8 @@ import { TOOLS_WITHOUT_DIRECTION, TOOLS_WITHOUT_EDGE_PROFILE } from '@terrace/sh
 import {
   CARVE_MAX_DEPTH_BANDS,
   CARVE_MIN_DEPTH_BANDS,
+  SMOOTH_FEATHER_MAX,
+  SMOOTH_FEATHER_MIN,
   SMOOTH_LAMBDA_MAX,
   SMOOTH_LAMBDA_MIN,
   type SculptProfile,
@@ -318,16 +320,43 @@ export function BrushModeler(): JSX.Element {
           </div>
           <span class="brush-slider__end">{SMOOTH_LAMBDA_MAX}%</span>
         </div>
-        <div class="hud-row">
-          <span class="controls-label">Feather edge</span>
-          <input
-            type="checkbox"
-            class="controls-check"
-            aria-label="Feather the smooth edge"
-            title="Feather edge: full strength across the brush, fading to the rim. Off by default."
-            checked={smoothFalloff()}
-            onChange={(event) => setSmoothFalloff(event.currentTarget.checked)}
-          />
+        <div class="hud-row brush-slider">
+          <span class="brush-slider__end">0%</span>
+          <div class="brush-slider__track">
+            <span class="brush-slider__rail" />
+            <span class="brush-slider__fill" />
+            <span class="controls-label">Feather</span>
+            <input
+              type="checkbox"
+              class="controls-check"
+              aria-label="Feather the smooth edge"
+              title="Feather edge: full strength across the brush, fading over the outer rim. Off by default."
+              checked={smoothFeather() > 0}
+              onChange={(event) =>
+                setSmoothFeather(
+                  event.currentTarget.checked
+                    ? (smoothFeather() > 0 ? smoothFeather() : 50)
+                    : 0,
+                )
+              }
+            />
+            <input
+              type="range"
+              class="brush-slider__input"
+              min={SMOOTH_FEATHER_MIN}
+              max={SMOOTH_FEATHER_MAX}
+              step="1"
+              value={smoothFeather()}
+              aria-label="Feather width"
+              aria-valuetext={`${smoothFeather()} percent of reach`}
+              title="Feather width: percent of the brush reach that fades to the rim"
+              onInput={(event) =>
+                setSmoothFeather(event.currentTarget.valueAsNumber)
+              }
+            />
+            <span class="brush-slider__value">{smoothFeather()}%</span>
+          </div>
+          <span class="brush-slider__end">100%</span>
         </div>
       </Show>
       <Show when={brushTool() === 'carve'}>

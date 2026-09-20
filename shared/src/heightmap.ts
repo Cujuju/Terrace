@@ -29,6 +29,9 @@ import {
   FULL_HEIGHT_SPAN,
   LIBRARY_DEFAULT_SCULPT_OPTIONS,
   LIBRARY_SCULPT_TOOL,
+  SMOOTH_FEATHER_DEFAULT,
+  SMOOTH_FEATHER_MAX,
+  SMOOTH_FEATHER_MIN,
   SMOOTH_LAMBDA_DEFAULT,
   SMOOTH_LAMBDA_MAX,
   SMOOTH_LAMBDA_MIN,
@@ -67,6 +70,9 @@ export {
   MIN_BAND,
   SCULPT_PROFILES,
   SCULPT_TOOLS,
+  SMOOTH_FEATHER_DEFAULT,
+  SMOOTH_FEATHER_MAX,
+  SMOOTH_FEATHER_MIN,
   SMOOTH_LAMBDA_DEFAULT,
   SMOOTH_LAMBDA_MAX,
   SMOOTH_LAMBDA_MIN,
@@ -115,7 +121,10 @@ export function applySculpt(
     SMOOTH_LAMBDA_MAX,
     Math.max(SMOOTH_LAMBDA_MIN, options?.smoothLambda ?? SMOOTH_LAMBDA_DEFAULT),
   );
-  const smoothFalloff = options?.smoothFalloff ?? false;
+  const smoothFeather = Math.min(
+    SMOOTH_FEATHER_MAX,
+    Math.max(SMOOTH_FEATHER_MIN, options?.smoothFeather ?? SMOOTH_FEATHER_DEFAULT),
+  );
 
   if (spanBand !== null && spanIndexCoveringBand(map, cx, cy, spanBand) === null) {
     return [];
@@ -243,8 +252,8 @@ export function applySculpt(
       anchoredSmooth ? smoothLambda : null,
       // Feathering is a player-smooth option: settle and free smooth keep
       // their untapered passes.
-      anchoredSmooth && smoothFalloff
-        ? { cx, cy, reach: smoothCascadeReachCells(radius) }
+      anchoredSmooth && smoothFeather > 0
+        ? { cx, cy, reach: smoothCascadeReachCells(radius), feather: smoothFeather }
         : null,
     );
   }

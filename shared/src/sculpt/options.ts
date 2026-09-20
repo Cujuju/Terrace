@@ -54,6 +54,11 @@ export const SMOOTH_LAMBDA_DEFAULT = 50;
 export const SMOOTH_LAMBDA_MIN = 1;
 export const SMOOTH_LAMBDA_MAX = 100;
 
+/** Feather width as percent of reach, 0..100. 0 is uniform strength. */
+export const SMOOTH_FEATHER_DEFAULT = 0;
+export const SMOOTH_FEATHER_MIN = 0;
+export const SMOOTH_FEATHER_MAX = 100;
+
 export const SCULPT_PROFILES: readonly SculptProfile[] = ['soft', 'hard'];
 
 export type SculptSpill = 'banded' | 'free';
@@ -74,7 +79,7 @@ export interface SculptOptions {
   readonly sweepFrom?: SweepOrigin | null;
   readonly smoothLambda?: number;
   /** Feather the smooth rim: full strength inside, fading across the halo. */
-  readonly smoothFalloff?: boolean;
+  readonly smoothFeather?: number;
 }
 
 export interface SweepOrigin {
@@ -96,7 +101,7 @@ export interface ResolvedSculptOptions {
   readonly spanBand: number | null;
   readonly sweepFrom: SweepOrigin | null;
   readonly smoothLambda: number;
-  readonly smoothFalloff: boolean;
+  readonly smoothFeather: number;
 }
 
 export const LIBRARY_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
@@ -111,5 +116,5 @@ export const LIBRARY_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
   spanBand: null,
   sweepFrom: null,
   smoothLambda: SMOOTH_LAMBDA_DEFAULT,
-  smoothFalloff: false,
+  smoothFeather: SMOOTH_FEATHER_DEFAULT,
 };

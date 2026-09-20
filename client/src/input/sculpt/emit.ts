@@ -5,7 +5,7 @@ import {
   brushRadius,
   carveDepthBands,
   sculptDirection,
-  smoothFalloff,
+  smoothFeather,
   smoothLambda,
 } from '../../state/hudState.ts';
 import { footOfFaceCell } from '../../terrain/faceFoot.ts';
@@ -116,7 +116,7 @@ export const emitIntent = (s: StrokeState, origin: EmitOrigin): EmitOutcome => {
       ? {}
       : { profile: brushProfile() }),
     ...(s.strokeTool === 'smooth' ? { smoothLambda: smoothLambda() } : {}),
-    ...(s.strokeTool === 'smooth' ? { smoothFalloff: smoothFalloff() } : {}),
+    ...(s.strokeTool === 'smooth' ? { smoothFeather: smoothFeather() } : {}),
     ...(s.strokeTool === 'carve' ? { depthBands: carveDepthBands() } : {}),
     ...(spanBand !== null ? { spanBand } : {}),
     seq: s.nextSeq++,
