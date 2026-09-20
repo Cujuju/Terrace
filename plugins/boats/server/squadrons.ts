@@ -306,9 +306,8 @@ function advanceSquadron(
     if (!complete && !timedOut) {
       return squadron.rendezvous;
     }
-    // Complete or timed out: sail with the whole crew. Stragglers chase the
-    // moving fleet instead of churning dissolve/reform loops that leave both
-    // sides stationary. Only a crew reduced below strength dissolves.
+    // Complete or timed out: sail with the whole crew. Stragglers chase
+    // the moving fleet; only a below-strength crew dissolves.
     if (squadron.members.length < SQUADRON_MIN_SHIPS) return null;
     const leg = planLeg(squadron, squadron.rendezvous, flagshipHome, nav);
     if (leg === null) return squadron.rendezvous;
@@ -353,12 +352,8 @@ function planLeg(
   return null;
 }
 
-/** Abandon a cruising squadron's current leg and plan the next spoke from
- * `from`. Returns the fresh leg, or null when the squadron is not cruising
- * (mustering squadrons gather first) or no spoke lands. Used when the
- * flagship is chronically routeless: the leg points somewhere no boxed
- * search can reach from here, so facing another direction beats retrying
- * the same span. */
+/** Abandon a cruising squadron's leg and plan the next spoke. Null when not
+ * cruising or no spoke lands. Used when the flagship is chronically routeless. */
 export function replanSquadronLeg(
   squadronId: number,
   from: SquadronWaypoint,

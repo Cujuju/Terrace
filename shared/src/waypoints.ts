@@ -5,36 +5,9 @@ import {
   type TraversalProfile,
 } from './traversal.ts';
 
-/** Generic waypoint chains for long-range travel.
- *
- * A waypoint chain is an ordered list of cell-space goals with a cursor. A
- * mover aims at the current waypoint, and the cursor advances whenever the
- * mover comes within an arrival radius. Chains exist for one reason: a single
- * A* search cannot span a long leg inside a per-tick node budget
- * (`pathing.ts`'s trial pattern), so a coarse leg (e.g. a 256–512 cell
- * squadron leg) is subdivided into hops, each of which fits one budgeted
- * search. How each hop is ROUTED stays the caller's job — this module never
- * reads terrain, so it works for any mover on any profile.
- *
- * Group travel reduces to two helpers here, which settle the handoff's open
- * representation question: members share one point list, and each member is
- * either given the leader's cursor (leader-follow) or the leader's cursor
- * minus a fixed stagger (shared path + index offsets). Both are the same
- * `memberTargetIndex` call with a different stagger. Per-member spacing around
- * a goal (so members do not stack) is `slotOffsetForMember`, an integer-lattice
- * ring walk: deterministic, no trigonometry. Anti-collision itself stays with
- * the caller.
- *
- * Arrival is `WaypointGroupArrival`: 'all' (every member complete), 'flagship'
- * (the flagship alone releases the group), or 'any' (first member home).
- *
- * Determinism: integer arithmetic and fixed iteration order throughout. The
- * subdivision interpolates linearly with one division per coordinate; slot
- * offsets walk integer rings with a single final multiply. No randomness, no
- * wall clock, no terrain reads.
- *
- * Not yet wired to any mover: landing the chain inside a plugin's tick loop
- * (boats, pilgrims, wildlife) is follow-up work.
+/** Waypoint chains: ordered cell goals with a cursor; long legs subdivide
+ * into hops. Group travel shares one point list. Integer math, fixed order:
+ * deterministic.
  */
 
 export interface Waypoint {
@@ -47,8 +20,8 @@ export interface WaypointChain {
   index: number;
 }
 
-/** Default arrival radius: one cell. Matches the rejoin radius `followRoute`
- * (`steering.ts`) treats as "close enough to be on the route". */
+/** Default arrival radius: one cell. Matches the rejoin radius followRoute
+ * treats as on-route. */
 export const WAYPOINT_ARRIVAL_RADIUS_CELLS = 1;
 
 export function createWaypointChain(points: readonly Waypoint[]): WaypointChain {
@@ -75,9 +48,9 @@ export function resetWaypointChain(chain: WaypointChain, index: number = 0): voi
   chain.index = Math.max(0, Math.min(Math.floor(index), chain.points.length));
 }
 
-/** Advances the cursor while the mover is within `arrivalRadiusCells` of the
- * current waypoint, so a fast step that overshoots several tight hops lands on
- * the right one. Returns true when the cursor moved. */
+/** Advances the cursor while the mover is within radius of the current
+ * waypoint, so overshooting steps land right. Returns true when the cursor
+ * moved. */
 export function advanceWaypointChain(
   chain: WaypointChain,
   x: number,
@@ -104,9 +77,8 @@ function chebyshevCells(ax: number, ay: number, bx: number, by: number): number 
   return dx > dy ? dx : dy;
 }
 
-/** Subdivides one straight leg into hops of at most `maxLegCells` (chebyshev),
- * excluding `from` and including `to`. A coincident leg subdivides to nothing.
- * Linear interpolation in fixed order, so identical inputs give identical
+/** Subdivides one straight leg into hops of at most `maxLegCells`, excluding
+ * `from` and including `to`. Fixed order keeps identical inputs on identical
  * hops. */
 export function subdivideLeg(
   from: Waypoint,
@@ -127,9 +99,8 @@ export function subdivideLeg(
   return hops;
 }
 
-/** Expands coarse legs (e.g. squadron legs) into fine hops, starting from
- * `from`. Each leg is subdivided independently, so every emitted hop spans at
- * most `maxLegCells` and fits one budgeted route search. */
+/** Expands coarse legs into fine hops from `from`. Each leg subdivides
+ * independently, so every hop fits one budgeted search. */
 export function buildWaypointChain(
   from: Waypoint,
   legs: readonly Waypoint[],
@@ -145,10 +116,8 @@ export function buildWaypointChain(
   return hops;
 }
 
-/** Shared-path cursor for one group member. `leaderIndex` is the leader's
- * cursor into the shared point list; `staggerWaypoints` trails behind it
- * (0 = leader-follow, N = index offsets). Clamped to the list. Returns null
- * for an empty list. */
+/** Shared-path cursor for one member: the leader's cursor minus a stagger,
+ * clamped to the list. Null for an empty list. */
 export function memberTargetIndex(
   pointCount: number,
   leaderIndex: number,
@@ -177,11 +146,9 @@ export interface SlotOffset {
   readonly dy: number;
 }
 
-/** Deterministic formation offset for `memberRank` around a shared goal, on
- * integer-lattice rings scaled by `spacingCells`. Rank 0 is the flagship at
- * the goal itself; every further rank walks square-ring perimeters in fixed
- * order (top edge, right edge, bottom edge, left edge), so members sharing one
- * chain goal fan out instead of stacking. */
+/** Deterministic formation offset for `memberRank` on integer-lattice rings.
+ * Rank 0 is the goal itself; further ranks walk square-ring perimeters in
+ * fixed order. */
 export function slotOffsetForMember(memberRank: number, spacingCells: number): SlotOffset {
   const rank = Math.max(0, Math.floor(memberRank));
   if (rank === 0) return { dx: 0, dy: 0 };
@@ -228,10 +195,8 @@ export function waypointForMember(
 
 export type WaypointGroupArrival = 'all' | 'flagship' | 'any';
 
-/** Group arrival semantics over per-member completion flags in fixed order.
- * 'all' releases when every member is complete; 'flagship' when the member at
- * `flagshipIndex` is; 'any' when at least one is. An empty group never
- * arrives. */
+/** Group arrival over per-member flags, in fixed order: 'all', 'flagship'
+ * (member at index), or 'any'. An empty group never arrives. */
 export function groupArrived(
   completions: readonly boolean[],
   mode: WaypointGroupArrival,
@@ -254,13 +219,9 @@ export function groupArrived(
   return true;
 }
 
-/** Debug wire: one group's live chain geometry, for visualisation only. `anchor`
- * is where the chain was built from (usually the flagship's position at build
- * time), `hops` are the subdivided points ending at the goal, `cursor` is the
- * leader's current hop, `members`/`spacing` let the overlay draw formation
- * slots around the goal via `waypointForMember`, and `sailed` is the hop
- * route the group is actually steering (cell centres, truncated to its cap).
- * Carries no authority: the simulation never reads a snapshot back. */
+/** Debug wire: one group's live chain geometry, visualisation only. Anchor,
+ * hops, cursor, members, spacing, sailed route. Carries no authority: never
+ * read back. */
 export interface WaypointChainSnapshot {
   readonly id: number;
   readonly label: string;
@@ -302,9 +263,8 @@ function isDebugWaypointList(value: unknown, cap: number): value is Waypoint[] {
   return true;
 }
 
-/** Validates an untrusted debug frame (e.g. off the plugin wire), returning a
- * deep copy or null. Bounds mirror `parseBoatsPayload`'s caps: a frame can
- * never carry more than a few dozen chains of a few dozen hops. */
+/** Validates an untrusted debug frame, returning a deep copy or null. Bounds
+ * mirror the payload caps. */
 export function parseWaypointDebugFrame(payload: unknown): WaypointDebugFrame | null {
   if (typeof payload !== 'object' || payload === null) return null;
   const { chains } = payload as { chains?: unknown };
@@ -355,13 +315,9 @@ export function parseWaypointDebugFrame(payload: unknown): WaypointDebugFrame | 
   return { chains: parsed };
 }
 
-/** Slides a blind chain point onto nearby ground the caller may stand on.
- * Returns the point unchanged when its own cell is already walkable; otherwise
- * walks square rings out to `radiusCells` in fixed order (top edge left to
- * right, right edge, bottom edge, left edge) and returns the first walkable
- * cell's centre. Returns the point unchanged when nothing within radius is
- * walkable, so the caller falls back exactly as it would without a snap.
- * Deterministic: identical terrain, profile and inputs give identical output. */
+/** Slides a blind chain point onto nearby walkable ground. Walks square rings
+ * out to `radiusCells` in fixed order, returning the first walkable centre;
+ * unchanged when none qualifies. Deterministic. */
 export function snapWaypointToWalkable(
   world: TerrainSampler,
   profile: TraversalProfile,

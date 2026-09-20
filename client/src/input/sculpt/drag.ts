@@ -112,9 +112,8 @@ export const takeHold = (s: StrokeState): void => {
   s.strokeGrabFloor = null;
   if (s.strokeTool !== 'drag') return;
   const hover = hoverTarget(s);
-  // The clicked band IS the hold: a press never seeds a band to grab, and the
-  // band is the one under the aim on every face — tread included, so a drag
-  // starts anywhere on a surface and heals a hollow without hunting its edge.
+  // The clicked band is the hold: a press seeds nothing. The band is read
+  // under the aim on every face, so drags start anywhere.
   s.strokeGrab = s.options.riserBand(hover);
   if (s.strokeGrab === null) {
     blinkFlat(s);

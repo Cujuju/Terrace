@@ -218,10 +218,9 @@ describe('water region tread', () => {
 });
 
 describe('band-0 regions emit no water', () => {
-  // Band 0 is the ocean's own level: the sea plane already draws every
-  // below-sea surface, so a region sheet here can only double-draw the sea
-  // (or float above it on cap+lift). Emission stops at the choke point;
-  // higher-band curtains still fall to the sea.
+  // Band 0 is the ocean's own level: the sea plane already draws below-sea
+  // surfaces, so a region sheet here can only double-draw. Emission stops
+  // at the choke point.
   it('emits neither sheet nor loops for a below-shore region', () => {
     const mirror = createTerrainMirror(WORLD_SIZE);
     for (let y = 0; y < WORLD_SIZE; y++) {

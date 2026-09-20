@@ -156,11 +156,9 @@ export function createConformedGeometry(
         return;
       }
 
-      // Y is absolute world Y, not local: the objects carry XZ only
-      // (position.y is 0; see brushPreview.ts). The runs arrive pre-draped,
-      // so every vertex melts onto the ground beneath it.
-      // A live footprint is built per aim, so its counts are clamped to the
-      // capacity measured at construction rather than trusted.
+      // Y is absolute world Y, not local: objects carry XZ only. Runs
+      // arrive pre-draped. Live footprints clamp counts to construction
+      // capacity.
       const ringCount = footprint.ringCount > maxRingVerts ? maxRingVerts : footprint.ringCount;
       const gridCount =
         footprint.gridCount > maxGridSegments ? maxGridSegments : footprint.gridCount;

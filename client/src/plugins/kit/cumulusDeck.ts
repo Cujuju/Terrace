@@ -72,12 +72,9 @@ export function deckCanopyFraction(puffSizeFraction: number): number {
   return DECK_RIM_FADE_START - puffSizeFraction;
 }
 
-// Crown for the cap: fraction of a tier's puff size added as height at the
-// top-centre of the stack, falling to zero at the base and at each tier's
-// rim. Without it the top tier is a flat disc of coplanar puffs whose union
-// ceiling is a plane, which reads as a cut-flat top when seen edge-on. The
-// fraction must clear a full top-tier puff radius (~1.0): the rim puffs keep
-// their radius above the plane, so anything less leaves the mesa.
+// Crown for the cap: tier puff size added as height at the top-centre,
+// falling to zero at the base and rims. Without it the top reads cut-flat
+// edge-on.
 export const DECK_DOME_LIFT_FRACTION = 1.5;
 
 export const PUFF_SIZE_TOP_GROWTH = 0.9;
@@ -165,9 +162,8 @@ export function createCumulusDeck(spec: CumulusDeckSpec): CumulusDeck {
       ),
     );
 
-  // Crown the cap toward the middle of each tier, most at the top of the
-  // stack: proportional to the puff's own size so the crown scales with the
-  // storm. The base tier is untouched, so the precipitation ceiling stays flat.
+  // Crown the cap toward each tier's middle, most at the top. The base
+  // tier is untouched, so the precipitation ceiling stays flat.
   const domeLift = aTier
     .mul(aTier)
     .mul(float(1).sub(aPolar.x.mul(aPolar.x)))

@@ -119,11 +119,8 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
   boatMarkers.count = 0;
   container.add(lines, sailed, hopPoints, slotPoints, cursorPoints, boatMarkers);
 
-  /**
-   * The readout wears the performance HUD's own classes (.hud-version for the
-   * corner typography, .hud-version__perf-panel for the panel chrome,
-   * .hud-version__perf rows inside), so it matches that styling exactly by
-   * sharing it rather than by copying its values.
+  /** The readout wears the performance HUD's own classes, matching its
+   * styling by sharing rather than copying values.
    */
   const readout = document.createElement('div');
   readout.id = 'boats-waypoints-readout';
@@ -134,9 +131,8 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
   readout.style.right = 'auto';
   readout.style.left = '16px';
   readout.style.alignItems = 'flex-start';
-  /** Two stacked panels: waypoints and boats above, squadron chains below.
-   * The chain rows carry the longest values, and sharing one panel would
-   * stretch it wide enough to cover the world header. */
+  /** Two stacked panels: waypoints above, chains below. Chain rows carry
+   * the longest values; one panel would cover the world header. */
   const boatPanel = document.createElement('div');
   boatPanel.className = 'hud-version__perf-panel';
   const chainPanel = document.createElement('div');
@@ -163,10 +159,8 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
     panel.replaceChildren(...rows.map(makeReadoutRow));
   };
 
-  /**
-   * Single-cell lines for the squadron panel: no label column. The `#id`
-   * plus `sqN` pair duplicated the number and left the fixed label column
-   * mostly empty, so each chain renders as one short line instead.
+  /** Single-cell lines for the squadron panel: no label column. Each chain
+   * renders as one short line instead.
    */
   const setPanelLines = (panel: HTMLElement, lines: readonly string[]): void => {
     panel.replaceChildren(
@@ -179,10 +173,8 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
     );
   };
 
-  /**
-   * The stack hangs below the top-left corner panel, measured live: that
-   * panel collapses to a tab or opens to full height, and the stack must
-   * clear it either way without covering it.
+  /** The stack hangs below the top-left corner panel, which collapses to a
+   * tab or opens full height; the stack clears it either way.
    */
   const updateReadoutPosition = (): void => {
     const corner = document.querySelector('.hud-anchor-top-left');
@@ -193,11 +185,8 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
     readout.style.top = `${String(top)}px`;
   };
 
-  /**
-   * Re-hang when the corner panel collapses or opens underneath us. Frames
-   * already reposition on every render; this covers a toggle between
-   * frames. Only DOM structure is inspected here, never geometry, so idle
-   * document churn costs no layout.
+  /** Re-hang when the corner panel toggles underneath us. Frames already
+   * reposition on render; this covers toggles between frames.
    */
   const cornered = (node: Node): boolean =>
     node instanceof Element &&
@@ -228,9 +217,8 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
   let readoutHead: ReadoutRow = ['waypoints', 'waiting for frame'];
   let chainLines: string[] = [];
 
-  /** One reading per row, like the performance panel: a count row plus one
-   * short row per boat. A single row carrying every boat's position grows
-   * the panel to the viewport width, since perf rows never wrap. */
+  /** One reading per row: a count row plus one short row per boat. One row
+   * for all boats would grow to the viewport width. */
   const boatRows = (): ReadoutRow[] => {
     const crewed = lastBoats.filter((boat) => fleetOfBoat.has(boat.id)).length;
     const head: ReadoutRow = [

@@ -176,10 +176,9 @@ export interface RouteSearchOutcome {
   readonly plan: RoutePlan | null;
 }
 
-/** Same search as {@link findRoute}, but the miss is labelled: `exhausted` spent
- * (or never had) node budget and may succeed later; `unreachable` searched its
- * bounds dry and will answer identically until the terrain changes. Starved
- * calls (empty pool on entry) report `exhausted`, never `unreachable`. */
+/** Same search as {@link findRoute}, but the miss is labelled: `exhausted`
+ * may succeed later; `unreachable` answers identically until terrain changes.
+ * Starved calls report `exhausted`. */
 export function findRouteWithStatus(
   world: TerrainSampler,
   profile: TraversalProfile,
@@ -433,12 +432,9 @@ export function regionAt(
   return regions.labels[cy * worldSize + cx];
 }
 
-/** Labels every walkable cell with its connected-region id (0 = not walkable).
- * Same movement rules as {@link floodReachableRegion} (orthogonal steps plus
- * flank-checked diagonals, gradient enforced only when the profile demands
- * it), so `regionAt(a) !== regionAt(b)` with both non-zero means A* would
- * search dry: a sound prune. Fixed scan order and fixed neighbour order make
- * the labels deterministic: identical inputs give identical outputs. */
+/** Labels every walkable cell with its connected-region id. Same movement
+ * rules as {@link floodReachableRegion}, so a region mismatch with both
+ * non-zero prunes A*. Fixed order keeps labels deterministic. */
 export function labelSeaRegions(
   world: TerrainSampler,
   profile: TraversalProfile,

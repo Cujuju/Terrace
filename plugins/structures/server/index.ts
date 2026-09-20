@@ -64,9 +64,8 @@ export const NO_GROWTH_MODEL_WARNING =
 
 let live: Map<number, BoardCellRecord> = new Map();
 
-/** Resting band of each standing structure, keyed by structureKey. A sculpt
- *  demolishes a structure only when the band it rests on changes, so a carve
- *  tunnel below (surface height and band untouched) leaves it standing. */
+/** Resting band of each standing structure. Demolition fires only when that
+ * band changes; a tunnel below leaves it standing. */
 let supportBands = new Map<number, number>();
 
 function noteSupportBand(world: StructuresWorld, x: number, y: number): void {

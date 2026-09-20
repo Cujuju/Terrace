@@ -61,10 +61,9 @@ export const ARRIVAL_RADIUS_CELLS = cellsAcross(0.75);
 
 export const PILGRIM_DISPATCH_EXPANSION_POOL = ROUTE_NODE_BUDGET;
 
-/** Trial expansions per pilgrim search (~2ms). Catchment-local and homebound
- * routes complete far below this; maze searches exhaust the trial and defer
- * instead of eating a full pool solo. Callers that pass a real pool keep
- * exact fallback semantics (see planRoute). */
+/** Trial expansions per pilgrim search. Local routes finish far below it;
+ * maze searches exhaust it and defer. Real-pool callers keep exact fallback
+ * semantics. */
 export const PILGRIM_ROUTE_TRIAL_EXPANSIONS = 1024;
 
 const SETTLEMENT_KEY_STRIDE = 65536;

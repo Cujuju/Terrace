@@ -200,9 +200,8 @@ export function createBrushPreview(
       };
 
       if (carveAdmits !== null && brush.tool === 'carve') {
-        // The outline is the cut, not the reach. A carve that admits nothing
-        // shows the refusal mark instead of a ring promising a bite.
-        // A carve opens the band IT reads, not the band a lip highlight lit.
+        // The outline is the cut, not the reach. An admitting-nothing carve
+        // shows the refusal mark. A carve opens the band it reads.
         const band = hover.carveBand ?? hover.aimBand ?? null;
         const cells = band === null ? null : carveAdmits(hover.x, hover.y, band, brush.radius);
         const paintAimMark = (): void => {

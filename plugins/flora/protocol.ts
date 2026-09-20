@@ -203,10 +203,8 @@ export function treeKindAt(x: number, y: number, height: number): FloraTreeKind 
  */
 export const TREE_CLEARANCE_RADIUS_CELLS = 2;
 
-/**
- * A neighbour may rise at most one band above the trunk base: the trunk is
- * narrow enough to clear it, and the crown starts ~1.7 bands up. Anything
- * higher would jut into the crown, so the cell has no room for a tree.
+/** A neighbour may rise at most one band above the trunk base. Anything
+ * higher juts into the crown: no room for a tree.
  */
 export const TREE_CLEARANCE_MAX_RISE = BAND_HEIGHT;
 

@@ -204,9 +204,9 @@ async function measure(world: GoldenWorldName): Promise<FixtureRow> {
     cpuWallTotal += cpu[1];
     gpuWallTotal += gpu[1];
 
-    // A chunk that is neither layered nor exposed skips the caps buried under
-    // its own square corners (the kernel's `lo = lowCorner`). Less cap is that
-    // rule; more cap is never legal, and the walls must match either way.
+    // An unlayered, unexposed chunk skips caps buried under its own
+    // corners. Less cap is that rule; more cap is never legal; walls
+    // must match.
     const capGap = cpu[0] - gpu[0];
     const culls = !layered && !exposed;
     if (culls && capGap > SNORM16_AREA_DRIFT_WORLD_UNITS) buriedCapCulled += capGap;

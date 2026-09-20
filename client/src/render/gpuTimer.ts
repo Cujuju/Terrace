@@ -2,8 +2,8 @@ import type { Renderer } from 'three/webgpu';
 
 const MAX_BUFFERED_SAMPLES = 8;
 
-/** Frames per resolve. A resolve costs ~2-3 ms of frame time on WebGPU, so the pool is
- *  drained on a cadence; three reports the window's last frame, so that frame is the sample. */
+/** Frames per resolve. The pool drains on a cadence; three reports the
+ * window's last frame, so that frame is the sample. */
 const RESOLVE_EVERY_FRAMES = 16;
 
 export const TIMESTAMP_QUERY_FEATURE = 'timestamp-query';

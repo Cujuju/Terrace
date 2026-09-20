@@ -890,9 +890,8 @@ export async function createGpuChunkBuildSource(
     }
   };
 
-  // One lips buffer serves every batch, and a count pass clears its counter and overwrites
-  // its records. So a batch holds the buffer from its count dispatch until its lips copy is
-  // enqueued (or it needs none); later batches queue behind it. Emission never touches lips.
+  // One lips buffer serves every batch. A batch holds it from its count
+  // dispatch until its lips copy is enqueued; later batches queue behind it.
   let lipsHeld = false;
   const batchesAwaitingLips: BatchMember[][] = [];
 
@@ -917,9 +916,8 @@ export async function createGpuChunkBuildSource(
     dispatchBatch(members);
   };
 
-  // Two maps, in order: the counts say how many lip records exist, and only then is that
-  // many bytes of them copied and mapped. Answers resolve after the second map. Every path
-  // out of the count map releases the lips buffer exactly once.
+  // Two maps, in order: counts first, then that many bytes copied and
+  // mapped. Every path out of the count map releases lips exactly once.
   const dispatchBatch = (members: BatchMember[]): void => {
     const readback = dispatchCount(members);
     if (readback === null) {
