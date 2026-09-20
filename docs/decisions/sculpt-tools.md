@@ -19,6 +19,16 @@ Relaxation: `relaxation.md`. Spans and carve: `overhangs.md`. Picking:
   tool. Lip proximity never vetoes it; it only gates the overlay highlight.
 - A drag press grabs the clicked band — no seed layer first.
 
+## Chords
+
+- `Sculpt` (Left): HUD way. `Sculpt, inverted` (Left+Shift): other way.
+  `Sculpt, alt` (Left+Ctrl): one band, HUD way. Rebindable; none names a
+  direction — the toggle does.
+- Alt rides raise/lower: alt+raise one band HUD way, alt+lower one band other
+  way (Ctrl+Shift default). Plain rows win ties; degenerate chords never fire.
+  Wire flag `dragAlt`, live per leg.
+- Mode icon shows `A` while alt is held on drag.
+
 ## Carve depth
 
 - `depthBands`, validated `1 … CARVE_MAX_DEPTH_BANDS` (10), set by a HUD

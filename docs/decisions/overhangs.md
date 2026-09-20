@@ -46,26 +46,17 @@ save bumps `SNAPSHOT_SCHEMA_VERSION`.
 
 ## The drag writes the run down from the band it grabbed
 
-From the dragged band, run down through like material to the first boundary.
-That slab is what the stroke writes into every swept cell.
+Slab = dragged band down through like material to the first boundary: solid
+to its span's `floorBand`, air to its void's floor. Every swept cell gets it.
 
-- Solid runs to its span's `floorBand`; a ground band carries the whole ground
-  beneath it. Air runs to its void's floor; a one-band void carries itself.
-- `runFloorBandAt` reads the run, `fillBandRun` writes the slab —
-  `shared/src/columns/bandQueries.ts`.
-- Welding is not a decision: the slab lands, `canonicaliseColumn` merges what
-  it touches, nothing inspects what is overhead.
-- The only refusal is a cell already solid through the whole run. No adjacency
-  gate on the raise path.
-- Shielding is free — the run never starts below its own floor, so it cannot
-  reach a hollow under the material grabbed. Fuzzed as
-  `expectGapsBelowRunSurvive`.
-- No depth limit: the run stops at the first boundary.
-
-The run's floor travels on the intent as `floorBand`. The swept cell cannot
-derive it — the same band may sit in an air run reaching far lower there — and
-computing it locally would destroy the hollow. A plain integer, not a span
-index, so both replicas apply it deterministically.
+- `runFloorBandAt` reads, `fillBandRun` writes (`columns/bandQueries.ts`).
+  Landed slab merges via `canonicaliseColumn`; nothing reads overhead.
+- Raise refuses only the already-solid run. No adjacency gate, no depth limit.
+- Shielding is free: the run starts at its own floor (`expectGapsBelowRunSurvive`).
+- `floorBand` rides the intent — the swept cell can't derive it. Plain
+  integer, never a span index.
+- Alt (`dragAlt`): raise writes the band alone; lower carves it alone, roof
+  intact, retreat gate kept, bedrock refused.
 
 2026-09-17, superseding #224's "the drag lays a roof; it never fills the carve
 beneath one", which left 215 of 317 swept cells dead on a cliff and could never
