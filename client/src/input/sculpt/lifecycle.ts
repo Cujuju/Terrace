@@ -7,7 +7,7 @@ import {
 } from '../../config.ts';
 import { brushTool, sculptMode, setSculptAlt, setSculptChord } from '../../state/hudState.ts';
 import {
-  altSubtractChordHeld,
+  altLowerChordHeld,
   sculptAltHeld,
   sculptChordHeld,
   type ModifierState,
@@ -128,7 +128,7 @@ export const syncMode = (s: StrokeState, state: ModifierState): void => {
   const directional = !TOOLS_WITHOUT_DIRECTION.includes(brushTool());
   setSculptChord(
     (directional && sculptChordHeld(s.mods)) ||
-      (directional && sculptMode() === 'raise' && altSubtractChordHeld(s.mods)),
+      (directional && sculptMode() === 'raise' && altLowerChordHeld(s.mods)),
   );
   setSculptAlt(sculptAltHeld(s.mods));
 };

@@ -153,11 +153,21 @@ function actionEffect(action: ControlAction, binding: ControlBinding): string {
 /** Neither sculpt binding names a direction: the HUD toggle does, chords invert it. Alt narrows the drag to one band. */
 function sculptHint(action: ControlAction, b: ControlBinding): string {
   const press = `${HINT_MODIFIER[b.modifier]}${BUTTON_LABEL[b.button]}-drag`;
-  if (action === 'alt')
-    return `${press} sculpts the HUD direction, current band only · Ctrl+Shift-${BUTTON_LABEL[b.button]}-drag takes one band down`;
+  if (action === 'alt') return `${press} sculpts the HUD direction, current band only`;
   return b.modifier === 'none'
     ? `${press} sculpts the HUD direction`
     : `${press} sculpts the other way`;
+}
+
+/** Names the alt+lower chord while it stays distinct, else null. */
+function altLowerComboHint(bindings: ControlBindings): string | null {
+  const lower = bindings.lower;
+  const alt = bindings.alt.modifier;
+  if (alt === 'none' || lower.modifier === 'none' || alt === lower.modifier) return null;
+  const rank = (m: BindingModifier): number => (m === 'ctrl' ? 0 : m === 'shift' ? 1 : 2);
+  const first = rank(lower.modifier) <= rank(alt) ? lower.modifier : alt;
+  const second = first === lower.modifier ? alt : lower.modifier;
+  return `${HINT_MODIFIER[first]}${HINT_MODIFIER[second]}${BUTTON_LABEL[lower.button]}-drag sculpts the other way, current band only`;
 }
 
 function hintText(bindings: ControlBindings, wheel: WheelBehaviour): string {
@@ -166,6 +176,8 @@ function hintText(bindings: ControlBindings, wheel: WheelBehaviour): string {
     if (isSculpt(action)) return sculptHint(action, b);
     return `${HINT_MODIFIER[b.modifier]}${BUTTON_LABEL[b.button]}-drag ${HINT_VERB[action]}`;
   });
+  const combo = altLowerComboHint(bindings);
+  if (combo !== null) parts.push(combo);
   const wheelVerb = wheel === 'zoom' ? 'zooms' : 'pans';
   return `${parts.join(' · ')} · Wheel ${wheelVerb} · Pinch zooms · Alt+scroll orbits`;
 }

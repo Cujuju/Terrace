@@ -261,19 +261,27 @@ export function resolveSculptPress(
   eventButton: number,
   mods: ModifierState,
 ): SculptAction | null {
-  if (isAltSubtractPress(eventButton, mods)) return 'lower';
   const action = resolvePress(eventButton, mods);
-  if (action !== 'raise' && action !== 'lower' && action !== 'alt') return null;
-  const toggle = sculptMode();
-  if (action === 'alt') return toggle;
-  return controlBindings()[action].modifier === 'none'
-    ? toggle
-    : oppositeSculptMode(toggle);
+  if (action === 'raise' || action === 'lower' || action === 'alt') {
+    const toggle = sculptMode();
+    if (action === 'alt') return toggle;
+    return controlBindings()[action].modifier === 'none'
+      ? toggle
+      : oppositeSculptMode(toggle);
+  }
+  // Alt composes with the raise and lower chords: one band either way.
+  if (isAltLowerPress(eventButton, mods)) return oppositeSculptMode(sculptMode());
+  if (isAltRaisePress(eventButton, mods)) return sculptMode();
+  return null;
 }
 
 /** True when the press names the alt sculpt: a drag of one band only. */
 export function isAltSculptPress(eventButton: number, mods: ModifierState): boolean {
-  return resolvePress(eventButton, mods) === 'alt' || isAltSubtractPress(eventButton, mods);
+  return (
+    resolvePress(eventButton, mods) === 'alt' ||
+    isAltLowerPress(eventButton, mods) ||
+    isAltRaisePress(eventButton, mods)
+  );
 }
 
 /** Whether the held modifiers are a sculpt chord, which inverts the toggle. */
@@ -286,20 +294,50 @@ export function sculptChordHeld(mods: ModifierState): boolean {
 
 /** Whether a non-none modifier matching the alt binding is held. */
 export function sculptAltHeld(mods: ModifierState): boolean {
-  if (altSubtractChordHeld(mods)) return true;
+  if (altLowerChordHeld(mods) || altRaiseChordHeld(mods)) return true;
   const modifier = modifierOf(mods);
   if (modifier === null || modifier === 'none') return false;
   return controlBindings().alt.modifier === modifier;
 }
 
-/** Ctrl+Shift, no Alt: the subtract chord, mods only. */
-export function altSubtractChordHeld(mods: ModifierState): boolean {
-  return mods.ctrlKey && mods.shiftKey && !mods.altKey;
+/** Mods held right now, minus 'none'. */
+const heldSet = (mods: ModifierState): readonly BindingModifier[] => {
+  const held: BindingModifier[] = [];
+  if (mods.shiftKey) held.push('shift');
+  if (mods.ctrlKey) held.push('ctrl');
+  if (mods.altKey) held.push('alt');
+  return held;
+};
+
+/** One row's chord as a set: 'none' holds nothing. */
+const rowSet = (modifier: BindingModifier): readonly BindingModifier[] =>
+  modifier === 'none' ? [] : [modifier];
+
+const sameSet = (a: readonly BindingModifier[], b: readonly BindingModifier[]): boolean =>
+  a.length === b.length && a.every((m) => b.includes(m));
+
+/** Alt riding the lower chord: one band the other way. */
+export function altLowerChordHeld(mods: ModifierState): boolean {
+  const bindings = controlBindings();
+  if (bindings.alt.modifier === 'none') return false;
+  return sameSet(heldSet(mods), [...rowSet(bindings.lower.modifier), bindings.alt.modifier]);
 }
 
-/** Ctrl+Shift on the alt button: one band down, whatever the toggle. */
-export function isAltSubtractPress(eventButton: number, mods: ModifierState): boolean {
-  return altSubtractChordHeld(mods) && buttonName(eventButton) === controlBindings().alt.button;
+/** Alt riding the raise chord: one band the HUD way. */
+export function altRaiseChordHeld(mods: ModifierState): boolean {
+  const bindings = controlBindings();
+  if (bindings.alt.modifier === 'none') return false;
+  return sameSet(heldSet(mods), [...rowSet(bindings.raise.modifier), bindings.alt.modifier]);
+}
+
+/** True when the press is alt+lower on the lower button. */
+export function isAltLowerPress(eventButton: number, mods: ModifierState): boolean {
+  return altLowerChordHeld(mods) && buttonName(eventButton) === controlBindings().lower.button;
+}
+
+/** True when the press is alt+raise on the raise button. */
+export function isAltRaisePress(eventButton: number, mods: ModifierState): boolean {
+  return altRaiseChordHeld(mods) && buttonName(eventButton) === controlBindings().raise.button;
 }
 
 export function shadowedActions(bindings: ControlBindings): ControlAction[] {
