@@ -362,6 +362,7 @@ body {
    The two colour states are unchanged — accent green raising, --hud-lower
    orange lowering — because the colour is the faster read of the two. */
 .mode-value {
+  position: relative;
   width: 40px;
   height: 40px;
   display: grid;
@@ -415,6 +416,18 @@ body {
   box-shadow:
     0 0 18px rgba(var(--hud-lower-rgb), 0.5),
     inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+
+.mode-alt-badge {
+  position: absolute;
+  right: 3px;
+  bottom: 2px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  opacity: 0.9;
+  pointer-events: none;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
 }
 
 /* ── THE BRUSH-WIDTH SLIDER (owner, 2026-09-04: "turn it into a slider that

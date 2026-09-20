@@ -13,6 +13,7 @@ import {
   carveDepthBands,
   denialHint,
   effectiveSculptMode,
+  sculptAlt,
   sculptMode,
   setBrushProfile,
   setBrushRadius,
@@ -142,6 +143,9 @@ function modeTitle(mode: SculptMode, bindings: ControlBindings): string {
   return `${base} (${chord}-drag ${mode === 'lower' ? 'raises' : 'lowers'})`;
 }
 
+/** Edge badge naming the live alt mode. A letter today, digits if modes multiply. */
+const DRAG_ALT_BADGE = 'A';
+
 export function BrushModeler(): JSX.Element {
   return (
     <div
@@ -197,8 +201,12 @@ export function BrushModeler(): JSX.Element {
             type="button"
             class="mode-value"
             classList={{ lower: effectiveSculptMode() === 'lower' }}
-            aria-label={`Sculpt direction: ${effectiveSculptMode() === 'lower' ? 'Lower' : 'Raise'}`}
-            title={modeTitle(sculptMode(), controlBindings())}
+            aria-label={`Sculpt direction: ${effectiveSculptMode() === 'lower' ? 'Lower' : 'Raise'}${sculptAlt() && brushTool() === 'drag' ? ', alt' : ''}`}
+            title={
+              sculptAlt() && brushTool() === 'drag'
+                ? `${modeTitle(sculptMode(), controlBindings())} · Alt: current band only`
+                : modeTitle(sculptMode(), controlBindings())
+            }
             onClick={() =>
               setSculptMode(sculptMode() === 'lower' ? 'raise' : 'lower')
             }
@@ -206,6 +214,11 @@ export function BrushModeler(): JSX.Element {
             <Dynamic
               component={effectiveSculptMode() === 'lower' ? LowerIcon : RaiseIcon}
             />
+            <Show when={sculptAlt() && brushTool() === 'drag'}>
+              <span class="mode-alt-badge" aria-hidden="true">
+                {DRAG_ALT_BADGE}
+              </span>
+            </Show>
           </button>
         </Show>
       </div>

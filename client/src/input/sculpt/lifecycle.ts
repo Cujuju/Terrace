@@ -5,8 +5,9 @@ import {
   SCULPT_REPEAT_RAMP_FACTOR,
   TOUCH_STROKE_GRACE_MS,
 } from '../../config.ts';
-import { brushTool, setSculptChord } from '../../state/hudState.ts';
+import { brushTool, setSculptAlt, setSculptChord } from '../../state/hudState.ts';
 import {
+  sculptAltHeld,
   sculptChordHeld,
   type ModifierState,
   type SculptAction,
@@ -125,4 +126,5 @@ export const syncMode = (s: StrokeState, state: ModifierState): void => {
   setSculptChord(
     !TOOLS_WITHOUT_DIRECTION.includes(brushTool()) && sculptChordHeld(s.mods),
   );
+  setSculptAlt(sculptAltHeld(s.mods));
 };

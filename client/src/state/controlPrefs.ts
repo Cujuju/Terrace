@@ -283,6 +283,13 @@ export function sculptChordHeld(mods: ModifierState): boolean {
   return bindings.raise.modifier === modifier || bindings.lower.modifier === modifier;
 }
 
+/** Whether a non-none modifier matching the alt binding is held. */
+export function sculptAltHeld(mods: ModifierState): boolean {
+  const modifier = modifierOf(mods);
+  if (modifier === null || modifier === 'none') return false;
+  return controlBindings().alt.modifier === modifier;
+}
+
 export function shadowedActions(bindings: ControlBindings): ControlAction[] {
   const seen = new Map<string, ControlAction>();
   const shadowed: ControlAction[] = [];

@@ -190,6 +190,9 @@ const [sculptMode, setSculptModeSignal] = createSignal<SculptMode>(
 /** Whether a chord is held. It inverts the toggle, so it is never persisted. */
 const [sculptChord, setSculptChordSignal] = createSignal<boolean>(false);
 
+/** Whether the alt chord is held. It narrows the drag, never persisted. */
+const [sculptAlt, setSculptAltSignal] = createSignal<boolean>(false);
+
 const [smoothLambda, setSmoothLambdaSignal] = createSignal<number>(
   stored.smoothLambda,
 );
@@ -251,6 +254,10 @@ export function setSculptChord(held: boolean): void {
   if (held !== sculptChord()) setSculptChordSignal(held);
 }
 
+export function setSculptAlt(held: boolean): void {
+  if (held !== sculptAlt()) setSculptAltSignal(held);
+}
+
 /** What a press sculpts right now: the toggle, inverted while a chord is held. */
 export function effectiveSculptMode(): SculptMode {
   return sculptChord() ? oppositeSculptMode(sculptMode()) : sculptMode();
@@ -293,6 +300,7 @@ export {
   brushTool,
   brushProfile,
   sculptMode,
+  sculptAlt,
   smoothLambda,
   carveDepthBands,
   showControls,
