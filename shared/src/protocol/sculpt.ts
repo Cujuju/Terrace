@@ -33,6 +33,7 @@ export interface SculptIntent {
   dragAlt?: boolean;
   spanBand?: number;
   smoothLambda?: number;
+  smoothFalloff?: boolean;
   depthBands?: number;
   fromX?: number;
   fromY?: number;
@@ -56,6 +57,7 @@ export const WIRE_DEFAULT_SCULPT_OPTIONS: ResolvedWireSculptOptions = {
   dragAlt: false,
   sweepFrom: null,
   smoothLambda: SMOOTH_LAMBDA_DEFAULT,
+  smoothFalloff: false,
 };
 
 export const EDGELESS_SCULPT_PROFILE: SculptProfile = 'hard';
@@ -87,6 +89,7 @@ export function sculptOptionsOf(intent: SculptIntent): ResolvedWireSculptOptions
       tool === 'smooth'
         ? (intent.smoothLambda ?? SMOOTH_LAMBDA_DEFAULT)
         : SMOOTH_LAMBDA_DEFAULT,
+    smoothFalloff: tool === 'smooth' ? (intent.smoothFalloff ?? false) : false,
   };
 }
 
@@ -209,6 +212,13 @@ export function validateSculptIntent(
     if (tool !== 'smooth') return null;
   }
 
+  // Feathering softens the smooth rim and only the smooth rim.
+  const { smoothFalloff } = m;
+  if (smoothFalloff !== undefined) {
+    if (typeof smoothFalloff !== 'boolean') return null;
+    if (tool !== 'smooth') return null;
+  }
+
   // A carve cuts the band it grasps: without one it names nothing to open and
   // would apply as a silent, acked no-op. Optional on a stamp or smooth.
   if (spanBand === undefined && tool === 'carve') return null;
@@ -244,6 +254,7 @@ export function validateSculptIntent(
     ...(dragAlt !== undefined ? { dragAlt: dragAlt as boolean } : {}),
     ...(spanBand !== undefined ? { spanBand: spanBand as number } : {}),
     ...(smoothLambda !== undefined ? { smoothLambda: smoothLambda as number } : {}),
+    ...(smoothFalloff !== undefined ? { smoothFalloff: smoothFalloff as boolean } : {}),
     ...(depthBands !== undefined ? { depthBands: depthBands as number } : {}),
     ...(fromX !== undefined ? { fromX: fromX as number, fromY: fromY as number } : {}),
     ...(seq !== undefined ? { seq: seq as number } : {}),

@@ -73,6 +73,8 @@ export interface SculptOptions {
   readonly spanBand?: number | null;
   readonly sweepFrom?: SweepOrigin | null;
   readonly smoothLambda?: number;
+  /** Feather the smooth rim: full strength inside, fading across the halo. */
+  readonly smoothFalloff?: boolean;
 }
 
 export interface SweepOrigin {
@@ -94,6 +96,7 @@ export interface ResolvedSculptOptions {
   readonly spanBand: number | null;
   readonly sweepFrom: SweepOrigin | null;
   readonly smoothLambda: number;
+  readonly smoothFalloff: boolean;
 }
 
 export const LIBRARY_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
@@ -108,4 +111,5 @@ export const LIBRARY_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
   spanBand: null,
   sweepFrom: null,
   smoothLambda: SMOOTH_LAMBDA_DEFAULT,
+  smoothFalloff: false,
 };

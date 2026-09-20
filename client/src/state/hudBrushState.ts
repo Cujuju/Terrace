@@ -66,6 +66,8 @@ export const DEFAULT_SCULPT_MODE: SculptMode = 'raise';
 
 export const DEFAULT_SMOOTH_LAMBDA = SMOOTH_LAMBDA_DEFAULT;
 
+export const DEFAULT_SMOOTH_FALLOFF = false;
+
 export const DEFAULT_CARVE_DEPTH_BANDS = CARVE_DEFAULT_DEPTH_BANDS;
 
 export const DEFAULT_SHOW_CONTROLS = false;
@@ -79,6 +81,7 @@ export interface PersistedHudState {
   readonly brushProfile: SculptProfile;
   readonly sculptMode: SculptMode;
   readonly smoothLambda: number;
+  readonly smoothFalloff: boolean;
   readonly carveDepthBands: number;
   readonly showControls: boolean;
   readonly panelOpen: boolean;
@@ -90,6 +93,7 @@ export const DEFAULT_HUD_STATE: PersistedHudState = {
   brushProfile: DEFAULT_BRUSH_PROFILE,
   sculptMode: DEFAULT_SCULPT_MODE,
   smoothLambda: DEFAULT_SMOOTH_LAMBDA,
+  smoothFalloff: DEFAULT_SMOOTH_FALLOFF,
   carveDepthBands: DEFAULT_CARVE_DEPTH_BANDS,
   showControls: DEFAULT_SHOW_CONTROLS,
   panelOpen: DEFAULT_PANEL_OPEN,
@@ -126,6 +130,10 @@ function readSmoothLambda(value: unknown): number {
     : DEFAULT_SMOOTH_LAMBDA;
 }
 
+function readSmoothFalloff(value: unknown): boolean {
+  return typeof value === 'boolean' ? value : DEFAULT_SMOOTH_FALLOFF;
+}
+
 /** The wire predicate is the one depth authority; the HUD never re-states it. */
 function readCarveDepthBands(value: unknown): number {
   return typeof value === 'number' && isValidCarveDepth(value)
@@ -157,6 +165,7 @@ export function parseHudState(raw: string | null): PersistedHudState {
     brushProfile: readProfile(record['brushProfile']),
     sculptMode: readMode(record['sculptMode']),
     smoothLambda: readSmoothLambda(record['smoothLambda']),
+    smoothFalloff: readSmoothFalloff(record['smoothFalloff']),
     carveDepthBands: readCarveDepthBands(record['carveDepthBands']),
     showControls: readShowControls(record['showControls']),
     panelOpen: readPanelOpen(record['panelOpen']),
@@ -197,6 +206,10 @@ const [smoothLambda, setSmoothLambdaSignal] = createSignal<number>(
   stored.smoothLambda,
 );
 
+const [smoothFalloff, setSmoothFalloffSignal] = createSignal<boolean>(
+  stored.smoothFalloff,
+);
+
 const [carveDepthBands, setCarveDepthBandsSignal] = createSignal<number>(
   stored.carveDepthBands,
 );
@@ -216,6 +229,7 @@ function persist(): void {
     brushProfile: brushProfile(),
     sculptMode: sculptMode(),
     smoothLambda: smoothLambda(),
+    smoothFalloff: smoothFalloff(),
     carveDepthBands: carveDepthBands(),
     showControls: showControls(),
     panelOpen: panelOpen(),
@@ -273,6 +287,12 @@ export function setSmoothLambda(lambda: number): void {
   persist();
 }
 
+export function setSmoothFalloff(feather: boolean): void {
+  if (feather === smoothFalloff()) return;
+  setSmoothFalloffSignal(feather);
+  persist();
+}
+
 export function setCarveDepthBands(bands: number): void {
   const clamped = Math.min(
     CARVE_MAX_DEPTH_BANDS,
@@ -301,6 +321,7 @@ export {
   brushProfile,
   sculptMode,
   sculptAlt,
+  smoothFalloff,
   smoothLambda,
   carveDepthBands,
   showControls,

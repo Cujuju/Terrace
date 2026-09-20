@@ -68,6 +68,25 @@ function relaxPair(
   return moved;
 }
 
+/** Radial strength taper for the player melt: full across the footprint. */
+export interface SmoothFalloff {
+  readonly cx: number;
+  readonly cy: number;
+  readonly reach: number;
+}
+
+// Plateau falloff: full strength inside the footprint so the clicked cell
+// co-moves with its patch; only the halo feathers down to the rim.
+function falloffStrength(pct: number, falloff: SmoothFalloff, x: number, y: number): number {
+  const dx = x - falloff.cx;
+  const dy = y - falloff.cy;
+  const dist = Math.floor(Math.sqrt(dx * dx + dy * dy));
+  const featherStart = Math.max(falloff.reach - 3, 0);
+  if (dist <= featherStart) return pct;
+  if (dist >= falloff.reach) return 0;
+  return Math.trunc((pct * (falloff.reach - dist)) / (falloff.reach - featherStart));
+}
+
 function laplacianCell(
   cells: Int16Array,
   viewBase: number,
@@ -78,6 +97,7 @@ function laplacianCell(
   changed: Set<number>,
   boundsOf: SpillBoundsOf | null,
   spanCaps: ReadonlyMap<number, SpillBand> | null,
+  falloff: SmoothFalloff | null = null,
 ): boolean {
   // Red-black Gauss-Seidel: even cells read odd neighbours untouched this
   // pass, then odd cells read the new evens. No snapshot copy is allocated.
@@ -104,9 +124,11 @@ function laplacianCell(
   if (count === 0) return false;
   const avg = Math.trunc(sum / count);
   if (avg === cells[k]) return false;
+  const eff = falloff === null ? pct : falloffStrength(pct, falloff, x, y);
+  if (eff <= 0) return false;
   // Min-one-unit progress: truncation alone stalls above the gradient
   // limit, leaving terracing the smoother was asked to remove.
-  let step = Math.trunc(((avg - cells[k]) * pct) / 100);
+  let step = Math.trunc(((avg - cells[k]) * eff) / 100);
   if (step === 0) step = avg > cells[k] ? 1 : -1;
   let next = cells[k] + step;
   const band = boundsOf === null ? null : boundsOf(i);
@@ -137,13 +159,14 @@ function laplacianPass(
   changed: Set<number>,
   boundsOf: SpillBoundsOf | null,
   layer: LayerView | null,
+  falloff: SmoothFalloff | null = null,
 ): boolean {
   let moved = false;
   for (let parity = 0; parity < 2; parity++) {
     for (let y = minY; y <= maxY; y++) {
       const startX = minX + (((minX + y + parity) & 1) === 0 ? 0 : 1);
       for (let x = startX; x <= maxX; x += 2) {
-        if (laplacianCell(cells, viewBase, size, x, y, pct, changed, boundsOf, layer === null ? null : layer.spanCaps)) {
+        if (laplacianCell(cells, viewBase, size, x, y, pct, changed, boundsOf, layer === null ? null : layer.spanCaps, falloff)) {
           moved = true;
         }
       }
@@ -161,6 +184,7 @@ export function smooth(
   spanBand: number | null = null,
   reachCells: number | null = null,
   laplacePct: number | null = null,
+  falloff: SmoothFalloff | null = null,
 ): number {
   const seed = bboxSeed ?? changed;
   if (seed.size === 0) return 0;
@@ -281,6 +305,7 @@ export function smooth(
         changed,
         boundsOf,
         layer,
+        falloff,
       );
     }
 

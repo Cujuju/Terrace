@@ -20,7 +20,9 @@ import {
   setBrushTool,
   setCarveDepthBands,
   setSculptMode,
+  setSmoothFalloff,
   setSmoothLambda,
+  smoothFalloff,
   smoothLambda,
   type DenialHint,
   type SculptMode,
@@ -315,6 +317,17 @@ export function BrushModeler(): JSX.Element {
             <span class="brush-slider__value">{smoothLambda()}%</span>
           </div>
           <span class="brush-slider__end">{SMOOTH_LAMBDA_MAX}%</span>
+        </div>
+        <div class="hud-row">
+          <span class="controls-label">Feather edge</span>
+          <input
+            type="checkbox"
+            class="controls-check"
+            aria-label="Feather the smooth edge"
+            title="Feather edge: full strength across the brush, fading to the rim. Off by default."
+            checked={smoothFalloff()}
+            onChange={(event) => setSmoothFalloff(event.currentTarget.checked)}
+          />
         </div>
       </Show>
       <Show when={brushTool() === 'carve'}>

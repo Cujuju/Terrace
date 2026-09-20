@@ -115,6 +115,7 @@ export function applySculpt(
     SMOOTH_LAMBDA_MAX,
     Math.max(SMOOTH_LAMBDA_MIN, options?.smoothLambda ?? SMOOTH_LAMBDA_DEFAULT),
   );
+  const smoothFalloff = options?.smoothFalloff ?? false;
 
   if (spanBand !== null && spanIndexCoveringBand(map, cx, cy, spanBand) === null) {
     return [];
@@ -240,6 +241,11 @@ export function applySculpt(
       tool === 'smooth' ? smoothCascadeReachCells(radius) : null,
       // Laplacian is the player melt only: free smooth keeps exact exchange.
       anchoredSmooth ? smoothLambda : null,
+      // Feathering is a player-smooth option: settle and free smooth keep
+      // their untapered passes.
+      anchoredSmooth && smoothFalloff
+        ? { cx, cy, reach: smoothCascadeReachCells(radius) }
+        : null,
     );
   }
 
