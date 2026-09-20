@@ -5,8 +5,9 @@ import {
   SCULPT_REPEAT_RAMP_FACTOR,
   TOUCH_STROKE_GRACE_MS,
 } from '../../config.ts';
-import { brushTool, setSculptAlt, setSculptChord } from '../../state/hudState.ts';
+import { brushTool, sculptMode, setSculptAlt, setSculptChord } from '../../state/hudState.ts';
 import {
+  altSubtractChordHeld,
   sculptAltHeld,
   sculptChordHeld,
   type ModifierState,
@@ -123,8 +124,11 @@ export const syncMode = (s: StrokeState, state: ModifierState): void => {
   };
   // The chord inverts the toggle rather than overwriting it, so re-asserting it
   // every move is idempotent. A directionless tool holds no chord.
+  // The subtract chord previews Lower on Raise.
+  const directional = !TOOLS_WITHOUT_DIRECTION.includes(brushTool());
   setSculptChord(
-    !TOOLS_WITHOUT_DIRECTION.includes(brushTool()) && sculptChordHeld(s.mods),
+    (directional && sculptChordHeld(s.mods)) ||
+      (directional && sculptMode() === 'raise' && altSubtractChordHeld(s.mods)),
   );
   setSculptAlt(sculptAltHeld(s.mods));
 };

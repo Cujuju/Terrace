@@ -261,6 +261,7 @@ export function resolveSculptPress(
   eventButton: number,
   mods: ModifierState,
 ): SculptAction | null {
+  if (isAltSubtractPress(eventButton, mods)) return 'lower';
   const action = resolvePress(eventButton, mods);
   if (action !== 'raise' && action !== 'lower' && action !== 'alt') return null;
   const toggle = sculptMode();
@@ -272,7 +273,7 @@ export function resolveSculptPress(
 
 /** True when the press names the alt sculpt: a drag of one band only. */
 export function isAltSculptPress(eventButton: number, mods: ModifierState): boolean {
-  return resolvePress(eventButton, mods) === 'alt';
+  return resolvePress(eventButton, mods) === 'alt' || isAltSubtractPress(eventButton, mods);
 }
 
 /** Whether the held modifiers are a sculpt chord, which inverts the toggle. */
@@ -285,9 +286,20 @@ export function sculptChordHeld(mods: ModifierState): boolean {
 
 /** Whether a non-none modifier matching the alt binding is held. */
 export function sculptAltHeld(mods: ModifierState): boolean {
+  if (altSubtractChordHeld(mods)) return true;
   const modifier = modifierOf(mods);
   if (modifier === null || modifier === 'none') return false;
   return controlBindings().alt.modifier === modifier;
+}
+
+/** Ctrl+Shift, no Alt: the subtract chord, mods only. */
+export function altSubtractChordHeld(mods: ModifierState): boolean {
+  return mods.ctrlKey && mods.shiftKey && !mods.altKey;
+}
+
+/** Ctrl+Shift on the alt button: one band down, whatever the toggle. */
+export function isAltSubtractPress(eventButton: number, mods: ModifierState): boolean {
+  return altSubtractChordHeld(mods) && buttonName(eventButton) === controlBindings().alt.button;
 }
 
 export function shadowedActions(bindings: ControlBindings): ControlAction[] {

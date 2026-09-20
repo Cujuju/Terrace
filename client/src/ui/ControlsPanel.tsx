@@ -153,7 +153,8 @@ function actionEffect(action: ControlAction, binding: ControlBinding): string {
 /** Neither sculpt binding names a direction: the HUD toggle does, chords invert it. Alt narrows the drag to one band. */
 function sculptHint(action: ControlAction, b: ControlBinding): string {
   const press = `${HINT_MODIFIER[b.modifier]}${BUTTON_LABEL[b.button]}-drag`;
-  if (action === 'alt') return `${press} sculpts the HUD direction, current band only`;
+  if (action === 'alt')
+    return `${press} sculpts the HUD direction, current band only · Ctrl+Shift-${BUTTON_LABEL[b.button]}-drag takes one band down`;
   return b.modifier === 'none'
     ? `${press} sculpts the HUD direction`
     : `${press} sculpts the other way`;
