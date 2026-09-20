@@ -260,6 +260,7 @@ export function createStumpModels(): StumpModels {
       for (const cell of rotted) removeCell(stumpKey(cell.x, cell.y));
       for (const placement of left) {
         const key = stumpKey(placement.cellX, placement.cellY);
+        if (written >= FLORA_STUMP_CAP && !slotOfCell.has(key)) continue;
         removeCell(key);
         if (!insertCell(key, placement)) continue;
         const slot = slotOfCell.get(key)!;

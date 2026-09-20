@@ -234,6 +234,7 @@ export function createCropModels(): CropModels {
       for (const cell of withered) removeCell(cropKey(cell.x, cell.y));
       for (const placement of sprouted) {
         const key = cropKey(placement.cellX, placement.cellY);
+        if (plotCount >= FLORA_CROP_CAP && !slotOfCell.has(key)) continue;
         removeCell(key);
         if (!insertCell(key, placement)) continue;
         const run = CROP_STALKS_PER_PLOT;

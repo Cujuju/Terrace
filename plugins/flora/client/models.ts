@@ -273,6 +273,7 @@ export function createFloraModels(): FloraModels {
       for (const cell of felled) removeCell(treeKey(cell.x, cell.y));
       for (const placement of sprouted) {
         const key = treeKey(placement.cellX, placement.cellY);
+        if (trunkCount >= FLORA_TREE_CAP && !trunkOfCell.has(key)) continue;
         removeCell(key);
         if (!insertCell(key, placement)) continue;
         const trunkSlot = trunkOfCell.get(key)!;

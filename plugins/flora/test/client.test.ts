@@ -1,4 +1,4 @@
-import { worldUnitsAcross } from '@terrace/shared';
+import { MAX_HEIGHT, MAX_RELIEF_WORLD_UNITS, worldUnitsAcross } from '@terrace/shared';
 import type { InstancedMesh } from 'three';
 import { describe, expect, it } from 'vitest';
 import {
@@ -14,6 +14,7 @@ import {
   parseTreeCells,
   treeCellOf,
   treeKey,
+  treeKindAt,
   treeVariation,
   type TreeCell,
 } from '../protocol.ts';
@@ -116,18 +117,22 @@ describe('placement', () => {
   const groundOf = new Map<string, number>([
     ['3,4', 5],
     ['9,9', -2],
+    ['7,7', 8],
   ]);
   const groundAt = (x: number, y: number): number | null => groundOf.get(`${x},${y}`) ?? null;
 
   it('puts a tree on the rendered surface at its own cell, holds back one whose ground has not arrived, and never invents a floor', () => {
     const { placements, pendingCells } = placementsFor(
-      cells([3, 4], [9, 9], [50, 50], [60, 1]),
+      cells([3, 4], [9, 9], [7, 7], [50, 50], [60, 1]),
       groundAt,
     );
     expect(pendingCells).toEqual([treeKey(50, 50), treeKey(60, 1)]);
-    expect(placements).toHaveLength(2);
+    expect(placements).toHaveLength(3);
 
+    const heightOf = (groundY: number): number =>
+      (groundY * MAX_HEIGHT) / MAX_RELIEF_WORLD_UNITS;
     const variation = treeVariation(3, 4);
+    expect(treeKindAt(3, 4, heightOf(5))).toBe(variation.kind);
     expect(placements[0]).toEqual({
       x: worldUnitsAcross(3),
       z: worldUnitsAcross(4),
@@ -140,6 +145,8 @@ describe('placement', () => {
     });
 
     expect(placements[1].groundY).toBe(-2);
+    expect(placements[2]?.kind).toBe('pine');
+    expect(placements[2]?.groundY).toBe(8);
   });
 });
 
