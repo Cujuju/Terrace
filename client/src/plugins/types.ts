@@ -87,6 +87,9 @@ export interface ClientPluginCtx {
 
   drawnGroundYAt(cellX: number, cellZ: number): number | null;
 
+  /** Fires when drawn ground may have arrived or moved: chunk drawn, snapshot, unlock, sculpt. */
+  onTerrainChanged(handler: () => void): () => void;
+
   onMessage(type: string, handler: (payload: unknown) => void): () => void;
 
   send(type: string, payload: unknown): void;

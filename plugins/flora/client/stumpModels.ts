@@ -11,7 +11,7 @@ import {
 } from 'three';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
 import { weldFlatShaded } from '../../../client/src/render/weld.ts';
-import { FLORA_STUMP_CAP, FLORA_STUMP_SCALE_MAX, STUMP_MAX_REACH_CELLS } from '../protocol.ts';
+import { FLORA_STUMP_CAP, FLORA_STUMP_SCALE_MAX, STUMP_MAX_REACH_CELLS, stumpKey, type StumpCell } from '../protocol.ts';
 import {
   MATRIX_FLOATS_PER_INSTANCE,
   clearPlacementExtent,
@@ -20,6 +20,7 @@ import {
   includePlacement,
   scaledReach,
   uploadAllInstances,
+  uploadInstanceRun,
   writeInstanceSphere,
   type InstanceReach,
 } from './instanceBounds.ts';
@@ -41,6 +42,8 @@ const CORE_COLOR = 0x8c7a63;
 export interface StumpPlacement {
   readonly x: number;
   readonly z: number;
+  readonly cellX: number;
+  readonly cellY: number;
   readonly groundY: number;
   readonly scale: number;
   readonly yaw: number;
@@ -49,6 +52,7 @@ export interface StumpPlacement {
 export interface StumpModels {
   readonly root: Group;
   apply(placements: readonly StumpPlacement[]): void;
+  applyDelta(left: readonly StumpPlacement[], rotted: readonly StumpCell[]): void;
   dispose(): void;
 }
 
@@ -171,30 +175,102 @@ export function createStumpModels(): StumpModels {
     (geometry): InstanceReach => scaledReach(geometryReach(geometry), FLORA_STUMP_SCALE_MAX),
   );
 
+  const slotOfCell = new Map<number, number>();
+  const cellOfSlot: number[] = [];
+  let written = 0;
+
+  const moveInstances = (
+    attribute: BufferAttribute,
+    from: number,
+    to: number,
+    count: number,
+  ): void => {
+    attribute.array.copyWithin(
+      to * MATRIX_FLOATS_PER_INSTANCE,
+      from * MATRIX_FLOATS_PER_INSTANCE,
+      (from + count) * MATRIX_FLOATS_PER_INSTANCE,
+    );
+  };
+
+  const writeStump = (slot: number, placement: StumpPlacement): void => {
+    includePlacement(extent, placement.x, placement.groundY, placement.z);
+    position.set(placement.x, placement.groundY, placement.z);
+    rotation.setFromAxisAngle(up, placement.yaw);
+    scale.set(placement.scale, placement.scale, placement.scale);
+    matrix.compose(position, rotation, scale);
+    bark.setMatrixAt(slot, matrix);
+    core.setMatrixAt(slot, matrix);
+  };
+
+  const insertCell = (key: number, placement: StumpPlacement): boolean => {
+    if (written >= FLORA_STUMP_CAP) return false;
+    const slot = written++;
+    writeStump(slot, placement);
+    slotOfCell.set(key, slot);
+    cellOfSlot[slot] = key;
+    return true;
+  };
+
+  const removeCell = (key: number): void => {
+    const slot = slotOfCell.get(key);
+    if (slot === undefined) return;
+    slotOfCell.delete(key);
+
+    const last = written - 1;
+    if (slot !== last) {
+      moveInstances(bark.instanceMatrix, last, slot, 1);
+      moveInstances(core.instanceMatrix, last, slot, 1);
+      const movedKey = cellOfSlot[last]!;
+      cellOfSlot[slot] = movedKey;
+      slotOfCell.set(movedKey, slot);
+      uploadInstanceRun(bark.instanceMatrix, slot, 1, MATRIX_FLOATS_PER_INSTANCE);
+      uploadInstanceRun(core.instanceMatrix, slot, 1, MATRIX_FLOATS_PER_INSTANCE);
+    }
+    written = last;
+    cellOfSlot.length = last;
+  };
+
+  const publish = (): void => {
+    bark.count = written;
+    core.count = written;
+  };
+
   return {
     root,
 
     apply(placements: readonly StumpPlacement[]): void {
-      let written = 0;
+      slotOfCell.clear();
+      cellOfSlot.length = 0;
+      written = 0;
       clearPlacementExtent(extent);
       for (const placement of placements) {
-        if (written >= FLORA_STUMP_CAP) break;
-        includePlacement(extent, placement.x, placement.groundY, placement.z);
-        position.set(placement.x, placement.groundY, placement.z);
-        rotation.setFromAxisAngle(up, placement.yaw);
-        scale.set(placement.scale, placement.scale, placement.scale);
-        matrix.compose(position, rotation, scale);
-        bark.setMatrixAt(written, matrix);
-        core.setMatrixAt(written++, matrix);
+        if (!insertCell(stumpKey(placement.cellX, placement.cellY), placement)) break;
       }
 
-      bark.count = written;
-      core.count = written;
+      publish();
       const meshes = [bark, core];
       for (let i = 0; i < meshes.length; i++) {
         const mesh = meshes[i]!;
         uploadAllInstances(mesh.instanceMatrix, mesh.count, MATRIX_FLOATS_PER_INSTANCE);
         writeInstanceSphere(mesh, extent, reaches[i]!);
+      }
+    },
+
+    applyDelta(left: readonly StumpPlacement[], rotted: readonly StumpCell[]): void {
+      for (const cell of rotted) removeCell(stumpKey(cell.x, cell.y));
+      for (const placement of left) {
+        const key = stumpKey(placement.cellX, placement.cellY);
+        if (written >= FLORA_STUMP_CAP && !slotOfCell.has(key)) continue;
+        removeCell(key);
+        if (!insertCell(key, placement)) continue;
+        const slot = slotOfCell.get(key)!;
+        uploadInstanceRun(bark.instanceMatrix, slot, 1, MATRIX_FLOATS_PER_INSTANCE);
+        uploadInstanceRun(core.instanceMatrix, slot, 1, MATRIX_FLOATS_PER_INSTANCE);
+      }
+      publish();
+      const meshes = [bark, core];
+      for (let i = 0; i < meshes.length; i++) {
+        writeInstanceSphere(meshes[i]!, extent, reaches[i]!);
       }
     },
 

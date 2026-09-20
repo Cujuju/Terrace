@@ -190,6 +190,8 @@ export interface World extends TerrainSink {
   terrainSampleAt(x: number, y: number): number | null;
   terrainRevisionAt(x: number, y: number): number;
   drawnGroundYAt(cellX: number, cellZ: number): number | null;
+  /** Fires when drawn ground may have arrived or moved: chunk drawn, snapshot, unlock, sculpt. */
+  onTerrainChanged(handler: () => void): () => void;
   chartSource(): ChartSource | null;
   drawBudget(): number;
   terrainLoadTrace(): TerrainLoadTrace | null;
@@ -270,11 +272,14 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
   let chunkRevisions: Int32Array | null = null;
   let terrainEpoch = 0;
 
+  const terrainChangedHandlers = new Set<() => void>();
+
   const noteTerrainRevisions = (dirty: ReadonlySet<number>): void => {
-    if (chunkRevisions === null) return;
+    if (chunkRevisions === null || dirty.size === 0) return;
     for (const idx of dirty) {
       if (idx >= 0 && idx < chunkRevisions.length) chunkRevisions[idx]++;
     }
+    for (const handler of [...terrainChangedHandlers]) handler();
   };
 
   let framedWorldSize = 0;
@@ -306,8 +311,8 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
 
   const applyDirty = (dirty: Set<number>): void => {
     if (dirty.size > 0) {
-      noteTerrainRevisions(dirty);
       meshes?.update(dirty);
+      noteTerrainRevisions(dirty);
       if (mirror !== null) {
         fog.refresh(mirror, dirty);
         frontierLine.refresh(mirror, dirty);
@@ -476,6 +481,7 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
     if (current === null) return;
     const built = buildTerrain(current);
     built.meshes.update(current.received);
+    noteTerrainRevisions(current.received);
     fog.sync(current);
     frontierLine.sync(current);
     revealMask.sync(current);
@@ -532,8 +538,8 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
         },
         nowMs(),
       );
-      noteTerrainRevisions(snapshotDirty);
       fresh.meshes.update(snapshotDirty);
+      noteTerrainRevisions(snapshotDirty);
       fog.sync(fresh.mirror);
       frontierLine.sync(fresh.mirror);
       revealMask.sync(fresh.mirror);
@@ -548,8 +554,8 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
         (m) => applyChunkUnlock(m, msg),
         nowMs(),
       );
-      noteTerrainRevisions(unlockDirty);
       meshes.update(unlockDirty);
+      noteTerrainRevisions(unlockDirty);
       fog.sync(mirror);
       frontierLine.sync(mirror);
       revealMask.sync(mirror);
@@ -638,6 +644,13 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
       if (southChunk && !cellDrawn(mirror, drawnGround, x0, z1)) return null;
       if (eastChunk && southChunk && !cellDrawn(mirror, drawnGround, x1, z1)) return null;
       return drawnGround.capYAt(cellX, cellZ);
+    },
+
+    onTerrainChanged(handler: () => void): () => void {
+      terrainChangedHandlers.add(handler);
+      return () => {
+        terrainChangedHandlers.delete(handler);
+      };
     },
 
     highlightLayerEdge(pick: TerrainRayPick | null, light: LayerEdgeLight): number | null {
@@ -776,6 +789,7 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
 
     dispose(): void {
       clearExpiryTimer();
+      terrainChangedHandlers.clear();
       stopMesherDump?.();
       stopDeviceLostWatch?.();
       meshes?.dispose();

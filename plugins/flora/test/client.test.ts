@@ -1,24 +1,32 @@
-import { worldUnitsAcross } from '@terrace/shared';
+import { MAX_HEIGHT, MAX_RELIEF_WORLD_UNITS, worldUnitsAcross } from '@terrace/shared';
 import type { InstancedMesh } from 'three';
 import { describe, expect, it } from 'vitest';
 import {
+  CROP_STALKS_PER_PLOT,
   FLORA_CONIFER_SHARE_OF_256,
   FLORA_TREE_CAP,
   FLORA_TREE_KINDS,
   FLORA_TREE_SCALE_MAX,
   FLORA_TREE_SCALE_MIN,
+  cropKey,
   hashCell,
   packTreeCells,
   parseChangesPayload,
   parseForestPayload,
   parseTreeCells,
+  stumpKey,
   treeCellOf,
   treeKey,
+  treeKindAt,
   treeVariation,
   type TreeCell,
 } from '../protocol.ts';
 import { placementsFor } from '../client/placement.ts';
+import { cropPlacementsFor } from '../client/cropPlacement.ts';
+import { stumpPlacementsFor } from '../client/stumpPlacement.ts';
 import { createFloraModels, type TreePlacement } from '../client/models.ts';
+import { createCropModels } from '../client/cropModels.ts';
+import { createStumpModels } from '../client/stumpModels.ts';
 
 const TWO_PI = Math.PI * 2;
 
@@ -116,21 +124,27 @@ describe('placement', () => {
   const groundOf = new Map<string, number>([
     ['3,4', 5],
     ['9,9', -2],
+    ['7,7', 8],
   ]);
   const groundAt = (x: number, y: number): number | null => groundOf.get(`${x},${y}`) ?? null;
 
   it('puts a tree on the rendered surface at its own cell, holds back one whose ground has not arrived, and never invents a floor', () => {
-    const { placements, pendingGround } = placementsFor(
-      cells([3, 4], [9, 9], [50, 50], [60, 1]),
+    const { placements, pendingCells } = placementsFor(
+      cells([3, 4], [9, 9], [7, 7], [50, 50], [60, 1]),
       groundAt,
     );
-    expect(pendingGround).toBe(2);
-    expect(placements).toHaveLength(2);
+    expect(pendingCells).toEqual([treeKey(50, 50), treeKey(60, 1)]);
+    expect(placements).toHaveLength(3);
 
+    const heightOf = (groundY: number): number =>
+      (groundY * MAX_HEIGHT) / MAX_RELIEF_WORLD_UNITS;
     const variation = treeVariation(3, 4);
+    expect(treeKindAt(3, 4, heightOf(5))).toBe(variation.kind);
     expect(placements[0]).toEqual({
       x: worldUnitsAcross(3),
       z: worldUnitsAcross(4),
+      cellX: 3,
+      cellY: 4,
       groundY: 5,
       kind: variation.kind,
       scale: variation.scale,
@@ -138,6 +152,23 @@ describe('placement', () => {
     });
 
     expect(placements[1].groundY).toBe(-2);
+    expect(placements[2]?.kind).toBe('pine');
+    expect(placements[2]?.groundY).toBe(8);
+  });
+
+  it('crop and stump placements hold back null ground as keys and keep cell coordinates', () => {
+    const groundOf = new Map<string, number>([['1,2', 4]]);
+    const groundAt = (x: number, y: number): number | null => groundOf.get(`${x},${y}`) ?? null;
+
+    const crops = cropPlacementsFor([{ x: 1, y: 2 }, { x: 3, y: 4 }], groundAt);
+    expect(crops.pendingCells).toEqual([cropKey(3, 4)]);
+    expect(crops.placements).toHaveLength(1);
+    expect(crops.placements[0]).toMatchObject({ cellX: 1, cellY: 2, groundY: 4 });
+
+    const stumps = stumpPlacementsFor([{ x: 1, y: 2 }, { x: 3, y: 4 }], groundAt);
+    expect(stumps.pendingCells).toEqual([stumpKey(3, 4)]);
+    expect(stumps.placements).toHaveLength(1);
+    expect(stumps.placements[0]).toMatchObject({ cellX: 1, cellY: 2, groundY: 4 });
   });
 });
 
@@ -148,6 +179,8 @@ describe('flora models contract', () => {
       const placements: TreePlacement[] = FLORA_TREE_KINDS.map((kind, index) => ({
         x: index,
         z: 0,
+        cellX: index,
+        cellY: 0,
         groundY: 0,
         kind,
         scale: 1,
@@ -165,6 +198,119 @@ describe('flora models contract', () => {
       expect(counts.get('flora:broadleaves')).toBe(1);
     } finally {
       models.dispose();
+    }
+  });
+
+  it('applyDelta moves a re-sprouted cell across kind meshes and drops its felled cell', () => {
+    const models = createFloraModels();
+    try {
+      models.apply(
+        FLORA_TREE_KINDS.map((kind, index) => ({
+          x: index,
+          z: 0,
+          cellX: index,
+          cellY: 0,
+          groundY: 0,
+          kind,
+          scale: 1,
+          yaw: 0,
+        })),
+      );
+      models.applyDelta(
+        [{ x: 0, z: 0, cellX: 0, cellY: 0, groundY: 0, kind: 'pine', scale: 1, yaw: 0 }],
+        [{ x: 1, y: 0 }],
+      );
+
+      const counts = new Map<string, number>();
+      for (const child of models.root.children) {
+        counts.set(child.name, (child as InstancedMesh).count);
+      }
+      expect(counts.get('flora:trunks')).toBe(2);
+      expect(counts.get('flora:conifers')).toBe(0);
+      expect(counts.get('flora:pines')).toBe(2);
+      expect(counts.get('flora:broadleaves')).toBe(0);
+    } finally {
+      models.dispose();
+    }
+  });
+
+  it('applyDelta at cap keeps visible trees and drops unseen keys', () => {
+    const models = createFloraModels();
+    try {
+      const full: TreePlacement[] = [];
+      for (let index = 0; index < FLORA_TREE_CAP; index++) {
+        full.push({
+          x: index,
+          z: 0,
+          cellX: index,
+          cellY: 0,
+          groundY: 0,
+          kind: 'conifer',
+          scale: 1,
+          yaw: 0,
+        });
+      }
+      models.apply(full);
+      models.applyDelta(
+        [{ x: 99999, z: 0, cellX: 99999, cellY: 0, groundY: 0, kind: 'pine', scale: 1, yaw: 0 }],
+        [],
+      );
+      const dropped = new Map<string, number>();
+      for (const child of models.root.children) {
+        dropped.set(child.name, (child as InstancedMesh).count);
+      }
+      expect(dropped.get('flora:trunks')).toBe(FLORA_TREE_CAP);
+      expect(dropped.get('flora:pines')).toBe(0);
+
+      models.applyDelta(
+        [{ x: 0, z: 0, cellX: 0, cellY: 0, groundY: 1, kind: 'pine', scale: 1, yaw: 0 }],
+        [],
+      );
+      const kept = new Map<string, number>();
+      for (const child of models.root.children) {
+        kept.set(child.name, (child as InstancedMesh).count);
+      }
+      expect(kept.get('flora:trunks')).toBe(FLORA_TREE_CAP);
+      expect(kept.get('flora:pines')).toBe(1);
+      expect(kept.get('flora:conifers')).toBe(FLORA_TREE_CAP - 1);
+    } finally {
+      models.dispose();
+    }
+  });
+
+  it('crop and stump applyDelta keeps counts exact across wither and sprout', () => {
+    const crops = createCropModels();
+    try {
+      crops.apply([
+        { x: 0, z: 0, cellX: 0, cellY: 0, groundY: 0, scale: 1, yaw: 0 },
+        { x: 1, z: 0, cellX: 1, cellY: 0, groundY: 0, scale: 1, yaw: 0 },
+      ]);
+      crops.applyDelta(
+        [{ x: 2, z: 0, cellX: 2, cellY: 0, groundY: 0, scale: 1, yaw: 0 }],
+        [{ x: 0, y: 0 }],
+      );
+      for (const child of crops.root.children) {
+        expect((child as InstancedMesh).count).toBe(2 * CROP_STALKS_PER_PLOT);
+      }
+    } finally {
+      crops.dispose();
+    }
+
+    const stumps = createStumpModels();
+    try {
+      stumps.apply([
+        { x: 0, z: 0, cellX: 0, cellY: 0, groundY: 0, scale: 1, yaw: 0 },
+        { x: 1, z: 0, cellX: 1, cellY: 0, groundY: 0, scale: 1, yaw: 0 },
+      ]);
+      stumps.applyDelta(
+        [{ x: 2, z: 0, cellX: 2, cellY: 0, groundY: 0, scale: 1, yaw: 0 }],
+        [{ x: 0, y: 0 }],
+      );
+      for (const child of stumps.root.children) {
+        expect((child as InstancedMesh).count).toBe(2);
+      }
+    } finally {
+      stumps.dispose();
     }
   });
 });

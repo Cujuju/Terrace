@@ -1,12 +1,12 @@
 import { CELL_WORLD_SIZE } from '@terrace/shared';
-import { cropVariation, type CropCell } from '../protocol.ts';
+import { cropKey, cropVariation, type CropCell } from '../protocol.ts';
 import type { CropPlacement } from './cropModels.ts';
 
 export type CropGroundLookup = (x: number, y: number) => number | null;
 
 export interface CropPlacementResult {
   readonly placements: CropPlacement[];
-  readonly pendingGround: number;
+  readonly pendingCells: number[];
 }
 
 export function cropPlacementsFor(
@@ -14,12 +14,12 @@ export function cropPlacementsFor(
   groundAt: CropGroundLookup,
 ): CropPlacementResult {
   const placements: CropPlacement[] = [];
-  let pendingGround = 0;
+  const pendingCells: number[] = [];
 
   for (const cell of cells) {
     const groundY = groundAt(cell.x, cell.y);
     if (groundY === null) {
-      pendingGround++;
+      pendingCells.push(cropKey(cell.x, cell.y));
       continue;
     }
 
@@ -35,5 +35,5 @@ export function cropPlacementsFor(
     });
   }
 
-  return { placements, pendingGround };
+  return { placements, pendingCells };
 }

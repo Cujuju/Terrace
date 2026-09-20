@@ -1,12 +1,12 @@
 import { CELL_WORLD_SIZE } from '@terrace/shared';
-import { stumpVariation, type StumpCell } from '../protocol.ts';
+import { stumpKey, stumpVariation, type StumpCell } from '../protocol.ts';
 import type { StumpPlacement } from './stumpModels.ts';
 
 export type StumpGroundLookup = (x: number, y: number) => number | null;
 
 export interface StumpPlacementResult {
   readonly placements: StumpPlacement[];
-  readonly pendingGround: number;
+  readonly pendingCells: number[];
 }
 
 export function stumpPlacementsFor(
@@ -14,12 +14,12 @@ export function stumpPlacementsFor(
   groundAt: StumpGroundLookup,
 ): StumpPlacementResult {
   const placements: StumpPlacement[] = [];
-  let pendingGround = 0;
+  const pendingCells: number[] = [];
 
   for (const cell of cells) {
     const groundY = groundAt(cell.x, cell.y);
     if (groundY === null) {
-      pendingGround++;
+      pendingCells.push(stumpKey(cell.x, cell.y));
       continue;
     }
 
@@ -27,11 +27,13 @@ export function stumpPlacementsFor(
     placements.push({
       x: cell.x * CELL_WORLD_SIZE,
       z: cell.y * CELL_WORLD_SIZE,
+      cellX: cell.x,
+      cellY: cell.y,
       groundY,
       scale: variation.scale,
       yaw: variation.yaw,
     });
   }
 
-  return { placements, pendingGround };
+  return { placements, pendingCells };
 }
