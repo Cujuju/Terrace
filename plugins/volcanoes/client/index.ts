@@ -13,17 +13,15 @@ import {
 import { createLavaFlow, type LavaFlowRenderer } from './lavaFlow.ts';
 import { createPlume, type PlumeRenderer, type PlumeSource } from './plume.ts';
 
-export const VOLCANOES_GROUND_RETRY_SECONDS = 0.5;
-
 let flow: LavaFlowRenderer | null = null;
 let plume: PlumeRenderer | null = null;
 let unsubscribeMessages: Array<() => void> = [];
 let unsubscribeFrames: (() => void) | null = null;
+let unsubscribeTerrain: (() => void) | null = null;
 
 const vents = new Map<number, VentState>();
 
 let elapsedSeconds = 0;
-let sinceRetrySeconds = 0;
 
 function plumeSources(ctx: ClientPluginCtx): PlumeSource[] {
   const sources: PlumeSource[] = [];
@@ -52,7 +50,6 @@ export const clientPlugin: TerraceClientPlugin = {
   attach(ctx: ClientPluginCtx): void {
     vents.clear();
     elapsedSeconds = 0;
-    sinceRetrySeconds = 0;
 
     flow = createLavaFlow();
     ctx.layer.add(flow.root);
@@ -78,30 +75,29 @@ export const clientPlugin: TerraceClientPlugin = {
       }),
     ];
 
+    unsubscribeTerrain = ctx.onTerrainChanged(() => {
+      if (flow?.pendingGround) flow.retryPending(groundAt);
+    });
+
     unsubscribeFrames = ctx.onFrame((dt) => {
       elapsedSeconds += dt;
 
       plume?.apply(plumeSources(ctx));
       plume?.update(dt, elapsedSeconds);
       flow?.update(elapsedSeconds);
-
-      if (flow === null || !flow.pendingGround) return;
-      sinceRetrySeconds += dt;
-      if (sinceRetrySeconds < VOLCANOES_GROUND_RETRY_SECONDS) return;
-      sinceRetrySeconds = 0;
-      flow.retryPending(groundAt);
     });
   },
 
   dispose(): void {
     for (const unsubscribe of unsubscribeMessages) unsubscribe();
     unsubscribeMessages = [];
+    unsubscribeTerrain?.();
+    unsubscribeTerrain = null;
     unsubscribeFrames?.();
     unsubscribeFrames = null;
 
     vents.clear();
     elapsedSeconds = 0;
-    sinceRetrySeconds = 0;
 
     flow?.dispose();
     flow = null;

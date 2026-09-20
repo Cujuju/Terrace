@@ -31,21 +31,17 @@ import {
   type SkiffModels,
 } from './skiffModels.ts';
 
-// Pending sites wait on terrain that may never arrive (fogged chunks); retry only once it changes,
-// and at most once a second while terrain streams in.
-export const STRUCTURES_PENDING_CHECK_SECONDS = 1;
-
 let models: StructureModels | null = null;
 let skiffModels: SkiffModels | null = null;
 let siteSurveys: SiteSurveyCache | null = null;
 let unsubscribeMessages: Array<() => void> = [];
 let unsubscribeFrames: (() => void) | null = null;
+let unsubscribeTerrain: (() => void) | null = null;
 
 const buildings = new Map<number, StructureCell>();
 
 let pendingCells: PlacementResult['pendingCells'] = [];
 let pendingRevision = 0;
-let sinceCheckSeconds = 0;
 
 function pendingRevisionOf(ctx: ClientPluginCtx): number {
   let sum = 0;
@@ -66,7 +62,6 @@ function rebuild(ctx: ClientPluginCtx): void {
   skiffModels?.apply(result.skiffs);
   pendingCells = result.pendingCells;
   pendingRevision = pendingRevisionOf(ctx);
-  sinceCheckSeconds = 0;
 }
 
 function replaceAll(cells: readonly StructureCell[]): void {
@@ -104,7 +99,6 @@ export const clientPlugin: TerraceClientPlugin = {
     buildings.clear();
     pendingCells = [];
     pendingRevision = 0;
-    sinceCheckSeconds = 0;
 
     siteSurveys = createSiteSurveyCache((x, y) => ctx.terrainRevisionAt(x, y));
     models = createStructureModels();
@@ -128,29 +122,29 @@ export const clientPlugin: TerraceClientPlugin = {
       }),
     ];
 
+    unsubscribeTerrain = ctx.onTerrainChanged(() => {
+      if (pendingCells.length === 0) return;
+      if (pendingRevisionOf(ctx) === pendingRevision) return;
+      rebuild(ctx);
+    });
+
     unsubscribeFrames = ctx.onFrame((dt) => {
       models?.animate(dt);
       skiffModels?.animate(dt);
-
-      if (pendingCells.length === 0) return;
-      sinceCheckSeconds += dt;
-      if (sinceCheckSeconds < STRUCTURES_PENDING_CHECK_SECONDS) return;
-      sinceCheckSeconds = 0;
-      if (pendingRevisionOf(ctx) === pendingRevision) return;
-      rebuild(ctx);
     });
   },
 
   dispose(): void {
     for (const unsubscribe of unsubscribeMessages) unsubscribe();
     unsubscribeMessages = [];
+    unsubscribeTerrain?.();
+    unsubscribeTerrain = null;
     unsubscribeFrames?.();
     unsubscribeFrames = null;
 
     buildings.clear();
     pendingCells = [];
     pendingRevision = 0;
-    sinceCheckSeconds = 0;
 
     siteSurveys?.clear();
     siteSurveys = null;

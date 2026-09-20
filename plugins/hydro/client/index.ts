@@ -23,8 +23,6 @@ import { WaterIcon } from './WaterIcon.tsx';
 import { createPourMarker, type PourMarker } from './pourMarker.ts';
 import { createPuddles, type PuddleInstance, type Puddles } from './puddles.ts';
 
-const HYDRO_GROUND_RETRY_SECONDS = 0.5;
-
 interface LocalPatch {
   readonly cell: HydroPatchState;
   drawnY: number | null;
@@ -51,12 +49,12 @@ let onPointerMove: ((event: PointerEvent) => void) | null = null;
 let unsubscribePress: (() => void) | null = null;
 let unsubscribeMessages: Array<() => void> = [];
 let unsubscribeFrames: (() => void) | null = null;
+let unsubscribeTerrain: (() => void) | null = null;
 let unpublishShade: (() => void) | null = null;
 
 const patches = new Map<number, LocalPatch>();
 
 let pendingGround = 0;
-let sinceRetrySeconds = 0;
 
 let elapsedSeconds = 0;
 
@@ -86,7 +84,6 @@ function adoptGround(ctx: ClientPluginCtx, patch: LocalPatch): void {
 
 function resolveGround(ctx: ClientPluginCtx): void {
   pendingGround = 0;
-  sinceRetrySeconds = 0;
   for (const patch of patches.values()) adoptGround(ctx, patch);
 }
 
@@ -146,7 +143,6 @@ export const clientPlugin: TerraceClientPlugin = {
   attach(ctx: ClientPluginCtx): void {
     patches.clear();
     pendingGround = 0;
-    sinceRetrySeconds = 0;
     elapsedSeconds = 0;
 
     puddles = createPuddles();
@@ -196,6 +192,10 @@ export const clientPlugin: TerraceClientPlugin = {
       }),
     ];
 
+    unsubscribeTerrain = ctx.onTerrainChanged(() => {
+      if (pendingGround > 0) resolveGround(ctx);
+    });
+
     unsubscribeFrames = ctx.onFrame((dt) => {
       if (puddles === null) return;
 
@@ -240,11 +240,6 @@ export const clientPlugin: TerraceClientPlugin = {
         if (isDried(patch.ageSeconds)) patches.delete(key);
       }
 
-      if (pendingGround > 0) {
-        sinceRetrySeconds += dt;
-        if (sinceRetrySeconds >= HYDRO_GROUND_RETRY_SECONDS) resolveGround(ctx);
-      }
-
       buildLists();
       puddles.apply(instances);
       puddles.update(elapsedSeconds);
@@ -254,6 +249,8 @@ export const clientPlugin: TerraceClientPlugin = {
   dispose(): void {
     for (const unsubscribe of unsubscribeMessages) unsubscribe();
     unsubscribeMessages = [];
+    unsubscribeTerrain?.();
+    unsubscribeTerrain = null;
     unsubscribeFrames?.();
     unsubscribeFrames = null;
     unsubscribePress?.();
@@ -272,7 +269,6 @@ export const clientPlugin: TerraceClientPlugin = {
     instances.length = 0;
     shade.length = 0;
     pendingGround = 0;
-    sinceRetrySeconds = 0;
 
     puddles?.dispose();
     puddles = null;

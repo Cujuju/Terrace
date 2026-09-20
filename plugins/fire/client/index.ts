@@ -27,8 +27,6 @@ import { createFireSmoke, type FireSmoke } from './smoke.ts';
 import { createFireScar, type DrawnGroundAt, type FireScar } from './scar.ts';
 import type { FireInstance, FlameRenderer } from './flames/types.ts';
 
-export const FIRE_GROUND_RETRY_SECONDS = 0.5;
-
 interface LocalFire {
   readonly cell: FireCellState;
   groundY: number | null;
@@ -60,6 +58,7 @@ let onPointerMove: ((event: PointerEvent) => void) | null = null;
 let unsubscribePress: (() => void) | null = null;
 let unsubscribeMessages: Array<() => void> = [];
 let unsubscribeFrames: (() => void) | null = null;
+let unsubscribeTerrain: (() => void) | null = null;
 
 const fires = new Map<number, LocalFire>();
 
@@ -74,7 +73,6 @@ const entityFires = new Map<string, LocalEntityFire>();
 let nextDrawKey = 1;
 
 let pendingGround = 0;
-let sinceRetrySeconds = 0;
 
 let elapsedSeconds = 0;
 
@@ -106,7 +104,6 @@ function adoptGround(ctx: ClientPluginCtx, fire: LocalFire): void {
 function resolveGround(ctx: ClientPluginCtx): void {
   pendingGround = 0;
   for (const fire of fires.values()) adoptGround(ctx, fire);
-  sinceRetrySeconds = 0;
 }
 
 function addFire(ctx: ClientPluginCtx, cell: FireCellState, inheritedKey?: number): void {
@@ -208,7 +205,6 @@ export const clientPlugin: TerraceClientPlugin = {
     fires.clear();
     entityFires.clear();
     pendingGround = 0;
-    sinceRetrySeconds = 0;
     elapsedSeconds = 0;
 
     flames = SHIPPED_FLAMES();
@@ -282,6 +278,10 @@ export const clientPlugin: TerraceClientPlugin = {
       }),
     ];
 
+    unsubscribeTerrain = ctx.onTerrainChanged(() => {
+      if (pendingGround > 0) resolveGround(ctx);
+    });
+
     unsubscribeFrames = ctx.onFrame((dt) => {
       if (flames === null || smoke === null || scar === null || lights === null) return;
       if (scarGroundAt === null) return;
@@ -329,11 +329,6 @@ export const clientPlugin: TerraceClientPlugin = {
       for (const fire of fires.values()) fire.ageSeconds += dt;
       for (const fire of entityFires.values()) fire.ageSeconds += dt;
 
-      if (pendingGround > 0) {
-        sinceRetrySeconds += dt;
-        if (sinceRetrySeconds >= FIRE_GROUND_RETRY_SECONDS) resolveGround(ctx);
-      }
-
       buildInstances();
       buildEntityInstances(ctx);
       flames.apply(instances);
@@ -349,6 +344,8 @@ export const clientPlugin: TerraceClientPlugin = {
   dispose(): void {
     for (const unsubscribe of unsubscribeMessages) unsubscribe();
     unsubscribeMessages = [];
+    unsubscribeTerrain?.();
+    unsubscribeTerrain = null;
     unsubscribeFrames?.();
     unsubscribeFrames = null;
     unsubscribePress?.();
@@ -365,7 +362,6 @@ export const clientPlugin: TerraceClientPlugin = {
     entityFires.clear();
     instances.length = 0;
     pendingGround = 0;
-    sinceRetrySeconds = 0;
 
     flames?.dispose();
     flames = null;
