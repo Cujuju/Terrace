@@ -20,11 +20,13 @@ import {
   setBrushTool,
   setCarveDepthBands,
   setSculptMode,
+  setSmoothBilateral,
   setSmoothFeather,
   setSmoothGauss,
   setSmoothLambda,
   setSmoothRim,
   smoothFeather,
+  smoothBilateral,
   smoothGauss,
   smoothLambda,
   smoothRim,
@@ -420,6 +422,19 @@ export function BrushModeler(): JSX.Element {
             checked={smoothGauss()}
             onChange={(event) =>
               setSmoothGauss(event.currentTarget.checked)
+            }
+          />
+        </div>
+        <div class="hud-row">
+          <span class="controls-label">Bilateral</span>
+          <input
+            type="checkbox"
+            class="controls-check"
+            aria-label="Blend terraces without dragging across cliffs"
+            title="Bilateral: neighbours past one band sit out of the average. Treads go smooth, steps stay crisp; off by default."
+            checked={smoothBilateral()}
+            onChange={(event) =>
+              setSmoothBilateral(event.currentTarget.checked)
             }
           />
         </div>

@@ -89,6 +89,8 @@ export interface SculptOptions {
   readonly smoothRim?: number;
   /** Use the 3x3 binomial kernel instead of the 4-cross average. */
   readonly smoothGauss?: boolean;
+  /** Across-cliff neighbours sit out of the smooth average. */
+  readonly smoothBilateral?: boolean;
 }
 
 export interface SweepOrigin {
@@ -113,6 +115,7 @@ export interface ResolvedSculptOptions {
   readonly smoothFeather: number;
   readonly smoothRim: number;
   readonly smoothGauss: boolean;
+  readonly smoothBilateral: boolean;
 }
 
 export const LIBRARY_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
@@ -130,4 +133,5 @@ export const LIBRARY_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
   smoothFeather: SMOOTH_FEATHER_DEFAULT,
   smoothRim: SMOOTH_RIM_DEFAULT,
   smoothGauss: false,
+  smoothBilateral: false,
 };

@@ -136,6 +136,7 @@ export function applySculpt(
     Math.max(SMOOTH_RIM_MIN, options?.smoothRim ?? SMOOTH_RIM_DEFAULT),
   );
   const smoothGauss = options?.smoothGauss ?? false;
+  const smoothBilateral = options?.smoothBilateral ?? false;
 
   if (spanBand !== null && spanIndexCoveringBand(map, cx, cy, spanBand) === null) {
     return [];
@@ -267,6 +268,7 @@ export function applySculpt(
         ? { cx, cy, reach: smoothCascadeReachCells(radius), feather: smoothFeather, rim: smoothRim }
         : null,
       smoothGauss,
+      smoothBilateral,
     );
   }
 

@@ -118,81 +118,88 @@ function laplacianCell(
   spanCaps: ReadonlyMap<number, SpillBand> | null,
   falloff: SmoothFalloff | null = null,
   gauss = false,
+  bilateral = false,
 ): boolean {
   // Red-black Gauss-Seidel: even cells read odd neighbours untouched this
   // pass, then odd cells read the new evens. No snapshot copy is allocated.
   const i = y * size + x;
   const k = i - viewBase;
+  const here = cells[k];
+  // Bilateral gating: neighbours past one band sit out, so terraces blend
+  // along themselves instead of dragging across cliffs. The divisor
+  // renormalizes over whoever votes.
+  const votes = (h: number): boolean => !bilateral || Math.abs(h - here) <= BAND_HEIGHT;
   let avg: number;
   if (gauss) {
     // 3x3 binomial: centre 4, cardinals 2, diagonals 1, divisor 16.
     // Missing edge neighbours drop out; the divisor renormalizes over the
     // remaining voters, keeping the average exact in integer math.
-    let num = 4 * cells[k];
+    let num = 4 * here;
     let den = 4;
-    if (x > 0) {
+    if (x > 0 && votes(cells[k - 1])) {
       num += 2 * cells[k - 1];
       den += 2;
     }
-    if (x < size - 1) {
+    if (x < size - 1 && votes(cells[k + 1])) {
       num += 2 * cells[k + 1];
       den += 2;
     }
-    if (y > 0) {
+    if (y > 0 && votes(cells[k - size])) {
       num += 2 * cells[k - size];
       den += 2;
     }
-    if (y < size - 1) {
+    if (y < size - 1 && votes(cells[k + size])) {
       num += 2 * cells[k + size];
       den += 2;
     }
-    if (x > 0 && y > 0) {
+    if (x > 0 && y > 0 && votes(cells[k - size - 1])) {
       num += cells[k - size - 1];
       den += 1;
     }
-    if (x < size - 1 && y > 0) {
+    if (x < size - 1 && y > 0 && votes(cells[k - size + 1])) {
       num += cells[k - size + 1];
       den += 1;
     }
-    if (x > 0 && y < size - 1) {
+    if (x > 0 && y < size - 1 && votes(cells[k + size - 1])) {
       num += cells[k + size - 1];
       den += 1;
     }
-    if (x < size - 1 && y < size - 1) {
+    if (x < size - 1 && y < size - 1 && votes(cells[k + size + 1])) {
       num += cells[k + size + 1];
       den += 1;
     }
+    if (den === 4) return false;
     avg = Math.trunc(num / den);
   } else {
     let sum = 0;
     let count = 0;
-    if (x > 0) {
+    if (x > 0 && votes(cells[k - 1])) {
       sum += cells[k - 1];
       count++;
     }
-    if (x < size - 1) {
+    if (x < size - 1 && votes(cells[k + 1])) {
       sum += cells[k + 1];
       count++;
     }
-    if (y > 0) {
+    if (y > 0 && votes(cells[k - size])) {
       sum += cells[k - size];
       count++;
     }
-    if (y < size - 1) {
+    if (y < size - 1 && votes(cells[k + size])) {
       sum += cells[k + size];
       count++;
     }
     if (count === 0) return false;
     avg = Math.trunc(sum / count);
   }
-  if (avg === cells[k]) return false;
+  if (avg === here) return false;
   const eff = falloff === null ? pct : falloffStrength(pct, falloff, x, y);
   if (eff <= 0) return false;
   // Min-one-unit progress: truncation alone stalls above the gradient
   // limit, leaving terracing the smoother was asked to remove.
-  let step = Math.trunc(((avg - cells[k]) * eff) / 100);
-  if (step === 0) step = avg > cells[k] ? 1 : -1;
-  let next = cells[k] + step;
+  let step = Math.trunc(((avg - here) * eff) / 100);
+  if (step === 0) step = avg > here ? 1 : -1;
+  let next = here + step;
   const band = boundsOf === null ? null : boundsOf(i);
   if (band !== null) {
     if (next < band.lo) next = band.lo;
@@ -203,7 +210,7 @@ function laplacianCell(
     if (next < cap.lo) next = cap.lo;
     if (next > cap.hi) next = cap.hi;
   }
-  if (next === cells[k]) return false;
+  if (next === here) return false;
   cells[k] = next;
   changed.add(i);
   return true;
@@ -223,13 +230,14 @@ function laplacianPass(
   layer: LayerView | null,
   falloff: SmoothFalloff | null = null,
   gauss = false,
+  bilateral = false,
 ): boolean {
   let moved = false;
   for (let parity = 0; parity < 2; parity++) {
     for (let y = minY; y <= maxY; y++) {
       const startX = minX + (((minX + y + parity) & 1) === 0 ? 0 : 1);
       for (let x = startX; x <= maxX; x += 2) {
-        if (laplacianCell(cells, viewBase, size, x, y, pct, changed, boundsOf, layer === null ? null : layer.spanCaps, falloff, gauss)) {
+        if (laplacianCell(cells, viewBase, size, x, y, pct, changed, boundsOf, layer === null ? null : layer.spanCaps, falloff, gauss, bilateral)) {
           moved = true;
         }
       }
@@ -249,6 +257,7 @@ export function smooth(
   laplacePct: number | null = null,
   falloff: SmoothFalloff | null = null,
   gauss = false,
+  bilateral = false,
 ): number {
   const seed = bboxSeed ?? changed;
   if (seed.size === 0) return 0;
@@ -378,6 +387,7 @@ export function smooth(
         layer,
         falloff,
         gauss,
+        bilateral,
       );
     }
 
