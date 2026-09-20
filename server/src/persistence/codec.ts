@@ -47,6 +47,7 @@ export function decodeHeights(
   if (!HOST_IS_LITTLE_ENDIAN) swapBytesInPlace(bytes);
   const cells = new Int16Array(bytes.buffer, 0, expectedCells);
   if (schemaVersion <= LEGACY_BAND_SCHEME_VERSION) {
+    // UNWIND-schema-migration: schema 1/2 height migration.
     for (let i = 0; i < cells.length; i++) cells[i] = migrateHeight(cells[i]!);
   }
   return cells;
@@ -65,8 +66,7 @@ export const RAW_FLOOR_SCHEMA_VERSION = 1;
 const MIN_SPANS_PER_RECORD = 2;
 
 /**
- * Schema 1's gap rule admitted a slab floored one band over the ground's cap.
- * The band rule draws that as one span, so repair reproduces what v1 drew.
+ * UNWIND-schema-migration: schema 1 repair path. Repair reproduces what v1 drew.
  */
 function repairRawFloorColumn(
   packedBands: readonly number[],
@@ -180,7 +180,7 @@ export function decodeColumnSpans(
       if (repaired.length < MIN_SPANS_PER_RECORD) continue;
       packed = repaired.flatMap((span) => [span.floorBand, span.ceiling]);
     } else if (schemaVersion <= LEGACY_BAND_SCHEME_VERSION) {
-      // Old rows store old bands and levels; migrate before the strict parse.
+      // UNWIND-schema-migration: old rows store old bands and levels; migrate before the strict parse.
       const migrated: number[] = [];
       for (let k = 0; k < flat.length; k += SPAN_STRIDE) {
         const span = migrateSpan(flat[k]!, flat[k + 1]!);

@@ -32,7 +32,7 @@ export const SNAPSHOT_SCHEMA_VERSION = 3;
 /** Schemas 2 and below predate the regular band scheme; decode migrates their heights. */
 export const LEGACY_BAND_SCHEME_VERSION = 2;
 
-/** The oldest schema this server still reads. `decodeColumnSpans` reinterprets its floors. */
+/** UNWIND-schema-migration: the oldest schema this server still reads. */
 export const OLDEST_READABLE_SCHEMA_VERSION = 1;
 
 /** INTEGER affinity stores un-coercible TEXT as-is, so range alone lets 'abc' and 1.5 through. */

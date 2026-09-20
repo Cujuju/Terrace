@@ -1,3 +1,4 @@
+// UNWIND-schema-migration: delete this file with the schema 1/2 read path.
 import { bandLevelHeight, BEDROCK_BAND, MAX_HEIGHT, MIN_HEIGHT, spanCapBand, type Span } from '@terrace/shared';
 
 const LEGACY_BAND_HEIGHT = 16;

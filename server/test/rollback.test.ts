@@ -250,6 +250,7 @@ describe('rolling the world back', () => {
   });
 });
 
+// UNWIND-schema-migration: older-than-current-schema rollback path.
 describe('a restore point older than the current schema', () => {
   const LAYERED_X = 8;
   const LAYERED_Y = 8;

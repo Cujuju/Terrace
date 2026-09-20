@@ -461,6 +461,7 @@ describe('SnapshotStore', () => {
   });
 });
 
+// UNWIND-schema-migration: schema 1 read path.
 describe('reading a schema 1 world under the band-floor rule', () => {
   let dir: string;
   let dbPath: string;
@@ -693,6 +694,7 @@ describe('reading a schema 1 world under the band-floor rule', () => {
   });
 });
 
+// UNWIND-schema-migration: schema 2 read path.
 describe('reading a schema 2 world under the regular band scheme', () => {
   let dir: string;
   let dbPath: string;
