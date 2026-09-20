@@ -1,4 +1,4 @@
-import { MAX_STEP, RELAX_SLACK, SMOOTH_LAPLACIAN_PASSES, SMOOTH_PASS_LIMIT } from '../constants.ts';
+import { BAND_HEIGHT, MAX_STEP, RELAX_SLACK, SMOOTH_LAPLACIAN_PASSES, SMOOTH_PASS_LIMIT } from '../constants.ts';
 import { drawnBandOfSample } from '../bands.ts';
 import { anyColumnLayered, bandFloorHeight } from '../columns.ts';
 import { cellX, cellY, type Heightmap } from '../grid.ts';
@@ -68,26 +68,42 @@ function relaxPair(
   return moved;
 }
 
-/** Radial strength taper for the player melt: full across the footprint. */
+/** Radial rim shaping for the player melt: full across the footprint. */
 export interface SmoothFalloff {
   readonly cx: number;
   readonly cy: number;
   readonly reach: number;
   /** Feather width as percent of reach, 0..100. The centre stays full. */
   readonly feather: number;
+  /** Rim clamp taper as percent of reach, 0..100. 0 keeps the band clamp. */
+  readonly rim: number;
+}
+
+function brushDist(cx: number, cy: number, x: number, y: number): number {
+  const dx = x - cx;
+  const dy = y - cy;
+  return Math.floor(Math.sqrt(dx * dx + dy * dy));
 }
 
 // Plateau falloff: full strength inside the footprint so the clicked cell
 // co-moves with its patch; only the outer feather percent fades to the rim.
 function falloffStrength(pct: number, falloff: SmoothFalloff, x: number, y: number): number {
-  const dx = x - falloff.cx;
-  const dy = y - falloff.cy;
-  const dist = Math.floor(Math.sqrt(dx * dx + dy * dy));
+  const dist = brushDist(falloff.cx, falloff.cy, x, y);
   const widthCells = Math.trunc((falloff.feather * falloff.reach) / 100);
   const featherStart = Math.max(falloff.reach - widthCells, 0);
   if (dist <= featherStart) return pct;
   if (dist >= falloff.reach) return 0;
   return Math.trunc((pct * (falloff.reach - dist)) / (falloff.reach - featherStart));
+}
+
+// Rim taper: the halo clamp shrinks from the full drawn band toward the
+// sampled height as the reach edge nears. Integer-exact like the taper.
+function rimBand(h: number, lo: number, hi: number, dist: number, reach: number, rimPct: number): SpillBand {
+  const widthCells = Math.trunc((rimPct * reach) / 100);
+  const taperStart = Math.max(reach - widthCells, 0);
+  if (dist <= taperStart) return { lo, hi };
+  const allow = Math.trunc((BAND_HEIGHT * (reach - dist)) / (reach - taperStart));
+  return { lo: Math.max(lo, h - allow), hi: Math.min(hi, h + allow) };
 }
 
 function laplacianCell(
@@ -240,9 +256,16 @@ export function smooth(
       if (spillFree === undefined || spillFree.has(index)) return null;
       let band = captured.get(index);
       if (band === undefined) {
-        const sampled = drawnBandOfSample(cells[index - viewBase]);
+        const h = cells[index - viewBase];
+        const sampled = drawnBandOfSample(h);
         const lo = bandFloorHeight(sampled);
-        band = { lo, hi: bandFloorHeight(sampled + 1) - 1 };
+        const hi = bandFloorHeight(sampled + 1) - 1;
+        if (falloff === null || falloff.rim <= 0) {
+          band = { lo, hi };
+        } else {
+          const dist = brushDist(falloff.cx, falloff.cy, cellX(size, index), cellY(size, index));
+          band = rimBand(h, lo, hi, dist, falloff.reach, falloff.rim);
+        }
         captured.set(index, band);
       }
       return band;

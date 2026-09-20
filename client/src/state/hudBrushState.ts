@@ -12,6 +12,9 @@ import {
   SMOOTH_FEATHER_DEFAULT,
   SMOOTH_FEATHER_MAX,
   SMOOTH_FEATHER_MIN,
+  SMOOTH_RIM_DEFAULT,
+  SMOOTH_RIM_MAX,
+  SMOOTH_RIM_MIN,
   SMOOTH_LAMBDA_DEFAULT,
   SMOOTH_LAMBDA_MAX,
   SMOOTH_LAMBDA_MIN,
@@ -71,6 +74,8 @@ export const DEFAULT_SMOOTH_LAMBDA = SMOOTH_LAMBDA_DEFAULT;
 
 export const DEFAULT_SMOOTH_FEATHER = SMOOTH_FEATHER_DEFAULT;
 
+export const DEFAULT_SMOOTH_RIM = SMOOTH_RIM_DEFAULT;
+
 export const DEFAULT_CARVE_DEPTH_BANDS = CARVE_DEFAULT_DEPTH_BANDS;
 
 export const DEFAULT_SHOW_CONTROLS = false;
@@ -85,6 +90,7 @@ export interface PersistedHudState {
   readonly sculptMode: SculptMode;
   readonly smoothLambda: number;
   readonly smoothFeather: number;
+  readonly smoothRim: number;
   readonly carveDepthBands: number;
   readonly showControls: boolean;
   readonly panelOpen: boolean;
@@ -97,6 +103,7 @@ export const DEFAULT_HUD_STATE: PersistedHudState = {
   sculptMode: DEFAULT_SCULPT_MODE,
   smoothLambda: DEFAULT_SMOOTH_LAMBDA,
   smoothFeather: DEFAULT_SMOOTH_FEATHER,
+  smoothRim: DEFAULT_SMOOTH_RIM,
   carveDepthBands: DEFAULT_CARVE_DEPTH_BANDS,
   showControls: DEFAULT_SHOW_CONTROLS,
   panelOpen: DEFAULT_PANEL_OPEN,
@@ -142,6 +149,15 @@ function readSmoothFeather(value: unknown): number {
     : DEFAULT_SMOOTH_FEATHER;
 }
 
+function readSmoothRim(value: unknown): number {
+  return typeof value === 'number' &&
+    Number.isInteger(value) &&
+    value >= SMOOTH_RIM_MIN &&
+    value <= SMOOTH_RIM_MAX
+    ? value
+    : DEFAULT_SMOOTH_RIM;
+}
+
 /** The wire predicate is the one depth authority; the HUD never re-states it. */
 function readCarveDepthBands(value: unknown): number {
   return typeof value === 'number' && isValidCarveDepth(value)
@@ -174,6 +190,7 @@ export function parseHudState(raw: string | null): PersistedHudState {
     sculptMode: readMode(record['sculptMode']),
     smoothLambda: readSmoothLambda(record['smoothLambda']),
     smoothFeather: readSmoothFeather(record['smoothFeather']),
+    smoothRim: readSmoothRim(record['smoothRim']),
     carveDepthBands: readCarveDepthBands(record['carveDepthBands']),
     showControls: readShowControls(record['showControls']),
     panelOpen: readPanelOpen(record['panelOpen']),
@@ -218,6 +235,10 @@ const [smoothFeather, setSmoothFeatherSignal] = createSignal<number>(
   stored.smoothFeather,
 );
 
+const [smoothRim, setSmoothRimSignal] = createSignal<number>(
+  stored.smoothRim,
+);
+
 const [carveDepthBands, setCarveDepthBandsSignal] = createSignal<number>(
   stored.carveDepthBands,
 );
@@ -238,6 +259,7 @@ function persist(): void {
     sculptMode: sculptMode(),
     smoothLambda: smoothLambda(),
     smoothFeather: smoothFeather(),
+    smoothRim: smoothRim(),
     carveDepthBands: carveDepthBands(),
     showControls: showControls(),
     panelOpen: panelOpen(),
@@ -305,6 +327,16 @@ export function setSmoothFeather(feather: number): void {
   persist();
 }
 
+export function setSmoothRim(rim: number): void {
+  const clamped = Math.min(
+    SMOOTH_RIM_MAX,
+    Math.max(SMOOTH_RIM_MIN, Math.trunc(rim)),
+  );
+  if (clamped === smoothRim()) return;
+  setSmoothRimSignal(clamped);
+  persist();
+}
+
 export function setCarveDepthBands(bands: number): void {
   const clamped = Math.min(
     CARVE_MAX_DEPTH_BANDS,
@@ -335,6 +367,7 @@ export {
   sculptAlt,
   smoothFeather,
   smoothLambda,
+  smoothRim,
   carveDepthBands,
   showControls,
   panelOpen,

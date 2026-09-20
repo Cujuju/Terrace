@@ -59,6 +59,11 @@ export const SMOOTH_FEATHER_DEFAULT = 0;
 export const SMOOTH_FEATHER_MIN = 0;
 export const SMOOTH_FEATHER_MAX = 100;
 
+/** Rim clamp taper as percent of reach, 0..100. 0 is the full band clamp. */
+export const SMOOTH_RIM_DEFAULT = 0;
+export const SMOOTH_RIM_MIN = 0;
+export const SMOOTH_RIM_MAX = 100;
+
 export const SCULPT_PROFILES: readonly SculptProfile[] = ['soft', 'hard'];
 
 export type SculptSpill = 'banded' | 'free';
@@ -80,6 +85,8 @@ export interface SculptOptions {
   readonly smoothLambda?: number;
   /** Feather the smooth rim: full strength inside, fading across the halo. */
   readonly smoothFeather?: number;
+  /** Tighten the smooth rim clamp: full band inside, freezing at the reach. */
+  readonly smoothRim?: number;
 }
 
 export interface SweepOrigin {
@@ -102,6 +109,7 @@ export interface ResolvedSculptOptions {
   readonly sweepFrom: SweepOrigin | null;
   readonly smoothLambda: number;
   readonly smoothFeather: number;
+  readonly smoothRim: number;
 }
 
 export const LIBRARY_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
@@ -117,4 +125,5 @@ export const LIBRARY_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
   sweepFrom: null,
   smoothLambda: SMOOTH_LAMBDA_DEFAULT,
   smoothFeather: SMOOTH_FEATHER_DEFAULT,
+  smoothRim: SMOOTH_RIM_DEFAULT,
 };

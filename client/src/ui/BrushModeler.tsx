@@ -22,8 +22,10 @@ import {
   setSculptMode,
   setSmoothFeather,
   setSmoothLambda,
+  setSmoothRim,
   smoothFeather,
   smoothLambda,
+  smoothRim,
   type DenialHint,
   type SculptMode,
 } from '../state/hudState.ts';
@@ -49,6 +51,8 @@ import {
   SMOOTH_FEATHER_MIN,
   SMOOTH_LAMBDA_MAX,
   SMOOTH_LAMBDA_MIN,
+  SMOOTH_RIM_MAX,
+  SMOOTH_RIM_MIN,
   type SculptProfile,
   type SculptTool,
 } from '@terrace/shared';
@@ -321,25 +325,30 @@ export function BrushModeler(): JSX.Element {
           <span class="brush-slider__end">{SMOOTH_LAMBDA_MAX}%</span>
         </div>
         <div class="hud-row brush-slider">
-          <span class="brush-slider__end">0%</span>
-          <div class="brush-slider__track">
+          <span class="controls-label">Feather</span>
+          <input
+            type="checkbox"
+            class="controls-check"
+            aria-label="Feather the smooth edge"
+            title="Feather edge: full strength across the brush, fading over the outer rim. Off by default."
+            checked={smoothFeather() > 0}
+            onChange={(event) =>
+              setSmoothFeather(
+                event.currentTarget.checked
+                  ? (smoothFeather() > 0 ? smoothFeather() : 50)
+                  : 0,
+              )
+            }
+          />
+          <div
+            class="brush-slider__track"
+            style={{
+              '--brush-rung': String(smoothFeather()),
+              '--brush-slider-rungs': String(SMOOTH_FEATHER_MAX),
+            }}
+          >
             <span class="brush-slider__rail" />
             <span class="brush-slider__fill" />
-            <span class="controls-label">Feather</span>
-            <input
-              type="checkbox"
-              class="controls-check"
-              aria-label="Feather the smooth edge"
-              title="Feather edge: full strength across the brush, fading over the outer rim. Off by default."
-              checked={smoothFeather() > 0}
-              onChange={(event) =>
-                setSmoothFeather(
-                  event.currentTarget.checked
-                    ? (smoothFeather() > 0 ? smoothFeather() : 50)
-                    : 0,
-                )
-              }
-            />
             <input
               type="range"
               class="brush-slider__input"
@@ -356,7 +365,48 @@ export function BrushModeler(): JSX.Element {
             />
             <span class="brush-slider__value">{smoothFeather()}%</span>
           </div>
-          <span class="brush-slider__end">100%</span>
+        </div>
+        <div class="hud-row brush-slider">
+          <span class="controls-label">Rim</span>
+          <input
+            type="checkbox"
+            class="controls-check"
+            aria-label="Tighten the smooth rim clamp"
+            title="Rim: tighten how far the outer rim may travel, from the full band down to frozen at the reach. Off by default."
+            checked={smoothRim() > 0}
+            onChange={(event) =>
+              setSmoothRim(
+                event.currentTarget.checked
+                  ? (smoothRim() > 0 ? smoothRim() : 50)
+                  : 0,
+              )
+            }
+          />
+          <div
+            class="brush-slider__track"
+            style={{
+              '--brush-rung': String(smoothRim()),
+              '--brush-slider-rungs': String(SMOOTH_RIM_MAX),
+            }}
+          >
+            <span class="brush-slider__rail" />
+            <span class="brush-slider__fill" />
+            <input
+              type="range"
+              class="brush-slider__input"
+              min={SMOOTH_RIM_MIN}
+              max={SMOOTH_RIM_MAX}
+              step="1"
+              value={smoothRim()}
+              aria-label="Rim clamp width"
+              aria-valuetext={`${smoothRim()} percent of reach`}
+              title="Rim width: percent of the brush reach whose clamp tightens to the edge"
+              onInput={(event) =>
+                setSmoothRim(event.currentTarget.valueAsNumber)
+              }
+            />
+            <span class="brush-slider__value">{smoothRim()}%</span>
+          </div>
         </div>
       </Show>
       <Show when={brushTool() === 'carve'}>

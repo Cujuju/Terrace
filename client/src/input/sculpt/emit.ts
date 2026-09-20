@@ -7,6 +7,7 @@ import {
   sculptDirection,
   smoothFeather,
   smoothLambda,
+  smoothRim,
 } from '../../state/hudState.ts';
 import { footOfFaceCell } from '../../terrain/faceFoot.ts';
 import { isAltSculptPress } from '../../state/controlPrefs.ts';
@@ -117,6 +118,7 @@ export const emitIntent = (s: StrokeState, origin: EmitOrigin): EmitOutcome => {
       : { profile: brushProfile() }),
     ...(s.strokeTool === 'smooth' ? { smoothLambda: smoothLambda() } : {}),
     ...(s.strokeTool === 'smooth' ? { smoothFeather: smoothFeather() } : {}),
+    ...(s.strokeTool === 'smooth' ? { smoothRim: smoothRim() } : {}),
     ...(s.strokeTool === 'carve' ? { depthBands: carveDepthBands() } : {}),
     ...(spanBand !== null ? { spanBand } : {}),
     seq: s.nextSeq++,

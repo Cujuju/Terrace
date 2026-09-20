@@ -33,6 +33,9 @@ import {
   SMOOTH_FEATHER_MAX,
   SMOOTH_FEATHER_MIN,
   SMOOTH_LAMBDA_DEFAULT,
+  SMOOTH_RIM_DEFAULT,
+  SMOOTH_RIM_MAX,
+  SMOOTH_RIM_MIN,
   SMOOTH_LAMBDA_MAX,
   SMOOTH_LAMBDA_MIN,
 } from './sculpt/options.ts';
@@ -74,6 +77,9 @@ export {
   SMOOTH_FEATHER_MAX,
   SMOOTH_FEATHER_MIN,
   SMOOTH_LAMBDA_DEFAULT,
+  SMOOTH_RIM_DEFAULT,
+  SMOOTH_RIM_MAX,
+  SMOOTH_RIM_MIN,
   SMOOTH_LAMBDA_MAX,
   SMOOTH_LAMBDA_MIN,
   TOOLS_WITHOUT_DIRECTION,
@@ -124,6 +130,10 @@ export function applySculpt(
   const smoothFeather = Math.min(
     SMOOTH_FEATHER_MAX,
     Math.max(SMOOTH_FEATHER_MIN, options?.smoothFeather ?? SMOOTH_FEATHER_DEFAULT),
+  );
+  const smoothRim = Math.min(
+    SMOOTH_RIM_MAX,
+    Math.max(SMOOTH_RIM_MIN, options?.smoothRim ?? SMOOTH_RIM_DEFAULT),
   );
 
   if (spanBand !== null && spanIndexCoveringBand(map, cx, cy, spanBand) === null) {
@@ -250,10 +260,10 @@ export function applySculpt(
       tool === 'smooth' ? smoothCascadeReachCells(radius) : null,
       // Laplacian is the player melt only: free smooth keeps exact exchange.
       anchoredSmooth ? smoothLambda : null,
-      // Feathering is a player-smooth option: settle and free smooth keep
-      // their untapered passes.
-      anchoredSmooth && smoothFeather > 0
-        ? { cx, cy, reach: smoothCascadeReachCells(radius), feather: smoothFeather }
+      // Rim shaping is a player-smooth option: settle and free smooth keep
+      // their untapered passes and full band clamps.
+      anchoredSmooth && (smoothFeather > 0 || smoothRim > 0)
+        ? { cx, cy, reach: smoothCascadeReachCells(radius), feather: smoothFeather, rim: smoothRim }
         : null,
     );
   }

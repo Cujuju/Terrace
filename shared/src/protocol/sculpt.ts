@@ -14,6 +14,9 @@ import {
   SMOOTH_LAMBDA_DEFAULT,
   SMOOTH_LAMBDA_MAX,
   SMOOTH_LAMBDA_MIN,
+  SMOOTH_RIM_DEFAULT,
+  SMOOTH_RIM_MAX,
+  SMOOTH_RIM_MIN,
   TOOLS_WITHOUT_EDGE_PROFILE,
 } from '../sculpt/options.ts';
 import type {
@@ -37,6 +40,7 @@ export interface SculptIntent {
   spanBand?: number;
   smoothLambda?: number;
   smoothFeather?: number;
+  smoothRim?: number;
   depthBands?: number;
   fromX?: number;
   fromY?: number;
@@ -61,6 +65,7 @@ export const WIRE_DEFAULT_SCULPT_OPTIONS: ResolvedWireSculptOptions = {
   sweepFrom: null,
   smoothLambda: SMOOTH_LAMBDA_DEFAULT,
   smoothFeather: SMOOTH_FEATHER_DEFAULT,
+  smoothRim: SMOOTH_RIM_DEFAULT,
 };
 
 export const EDGELESS_SCULPT_PROFILE: SculptProfile = 'hard';
@@ -96,6 +101,8 @@ export function sculptOptionsOf(intent: SculptIntent): ResolvedWireSculptOptions
       tool === 'smooth'
         ? (intent.smoothFeather ?? SMOOTH_FEATHER_DEFAULT)
         : SMOOTH_FEATHER_DEFAULT,
+    smoothRim:
+      tool === 'smooth' ? (intent.smoothRim ?? SMOOTH_RIM_DEFAULT) : SMOOTH_RIM_DEFAULT,
   };
 }
 
@@ -231,6 +238,19 @@ export function validateSculptIntent(
     if (tool !== 'smooth') return null;
   }
 
+  // The rim clamp tightens the smooth halo and only the smooth halo.
+  const { smoothRim } = m;
+  if (smoothRim !== undefined) {
+    if (
+      !Number.isInteger(smoothRim) ||
+      (smoothRim as number) < SMOOTH_RIM_MIN ||
+      (smoothRim as number) > SMOOTH_RIM_MAX
+    ) {
+      return null;
+    }
+    if (tool !== 'smooth') return null;
+  }
+
   // A carve cuts the band it grasps: without one it names nothing to open and
   // would apply as a silent, acked no-op. Optional on a stamp or smooth.
   if (spanBand === undefined && tool === 'carve') return null;
@@ -267,6 +287,7 @@ export function validateSculptIntent(
     ...(spanBand !== undefined ? { spanBand: spanBand as number } : {}),
     ...(smoothLambda !== undefined ? { smoothLambda: smoothLambda as number } : {}),
     ...(smoothFeather !== undefined ? { smoothFeather: smoothFeather as number } : {}),
+    ...(smoothRim !== undefined ? { smoothRim: smoothRim as number } : {}),
     ...(depthBands !== undefined ? { depthBands: depthBands as number } : {}),
     ...(fromX !== undefined ? { fromX: fromX as number, fromY: fromY as number } : {}),
     ...(seq !== undefined ? { seq: seq as number } : {}),
