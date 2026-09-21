@@ -174,6 +174,7 @@ export interface World extends TerrainSink {
   setCellLook(look: CellLook): void;
   setCellLinesVisible(visible: boolean): void;
   setBandGridVisible(visible: boolean): void;
+  setLipSmoothing(enabled: boolean): void;
   setBrushRefused(refused: boolean): void;
   /** Cap band of the layer holding `spanBand` (the column top when null); after a lower, the layer just beneath it. */
   bandAtCell(x: number, y: number, spanBand: number | null): number | null;
@@ -275,6 +276,7 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
   let cellLook: CellLook = DEFAULT_CELL_LOOK;
   let cellLinesVisible = false;
   let bandGridVisible = false;
+  let lipSmoothing = false;
   let predictions: PredictionStore | null = null;
 
   let chunkRevisions: Int32Array | null = null;
@@ -440,6 +442,7 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
     nextLayerEdges.setCellLook(cellLook);
     nextLayerEdges.setCellLinesVisible(cellLinesVisible);
     nextLayerEdges.setBandGridVisible(bandGridVisible);
+    nextLayerEdges.setLipSmoothing(lipSmoothing);
     const nextGround = createDrawnGround(nextMirror, nextMeshes.drawnGround());
     nextMeshes.onChunkDrawn((chunkIdx) => {
       nextLayerEdges.refreshChunk(chunkIdx);
@@ -696,6 +699,10 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
     setBandGridVisible(visible: boolean): void {
       bandGridVisible = visible;
       layerEdges?.setBandGridVisible(visible);
+    },
+    setLipSmoothing(enabled: boolean): void {
+      lipSmoothing = enabled;
+      layerEdges?.setLipSmoothing(enabled);
     },
     setBrushRefused(refused: boolean): void {
       layerEdges?.setRefused(refused);

@@ -15,6 +15,7 @@ import { voidAnchor, voidStyle } from './state/voidPrefs.ts';
 import { creaseLook, layerEdgeStyle, lipHighlight } from './state/layerEdgePrefs.ts';
 import { cellLinesVisible, cellLook } from './state/layerEdgePrefs.ts';
 import { bandGridVisible } from './state/layerEdgePrefs.ts';
+import { smoothLinesEnabled } from './state/layerEdgePrefs.ts';
 import { frameRateTarget, frameRateTargetFps } from './state/frameRatePrefs.ts';
 import { multisampleEnabled, multisampleSetting } from './state/multisamplePrefs.ts';
 import { pointerToNdc, worldPointToCell } from './terrain/picking.ts';
@@ -127,6 +128,7 @@ createEffect(() => world.setCreaseLook(creaseLook()));
 createEffect(() => world.setCellLinesVisible(cellLinesVisible()));
 createEffect(() => world.setCellLook(cellLook()));
 createEffect(() => world.setBandGridVisible(bandGridVisible()));
+createEffect(() => world.setLipSmoothing(smoothLinesEnabled()));
 createEffect(() => viewport.setFrameRateTarget(frameRateTargetFps(frameRateTarget())));
 createEffect(() => viewport.setMultisampling(multisampleEnabled(multisampleSetting())));
 

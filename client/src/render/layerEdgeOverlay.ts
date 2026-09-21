@@ -15,6 +15,7 @@ import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
 import { LIP_LIFT_WORLD_UNITS } from '../terrain/capPlanFlat.ts';
 import type { DrawnGroundStore } from '../terrain/drawnGroundStore.ts';
 import { hasChunk, sampleRenderHeight, type TerrainMirror } from '../terrain/mirror.ts';
+import { smoothLipSegments } from '../terrain/contourSmoothing.ts';
 import { SUPER_MESH_SPAN_CHUNKS } from './terrainMeshes.ts';
 import { DENIED_COLOR } from './denialCue.ts';
 
@@ -101,6 +102,7 @@ export interface LayerEdgeOverlay {
   setCellLook(look: CellLook): void;
   setCellLinesVisible(visible: boolean): void;
   setBandGridVisible(visible: boolean): void;
+  setLipSmoothing(enabled: boolean): void;
   clear(): void;
   drawCallCount(): number;
   dispose(): void;
@@ -121,6 +123,7 @@ export function createLayerEdgeOverlay(
   let cellLook: CellLook = DEFAULT_CELL_LOOK;
   let cellLinesVisible = false;
   let bandGridVisible = false;
+  let lipSmoothing = false;
   const restingVisible = (): boolean => style !== 'normal';
   const material = new LineBasicMaterial({
     color: DEBUG_COLOR,
@@ -451,20 +454,26 @@ export function createLayerEdgeOverlay(
     const { positions, flat, bands } = chart.lips;
     if (positions.length < FLOATS_PER_SEGMENT) return;
 
+    const smoothedPositions = lipSmoothing ? smoothLipSegments(positions, 6, bands) : null;
+    const smoothedFlat = lipSmoothing ? smoothLipSegments(flat, 4, bands) : null;
+    const lipPositions = smoothedPositions?.coords ?? positions;
+    const lipFlat = smoothedFlat?.coords ?? flat;
+    const lipBands = smoothedPositions?.bands ?? bands;
+
     const perBand = new Map<number, Float32Array>();
-    for (let i = 0; i + 2 < bands.length; i += 3) {
-      const band = bands[i]!;
-      const firstSegment = bands[i + 1]!;
-      const segmentCount = bands[i + 2]!;
+    for (let i = 0; i + 2 < lipBands.length; i += 3) {
+      const band = lipBands[i]!;
+      const firstSegment = lipBands[i + 1]!;
+      const segmentCount = lipBands[i + 2]!;
       perBand.set(
         band,
-        flat.subarray(firstSegment * FLOATS_PER_FLAT_SEGMENT, (firstSegment + segmentCount) * FLOATS_PER_FLAT_SEGMENT),
+        lipFlat.subarray(firstSegment * FLOATS_PER_FLAT_SEGMENT, (firstSegment + segmentCount) * FLOATS_PER_FLAT_SEGMENT),
       );
     }
     segmentsByChunk.set(idx, perBand);
 
     const tileIdx = tileIndexOfChunk(idx);
-    writeRun(tileIdx, tiles.get(tileIdx) ?? createTile(tileIdx), idx, positions);
+    writeRun(tileIdx, tiles.get(tileIdx) ?? createTile(tileIdx), idx, lipPositions);
   };
 
   const grabbedMaterial = new LineBasicMaterial({
@@ -745,6 +754,11 @@ export function createLayerEdgeOverlay(
         for (const idx of [...bandMeshes.keys()]) dropBandGrid(idx);
         return;
       }
+      for (const idx of [...knownChunks]) rebuild(idx);
+    },
+    setLipSmoothing(enabled) {
+      if (enabled === lipSmoothing) return;
+      lipSmoothing = enabled;
       for (const idx of [...knownChunks]) rebuild(idx);
     },
     setStyle(next) {

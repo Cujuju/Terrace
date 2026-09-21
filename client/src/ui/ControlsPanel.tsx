@@ -69,6 +69,8 @@ import {
   setCellLinesVisible,
   setCellOpacity,
   setBandGridVisible,
+  setSmoothLinesEnabled,
+  smoothLinesEnabled,
   setCreaseColor,
   setCreaseOpacity,
   setLayerEdgeStyle,
@@ -473,6 +475,18 @@ export function ControlsPanel(): JSX.Element {
           title="Band grid: the quarter-cell lattice the band pipeline resolves, in the Cell colour. Heavy while sculpting; look, then switch off."
           checked={bandGridVisible()}
           onChange={(e) => setBandGridVisible(e.currentTarget.checked)}
+        />
+      </div>
+
+      <div class="hud-row controls-row">
+        <span class="controls-label">Smooth lines</span>
+        <input
+          type="checkbox"
+          class="controls-check"
+          aria-label="Smooth the band boundary lines"
+          title="Smooth lines: rounds the sharp corners off every band boundary line. Lines only; fills keep their edges."
+          checked={smoothLinesEnabled()}
+          onChange={(e) => setSmoothLinesEnabled(e.currentTarget.checked)}
         />
       </div>
 

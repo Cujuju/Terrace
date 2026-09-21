@@ -138,6 +138,22 @@ export const setBandGridVisible = (visible: boolean): void => {
   setBandGridChoice(visible ? 'on' : 'off');
 };
 
+const SMOOTH_LINES_STORAGE_KEY = 'terrace.smoothLines.v1';
+
+const SMOOTH_LINES_CHOICES = ['on', 'off'] as const;
+
+const [smoothLinesChoice, setSmoothLinesChoice] = persistedChoice<'on' | 'off'>(
+  SMOOTH_LINES_STORAGE_KEY,
+  SMOOTH_LINES_CHOICES,
+  'off',
+);
+
+export const smoothLinesEnabled = (): boolean => smoothLinesChoice() === 'on';
+
+export const setSmoothLinesEnabled = (enabled: boolean): void => {
+  setSmoothLinesChoice(enabled ? 'on' : 'off');
+};
+
 const CELL_COLOR_STORAGE_KEY = 'terrace.cellColor.v1';
 
 const CELL_OPACITY_STORAGE_KEY = 'terrace.cellOpacity.v1';
@@ -203,6 +219,8 @@ export function resetLayerEdgePrefs(): void {
   clearPersistedChoice(CELL_LINES_STORAGE_KEY);
   setBandGridChoice('off');
   clearPersistedChoice(BAND_GRID_STORAGE_KEY);
+  setSmoothLinesChoice('off');
+  clearPersistedChoice(SMOOTH_LINES_STORAGE_KEY);
   setCellLookSignal(DEFAULT_CELL_LOOK);
   clearPersistedChoice(CELL_COLOR_STORAGE_KEY);
   clearPersistedChoice(CELL_OPACITY_STORAGE_KEY);
