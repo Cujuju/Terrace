@@ -11,6 +11,8 @@ import {
   SMOOTH_FEATHER_DEFAULT,
   SMOOTH_FEATHER_MAX,
   SMOOTH_FEATHER_MIN,
+  SMOOTH_KERNELS,
+  SMOOTH_KERNEL_DEFAULT,
   SMOOTH_LAMBDA_DEFAULT,
   SMOOTH_LAMBDA_MAX,
   SMOOTH_LAMBDA_MIN,
@@ -23,6 +25,7 @@ import type {
   ResolvedSculptOptions,
   SculptProfile,
   SculptTool,
+  SmoothKernel,
 } from '../sculpt/options.ts';
 import type { CellDiff } from '../sculpt/diff.ts';
 
@@ -41,8 +44,8 @@ export interface SculptIntent {
   smoothLambda?: number;
   smoothFeather?: number;
   smoothRim?: number;
-  smoothGauss?: boolean;
   smoothBilateral?: boolean;
+  smoothKernel?: SmoothKernel;
   depthBands?: number;
   fromX?: number;
   fromY?: number;
@@ -68,8 +71,8 @@ export const WIRE_DEFAULT_SCULPT_OPTIONS: ResolvedWireSculptOptions = {
   smoothLambda: SMOOTH_LAMBDA_DEFAULT,
   smoothFeather: SMOOTH_FEATHER_DEFAULT,
   smoothRim: SMOOTH_RIM_DEFAULT,
-  smoothGauss: false,
   smoothBilateral: false,
+  smoothKernel: SMOOTH_KERNEL_DEFAULT,
 };
 
 export const EDGELESS_SCULPT_PROFILE: SculptProfile = 'hard';
@@ -107,8 +110,9 @@ export function sculptOptionsOf(intent: SculptIntent): ResolvedWireSculptOptions
         : SMOOTH_FEATHER_DEFAULT,
     smoothRim:
       tool === 'smooth' ? (intent.smoothRim ?? SMOOTH_RIM_DEFAULT) : SMOOTH_RIM_DEFAULT,
-    smoothGauss: tool === 'smooth' ? (intent.smoothGauss ?? false) : false,
     smoothBilateral: tool === 'smooth' ? (intent.smoothBilateral ?? false) : false,
+    smoothKernel:
+      tool === 'smooth' ? (intent.smoothKernel ?? SMOOTH_KERNEL_DEFAULT) : SMOOTH_KERNEL_DEFAULT,
   };
 }
 
@@ -258,9 +262,9 @@ export function validateSculptIntent(
   }
 
   // The Gaussian kernel reshapes the smooth average and only the smooth average.
-  const { smoothGauss } = m;
-  if (smoothGauss !== undefined) {
-    if (typeof smoothGauss !== 'boolean') return null;
+  const { smoothKernel } = m;
+  if (smoothKernel !== undefined) {
+    if (!SMOOTH_KERNELS.includes(smoothKernel as SmoothKernel)) return null;
     if (tool !== 'smooth') return null;
   }
 
@@ -308,8 +312,8 @@ export function validateSculptIntent(
     ...(smoothLambda !== undefined ? { smoothLambda: smoothLambda as number } : {}),
     ...(smoothFeather !== undefined ? { smoothFeather: smoothFeather as number } : {}),
     ...(smoothRim !== undefined ? { smoothRim: smoothRim as number } : {}),
-    ...(smoothGauss !== undefined ? { smoothGauss: smoothGauss as boolean } : {}),
     ...(smoothBilateral !== undefined ? { smoothBilateral: smoothBilateral as boolean } : {}),
+    ...(smoothKernel !== undefined ? { smoothKernel: smoothKernel as SmoothKernel } : {}),
     ...(depthBands !== undefined ? { depthBands: depthBands as number } : {}),
     ...(fromX !== undefined ? { fromX: fromX as number, fromY: fromY as number } : {}),
     ...(seq !== undefined ? { seq: seq as number } : {}),

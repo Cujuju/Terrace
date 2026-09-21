@@ -4,6 +4,11 @@ import { anyColumnLayered, bandFloorHeight } from '../columns.ts';
 import { cellX, cellY, type Heightmap } from '../grid.ts';
 import { buildLayerView, commitLayerView, LAYER_VIEW_SLACK_ROWS } from './layerView.ts';
 import type { LayerView, SpillBand, SpillBoundsOf } from './layerView.ts';
+import type { SmoothKernel } from './options.ts';
+
+// Reused median voter buffer: smooth() runs synchronously, so sharing one
+// avoids an allocation per cell per pass.
+const medianScratch: number[] = [];
 
 function movePair(
   cells: Int16Array,
@@ -117,7 +122,7 @@ function laplacianCell(
   boundsOf: SpillBoundsOf | null,
   spanCaps: ReadonlyMap<number, SpillBand> | null,
   falloff: SmoothFalloff | null = null,
-  gauss = false,
+  kernel: SmoothKernel = 'cross',
   bilateral = false,
 ): boolean {
   // Red-black Gauss-Seidel: even cells read odd neighbours untouched this
@@ -130,7 +135,7 @@ function laplacianCell(
   // renormalizes over whoever votes.
   const votes = (h: number): boolean => !bilateral || Math.abs(h - here) <= BAND_HEIGHT;
   let avg: number;
-  if (gauss) {
+  if (kernel === 'gauss') {
     // 3x3 binomial: centre 4, cardinals 2, diagonals 1, divisor 16.
     // Missing edge neighbours drop out; the divisor renormalizes over the
     // remaining voters, keeping the average exact in integer math.
@@ -170,6 +175,21 @@ function laplacianCell(
     }
     if (den === 4) return false;
     avg = Math.trunc(num / den);
+  } else if (kernel === 'median') {
+    // Median over the gated 3x3: deletes speckle symmetrically, with no
+    // shrink and no drift. Lower median of an even voter count.
+    medianScratch.length = 0;
+    medianScratch.push(here);
+    if (x > 0 && votes(cells[k - 1])) medianScratch.push(cells[k - 1]);
+    if (x < size - 1 && votes(cells[k + 1])) medianScratch.push(cells[k + 1]);
+    if (y > 0 && votes(cells[k - size])) medianScratch.push(cells[k - size]);
+    if (y < size - 1 && votes(cells[k + size])) medianScratch.push(cells[k + size]);
+    if (x > 0 && y > 0 && votes(cells[k - size - 1])) medianScratch.push(cells[k - size - 1]);
+    if (x < size - 1 && y > 0 && votes(cells[k - size + 1])) medianScratch.push(cells[k - size + 1]);
+    if (x > 0 && y < size - 1 && votes(cells[k + size - 1])) medianScratch.push(cells[k + size - 1]);
+    if (x < size - 1 && y < size - 1 && votes(cells[k + size + 1])) medianScratch.push(cells[k + size + 1]);
+    medianScratch.sort((a, b) => a - b);
+    avg = medianScratch[(medianScratch.length - 1) >> 1];
   } else {
     let sum = 0;
     let count = 0;
@@ -229,7 +249,7 @@ function laplacianPass(
   boundsOf: SpillBoundsOf | null,
   layer: LayerView | null,
   falloff: SmoothFalloff | null = null,
-  gauss = false,
+  kernel: SmoothKernel = 'cross',
   bilateral = false,
 ): boolean {
   let moved = false;
@@ -237,7 +257,7 @@ function laplacianPass(
     for (let y = minY; y <= maxY; y++) {
       const startX = minX + (((minX + y + parity) & 1) === 0 ? 0 : 1);
       for (let x = startX; x <= maxX; x += 2) {
-        if (laplacianCell(cells, viewBase, size, x, y, pct, changed, boundsOf, layer === null ? null : layer.spanCaps, falloff, gauss, bilateral)) {
+        if (laplacianCell(cells, viewBase, size, x, y, pct, changed, boundsOf, layer === null ? null : layer.spanCaps, falloff, kernel, bilateral)) {
           moved = true;
         }
       }
@@ -256,7 +276,7 @@ export function smooth(
   reachCells: number | null = null,
   laplacePct: number | null = null,
   falloff: SmoothFalloff | null = null,
-  gauss = false,
+  kernel: SmoothKernel = 'cross',
   bilateral = false,
 ): number {
   const seed = bboxSeed ?? changed;
@@ -386,7 +406,7 @@ export function smooth(
         boundsOf,
         layer,
         falloff,
-        gauss,
+        kernel,
         bilateral,
       );
     }

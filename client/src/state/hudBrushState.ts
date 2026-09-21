@@ -12,6 +12,8 @@ import {
   SMOOTH_FEATHER_DEFAULT,
   SMOOTH_FEATHER_MAX,
   SMOOTH_FEATHER_MIN,
+  SMOOTH_KERNELS,
+  SMOOTH_KERNEL_DEFAULT,
   SMOOTH_RIM_DEFAULT,
   SMOOTH_RIM_MAX,
   SMOOTH_RIM_MIN,
@@ -24,6 +26,7 @@ import {
   isValidCarveDepth,
   type SculptProfile,
   type SculptTool,
+  type SmoothKernel,
 } from '@terrace/shared';
 
 export const BRUSH_LADDER_TOP_RADIUS = FULL_BRUSH_RADIUS;
@@ -76,9 +79,9 @@ export const DEFAULT_SMOOTH_FEATHER = SMOOTH_FEATHER_DEFAULT;
 
 export const DEFAULT_SMOOTH_RIM = SMOOTH_RIM_DEFAULT;
 
-export const DEFAULT_SMOOTH_GAUSS = false;
-
 export const DEFAULT_SMOOTH_BILATERAL = false;
+
+export const DEFAULT_SMOOTH_KERNEL: SmoothKernel = SMOOTH_KERNEL_DEFAULT;
 
 export const DEFAULT_CARVE_DEPTH_BANDS = CARVE_DEFAULT_DEPTH_BANDS;
 
@@ -95,8 +98,8 @@ export interface PersistedHudState {
   readonly smoothLambda: number;
   readonly smoothFeather: number;
   readonly smoothRim: number;
-  readonly smoothGauss: boolean;
   readonly smoothBilateral: boolean;
+  readonly smoothKernel: SmoothKernel;
   readonly carveDepthBands: number;
   readonly showControls: boolean;
   readonly panelOpen: boolean;
@@ -110,8 +113,8 @@ export const DEFAULT_HUD_STATE: PersistedHudState = {
   smoothLambda: DEFAULT_SMOOTH_LAMBDA,
   smoothFeather: DEFAULT_SMOOTH_FEATHER,
   smoothRim: DEFAULT_SMOOTH_RIM,
-  smoothGauss: DEFAULT_SMOOTH_GAUSS,
   smoothBilateral: DEFAULT_SMOOTH_BILATERAL,
+  smoothKernel: DEFAULT_SMOOTH_KERNEL,
   carveDepthBands: DEFAULT_CARVE_DEPTH_BANDS,
   showControls: DEFAULT_SHOW_CONTROLS,
   panelOpen: DEFAULT_PANEL_OPEN,
@@ -166,12 +169,15 @@ function readSmoothRim(value: unknown): number {
     : DEFAULT_SMOOTH_RIM;
 }
 
-function readSmoothGauss(value: unknown): boolean {
-  return typeof value === 'boolean' ? value : DEFAULT_SMOOTH_GAUSS;
-}
-
 function readSmoothBilateral(value: unknown): boolean {
   return typeof value === 'boolean' ? value : DEFAULT_SMOOTH_BILATERAL;
+}
+
+function readSmoothKernel(value: unknown): SmoothKernel {
+  if (value === true) return 'gauss';
+  return SMOOTH_KERNELS.includes(value as SmoothKernel)
+    ? (value as SmoothKernel)
+    : DEFAULT_SMOOTH_KERNEL;
 }
 
 /** The wire predicate is the one depth authority; the HUD never re-states it. */
@@ -207,8 +213,8 @@ export function parseHudState(raw: string | null): PersistedHudState {
     smoothLambda: readSmoothLambda(record['smoothLambda']),
     smoothFeather: readSmoothFeather(record['smoothFeather']),
     smoothRim: readSmoothRim(record['smoothRim']),
-    smoothGauss: readSmoothGauss(record['smoothGauss']),
     smoothBilateral: readSmoothBilateral(record['smoothBilateral']),
+    smoothKernel: readSmoothKernel(record['smoothKernel'] ?? record['smoothGauss']),
     carveDepthBands: readCarveDepthBands(record['carveDepthBands']),
     showControls: readShowControls(record['showControls']),
     panelOpen: readPanelOpen(record['panelOpen']),
@@ -257,12 +263,12 @@ const [smoothRim, setSmoothRimSignal] = createSignal<number>(
   stored.smoothRim,
 );
 
-const [smoothGauss, setSmoothGaussSignal] = createSignal<boolean>(
-  stored.smoothGauss,
-);
-
 const [smoothBilateral, setSmoothBilateralSignal] = createSignal<boolean>(
   stored.smoothBilateral,
+);
+
+const [smoothKernel, setSmoothKernelSignal] = createSignal<SmoothKernel>(
+  stored.smoothKernel,
 );
 
 const [carveDepthBands, setCarveDepthBandsSignal] = createSignal<number>(
@@ -286,8 +292,8 @@ function persist(): void {
     smoothLambda: smoothLambda(),
     smoothFeather: smoothFeather(),
     smoothRim: smoothRim(),
-    smoothGauss: smoothGauss(),
     smoothBilateral: smoothBilateral(),
+    smoothKernel: smoothKernel(),
     carveDepthBands: carveDepthBands(),
     showControls: showControls(),
     panelOpen: panelOpen(),
@@ -365,9 +371,10 @@ export function setSmoothRim(rim: number): void {
   persist();
 }
 
-export function setSmoothGauss(gauss: boolean): void {
-  if (gauss === smoothGauss()) return;
-  setSmoothGaussSignal(gauss);
+export function setSmoothKernel(kernel: SmoothKernel): void {
+  if (!SMOOTH_KERNELS.includes(kernel)) return;
+  if (kernel === smoothKernel()) return;
+  setSmoothKernelSignal(kernel);
   persist();
 }
 
@@ -407,7 +414,7 @@ export {
   sculptAlt,
   smoothBilateral,
   smoothFeather,
-  smoothGauss,
+  smoothKernel,
   smoothLambda,
   smoothRim,
   carveDepthBands,

@@ -22,12 +22,12 @@ import {
   setSculptMode,
   setSmoothBilateral,
   setSmoothFeather,
-  setSmoothGauss,
+  setSmoothKernel,
   setSmoothLambda,
   setSmoothRim,
   smoothFeather,
   smoothBilateral,
-  smoothGauss,
+  smoothKernel,
   smoothLambda,
   smoothRim,
   type DenialHint,
@@ -57,6 +57,7 @@ import {
   SMOOTH_LAMBDA_MIN,
   SMOOTH_RIM_MAX,
   SMOOTH_RIM_MIN,
+  type SmoothKernel,
   type SculptProfile,
   type SculptTool,
 } from '@terrace/shared';
@@ -413,17 +414,20 @@ export function BrushModeler(): JSX.Element {
           </div>
         </div>
         <div class="hud-row">
-          <span class="controls-label">Gauss</span>
-          <input
-            type="checkbox"
-            class="controls-check"
-            aria-label="Use the Gaussian smooth kernel"
-            title="Gauss: 3x3 binomial kernel instead of the 4-cross average. Smooths along contours; off by default."
-            checked={smoothGauss()}
+          <span class="controls-label">Kernel</span>
+          <select
+            class="controls-select"
+            aria-label="Smooth kernel"
+            title="Kernel: the smooth average. Cross is today; Gauss blurs along contours; Median deletes speckle."
+            value={smoothKernel()}
             onChange={(event) =>
-              setSmoothGauss(event.currentTarget.checked)
+              setSmoothKernel(event.currentTarget.value as SmoothKernel)
             }
-          />
+          >
+            <option value="cross">Cross</option>
+            <option value="gauss">Gauss</option>
+            <option value="median">Median</option>
+          </select>
         </div>
         <div class="hud-row">
           <span class="controls-label">Bilateral</span>

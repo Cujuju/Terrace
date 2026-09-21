@@ -32,6 +32,8 @@ import {
   SMOOTH_FEATHER_DEFAULT,
   SMOOTH_FEATHER_MAX,
   SMOOTH_FEATHER_MIN,
+  SMOOTH_KERNELS,
+  SMOOTH_KERNEL_DEFAULT,
   SMOOTH_LAMBDA_DEFAULT,
   SMOOTH_RIM_DEFAULT,
   SMOOTH_RIM_MAX,
@@ -39,7 +41,7 @@ import {
   SMOOTH_LAMBDA_MAX,
   SMOOTH_LAMBDA_MIN,
 } from './sculpt/options.ts';
-import type { SculptOptions } from './sculpt/options.ts';
+import type { SculptOptions, SmoothKernel } from './sculpt/options.ts';
 
 export type { CellDiff } from './sculpt/diff.ts';
 
@@ -76,6 +78,8 @@ export {
   SMOOTH_FEATHER_DEFAULT,
   SMOOTH_FEATHER_MAX,
   SMOOTH_FEATHER_MIN,
+  SMOOTH_KERNELS,
+  SMOOTH_KERNEL_DEFAULT,
   SMOOTH_LAMBDA_DEFAULT,
   SMOOTH_RIM_DEFAULT,
   SMOOTH_RIM_MAX,
@@ -96,6 +100,7 @@ export type {
   SculptProfile,
   SculptSpill,
   SculptTool,
+  SmoothKernel,
   SweepOrigin,
 } from './sculpt/options.ts';
 
@@ -135,7 +140,9 @@ export function applySculpt(
     SMOOTH_RIM_MAX,
     Math.max(SMOOTH_RIM_MIN, options?.smoothRim ?? SMOOTH_RIM_DEFAULT),
   );
-  const smoothGauss = options?.smoothGauss ?? false;
+  const smoothKernel: SmoothKernel = SMOOTH_KERNELS.includes(options?.smoothKernel ?? SMOOTH_KERNEL_DEFAULT)
+    ? (options?.smoothKernel ?? SMOOTH_KERNEL_DEFAULT)
+    : SMOOTH_KERNEL_DEFAULT;
   const smoothBilateral = options?.smoothBilateral ?? false;
 
   if (spanBand !== null && spanIndexCoveringBand(map, cx, cy, spanBand) === null) {
@@ -267,7 +274,7 @@ export function applySculpt(
       anchoredSmooth && (smoothFeather > 0 || smoothRim > 0)
         ? { cx, cy, reach: smoothCascadeReachCells(radius), feather: smoothFeather, rim: smoothRim }
         : null,
-      smoothGauss,
+      smoothKernel,
       smoothBilateral,
     );
   }

@@ -59,6 +59,14 @@ export const SMOOTH_FEATHER_DEFAULT = 0;
 export const SMOOTH_FEATHER_MIN = 0;
 export const SMOOTH_FEATHER_MAX = 100;
 
+/** The smooth average: cross, gaussian blur, or median denoise. */
+/** The smooth average: cross, gaussian blur, or median denoise. */
+export type SmoothKernel = 'cross' | 'gauss' | 'median';
+
+export const SMOOTH_KERNELS: readonly SmoothKernel[] = ['cross', 'gauss', 'median'];
+
+export const SMOOTH_KERNEL_DEFAULT: SmoothKernel = 'cross';
+
 /** Rim clamp taper as percent of reach, 0..100. 0 is the full band clamp. */
 export const SMOOTH_RIM_DEFAULT = 0;
 export const SMOOTH_RIM_MIN = 0;
@@ -87,10 +95,10 @@ export interface SculptOptions {
   readonly smoothFeather?: number;
   /** Tighten the smooth rim clamp: full band inside, freezing at the reach. */
   readonly smoothRim?: number;
-  /** Use the 3x3 binomial kernel instead of the 4-cross average. */
-  readonly smoothGauss?: boolean;
   /** Across-cliff neighbours sit out of the smooth average. */
   readonly smoothBilateral?: boolean;
+  /** Smooth average kernel. */
+  readonly smoothKernel?: SmoothKernel;
 }
 
 export interface SweepOrigin {
@@ -114,8 +122,8 @@ export interface ResolvedSculptOptions {
   readonly smoothLambda: number;
   readonly smoothFeather: number;
   readonly smoothRim: number;
-  readonly smoothGauss: boolean;
   readonly smoothBilateral: boolean;
+  readonly smoothKernel: SmoothKernel;
 }
 
 export const LIBRARY_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
@@ -132,6 +140,6 @@ export const LIBRARY_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
   smoothLambda: SMOOTH_LAMBDA_DEFAULT,
   smoothFeather: SMOOTH_FEATHER_DEFAULT,
   smoothRim: SMOOTH_RIM_DEFAULT,
-  smoothGauss: false,
   smoothBilateral: false,
+  smoothKernel: SMOOTH_KERNEL_DEFAULT,
 };
