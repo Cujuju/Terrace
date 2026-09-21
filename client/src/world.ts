@@ -657,7 +657,8 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
       if (eastChunk && !cellDrawn(mirror, drawnGround, x1, z0)) return null;
       if (southChunk && !cellDrawn(mirror, drawnGround, x0, z1)) return null;
       if (eastChunk && southChunk && !cellDrawn(mirror, drawnGround, x1, z1)) return null;
-      return drawnGround.capYAt(cellX, cellZ);
+      // Gate on floored neighbours; sample the exact fractional spot.
+      return drawnGround.capYAtFractional(cellX, cellZ);
     },
 
     onTerrainChanged(handler: () => void): () => void {

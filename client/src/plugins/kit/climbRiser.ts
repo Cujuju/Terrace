@@ -1,5 +1,6 @@
 import {
   CLIMB_BODY_HALF_WIDTH_CELLS,
+  DRAWN_GROUND_CELL_CENTRE,
   WALK_SPEED_FOR_COSTING_WORLD_UNITS_PER_SECOND,
   cellsAcross,
 } from '@terrace/shared';
@@ -39,12 +40,19 @@ function riserStandOf(
 
   const lowX = Math.floor(mover.x);
   const lowY = Math.floor(mover.y);
-  const groundAtFoot = ctx.drawnGroundYAt(lowX, lowY);
+  // Cell-grid probes sample centres under exact-spot ground sampling.
+  const groundAtFoot = ctx.drawnGroundYAt(
+    lowX + DRAWN_GROUND_CELL_CENTRE,
+    lowY + DRAWN_GROUND_CELL_CENTRE,
+  );
   if (groundAtFoot === null || groundAtFoot >= feetY) return null;
 
   for (let step = 1; step <= RISER_PROBE_STEPS; step++) {
     const along = step * BAND_GRID_CELLS;
-    const capY = ctx.drawnGroundYAt(lowX + normalX * along, lowY + normalY * along);
+    const capY = ctx.drawnGroundYAt(
+      lowX + DRAWN_GROUND_CELL_CENTRE + normalX * along,
+      lowY + DRAWN_GROUND_CELL_CENTRE + normalY * along,
+    );
     if (capY === null) return null;
     if (capY <= feetY) continue;
     const stand = along - RISER_PROBE_HALF_STEP - CLIMB_BODY_HALF_WIDTH_CELLS;

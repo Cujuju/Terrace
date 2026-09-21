@@ -28,6 +28,7 @@ export function followGroundY(
   return previousY + Math.max(-budget, Math.min(budget, gap));
 }
 
+// Fractional cell coords at the body's true spot; the gate stays floored.
 export type GroundSampler = (cellX: number, cellY: number) => number | null;
 
 export function drawnGroundSampler(ctx: ClientPluginCtx): GroundSampler {

@@ -79,7 +79,8 @@ function createClumpField(color: number, capacity: number): ClumpField {
       let drawn = 0;
       for (const clump of clumps) {
         if (drawn >= capacity) break;
-        const groundY = groundAt(clump.cellX, clump.cellY);
+        // Clumps draw at cell centres; sample the drawn centre.
+        const groundY = groundAt(clump.cellX + 0.5, clump.cellY + 0.5);
         if (groundY === null) continue;
 
         const offset = jitter(clump.cellX, clump.cellY, clump.index);

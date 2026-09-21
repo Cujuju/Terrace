@@ -195,40 +195,18 @@ export function swimmerFrameY(
   return Math.min(Math.max(eased, bounds.lowest), bounds.highest);
 }
 
-const HULL_SAMPLE_ALONG: readonly number[] = [0, 1, -1, 0, 0];
-const HULL_SAMPLE_ACROSS: readonly number[] = [0, 0, 0, 1, -1];
-const HULL_SAMPLE_COUNT = HULL_SAMPLE_ALONG.length;
-
 export function swimmerSeabedY(
   sampleRenderedY: (cellX: number, cellY: number) => number | null,
   x: number,
   y: number,
-  heading: number,
-  profile: SwimProfile,
-  modelScale: number,
+  _heading: number,
+  _profile: SwimProfile,
+  _modelScale: number,
 ): number | null {
-  const along = cellsAcross(profile.halfLength * modelScale);
-  const across = cellsAcross(profile.halfWidth * modelScale);
-  const forwardX = Math.cos(heading);
-  const forwardY = Math.sin(heading);
-  const rightX = -forwardY;
-  const rightY = forwardX;
-
-  let seabed: number | null = null;
-  for (let i = 0; i < HULL_SAMPLE_COUNT; i++) {
-    const alongOffset = HULL_SAMPLE_ALONG[i]! * along;
-    const acrossOffset = HULL_SAMPLE_ACROSS[i]! * across;
-    const sampled = sampleRenderedY(
-      Math.floor(x + forwardX * alongOffset + rightX * acrossOffset),
-      Math.floor(y + forwardY * alongOffset + rightY * acrossOffset),
-    );
-    if (sampled === null) continue;
-    // Sample 0 is the hull centre. Overhanging ends are transient
-    // drawn-terrain lag, but a centre over land is invalid: skip the frame.
-    if (i === 0 && sampled > SEA_SURFACE_WORLD_Y) return null;
-    if (sampled > SEA_SURFACE_WORLD_Y) continue;
-    if (seabed === null || sampled > seabed) seabed = sampled;
-  }
+  const seabed = sampleRenderedY(x, y);
+  if (seabed === null) return null;
+  // Hull-centre exact spot; a centre over land is invalid: skip the frame.
+  if (seabed > SEA_SURFACE_WORLD_Y) return null;
   return seabed;
 }
 
@@ -299,28 +277,15 @@ export const WALKER_FOOTPRINT_HALF_EXTENT_CELLS_BY_SPECIES: Readonly<
   ]),
 ) as Readonly<Record<WildlifeSpecies, number | null>>;
 
-const FOOTPRINT_SAMPLE_DX: readonly number[] = [0, -1, -1, 1, 1];
-const FOOTPRINT_SAMPLE_DY: readonly number[] = [0, -1, 1, -1, 1];
-const FOOTPRINT_SAMPLE_COUNT = FOOTPRINT_SAMPLE_DX.length;
-
 export function walkerGroundY(
   sampleRenderedY: (cellX: number, cellY: number) => number | null,
   x: number,
   y: number,
   species: WildlifeSpecies,
 ): number | null {
-  const halfExtent = WALKER_FOOTPRINT_HALF_EXTENT_CELLS_BY_SPECIES[species];
-  if (halfExtent === null) {
+  if (WALKER_FOOTPRINT_HALF_EXTENT_CELLS_BY_SPECIES[species] === null) {
     throw new Error(`walkerGroundY: "${species}" is not a walker and has no ground footprint`);
   }
-  const drawnHalfExtent = halfExtent * speciesModelScale(species);
-  let ground: number | null = null;
-  for (let i = 0; i < FOOTPRINT_SAMPLE_COUNT; i++) {
-    const sampled = sampleRenderedY(
-      Math.floor(x + FOOTPRINT_SAMPLE_DX[i]! * drawnHalfExtent),
-      Math.floor(y + FOOTPRINT_SAMPLE_DY[i]! * drawnHalfExtent),
-    );
-    if (sampled !== null && (ground === null || sampled > ground)) ground = sampled;
-  }
-  return ground;
+  // Body-centre exact spot; a straddled riser defers to climbHeight upstream.
+  return sampleRenderedY(x, y);
 }

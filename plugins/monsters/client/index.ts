@@ -1,9 +1,10 @@
 import { Group, type PointLight } from 'three';
-import { CELL_WORLD_SIZE, MAX_HEIGHT, MAX_RELIEF_WORLD_UNITS } from '@terrace/shared';
+import { BAND_HEIGHT, CELL_WORLD_SIZE, drawnBandOfSample } from '@terrace/shared';
 import {
   drawnGroundSampler,
   followGroundY,
 } from '../../../client/src/plugins/kit/groundFollow.ts';
+import { HEIGHT_WORLD_SCALE } from '../../../client/src/worldScale.ts';
 import {
   advanceClimbRiserShift,
   newClimbRiserShift,
@@ -11,8 +12,6 @@ import {
 } from '../../../client/src/plugins/kit/climbRiser.ts';
 import { moverGaitOf } from '../../../client/src/plugins/kit/moverGait.ts';
 import { moverStanceFromWire } from '@terrace/shared';
-
-const HEIGHT_WORLD_SCALE = MAX_RELIEF_WORLD_UNITS / MAX_HEIGHT;
 import type {
   ClientPluginCtx,
   TerraceClientPlugin,
@@ -217,8 +216,11 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
 
     const root = view.model.root;
     const placedY = monsterOriginY(monster.kind, groundAt, monster.x, monster.y);
+    // Raw height through the drawn function, agreeing with drawn caps.
     const targetY =
-      monster.climbHeight === null ? placedY : monster.climbHeight * HEIGHT_WORLD_SCALE;
+      monster.climbHeight === null
+        ? placedY
+        : drawnBandOfSample(monster.climbHeight) * BAND_HEIGHT * HEIGHT_WORLD_SCALE;
     const drawnY = followGroundY(view.drawnY, targetY, dt);
     view.drawnY = drawnY;
     advanceClimbRiserShift(view.riserShift, ctx, monster, drawnY, dt);

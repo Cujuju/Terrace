@@ -1,10 +1,11 @@
 import { Group } from 'three';
 import { NO_SAMPLE } from '../../../client/src/plugins/kit/viewReconcile.ts';
-import { CELL_WORLD_SIZE, MAX_HEIGHT, MAX_RELIEF_WORLD_UNITS } from '@terrace/shared';
+import { BAND_HEIGHT, CELL_WORLD_SIZE, drawnBandOfSample } from '@terrace/shared';
 import {
   drawnGroundSampler,
   followGroundY,
 } from '../../../client/src/plugins/kit/groundFollow.ts';
+import { HEIGHT_WORLD_SCALE } from '../../../client/src/worldScale.ts';
 import {
   advanceClimbRiserShift,
   newClimbRiserShift,
@@ -12,8 +13,6 @@ import {
 } from '../../../client/src/plugins/kit/climbRiser.ts';
 import { moverGaitOf } from '../../../client/src/plugins/kit/moverGait.ts';
 import { moverStanceFromWire } from '@terrace/shared';
-
-const HEIGHT_WORLD_SCALE = MAX_RELIEF_WORLD_UNITS / MAX_HEIGHT;
 import type {
   ClientPluginCtx,
   MoverPose,
@@ -112,8 +111,11 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
       view.riserShift.y = 0;
       continue;
     }
+    // Raw height through the drawn function, agreeing with drawn caps.
     const targetY =
-      pilgrim.climbHeight === null ? terrainY : pilgrim.climbHeight * HEIGHT_WORLD_SCALE;
+      pilgrim.climbHeight === null
+        ? terrainY
+        : drawnBandOfSample(pilgrim.climbHeight) * BAND_HEIGHT * HEIGHT_WORLD_SCALE;
     const drawnY = followGroundY(view.drawnY, targetY, dt);
     view.drawnY = drawnY;
     advanceClimbRiserShift(view.riserShift, ctx, pilgrim, drawnY, dt);

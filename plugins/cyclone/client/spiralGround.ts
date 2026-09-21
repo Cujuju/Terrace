@@ -59,8 +59,8 @@ export function createColumnGround(): ColumnGround {
           const along = alongAt(index);
           const angle = TWO_PI * (columnBearingTurns(arm, along) - spinTurns);
           const reach = radius * columnRadiusFraction(along);
-          const cellX = Math.round((x + Math.cos(angle) * reach) / CELL_WORLD_SIZE);
-          const cellZ = Math.round((z + Math.sin(angle) * reach) / CELL_WORLD_SIZE);
+          const cellX = (x + Math.cos(angle) * reach) / CELL_WORLD_SIZE;
+          const cellZ = (z + Math.sin(angle) * reach) / CELL_WORLD_SIZE;
           const terrainY = groundAt(cellX, cellZ);
           write(
             column,

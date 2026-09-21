@@ -234,14 +234,17 @@ describe('vertical placement', () => {
 });
 
 describe('walkerGroundY — footprint sampling', () => {
-  it('stands on the highest band the footprint overlaps, not the centre cell, and returns null only when every sample is null', () => {
-    const sample = (cx: number) => (cx >= 10 ? 2 : 0);
-    expect(walkerGroundY(sample, 9.8, 5.5, 'grazer')).toBe(2);
-    expect(walkerGroundY(sample, 8.0, 5.5, 'grazer')).toBe(0);
+  it('stands on the band under the fractional body centre, deferring straddled risers to climbHeight', () => {
+    const seen: number[] = [];
+    const sample = (cx: number, cy: number): number | null => {
+      seen.push(cx, cy);
+      return cx >= 10 ? 2 : 0;
+    };
+    expect(walkerGroundY(sample, 9.8, 5.5, 'grazer')).toBe(0);
+    expect(walkerGroundY(sample, 10.2, 5.5, 'grazer')).toBe(2);
+    expect(seen).toEqual([9.8, 5.5, 10.2, 5.5]);
 
     expect(walkerGroundY(() => null, 5, 5, 'grazer')).toBeNull();
-    const halfNull = (cx: number) => (cx >= 5 ? 1 : null);
-    expect(walkerGroundY(halfNull, 5.5, 5.5, 'grazer')).toBe(1);
   });
 
   it('probes the ground in CELLS, not in the world units the model is built in', () => {

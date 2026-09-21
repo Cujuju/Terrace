@@ -1,7 +1,5 @@
 import { Group } from 'three';
-import { CELL_WORLD_SIZE, MAX_HEIGHT, MAX_RELIEF_WORLD_UNITS } from '@terrace/shared';
-
-const HEIGHT_WORLD_SCALE = MAX_RELIEF_WORLD_UNITS / MAX_HEIGHT;
+import { BAND_HEIGHT, CELL_WORLD_SIZE, drawnBandOfSample } from '@terrace/shared';
 import type {
   ClientPluginCtx,
   TerraceClientPlugin,
@@ -26,6 +24,7 @@ import {
   drawnGroundSampler,
   followGroundY,
 } from '../../../client/src/plugins/kit/groundFollow.ts';
+import { HEIGHT_WORLD_SCALE } from '../../../client/src/worldScale.ts';
 import {
   advanceClimbRiserShift,
   newClimbRiserShift,
@@ -195,7 +194,12 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     const drawnY =
       entity.climbHeight === null
         ? creatureWorldY(entity.species, terrainY, sizeClass, previousDrawnY, sinceFull)
-        : followGroundY(previousDrawnY, entity.climbHeight * HEIGHT_WORLD_SCALE, sinceFull);
+        // Raw height through the drawn function, agreeing with drawn caps.
+        : followGroundY(
+            previousDrawnY,
+            drawnBandOfSample(entity.climbHeight) * BAND_HEIGHT * HEIGHT_WORLD_SCALE,
+            sinceFull,
+          );
     advanceClimbRiserShift(view.riserShift, ctx, entity, drawnY, sinceFull);
     const drawnX = (entity.x + view.riserShift.x) * CELL_WORLD_SIZE;
     const drawnZ = (entity.y + view.riserShift.y) * CELL_WORLD_SIZE;

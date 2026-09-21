@@ -44,20 +44,10 @@ export function walkerGroundWorldY(
   sampleRenderedY: (cellX: number, cellY: number) => number | null,
   x: number,
   y: number,
-  halfExtentCells: number,
+  _halfExtentCells: number,
 ): number | null {
-  let ground: number | null = null;
-  for (const [dx, dy] of [
-    [0, 0],
-    [-halfExtentCells, -halfExtentCells],
-    [-halfExtentCells, halfExtentCells],
-    [halfExtentCells, -halfExtentCells],
-    [halfExtentCells, halfExtentCells],
-  ]) {
-    const sampled = sampleRenderedY(Math.floor(x + dx!), Math.floor(y + dy!));
-    if (sampled !== null && (ground === null || sampled > ground)) ground = sampled;
-  }
-  return ground;
+  // Body-centre exact spot; a straddled riser defers to climbHeight upstream.
+  return sampleRenderedY(x, y);
 }
 
 export function monsterOriginY(
@@ -71,7 +61,7 @@ export function monsterOriginY(
     const ground = walkerGroundWorldY(sampleRenderedY, x, y, rule.footGroundHalfExtentCells);
     return ground ?? UNKNOWN_TERRAIN_WORLD_Y;
   }
-  return monsterOriginWorldY(sampleRenderedY(Math.floor(x), Math.floor(y)), rule.lurkDepth);
+  return monsterOriginWorldY(sampleRenderedY(x, y), rule.lurkDepth);
 }
 
 export function submergedFraction(originY: number, totalHeight: number): number {

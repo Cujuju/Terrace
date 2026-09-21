@@ -198,16 +198,16 @@ describe('the yeti is placed on the ground, not in the water', () => {
   }
 
   it('stands ON the terrain — the origin IS the ground height', () => {
-    const ground = sampler({ '10,10': 9, '9,9': 9, '9,11': 9, '11,9': 9, '11,11': 9 });
+    const ground = sampler({ '10.5,10.5': 9 });
     expect(monsterOriginY('yeti', ground, 10.5, 10.5)).toBe(9);
   });
 
-  it('stands on the HIGHEST band its feet overlap, not the one under its centre', () => {
-    const straddling = sampler({ '10,10': 9, '11,11': 12, '9,9': 9, '9,11': 9, '11,9': 9 });
-    expect(monsterOriginY('yeti', straddling, 10.5, 10.5)).toBe(12);
+  it('stands on the band under its fractional centre, deferring straddled risers to climbHeight', () => {
+    const straddling = sampler({ '10.5,10.5': 9, '11,11': 12 });
+    expect(monsterOriginY('yeti', straddling, 10.5, 10.5)).toBe(9);
     expect(
       walkerGroundWorldY(straddling, 10.5, 10.5, cellsAcross(YETI_FOOT_GROUND_HALF_EXTENT)),
-    ).toBe(12);
+    ).toBe(9);
   });
 });
 

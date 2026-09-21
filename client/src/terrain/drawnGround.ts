@@ -20,6 +20,9 @@ function chunkOf(cell: number): number {
 export interface DrawnGround {
   capYAt(cellX: number, cellZ: number): number;
   bandAt(cellX: number, cellZ: number): number;
+  // Exact fractional spot for entity queries; cell probes use capYAt.
+  capYAtFractional(x: number, z: number): number;
+  bandAtFractional(x: number, z: number): number;
   nearestOnContour(
     threshold: number,
     cellX: number,
@@ -40,13 +43,24 @@ export function createDrawnGround(mirror: TerrainMirror, store: DrawnGroundStore
       cellZ + DRAWN_GROUND_CELL_CENTRE,
     );
 
+  const drawnBandOfFractional = (x: number, z: number): number =>
+    drawnBandAt(mirror.map, x, z);
+
   return {
     capYAt(cellX: number, cellZ: number): number {
       return drawnBandCapY(drawnBandOf(cellX, cellZ));
     },
 
+    capYAtFractional(x: number, z: number): number {
+      return drawnBandCapY(drawnBandOfFractional(x, z));
+    },
+
     bandAt(cellX: number, cellZ: number): number {
       return drawnBandOf(cellX, cellZ);
+    },
+
+    bandAtFractional(x: number, z: number): number {
+      return drawnBandOfFractional(x, z);
     },
 
     nearestOnContour(threshold, cellX, cellZ) {
