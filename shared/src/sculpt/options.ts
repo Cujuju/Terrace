@@ -99,6 +99,10 @@ export interface SculptOptions {
   readonly smoothBilateral?: boolean;
   /** Ignore sub-unit pulls instead of forcing a unit step. */
   readonly smoothFullSteps?: boolean;
+  /** Gate dust on later passes: melt fast, settle clean. */
+  readonly smoothCooldown?: boolean;
+  /** Round-half-even averages instead of truncating toward zero. */
+  readonly smoothUnbiased?: boolean;
   /** Smooth average kernel. */
   readonly smoothKernel?: SmoothKernel;
 }
@@ -126,6 +130,8 @@ export interface ResolvedSculptOptions {
   readonly smoothRim: number;
   readonly smoothBilateral: boolean;
   readonly smoothFullSteps: boolean;
+  readonly smoothCooldown: boolean;
+  readonly smoothUnbiased: boolean;
   readonly smoothKernel: SmoothKernel;
 }
 
@@ -145,5 +151,7 @@ export const LIBRARY_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
   smoothRim: SMOOTH_RIM_DEFAULT,
   smoothBilateral: false,
   smoothFullSteps: false,
+  smoothCooldown: false,
+  smoothUnbiased: false,
   smoothKernel: SMOOTH_KERNEL_DEFAULT,
 };

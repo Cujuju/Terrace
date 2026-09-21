@@ -83,6 +83,10 @@ export const DEFAULT_SMOOTH_BILATERAL = false;
 
 export const DEFAULT_SMOOTH_FULL_STEPS = false;
 
+export const DEFAULT_SMOOTH_COOLDOWN = false;
+
+export const DEFAULT_SMOOTH_UNBIASED = false;
+
 export const DEFAULT_SMOOTH_KERNEL: SmoothKernel = SMOOTH_KERNEL_DEFAULT;
 
 export const DEFAULT_CARVE_DEPTH_BANDS = CARVE_DEFAULT_DEPTH_BANDS;
@@ -102,6 +106,8 @@ export interface PersistedHudState {
   readonly smoothRim: number;
   readonly smoothBilateral: boolean;
   readonly smoothFullSteps: boolean;
+  readonly smoothCooldown: boolean;
+  readonly smoothUnbiased: boolean;
   readonly smoothKernel: SmoothKernel;
   readonly carveDepthBands: number;
   readonly showControls: boolean;
@@ -118,6 +124,8 @@ export const DEFAULT_HUD_STATE: PersistedHudState = {
   smoothRim: DEFAULT_SMOOTH_RIM,
   smoothBilateral: DEFAULT_SMOOTH_BILATERAL,
   smoothFullSteps: DEFAULT_SMOOTH_FULL_STEPS,
+  smoothCooldown: DEFAULT_SMOOTH_COOLDOWN,
+  smoothUnbiased: DEFAULT_SMOOTH_UNBIASED,
   smoothKernel: DEFAULT_SMOOTH_KERNEL,
   carveDepthBands: DEFAULT_CARVE_DEPTH_BANDS,
   showControls: DEFAULT_SHOW_CONTROLS,
@@ -181,6 +189,14 @@ function readSmoothFullSteps(value: unknown): boolean {
   return typeof value === 'boolean' ? value : DEFAULT_SMOOTH_FULL_STEPS;
 }
 
+function readSmoothCooldown(value: unknown): boolean {
+  return typeof value === 'boolean' ? value : DEFAULT_SMOOTH_COOLDOWN;
+}
+
+function readSmoothUnbiased(value: unknown): boolean {
+  return typeof value === 'boolean' ? value : DEFAULT_SMOOTH_UNBIASED;
+}
+
 function readSmoothKernel(value: unknown): SmoothKernel {
   if (value === true) return 'gauss';
   return SMOOTH_KERNELS.includes(value as SmoothKernel)
@@ -223,6 +239,8 @@ export function parseHudState(raw: string | null): PersistedHudState {
     smoothRim: readSmoothRim(record['smoothRim']),
     smoothBilateral: readSmoothBilateral(record['smoothBilateral']),
     smoothFullSteps: readSmoothFullSteps(record['smoothFullSteps']),
+    smoothCooldown: readSmoothCooldown(record['smoothCooldown']),
+    smoothUnbiased: readSmoothUnbiased(record['smoothUnbiased']),
     smoothKernel: readSmoothKernel(record['smoothKernel'] ?? record['smoothGauss']),
     carveDepthBands: readCarveDepthBands(record['carveDepthBands']),
     showControls: readShowControls(record['showControls']),
@@ -280,6 +298,14 @@ const [smoothFullSteps, setSmoothFullStepsSignal] = createSignal<boolean>(
   stored.smoothFullSteps,
 );
 
+const [smoothCooldown, setSmoothCooldownSignal] = createSignal<boolean>(
+  stored.smoothCooldown,
+);
+
+const [smoothUnbiased, setSmoothUnbiasedSignal] = createSignal<boolean>(
+  stored.smoothUnbiased,
+);
+
 const [smoothKernel, setSmoothKernelSignal] = createSignal<SmoothKernel>(
   stored.smoothKernel,
 );
@@ -307,6 +333,8 @@ function persist(): void {
     smoothRim: smoothRim(),
     smoothBilateral: smoothBilateral(),
     smoothFullSteps: smoothFullSteps(),
+    smoothCooldown: smoothCooldown(),
+    smoothUnbiased: smoothUnbiased(),
     smoothKernel: smoothKernel(),
     carveDepthBands: carveDepthBands(),
     showControls: showControls(),
@@ -404,6 +432,18 @@ export function setSmoothFullSteps(full: boolean): void {
   persist();
 }
 
+export function setSmoothCooldown(cooldown: boolean): void {
+  if (cooldown === smoothCooldown()) return;
+  setSmoothCooldownSignal(cooldown);
+  persist();
+}
+
+export function setSmoothUnbiased(unbiased: boolean): void {
+  if (unbiased === smoothUnbiased()) return;
+  setSmoothUnbiasedSignal(unbiased);
+  persist();
+}
+
 export function setCarveDepthBands(bands: number): void {
   const clamped = Math.min(
     CARVE_MAX_DEPTH_BANDS,
@@ -435,6 +475,8 @@ export {
   smoothBilateral,
   smoothFeather,
   smoothFullSteps,
+  smoothCooldown,
+  smoothUnbiased,
   smoothKernel,
   smoothLambda,
   smoothRim,

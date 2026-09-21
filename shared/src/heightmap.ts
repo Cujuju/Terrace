@@ -145,6 +145,8 @@ export function applySculpt(
     : SMOOTH_KERNEL_DEFAULT;
   const smoothBilateral = options?.smoothBilateral ?? false;
   const smoothFullSteps = options?.smoothFullSteps ?? false;
+  const smoothCooldown = options?.smoothCooldown ?? false;
+  const smoothUnbiased = options?.smoothUnbiased ?? false;
 
   if (spanBand !== null && spanIndexCoveringBand(map, cx, cy, spanBand) === null) {
     return [];
@@ -278,6 +280,8 @@ export function applySculpt(
       smoothKernel,
       smoothBilateral,
       smoothFullSteps,
+      smoothCooldown,
+      smoothUnbiased,
     );
   }
 

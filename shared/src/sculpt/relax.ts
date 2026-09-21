@@ -90,6 +90,19 @@ function brushDist(cx: number, cy: number, x: number, y: number): number {
   return Math.floor(Math.sqrt(dx * dx + dy * dy));
 }
 
+// Round-half-even of num/den for den > 0: halves go to the even neighbour,
+// killing truncation's drift toward zero. Exact integer math either way.
+function divHalfEven(num: number, den: number): number {
+  const q = Math.trunc(num / den);
+  const twice = (num - q * den) * 2;
+  if (twice > den) return q + 1;
+  if (twice < -den) return q - 1;
+  if (twice === den || twice === -den) {
+    if ((q & 1) !== 0) return q + (num >= 0 ? 1 : -1);
+  }
+  return q;
+}
+
 // Plateau falloff: full strength inside the footprint so the clicked cell
 // co-moves with its patch; only the outer feather percent fades to the rim.
 function falloffStrength(pct: number, falloff: SmoothFalloff, x: number, y: number): number {
@@ -125,6 +138,7 @@ function laplacianCell(
   kernel: SmoothKernel = 'cross',
   bilateral = false,
   fullSteps = false,
+  unbiased = false,
 ): boolean {
   // Red-black Gauss-Seidel: even cells read odd neighbours untouched this
   // pass, then odd cells read the new evens. No snapshot copy is allocated.
@@ -175,7 +189,7 @@ function laplacianCell(
       den += 1;
     }
     if (den === 4) return false;
-    avg = Math.trunc(num / den);
+    avg = unbiased ? divHalfEven(num, den) : Math.trunc(num / den);
   } else if (kernel === 'median') {
     // Median over the gated 3x3: deletes speckle symmetrically, with no
     // shrink and no drift. Lower median of an even voter count.
@@ -211,7 +225,7 @@ function laplacianCell(
       count++;
     }
     if (count === 0) return false;
-    avg = Math.trunc(sum / count);
+    avg = unbiased ? divHalfEven(sum, count) : Math.trunc(sum / count);
   }
   if (avg === here) return false;
   const eff = falloff === null ? pct : falloffStrength(pct, falloff, x, y);
@@ -253,13 +267,14 @@ function laplacianPass(
   kernel: SmoothKernel = 'cross',
   bilateral = false,
   fullSteps = false,
+  unbiased = false,
 ): boolean {
   let moved = false;
   for (let parity = 0; parity < 2; parity++) {
     for (let y = minY; y <= maxY; y++) {
       const startX = minX + (((minX + y + parity) & 1) === 0 ? 0 : 1);
       for (let x = startX; x <= maxX; x += 2) {
-        if (laplacianCell(cells, viewBase, size, x, y, pct, changed, boundsOf, layer === null ? null : layer.spanCaps, falloff, kernel, bilateral, fullSteps)) {
+        if (laplacianCell(cells, viewBase, size, x, y, pct, changed, boundsOf, layer === null ? null : layer.spanCaps, falloff, kernel, bilateral, fullSteps, unbiased)) {
           moved = true;
         }
       }
@@ -281,6 +296,8 @@ export function smooth(
   kernel: SmoothKernel = 'cross',
   bilateral = false,
   fullSteps = false,
+  cooldown = false,
+  unbiased = false,
 ): number {
   const seed = bboxSeed ?? changed;
   if (seed.size === 0) return 0;
@@ -411,7 +428,10 @@ export function smooth(
         falloff,
         kernel,
         bilateral,
-        fullSteps,
+        // Cool-down: the first pass melts with unit steps, later passes
+        // settle without etching.
+        fullSteps || (cooldown && pass > 0),
+        unbiased,
       );
     }
 

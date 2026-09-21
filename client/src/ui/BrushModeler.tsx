@@ -23,12 +23,16 @@ import {
   setSmoothBilateral,
   setSmoothFeather,
   setSmoothFullSteps,
+  setSmoothCooldown,
+  setSmoothUnbiased,
   setSmoothKernel,
   setSmoothLambda,
   setSmoothRim,
   smoothFeather,
   smoothBilateral,
   smoothFullSteps,
+  smoothCooldown,
+  smoothUnbiased,
   smoothKernel,
   smoothLambda,
   smoothRim,
@@ -454,6 +458,32 @@ export function BrushModeler(): JSX.Element {
             checked={smoothFullSteps()}
             onChange={(event) =>
               setSmoothFullSteps(event.currentTarget.checked)
+            }
+          />
+        </div>
+        <div class="hud-row">
+          <span class="controls-label">Cooldown</span>
+          <input
+            type="checkbox"
+            class="controls-check"
+            aria-label="Melt fast then settle clean"
+            title="Cooldown: the first pass melts with unit steps, later passes settle without etching. Off by default."
+            checked={smoothCooldown()}
+            onChange={(event) =>
+              setSmoothCooldown(event.currentTarget.checked)
+            }
+          />
+        </div>
+        <div class="hud-row">
+          <span class="controls-label">Unbiased</span>
+          <input
+            type="checkbox"
+            class="controls-check"
+            aria-label="Round averages to even"
+            title="Unbiased: round-half-even averages instead of truncating toward zero. Kills systematic drift; off by default."
+            checked={smoothUnbiased()}
+            onChange={(event) =>
+              setSmoothUnbiased(event.currentTarget.checked)
             }
           />
         </div>

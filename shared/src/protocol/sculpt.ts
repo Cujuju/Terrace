@@ -46,6 +46,8 @@ export interface SculptIntent {
   smoothRim?: number;
   smoothBilateral?: boolean;
   smoothFullSteps?: boolean;
+  smoothCooldown?: boolean;
+  smoothUnbiased?: boolean;
   smoothKernel?: SmoothKernel;
   depthBands?: number;
   fromX?: number;
@@ -74,6 +76,8 @@ export const WIRE_DEFAULT_SCULPT_OPTIONS: ResolvedWireSculptOptions = {
   smoothRim: SMOOTH_RIM_DEFAULT,
   smoothBilateral: false,
   smoothFullSteps: false,
+  smoothCooldown: false,
+  smoothUnbiased: false,
   smoothKernel: SMOOTH_KERNEL_DEFAULT,
 };
 
@@ -114,6 +118,8 @@ export function sculptOptionsOf(intent: SculptIntent): ResolvedWireSculptOptions
       tool === 'smooth' ? (intent.smoothRim ?? SMOOTH_RIM_DEFAULT) : SMOOTH_RIM_DEFAULT,
     smoothBilateral: tool === 'smooth' ? (intent.smoothBilateral ?? false) : false,
     smoothFullSteps: tool === 'smooth' ? (intent.smoothFullSteps ?? false) : false,
+    smoothCooldown: tool === 'smooth' ? (intent.smoothCooldown ?? false) : false,
+    smoothUnbiased: tool === 'smooth' ? (intent.smoothUnbiased ?? false) : false,
     smoothKernel:
       tool === 'smooth' ? (intent.smoothKernel ?? SMOOTH_KERNEL_DEFAULT) : SMOOTH_KERNEL_DEFAULT,
   };
@@ -285,6 +291,20 @@ export function validateSculptIntent(
     if (tool !== 'smooth') return null;
   }
 
+  // Cool-down gates dust on later passes, smooth only.
+  const { smoothCooldown } = m;
+  if (smoothCooldown !== undefined) {
+    if (typeof smoothCooldown !== 'boolean') return null;
+    if (tool !== 'smooth') return null;
+  }
+
+  // Unbiased rounding evens halves instead of truncating, smooth only.
+  const { smoothUnbiased } = m;
+  if (smoothUnbiased !== undefined) {
+    if (typeof smoothUnbiased !== 'boolean') return null;
+    if (tool !== 'smooth') return null;
+  }
+
   // A carve cuts the band it grasps: without one it names nothing to open and
   // would apply as a silent, acked no-op. Optional on a stamp or smooth.
   if (spanBand === undefined && tool === 'carve') return null;
@@ -324,6 +344,8 @@ export function validateSculptIntent(
     ...(smoothRim !== undefined ? { smoothRim: smoothRim as number } : {}),
     ...(smoothBilateral !== undefined ? { smoothBilateral: smoothBilateral as boolean } : {}),
     ...(smoothFullSteps !== undefined ? { smoothFullSteps: smoothFullSteps as boolean } : {}),
+    ...(smoothCooldown !== undefined ? { smoothCooldown: smoothCooldown as boolean } : {}),
+    ...(smoothUnbiased !== undefined ? { smoothUnbiased: smoothUnbiased as boolean } : {}),
     ...(smoothKernel !== undefined ? { smoothKernel: smoothKernel as SmoothKernel } : {}),
     ...(depthBands !== undefined ? { depthBands: depthBands as number } : {}),
     ...(fromX !== undefined ? { fromX: fromX as number, fromY: fromY as number } : {}),
