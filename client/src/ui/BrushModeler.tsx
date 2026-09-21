@@ -22,11 +22,13 @@ import {
   setSculptMode,
   setSmoothBilateral,
   setSmoothFeather,
+  setSmoothFullSteps,
   setSmoothKernel,
   setSmoothLambda,
   setSmoothRim,
   smoothFeather,
   smoothBilateral,
+  smoothFullSteps,
   smoothKernel,
   smoothLambda,
   smoothRim,
@@ -439,6 +441,19 @@ export function BrushModeler(): JSX.Element {
             checked={smoothBilateral()}
             onChange={(event) =>
               setSmoothBilateral(event.currentTarget.checked)
+            }
+          />
+        </div>
+        <div class="hud-row">
+          <span class="controls-label">Full steps</span>
+          <input
+            type="checkbox"
+            class="controls-check"
+            aria-label="Take full steps only"
+            title="Full steps: ignore sub-unit pulls instead of forcing unit moves. Stops the smoother etching stair-steps; off by default."
+            checked={smoothFullSteps()}
+            onChange={(event) =>
+              setSmoothFullSteps(event.currentTarget.checked)
             }
           />
         </div>

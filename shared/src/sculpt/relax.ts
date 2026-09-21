@@ -124,6 +124,7 @@ function laplacianCell(
   falloff: SmoothFalloff | null = null,
   kernel: SmoothKernel = 'cross',
   bilateral = false,
+  fullSteps = false,
 ): boolean {
   // Red-black Gauss-Seidel: even cells read odd neighbours untouched this
   // pass, then odd cells read the new evens. No snapshot copy is allocated.
@@ -216,9 +217,9 @@ function laplacianCell(
   const eff = falloff === null ? pct : falloffStrength(pct, falloff, x, y);
   if (eff <= 0) return false;
   // Min-one-unit progress: truncation alone stalls above the gradient
-  // limit, leaving terracing the smoother was asked to remove.
+  // limit. Full steps gate the dust: sub-unit pulls stay put.
   let step = Math.trunc(((avg - here) * eff) / 100);
-  if (step === 0) step = avg > here ? 1 : -1;
+  if (step === 0 && !fullSteps) step = avg > here ? 1 : -1;
   let next = here + step;
   const band = boundsOf === null ? null : boundsOf(i);
   if (band !== null) {
@@ -251,13 +252,14 @@ function laplacianPass(
   falloff: SmoothFalloff | null = null,
   kernel: SmoothKernel = 'cross',
   bilateral = false,
+  fullSteps = false,
 ): boolean {
   let moved = false;
   for (let parity = 0; parity < 2; parity++) {
     for (let y = minY; y <= maxY; y++) {
       const startX = minX + (((minX + y + parity) & 1) === 0 ? 0 : 1);
       for (let x = startX; x <= maxX; x += 2) {
-        if (laplacianCell(cells, viewBase, size, x, y, pct, changed, boundsOf, layer === null ? null : layer.spanCaps, falloff, kernel, bilateral)) {
+        if (laplacianCell(cells, viewBase, size, x, y, pct, changed, boundsOf, layer === null ? null : layer.spanCaps, falloff, kernel, bilateral, fullSteps)) {
           moved = true;
         }
       }
@@ -278,6 +280,7 @@ export function smooth(
   falloff: SmoothFalloff | null = null,
   kernel: SmoothKernel = 'cross',
   bilateral = false,
+  fullSteps = false,
 ): number {
   const seed = bboxSeed ?? changed;
   if (seed.size === 0) return 0;
@@ -408,6 +411,7 @@ export function smooth(
         falloff,
         kernel,
         bilateral,
+        fullSteps,
       );
     }
 

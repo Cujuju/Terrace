@@ -144,6 +144,7 @@ export function applySculpt(
     ? (options?.smoothKernel ?? SMOOTH_KERNEL_DEFAULT)
     : SMOOTH_KERNEL_DEFAULT;
   const smoothBilateral = options?.smoothBilateral ?? false;
+  const smoothFullSteps = options?.smoothFullSteps ?? false;
 
   if (spanBand !== null && spanIndexCoveringBand(map, cx, cy, spanBand) === null) {
     return [];
@@ -276,6 +277,7 @@ export function applySculpt(
         : null,
       smoothKernel,
       smoothBilateral,
+      smoothFullSteps,
     );
   }
 

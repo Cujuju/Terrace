@@ -97,6 +97,8 @@ export interface SculptOptions {
   readonly smoothRim?: number;
   /** Across-cliff neighbours sit out of the smooth average. */
   readonly smoothBilateral?: boolean;
+  /** Ignore sub-unit pulls instead of forcing a unit step. */
+  readonly smoothFullSteps?: boolean;
   /** Smooth average kernel. */
   readonly smoothKernel?: SmoothKernel;
 }
@@ -123,6 +125,7 @@ export interface ResolvedSculptOptions {
   readonly smoothFeather: number;
   readonly smoothRim: number;
   readonly smoothBilateral: boolean;
+  readonly smoothFullSteps: boolean;
   readonly smoothKernel: SmoothKernel;
 }
 
@@ -141,5 +144,6 @@ export const LIBRARY_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
   smoothFeather: SMOOTH_FEATHER_DEFAULT,
   smoothRim: SMOOTH_RIM_DEFAULT,
   smoothBilateral: false,
+  smoothFullSteps: false,
   smoothKernel: SMOOTH_KERNEL_DEFAULT,
 };

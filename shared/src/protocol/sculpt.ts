@@ -45,6 +45,7 @@ export interface SculptIntent {
   smoothFeather?: number;
   smoothRim?: number;
   smoothBilateral?: boolean;
+  smoothFullSteps?: boolean;
   smoothKernel?: SmoothKernel;
   depthBands?: number;
   fromX?: number;
@@ -72,6 +73,7 @@ export const WIRE_DEFAULT_SCULPT_OPTIONS: ResolvedWireSculptOptions = {
   smoothFeather: SMOOTH_FEATHER_DEFAULT,
   smoothRim: SMOOTH_RIM_DEFAULT,
   smoothBilateral: false,
+  smoothFullSteps: false,
   smoothKernel: SMOOTH_KERNEL_DEFAULT,
 };
 
@@ -111,6 +113,7 @@ export function sculptOptionsOf(intent: SculptIntent): ResolvedWireSculptOptions
     smoothRim:
       tool === 'smooth' ? (intent.smoothRim ?? SMOOTH_RIM_DEFAULT) : SMOOTH_RIM_DEFAULT,
     smoothBilateral: tool === 'smooth' ? (intent.smoothBilateral ?? false) : false,
+    smoothFullSteps: tool === 'smooth' ? (intent.smoothFullSteps ?? false) : false,
     smoothKernel:
       tool === 'smooth' ? (intent.smoothKernel ?? SMOOTH_KERNEL_DEFAULT) : SMOOTH_KERNEL_DEFAULT,
   };
@@ -275,6 +278,13 @@ export function validateSculptIntent(
     if (tool !== 'smooth') return null;
   }
 
+  // Full steps gate dust-driven unit moves, smooth only.
+  const { smoothFullSteps } = m;
+  if (smoothFullSteps !== undefined) {
+    if (typeof smoothFullSteps !== 'boolean') return null;
+    if (tool !== 'smooth') return null;
+  }
+
   // A carve cuts the band it grasps: without one it names nothing to open and
   // would apply as a silent, acked no-op. Optional on a stamp or smooth.
   if (spanBand === undefined && tool === 'carve') return null;
@@ -313,6 +323,7 @@ export function validateSculptIntent(
     ...(smoothFeather !== undefined ? { smoothFeather: smoothFeather as number } : {}),
     ...(smoothRim !== undefined ? { smoothRim: smoothRim as number } : {}),
     ...(smoothBilateral !== undefined ? { smoothBilateral: smoothBilateral as boolean } : {}),
+    ...(smoothFullSteps !== undefined ? { smoothFullSteps: smoothFullSteps as boolean } : {}),
     ...(smoothKernel !== undefined ? { smoothKernel: smoothKernel as SmoothKernel } : {}),
     ...(depthBands !== undefined ? { depthBands: depthBands as number } : {}),
     ...(fromX !== undefined ? { fromX: fromX as number, fromY: fromY as number } : {}),

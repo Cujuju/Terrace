@@ -81,6 +81,8 @@ export const DEFAULT_SMOOTH_RIM = SMOOTH_RIM_DEFAULT;
 
 export const DEFAULT_SMOOTH_BILATERAL = false;
 
+export const DEFAULT_SMOOTH_FULL_STEPS = false;
+
 export const DEFAULT_SMOOTH_KERNEL: SmoothKernel = SMOOTH_KERNEL_DEFAULT;
 
 export const DEFAULT_CARVE_DEPTH_BANDS = CARVE_DEFAULT_DEPTH_BANDS;
@@ -99,6 +101,7 @@ export interface PersistedHudState {
   readonly smoothFeather: number;
   readonly smoothRim: number;
   readonly smoothBilateral: boolean;
+  readonly smoothFullSteps: boolean;
   readonly smoothKernel: SmoothKernel;
   readonly carveDepthBands: number;
   readonly showControls: boolean;
@@ -114,6 +117,7 @@ export const DEFAULT_HUD_STATE: PersistedHudState = {
   smoothFeather: DEFAULT_SMOOTH_FEATHER,
   smoothRim: DEFAULT_SMOOTH_RIM,
   smoothBilateral: DEFAULT_SMOOTH_BILATERAL,
+  smoothFullSteps: DEFAULT_SMOOTH_FULL_STEPS,
   smoothKernel: DEFAULT_SMOOTH_KERNEL,
   carveDepthBands: DEFAULT_CARVE_DEPTH_BANDS,
   showControls: DEFAULT_SHOW_CONTROLS,
@@ -173,6 +177,10 @@ function readSmoothBilateral(value: unknown): boolean {
   return typeof value === 'boolean' ? value : DEFAULT_SMOOTH_BILATERAL;
 }
 
+function readSmoothFullSteps(value: unknown): boolean {
+  return typeof value === 'boolean' ? value : DEFAULT_SMOOTH_FULL_STEPS;
+}
+
 function readSmoothKernel(value: unknown): SmoothKernel {
   if (value === true) return 'gauss';
   return SMOOTH_KERNELS.includes(value as SmoothKernel)
@@ -214,6 +222,7 @@ export function parseHudState(raw: string | null): PersistedHudState {
     smoothFeather: readSmoothFeather(record['smoothFeather']),
     smoothRim: readSmoothRim(record['smoothRim']),
     smoothBilateral: readSmoothBilateral(record['smoothBilateral']),
+    smoothFullSteps: readSmoothFullSteps(record['smoothFullSteps']),
     smoothKernel: readSmoothKernel(record['smoothKernel'] ?? record['smoothGauss']),
     carveDepthBands: readCarveDepthBands(record['carveDepthBands']),
     showControls: readShowControls(record['showControls']),
@@ -267,6 +276,10 @@ const [smoothBilateral, setSmoothBilateralSignal] = createSignal<boolean>(
   stored.smoothBilateral,
 );
 
+const [smoothFullSteps, setSmoothFullStepsSignal] = createSignal<boolean>(
+  stored.smoothFullSteps,
+);
+
 const [smoothKernel, setSmoothKernelSignal] = createSignal<SmoothKernel>(
   stored.smoothKernel,
 );
@@ -293,6 +306,7 @@ function persist(): void {
     smoothFeather: smoothFeather(),
     smoothRim: smoothRim(),
     smoothBilateral: smoothBilateral(),
+    smoothFullSteps: smoothFullSteps(),
     smoothKernel: smoothKernel(),
     carveDepthBands: carveDepthBands(),
     showControls: showControls(),
@@ -384,6 +398,12 @@ export function setSmoothBilateral(bilateral: boolean): void {
   persist();
 }
 
+export function setSmoothFullSteps(full: boolean): void {
+  if (full === smoothFullSteps()) return;
+  setSmoothFullStepsSignal(full);
+  persist();
+}
+
 export function setCarveDepthBands(bands: number): void {
   const clamped = Math.min(
     CARVE_MAX_DEPTH_BANDS,
@@ -414,6 +434,7 @@ export {
   sculptAlt,
   smoothBilateral,
   smoothFeather,
+  smoothFullSteps,
   smoothKernel,
   smoothLambda,
   smoothRim,
