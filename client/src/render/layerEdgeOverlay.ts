@@ -759,10 +759,6 @@ export function createLayerEdgeOverlay(
     setLipSmoothing(enabled) {
       if (enabled === lipSmoothing) return;
       lipSmoothing = enabled;
-      material.depthTest = !enabled;
-      material.needsUpdate = true;
-      grabbedMaterial.depthTest = !enabled;
-      grabbedMaterial.needsUpdate = true;
       for (const idx of [...knownChunks]) rebuild(idx);
     },
     setStyle(next) {
