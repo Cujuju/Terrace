@@ -100,6 +100,7 @@ export interface LayerEdgeOverlay {
   setLipHighlight(visible: boolean): void;
   setCellLook(look: CellLook): void;
   setCellLinesVisible(visible: boolean): void;
+  setBandGridVisible(visible: boolean): void;
   clear(): void;
   drawCallCount(): number;
   dispose(): void;
@@ -119,6 +120,7 @@ export function createLayerEdgeOverlay(
   let creaseLook: CreaseLook = DEFAULT_CREASE_LOOK;
   let cellLook: CellLook = DEFAULT_CELL_LOOK;
   let cellLinesVisible = false;
+  let bandGridVisible = false;
   const restingVisible = (): boolean => style !== 'normal';
   const material = new LineBasicMaterial({
     color: DEBUG_COLOR,
@@ -135,6 +137,7 @@ export function createLayerEdgeOverlay(
     depthWrite: false,
   });
   const cellMeshes = new Map<number, LineSegments>();
+  const bandMeshes = new Map<number, LineSegments>();
   const knownChunks = new Set<number>();
 
   const tileIndexOfChunk = (chunkIdx: number): number => {
@@ -309,6 +312,7 @@ export function createLayerEdgeOverlay(
   const dropChunk = (idx: number): void => {
     knownChunks.delete(idx);
     dropCellGrid(idx);
+    dropBandGrid(idx);
     segmentsByChunk.delete(idx);
     const tileIdx = tileIndexOfChunk(idx);
     const tile = tiles.get(tileIdx);
@@ -318,68 +322,95 @@ export function createLayerEdgeOverlay(
 
   const NEIGHBOUR_OFFSETS = [[-1, 0], [1, 0], [0, -1], [0, 1]] as const;
 
-  const dropCellGrid = (idx: number): void => {
-    const mesh = cellMeshes.get(idx);
+  const dropGridLines = (meshes: Map<number, LineSegments>, idx: number): void => {
+    const mesh = meshes.get(idx);
     if (mesh === undefined) return;
     group.remove(mesh);
     mesh.geometry.dispose();
-    cellMeshes.delete(idx);
+    meshes.delete(idx);
   };
 
-  const buildCellGrid = (idx: number): void => {
-    dropCellGrid(idx);
-    if (!cellLinesVisible) return;
+  const dropCellGrid = (idx: number): void => {
+    dropGridLines(cellMeshes, idx);
+  };
+
+  const dropBandGrid = (idx: number): void => {
+    dropGridLines(bandMeshes, idx);
+  };
+
+  const gridPositions = (idx: number, subdiv: number): Float32Array => {
     const cx = idx % chunksPerEdge;
     const cy = Math.floor(idx / chunksPerEdge);
     const ox = cx * CHUNK_SIZE;
     const oz = cy * CHUNK_SIZE;
     const size = worldSize;
     const n = CHUNK_SIZE;
-    const corners = new Float32Array((n + 1) * (n + 1));
-    for (let j = 0; j <= n; j++) {
-      for (let i = 0; i <= n; i++) {
-        let sum = 0;
-        let count = 0;
-        for (const [ax, ay] of [[ox + i - 1, oz + j - 1], [ox + i, oz + j - 1], [ox + i - 1, oz + j], [ox + i, oz + j]] as const) {
-          if (ax < 0 || ay < 0 || ax >= size || ay >= size) continue;
-          sum += sampleRenderHeight(mirror, ax, ay);
-          count++;
-        }
-        corners[j * (n + 1) + i] = count === 0 ? 0 : sum / count;
+    const m = n * subdiv;
+    const hAt = (fx: number, fz: number): number => {
+      const x0 = Math.max(0, Math.min(size - 2, Math.floor(fx)));
+      const z0 = Math.max(0, Math.min(size - 2, Math.floor(fz)));
+      const tx = Math.max(0, Math.min(1, fx - x0));
+      const tz = Math.max(0, Math.min(1, fz - z0));
+      const a = sampleRenderHeight(mirror, x0, z0);
+      const b = sampleRenderHeight(mirror, x0 + 1, z0);
+      const c = sampleRenderHeight(mirror, x0, z0 + 1);
+      const d = sampleRenderHeight(mirror, x0 + 1, z0 + 1);
+      return a + (b - a) * tx + (c - a) * tz + (a - b - c + d) * tx * tz;
+    };
+    const corners = new Float32Array((m + 1) * (m + 1));
+    for (let j = 0; j <= m; j++) {
+      for (let i = 0; i <= m; i++) {
+        corners[j * (m + 1) + i] = hAt(ox + i / subdiv, oz + j / subdiv);
       }
     }
-    const positions = new Float32Array(2 * n * (n + 1) * FLOATS_PER_SEGMENT);
+    const positions = new Float32Array(2 * m * (m + 1) * FLOATS_PER_SEGMENT);
     let w = 0;
-    const xOf = (i: number): number => (ox + i - 0.5) * CELL_WORLD_SIZE;
-    const zOf = (j: number): number => (oz + j - 0.5) * CELL_WORLD_SIZE;
+    const xOf = (i: number): number => (ox + i / subdiv - 0.5) * CELL_WORLD_SIZE;
+    const zOf = (j: number): number => (oz + j / subdiv - 0.5) * CELL_WORLD_SIZE;
     const yOf = (h: number): number => h * HEIGHT_WORLD_SCALE + LIP_LIFT_WORLD_UNITS;
-    for (let j = 0; j <= n; j++) {
-      for (let i = 0; i < n; i++) {
+    for (let j = 0; j <= m; j++) {
+      for (let i = 0; i < m; i++) {
         positions[w++] = xOf(i);
-        positions[w++] = yOf(corners[j * (n + 1) + i]!);
+        positions[w++] = yOf(corners[j * (m + 1) + i]!);
         positions[w++] = zOf(j);
         positions[w++] = xOf(i + 1);
-        positions[w++] = yOf(corners[j * (n + 1) + i + 1]!);
+        positions[w++] = yOf(corners[j * (m + 1) + i + 1]!);
         positions[w++] = zOf(j);
       }
     }
-    for (let i = 0; i <= n; i++) {
-      for (let j = 0; j < n; j++) {
+    for (let i = 0; i <= m; i++) {
+      for (let j = 0; j < m; j++) {
         positions[w++] = xOf(i);
-        positions[w++] = yOf(corners[j * (n + 1) + i]!);
+        positions[w++] = yOf(corners[j * (m + 1) + i]!);
         positions[w++] = zOf(j);
         positions[w++] = xOf(i);
-        positions[w++] = yOf(corners[(j + 1) * (n + 1) + i]!);
+        positions[w++] = yOf(corners[(j + 1) * (m + 1) + i]!);
         positions[w++] = zOf(j + 1);
       }
     }
+    return positions;
+  };
+
+  const makeGridMesh = (positions: Float32Array): LineSegments => {
     const geometry = new BufferGeometry();
     geometry.setAttribute('position', new BufferAttribute(positions, POSITION_FLOATS_PER_VERTEX));
     geometry.computeBoundingSphere();
     const mesh = new LineSegments(geometry, cellMaterial);
     mesh.renderOrder = RESTING_RENDER_ORDER;
     group.add(mesh);
-    cellMeshes.set(idx, mesh);
+    return mesh;
+  };
+
+  const buildCellGrid = (idx: number): void => {
+    dropCellGrid(idx);
+    if (!cellLinesVisible) return;
+    cellMeshes.set(idx, makeGridMesh(gridPositions(idx, 1)));
+  };
+
+  const buildBandGrid = (idx: number): void => {
+    dropBandGrid(idx);
+    if (!bandGridVisible) return;
+    bandMeshes.set(idx, makeGridMesh(gridPositions(idx, 4)));
   };
 
   const neighboursKnown = (cx: number, cy: number): boolean => {
@@ -414,6 +445,7 @@ export function createLayerEdgeOverlay(
     if (!neighboursKnown(cx, cy)) return;
     knownChunks.add(idx);
     buildCellGrid(idx);
+    buildBandGrid(idx);
     const chart = drawnGround.chartOf(cx, cy);
     if (chart === null) return;
     const { positions, flat, bands } = chart.lips;
@@ -706,6 +738,15 @@ export function createLayerEdgeOverlay(
       }
       for (const idx of [...knownChunks]) rebuild(idx);
     },
+    setBandGridVisible(visible) {
+      if (visible === bandGridVisible) return;
+      bandGridVisible = visible;
+      if (!visible) {
+        for (const idx of [...bandMeshes.keys()]) dropBandGrid(idx);
+        return;
+      }
+      for (const idx of [...knownChunks]) rebuild(idx);
+    },
     setStyle(next) {
       if (next === style) return;
       style = next;
@@ -730,10 +771,11 @@ export function createLayerEdgeOverlay(
       segmentsByChunk.clear();
       knownChunks.clear();
       for (const idx of [...cellMeshes.keys()]) dropCellGrid(idx);
+      for (const idx of [...bandMeshes.keys()]) dropBandGrid(idx);
       for (const [tileIdx, tile] of [...tiles]) disposeTile(tileIdx, tile);
     },
     drawCallCount(): number {
-      return (restingVisible() ? tiles.size : 0) + (grabbed.visible ? 1 : 0) + (riser.visible ? 1 : 0) + cellMeshes.size;
+      return (restingVisible() ? tiles.size : 0) + (grabbed.visible ? 1 : 0) + (riser.visible ? 1 : 0) + cellMeshes.size + bandMeshes.size;
     },
     dispose() {
       this.clear();

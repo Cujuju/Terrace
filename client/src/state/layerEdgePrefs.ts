@@ -122,6 +122,22 @@ export const setCellLinesVisible = (visible: boolean): void => {
   setCellLinesChoice(visible ? 'on' : 'off');
 };
 
+const BAND_GRID_STORAGE_KEY = 'terrace.bandGrid.v1';
+
+const BAND_GRID_CHOICES = ['on', 'off'] as const;
+
+const [bandGridChoice, setBandGridChoice] = persistedChoice<'on' | 'off'>(
+  BAND_GRID_STORAGE_KEY,
+  BAND_GRID_CHOICES,
+  'off',
+);
+
+export const bandGridVisible = (): boolean => bandGridChoice() === 'on';
+
+export const setBandGridVisible = (visible: boolean): void => {
+  setBandGridChoice(visible ? 'on' : 'off');
+};
+
 const CELL_COLOR_STORAGE_KEY = 'terrace.cellColor.v1';
 
 const CELL_OPACITY_STORAGE_KEY = 'terrace.cellOpacity.v1';
@@ -185,6 +201,8 @@ export function resetLayerEdgePrefs(): void {
   clearPersistedChoice(CREASE_OPACITY_STORAGE_KEY);
   setCellLinesChoice('off');
   clearPersistedChoice(CELL_LINES_STORAGE_KEY);
+  setBandGridChoice('off');
+  clearPersistedChoice(BAND_GRID_STORAGE_KEY);
   setCellLookSignal(DEFAULT_CELL_LOOK);
   clearPersistedChoice(CELL_COLOR_STORAGE_KEY);
   clearPersistedChoice(CELL_OPACITY_STORAGE_KEY);

@@ -58,6 +58,7 @@ import {
   CELL_OPACITY_STEP,
   MAX_CELL_OPACITY,
   MIN_CELL_OPACITY,
+  bandGridVisible,
   cellLinesVisible,
   cellLook,
   creaseColorHex,
@@ -67,6 +68,7 @@ import {
   setCellColor,
   setCellLinesVisible,
   setCellOpacity,
+  setBandGridVisible,
   setCreaseColor,
   setCreaseOpacity,
   setLayerEdgeStyle,
@@ -461,6 +463,18 @@ export function ControlsPanel(): JSX.Element {
           </span>
         </div>
       </Show>
+
+      <div class="hud-row controls-row">
+        <span class="controls-label">Band grid</span>
+        <input
+          type="checkbox"
+          class="controls-check"
+          aria-label="Draw the band pipeline lattice"
+          title="Band grid: the quarter-cell lattice the band pipeline resolves, in the Cell colour. Heavy while sculpting; look, then switch off."
+          checked={bandGridVisible()}
+          onChange={(e) => setBandGridVisible(e.currentTarget.checked)}
+        />
+      </div>
 
       {
 }
