@@ -14,7 +14,7 @@ import { BAND_HEIGHT, CHUNK_SIZE } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
 import { LIP_LIFT_WORLD_UNITS } from '../terrain/capPlanFlat.ts';
 import type { DrawnGroundStore } from '../terrain/drawnGroundStore.ts';
-import { hasChunk, type TerrainMirror } from '../terrain/mirror.ts';
+import { hasChunk, sampleRenderHeight, type TerrainMirror } from '../terrain/mirror.ts';
 import { SUPER_MESH_SPAN_CHUNKS } from './terrainMeshes.ts';
 import { DENIED_COLOR } from './denialCue.ts';
 
@@ -30,6 +30,13 @@ export interface CreaseLook {
 }
 
 export const DEFAULT_CREASE_LOOK: CreaseLook = { color: 0x000000, opacity: 0.33 };
+
+export interface CellLook {
+  readonly color: number;
+  readonly opacity: number;
+}
+
+export const DEFAULT_CELL_LOOK: CellLook = { color: 0xffffff, opacity: 0.15 };
 
 const FLOATS_PER_SEGMENT = 6;
 
@@ -91,6 +98,8 @@ export interface LayerEdgeOverlay {
   setRefused(refused: boolean): void;
   /** The lip line over the lit riser. The riser face itself always shows. */
   setLipHighlight(visible: boolean): void;
+  setCellLook(look: CellLook): void;
+  setCellLinesVisible(visible: boolean): void;
   clear(): void;
   drawCallCount(): number;
   dispose(): void;
@@ -108,6 +117,8 @@ export function createLayerEdgeOverlay(
   const segmentsByChunk = new Map<number, Map<number, Float32Array>>();
   let style: LayerEdgeStyle = 'debug';
   let creaseLook: CreaseLook = DEFAULT_CREASE_LOOK;
+  let cellLook: CellLook = DEFAULT_CELL_LOOK;
+  let cellLinesVisible = false;
   const restingVisible = (): boolean => style !== 'normal';
   const material = new LineBasicMaterial({
     color: DEBUG_COLOR,
@@ -116,6 +127,15 @@ export function createLayerEdgeOverlay(
     depthTest: true,
     depthWrite: false,
   });
+  const cellMaterial = new LineBasicMaterial({
+    color: DEFAULT_CELL_LOOK.color,
+    transparent: true,
+    opacity: DEFAULT_CELL_LOOK.opacity,
+    depthTest: true,
+    depthWrite: false,
+  });
+  const cellMeshes = new Map<number, LineSegments>();
+  const knownChunks = new Set<number>();
 
   const tileIndexOfChunk = (chunkIdx: number): number => {
     const cx = chunkIdx % chunksPerEdge;
@@ -287,6 +307,8 @@ export function createLayerEdgeOverlay(
   };
 
   const dropChunk = (idx: number): void => {
+    knownChunks.delete(idx);
+    dropCellGrid(idx);
     segmentsByChunk.delete(idx);
     const tileIdx = tileIndexOfChunk(idx);
     const tile = tiles.get(tileIdx);
@@ -295,6 +317,70 @@ export function createLayerEdgeOverlay(
   };
 
   const NEIGHBOUR_OFFSETS = [[-1, 0], [1, 0], [0, -1], [0, 1]] as const;
+
+  const dropCellGrid = (idx: number): void => {
+    const mesh = cellMeshes.get(idx);
+    if (mesh === undefined) return;
+    group.remove(mesh);
+    mesh.geometry.dispose();
+    cellMeshes.delete(idx);
+  };
+
+  const buildCellGrid = (idx: number): void => {
+    dropCellGrid(idx);
+    if (!cellLinesVisible) return;
+    const cx = idx % chunksPerEdge;
+    const cy = Math.floor(idx / chunksPerEdge);
+    const ox = cx * CHUNK_SIZE;
+    const oz = cy * CHUNK_SIZE;
+    const size = worldSize;
+    const n = CHUNK_SIZE;
+    const corners = new Float32Array((n + 1) * (n + 1));
+    for (let j = 0; j <= n; j++) {
+      for (let i = 0; i <= n; i++) {
+        let sum = 0;
+        let count = 0;
+        for (const [ax, ay] of [[ox + i - 1, oz + j - 1], [ox + i, oz + j - 1], [ox + i - 1, oz + j], [ox + i, oz + j]] as const) {
+          if (ax < 0 || ay < 0 || ax >= size || ay >= size) continue;
+          sum += sampleRenderHeight(mirror, ax, ay);
+          count++;
+        }
+        corners[j * (n + 1) + i] = count === 0 ? 0 : sum / count;
+      }
+    }
+    const positions = new Float32Array(2 * n * (n + 1) * FLOATS_PER_SEGMENT);
+    let w = 0;
+    const xOf = (i: number): number => (ox + i - 0.5) * CELL_WORLD_SIZE;
+    const zOf = (j: number): number => (oz + j - 0.5) * CELL_WORLD_SIZE;
+    const yOf = (h: number): number => h * HEIGHT_WORLD_SCALE + LIP_LIFT_WORLD_UNITS;
+    for (let j = 0; j <= n; j++) {
+      for (let i = 0; i < n; i++) {
+        positions[w++] = xOf(i);
+        positions[w++] = yOf(corners[j * (n + 1) + i]!);
+        positions[w++] = zOf(j);
+        positions[w++] = xOf(i + 1);
+        positions[w++] = yOf(corners[j * (n + 1) + i + 1]!);
+        positions[w++] = zOf(j);
+      }
+    }
+    for (let i = 0; i <= n; i++) {
+      for (let j = 0; j < n; j++) {
+        positions[w++] = xOf(i);
+        positions[w++] = yOf(corners[j * (n + 1) + i]!);
+        positions[w++] = zOf(j);
+        positions[w++] = xOf(i);
+        positions[w++] = yOf(corners[(j + 1) * (n + 1) + i]!);
+        positions[w++] = zOf(j + 1);
+      }
+    }
+    const geometry = new BufferGeometry();
+    geometry.setAttribute('position', new BufferAttribute(positions, POSITION_FLOATS_PER_VERTEX));
+    geometry.computeBoundingSphere();
+    const mesh = new LineSegments(geometry, cellMaterial);
+    mesh.renderOrder = RESTING_RENDER_ORDER;
+    group.add(mesh);
+    cellMeshes.set(idx, mesh);
+  };
 
   const neighboursKnown = (cx: number, cy: number): boolean => {
     for (const [dx, dy] of NEIGHBOUR_OFFSETS) {
@@ -326,6 +412,8 @@ export function createLayerEdgeOverlay(
     const cx = idx % chunksPerEdge;
     const cy = Math.floor(idx / chunksPerEdge);
     if (!neighboursKnown(cx, cy)) return;
+    knownChunks.add(idx);
+    buildCellGrid(idx);
     const chart = drawnGround.chartOf(cx, cy);
     if (chart === null) return;
     const { positions, flat, bands } = chart.lips;
@@ -604,6 +692,20 @@ export function createLayerEdgeOverlay(
       litValid = false;
       if (!visible) grabbed.visible = false;
     },
+    setCellLook(look) {
+      cellLook = look;
+      cellMaterial.color.setHex(look.color);
+      cellMaterial.opacity = look.opacity;
+    },
+    setCellLinesVisible(visible) {
+      if (visible === cellLinesVisible) return;
+      cellLinesVisible = visible;
+      if (!visible) {
+        for (const idx of [...cellMeshes.keys()]) dropCellGrid(idx);
+        return;
+      }
+      for (const idx of [...knownChunks]) rebuild(idx);
+    },
     setStyle(next) {
       if (next === style) return;
       style = next;
@@ -626,19 +728,23 @@ export function createLayerEdgeOverlay(
     clear() {
       clearGrabbed();
       segmentsByChunk.clear();
+      knownChunks.clear();
+      for (const idx of [...cellMeshes.keys()]) dropCellGrid(idx);
       for (const [tileIdx, tile] of [...tiles]) disposeTile(tileIdx, tile);
     },
     drawCallCount(): number {
-      return (restingVisible() ? tiles.size : 0) + (grabbed.visible ? 1 : 0) + (riser.visible ? 1 : 0);
+      return (restingVisible() ? tiles.size : 0) + (grabbed.visible ? 1 : 0) + (riser.visible ? 1 : 0) + cellMeshes.size;
     },
     dispose() {
       this.clear();
+      for (const idx of [...cellMeshes.keys()]) dropCellGrid(idx);
       group.remove(grabbed);
       group.remove(riser);
       riser.geometry.dispose();
       riserMaterial.dispose();
       grabbed.geometry.dispose();
       material.dispose();
+      cellMaterial.dispose();
       grabbedMaterial.dispose();
     },
   };

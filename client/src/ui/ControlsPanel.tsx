@@ -55,10 +55,18 @@ import {
   LAYER_EDGE_STYLES,
   MAX_CREASE_OPACITY,
   MIN_CREASE_OPACITY,
+  CELL_OPACITY_STEP,
+  MAX_CELL_OPACITY,
+  MIN_CELL_OPACITY,
+  cellLinesVisible,
+  cellLook,
   creaseColorHex,
   creaseLook,
   layerEdgeStyle,
   lipHighlight,
+  setCellColor,
+  setCellLinesVisible,
+  setCellOpacity,
   setCreaseColor,
   setCreaseOpacity,
   setLayerEdgeStyle,
@@ -368,18 +376,6 @@ export function ControlsPanel(): JSX.Element {
         </select>
       </div>
 
-      <div class="hud-row controls-row">
-        <span class="controls-label">Lip line</span>
-        <input
-          type="checkbox"
-          class="controls-check"
-          aria-label="Draw the lip line over the highlighted riser"
-          title="Lip line: a bright line along the top edge of the highlighted riser. The riser face itself always shows."
-          checked={lipHighlight()}
-          onChange={(e) => setLipHighlight(e.currentTarget.checked)}
-        />
-      </div>
-
       <Show when={layerEdgeStyle() === 'crease'}>
         <div class="hud-row controls-row">
           <span class="controls-label">Crease colour</span>
@@ -407,6 +403,61 @@ export function ControlsPanel(): JSX.Element {
           />
           <span class="controls-readout">
             {Math.round(creaseLook().opacity * PERCENT_SCALE)}%
+          </span>
+        </div>
+      </Show>
+
+      <div class="hud-row controls-row">
+        <span class="controls-label">Lip line</span>
+        <input
+          type="checkbox"
+          class="controls-check"
+          aria-label="Draw the lip line over the highlighted riser"
+          title="Lip line: a bright line along the top edge of the highlighted riser. The riser face itself always shows."
+          checked={lipHighlight()}
+          onChange={(e) => setLipHighlight(e.currentTarget.checked)}
+        />
+      </div>
+
+      <div class="hud-row controls-row">
+        <span class="controls-label">Cell lines</span>
+        <input
+          type="checkbox"
+          class="controls-check"
+          aria-label="Draw a crease line on every cell"
+          title="Cell lines: a thin crease line along every cell boundary, hugging the terrain. Off by default."
+          checked={cellLinesVisible()}
+          onChange={(e) => setCellLinesVisible(e.currentTarget.checked)}
+        />
+      </div>
+
+      <Show when={cellLinesVisible()}>
+        <div class="hud-row controls-row">
+          <span class="controls-label">Cell colour</span>
+          <input
+            type="color"
+            class="controls-color"
+            aria-label="Cell line colour"
+            title="Cell colour: the colour every cell boundary is drawn in"
+            value={creaseColorHex(cellLook().color)}
+            onInput={(e) => setCellColor(e.currentTarget.value)}
+          />
+        </div>
+        <div class="hud-row controls-row">
+          <span class="controls-label">Cell opacity</span>
+          <input
+            type="range"
+            class="controls-slider"
+            aria-label="Cell line opacity"
+            title="Cell opacity: how strongly the lines show over the terrain"
+            min={MIN_CELL_OPACITY}
+            max={MAX_CELL_OPACITY}
+            step={CELL_OPACITY_STEP}
+            value={cellLook().opacity}
+            onInput={(e) => setCellOpacity(e.currentTarget.valueAsNumber)}
+          />
+          <span class="controls-readout">
+            {Math.round(cellLook().opacity * PERCENT_SCALE)}%
           </span>
         </div>
       </Show>

@@ -75,6 +75,8 @@ import {
   type LayerEdgeStyle,
   DEFAULT_CREASE_LOOK,
   type CreaseLook,
+  DEFAULT_CELL_LOOK,
+  type CellLook,
 } from './render/layerEdgeOverlay.ts';
 import { createEffect, on } from 'solid-js';
 import { createFrontierFog, type FrontierFog } from './render/frontierFog.ts';
@@ -169,6 +171,8 @@ export interface World extends TerrainSink {
   /** Draw the lip line over the lit riser; the riser face shows regardless. */
   setLipHighlight(visible: boolean): void;
   setCreaseLook(look: CreaseLook): void;
+  setCellLook(look: CellLook): void;
+  setCellLinesVisible(visible: boolean): void;
   setBrushRefused(refused: boolean): void;
   /** Cap band of the layer holding `spanBand` (the column top when null); after a lower, the layer just beneath it. */
   bandAtCell(x: number, y: number, spanBand: number | null): number | null;
@@ -267,6 +271,8 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
   let layerEdgeStyle: LayerEdgeStyle = 'debug';
   let creaseLook: CreaseLook = DEFAULT_CREASE_LOOK;
   let lipHighlight = true;
+  let cellLook: CellLook = DEFAULT_CELL_LOOK;
+  let cellLinesVisible = false;
   let predictions: PredictionStore | null = null;
 
   let chunkRevisions: Int32Array | null = null;
@@ -429,6 +435,8 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
     nextLayerEdges.setCreaseLook(creaseLook);
     nextLayerEdges.setStyle(layerEdgeStyle);
     nextLayerEdges.setLipHighlight(lipHighlight);
+    nextLayerEdges.setCellLook(cellLook);
+    nextLayerEdges.setCellLinesVisible(cellLinesVisible);
     const nextGround = createDrawnGround(nextMirror, nextMeshes.drawnGround());
     nextMeshes.onChunkDrawn((chunkIdx) => {
       nextLayerEdges.refreshChunk(chunkIdx);
@@ -673,6 +681,14 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
     setCreaseLook(look: CreaseLook): void {
       creaseLook = look;
       layerEdges?.setCreaseLook(look);
+    },
+    setCellLook(look: CellLook): void {
+      cellLook = look;
+      layerEdges?.setCellLook(look);
+    },
+    setCellLinesVisible(visible: boolean): void {
+      cellLinesVisible = visible;
+      layerEdges?.setCellLinesVisible(visible);
     },
     setBrushRefused(refused: boolean): void {
       layerEdges?.setRefused(refused);

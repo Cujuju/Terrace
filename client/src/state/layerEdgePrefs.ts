@@ -1,6 +1,6 @@
 import { createSignal } from 'solid-js';
 import { clearPersistedChoice, persistedChoice } from './persistedChoice.ts';
-import { DEFAULT_CREASE_LOOK, type CreaseLook, type LayerEdgeStyle } from '../render/layerEdgeOverlay.ts';
+import { DEFAULT_CREASE_LOOK, DEFAULT_CELL_LOOK, type CellLook, type CreaseLook, type LayerEdgeStyle } from '../render/layerEdgeOverlay.ts';
 
 export type { LayerEdgeStyle };
 
@@ -106,6 +106,75 @@ export function setCreaseOpacity(opacity: number): void {
   persist(CREASE_OPACITY_STORAGE_KEY, String(opacity));
 }
 
+const CELL_LINES_STORAGE_KEY = 'terrace.cellLines.v1';
+
+const CELL_LINES_CHOICES = ['on', 'off'] as const;
+
+const [cellLinesChoice, setCellLinesChoice] = persistedChoice<'on' | 'off'>(
+  CELL_LINES_STORAGE_KEY,
+  CELL_LINES_CHOICES,
+  'off',
+);
+
+export const cellLinesVisible = (): boolean => cellLinesChoice() === 'on';
+
+export const setCellLinesVisible = (visible: boolean): void => {
+  setCellLinesChoice(visible ? 'on' : 'off');
+};
+
+const CELL_COLOR_STORAGE_KEY = 'terrace.cellColor.v1';
+
+const CELL_OPACITY_STORAGE_KEY = 'terrace.cellOpacity.v1';
+
+export const MIN_CELL_OPACITY = 0;
+
+export const MAX_CELL_OPACITY = 1;
+
+export const CELL_OPACITY_STEP = 0.05;
+
+function loadCellColor(): number {
+  try {
+    const raw = localStorage.getItem(CELL_COLOR_STORAGE_KEY);
+    return raw !== null && HEX_COLOR.test(raw)
+      ? parseInt(raw.slice(1), HEX_RADIX)
+      : DEFAULT_CELL_LOOK.color;
+  } catch {
+    return DEFAULT_CELL_LOOK.color;
+  }
+}
+
+function loadCellOpacity(): number {
+  try {
+    const raw = localStorage.getItem(CELL_OPACITY_STORAGE_KEY);
+    const opacity = raw === null ? NaN : Number(raw);
+    return opacity >= MIN_CELL_OPACITY && opacity <= MAX_CELL_OPACITY
+      ? opacity
+      : DEFAULT_CELL_LOOK.opacity;
+  } catch {
+    return DEFAULT_CELL_LOOK.opacity;
+  }
+}
+
+const [cellLook, setCellLookSignal] = createSignal<CellLook>({
+  color: loadCellColor(),
+  opacity: loadCellOpacity(),
+});
+
+export { cellLook };
+
+/** `hex` is `#rrggbb`, as a colour input yields it; anything else is ignored. */
+export function setCellColor(hex: string): void {
+  if (!HEX_COLOR.test(hex)) return;
+  setCellLookSignal((look) => ({ ...look, color: parseInt(hex.slice(1), HEX_RADIX) }));
+  persist(CELL_COLOR_STORAGE_KEY, hex.toLowerCase());
+}
+
+export function setCellOpacity(opacity: number): void {
+  if (!(opacity >= MIN_CELL_OPACITY && opacity <= MAX_CELL_OPACITY)) return;
+  setCellLookSignal((look) => ({ ...look, opacity }));
+  persist(CELL_OPACITY_STORAGE_KEY, String(opacity));
+}
+
 export function resetLayerEdgePrefs(): void {
   setLayerEdgeStyleSignal(DEFAULT_LAYER_EDGE_STYLE);
   clearPersistedChoice(LAYER_EDGE_STORAGE_KEY);
@@ -114,4 +183,9 @@ export function resetLayerEdgePrefs(): void {
   setCreaseLookSignal(DEFAULT_CREASE_LOOK);
   clearPersistedChoice(CREASE_COLOR_STORAGE_KEY);
   clearPersistedChoice(CREASE_OPACITY_STORAGE_KEY);
+  setCellLinesChoice('off');
+  clearPersistedChoice(CELL_LINES_STORAGE_KEY);
+  setCellLookSignal(DEFAULT_CELL_LOOK);
+  clearPersistedChoice(CELL_COLOR_STORAGE_KEY);
+  clearPersistedChoice(CELL_OPACITY_STORAGE_KEY);
 }
