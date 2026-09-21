@@ -68,10 +68,11 @@ function chainRun(
   segmentCount: number,
 ): LipChain[] {
   const base = firstSegment * stride;
+  const zOffset = stride / 2 - 1;
   const xAt = (s: number, end: 0 | 1): number =>
     end === 0 ? coords[base + s * stride]! : coords[base + s * stride + stride / 2]!;
   const zAt = (s: number, end: 0 | 1): number =>
-    end === 0 ? coords[base + s * stride + 1]! : coords[base + s * stride + stride / 2 + 1]!;
+    end === 0 ? coords[base + s * stride + zOffset]! : coords[base + s * stride + stride / 2 + zOffset]!;
   const byKey = new Map<string, Array<{ seg: number; end: 0 | 1 }>>();
   for (let s = 0; s < segmentCount; s++) {
     for (const end of [0, 1] as const) {
@@ -115,7 +116,7 @@ function chainRun(
     if (points.length < 4) continue;
     const n = points.length;
     const closed =
-      n >= 8 && points[0] === points[n - 2] && points[1] === points[n - 1];
+      n >= 8 && lipKey(points[0]!, points[1]!) === lipKey(points[n - 2]!, points[n - 1]!);
     chains.push({ points: closed ? points.slice(0, n - 2) : points, closed });
   }
   return chains;
