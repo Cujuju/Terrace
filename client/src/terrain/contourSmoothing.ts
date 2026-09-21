@@ -1,4 +1,5 @@
 import { DRAWN_GROUND_SIMPLIFY_EPSILON } from '@terrace/shared';
+import { CELL_WORLD_SIZE } from '../config.ts';
 import { RECT_NONE, type ContourLoop } from './contours.ts';
 
 export const CONTOUR_SIMPLIFY_EPSILON = DRAWN_GROUND_SIMPLIFY_EPSILON;
@@ -33,7 +34,7 @@ export function simplifyLoop(loop: ContourLoop): ContourLoop {
 export const LIP_SMOOTH_CHAIKIN_PASSES = 2;
 
 function lipKey(x: number, z: number): string {
-  return `${x},${z}`;
+  return `${Math.round((x / CELL_WORLD_SIZE) * 1024)},${Math.round((z / CELL_WORLD_SIZE) * 1024)}`;
 }
 
 function chaikin(points: number[], closed: boolean): number[] {
@@ -154,7 +155,7 @@ export function smoothLipSegments(
         emit(points[m * 2]!, points[m * 2 + 1]!);
       }
     }
-    triples.push(band, runs.reduce((sum, run) => sum + run.length / stride / 2, 0), out.length / stride / 2);
+    triples.push(band, runs.reduce((sum, run) => sum + run.length / stride, 0), out.length / stride);
     runs.push(out);
   }
   const total = runs.reduce((sum, run) => sum + run.length, 0);
