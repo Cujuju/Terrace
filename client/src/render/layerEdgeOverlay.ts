@@ -10,7 +10,7 @@ import {
   Vector3,
 } from 'three';
 import type { Object3D } from 'three';
-import { BAND_HEIGHT, CHUNK_SIZE } from '@terrace/shared';
+import { BAND_HEIGHT, CHUNK_SIZE, drawnBandAt } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
 import { LIP_LIFT_WORLD_UNITS } from '../terrain/capPlanFlat.ts';
 import type { DrawnGroundStore } from '../terrain/drawnGroundStore.ts';
@@ -125,6 +125,11 @@ export function createLayerEdgeOverlay(
   let bandGridVisible = false;
   let lipSmoothing = false;
   const restingVisible = (): boolean => style !== 'normal';
+  const drapeLipY = (x: number, z: number): number =>
+    drawnBandAt(mirror.map, x / CELL_WORLD_SIZE, z / CELL_WORLD_SIZE) *
+      BAND_HEIGHT *
+      HEIGHT_WORLD_SCALE +
+    LIP_LIFT_WORLD_UNITS;
   const material = new LineBasicMaterial({
     color: DEBUG_COLOR,
     transparent: true,
@@ -454,7 +459,9 @@ export function createLayerEdgeOverlay(
     const { positions, flat, bands } = chart.lips;
     if (positions.length < FLOATS_PER_SEGMENT) return;
 
-    const smoothedPositions = lipSmoothing ? smoothLipSegments(positions, 6, bands) : null;
+    const smoothedPositions = lipSmoothing
+      ? smoothLipSegments(positions, 6, bands, drapeLipY)
+      : null;
     const smoothedFlat = lipSmoothing ? smoothLipSegments(flat, 4, bands) : null;
     const lipPositions = smoothedPositions?.coords ?? positions;
     const lipFlat = smoothedFlat?.coords ?? flat;
@@ -678,11 +685,13 @@ export function createLayerEdgeOverlay(
           const bz = flat[i + 3]!;
           if (distanceSqToSegment(atX, atZ, ax, az, bx, bz) > spanSq) continue;
           ensureGrabbedCapacity(written + FLOATS_PER_SEGMENT);
+          const ay = lipSmoothing ? drapeLipY(ax, az) : y;
+          const by = lipSmoothing ? drapeLipY(bx, bz) : y;
           grabbedPositions[written++] = ax;
-          grabbedPositions[written++] = y;
+          grabbedPositions[written++] = ay;
           grabbedPositions[written++] = az;
           grabbedPositions[written++] = bx;
-          grabbedPositions[written++] = y;
+          grabbedPositions[written++] = by;
           grabbedPositions[written++] = bz;
           ensureRiserCapacity(riserWritten + FLOATS_PER_RISER_QUAD);
           for (const [vx, vy, vz] of [

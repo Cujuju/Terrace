@@ -130,6 +130,7 @@ export function smoothLipSegments(
   coords: Float32Array,
   stride: 4 | 6,
   bands: ArrayLike<number>,
+  yAt: ((x: number, z: number) => number) | null = null,
 ): SmoothedLips {
   const runs: number[][] = [];
   const triples: number[] = [];
@@ -138,13 +139,13 @@ export function smoothLipSegments(
     const firstSegment = bands[i + 1]!;
     const segmentCount = bands[i + 2]!;
     if (segmentCount <= 0) continue;
-    const y = stride === 6 ? coords[firstSegment * stride + 1]! : 0;
+    const y = stride === 6 && yAt === null ? coords[firstSegment * stride + 1]! : 0;
     const out: number[] = [];
     for (const chain of chainRun(coords, stride, firstSegment, segmentCount)) {
       let points = chain.points;
       for (let p = 0; p < LIP_SMOOTH_CHAIKIN_PASSES; p++) points = chaikin(points, chain.closed);
       const emit = (x: number, z: number): void => {
-        if (stride === 6) out.push(x, y, z);
+        if (stride === 6) out.push(x, yAt !== null ? yAt(x, z) : y, z);
         else out.push(x, z);
       };
       const n = points.length / 2;
