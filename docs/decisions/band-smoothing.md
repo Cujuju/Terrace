@@ -8,10 +8,23 @@
 - Preserve one-cell terraces and tiny holes, with another visual review if
   protection changes the preferred full-filter appearance.
 - Build the protected prototype and keep the design document current.
+- Follow-up requirement: remove remaining high-frequency contour noise,
+  especially sharp corners on the lowest visible terrace, while retaining
+  the broader shape. A permissible displacement bound has not been selected.
 
 Status: offline prototype built; protected appearance awaits owner review.
 No production mesher, terrain storage, brush behavior, or ground query changed.
 Tracking: [#503](https://github.com/Cujuju/Terrace/issues/503).
+
+Follow-up inspection: the stamp-only band-1 full-filter and locally protected
+results have identical reported area, turning, and vertex counts. Dense
+extraction retains substantial turning there. Thus protection is not needed
+to explain that example's remaining noise, and extra subdivisions alone are
+insufficient. In stamp-then-smooth, protection adds further turning. The
+piecewise bilinear field also permits contour-tangent changes at cell edges.
+Distance-based contour smoothing under a displacement bound is an unbuilt
+candidate for removing residual wiggles; it is not an approved replacement
+for the shared field/query contract.
 
 ## Executable prototype
 
