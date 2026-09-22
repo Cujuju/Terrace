@@ -1,0 +1,1568 @@
+[
+  {
+    "name": "stamp",
+    "timingMsPerBandSet": {
+      "production": 0.3053800000000001,
+      "dense-bilinear": 1.2740560000000005,
+      "derived-binomial": 1.6233960000000025
+    },
+    "rows": [
+      {
+        "band": 4,
+        "name": "production",
+        "loops": 1,
+        "vertices": 228,
+        "length": 77.82710131073102,
+        "area": 425.37786960601807,
+        "absoluteTurn": 47.254720326750835,
+        "maxTurnDeg": 36.943412912779465,
+        "displacementToDense": {
+          "sampledMaxCells": 0.008375293855281228,
+          "meanCells": 0.0013503411556829918
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.00841097032390555,
+          "meanCells": 0.0013224731240282315
+        }
+      },
+      {
+        "band": 4,
+        "name": "dense-bilinear",
+        "loops": 1,
+        "vertices": 2944,
+        "length": 77.87517817724672,
+        "area": 425.4355161190033,
+        "absoluteTurn": 48.3596986950301,
+        "maxTurnDeg": 36.70758409738752,
+        "displacementToDense": {
+          "sampledMaxCells": 4.391198842038897e-15,
+          "meanCells": 6.114625366105631e-16
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 4.391198842038897e-15,
+          "meanCells": 6.114625366105631e-16
+        }
+      },
+      {
+        "band": 4,
+        "name": "derived-binomial",
+        "loops": 1,
+        "vertices": 2944,
+        "length": 74.00107336346639,
+        "area": 430.1481670941842,
+        "absoluteTurn": 13.230926837777705,
+        "maxTurnDeg": 11.619623411015436,
+        "displacementToDense": {
+          "sampledMaxCells": 0.2689508293871832,
+          "meanCells": 0.09616117198421144
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.29784006785447564,
+          "meanCells": 0.10146639053740755
+        }
+      },
+      {
+        "band": 4,
+        "name": "four-corner-smoothstep",
+        "loops": 1,
+        "vertices": 2944,
+        "length": 81.29431880594825,
+        "area": 424.2865615691636,
+        "absoluteTurn": 71.28376672631845,
+        "maxTurnDeg": 32.75791487414293,
+        "displacementToDense": {
+          "sampledMaxCells": 0.10917940972878605,
+          "meanCells": 0.03964505667695593
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.10838955082147782,
+          "meanCells": 0.037808496744579805
+        }
+      },
+      {
+        "band": 4,
+        "name": "neighbor-cubic",
+        "loops": 1,
+        "vertices": 740,
+        "length": 78.66544670446106,
+        "area": 424.3836989187718,
+        "absoluteTurn": 56.394042578404864,
+        "maxTurnDeg": 24.621148376732005,
+        "displacementToDense": {
+          "sampledMaxCells": 0.04990300977311435,
+          "meanCells": 0.017878290961723373
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.0488368956484796,
+          "meanCells": 0.017966304180086143
+        }
+      },
+      {
+        "band": 4,
+        "name": "packed-position-model",
+        "loops": 1,
+        "vertices": 228,
+        "length": 77.82403892402199,
+        "area": 425.3779296875,
+        "absoluteTurn": 47.21846021688131,
+        "maxTurnDeg": 36.876635735071616,
+        "displacementToDense": {
+          "sampledMaxCells": 0.008645426192372073,
+          "meanCells": 0.001419419753390707
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.008698229433761353,
+          "meanCells": 0.0013908962310920413
+        }
+      },
+      {
+        "band": 8,
+        "name": "production",
+        "loops": 1,
+        "vertices": 172,
+        "length": 77.94497128259502,
+        "area": 386.48079681396484,
+        "absoluteTurn": 64.75968511183999,
+        "maxTurnDeg": 71.39813671125383,
+        "displacementToDense": {
+          "sampledMaxCells": 0.08182981483923223,
+          "meanCells": 0.00919114513524281
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.08203461161708363,
+          "meanCells": 0.0092382989918608
+        }
+      },
+      {
+        "band": 8,
+        "name": "dense-bilinear",
+        "loops": 1,
+        "vertices": 2944,
+        "length": 78.31210233681054,
+        "area": 385.75998747348785,
+        "absoluteTurn": 69.7556335829261,
+        "maxTurnDeg": 71.59802859144256,
+        "displacementToDense": {
+          "sampledMaxCells": 3.710102048561723e-15,
+          "meanCells": 6.341966326281328e-16
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 3.710102048561723e-15,
+          "meanCells": 6.341966326281328e-16
+        }
+      },
+      {
+        "band": 8,
+        "name": "derived-binomial",
+        "loops": 1,
+        "vertices": 2688,
+        "length": 67.07012964245622,
+        "area": 350.4076982911548,
+        "absoluteTurn": 20.500111774003287,
+        "maxTurnDeg": 26.7908870393209,
+        "displacementToDense": {
+          "sampledMaxCells": 0.687587940727596,
+          "meanCells": 0.45961586268566945
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.8810001191198491,
+          "meanCells": 0.5232304046502941
+        }
+      },
+      {
+        "band": 8,
+        "name": "four-corner-smoothstep",
+        "loops": 1,
+        "vertices": 2944,
+        "length": 79.42536525842502,
+        "area": 392.51296095793464,
+        "absoluteTurn": 72.68843356029808,
+        "maxTurnDeg": 65.71036842836679,
+        "displacementToDense": {
+          "sampledMaxCells": 0.10769229101076401,
+          "meanCells": 0.08586133110218246
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.10749535035733329,
+          "meanCells": 0.08526140514531007
+        }
+      },
+      {
+        "band": 8,
+        "name": "neighbor-cubic",
+        "loops": 1,
+        "vertices": 756,
+        "length": 77.24713992385786,
+        "area": 390.603324399407,
+        "absoluteTurn": 66.39687553496024,
+        "maxTurnDeg": 36.93846568612133,
+        "displacementToDense": {
+          "sampledMaxCells": 0.15961683420564937,
+          "meanCells": 0.061378847221327
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.15995159434085285,
+          "meanCells": 0.06305398939966399
+        }
+      },
+      {
+        "band": 8,
+        "name": "packed-position-model",
+        "loops": 1,
+        "vertices": 172,
+        "length": 77.93351867225832,
+        "area": 386.49267578125,
+        "absoluteTurn": 64.60072009674568,
+        "maxTurnDeg": 71.25651918917877,
+        "displacementToDense": {
+          "sampledMaxCells": 0.08194301908764505,
+          "meanCells": 0.00938489490675141
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.08211696964532188,
+          "meanCells": 0.009406956998466123
+        }
+      },
+      {
+        "band": 12,
+        "name": "production",
+        "loops": 1,
+        "vertices": 89,
+        "length": 34.633558436975115,
+        "area": 76.38902568817139,
+        "absoluteTurn": 24.14581513075584,
+        "maxTurnDeg": 49.65660536213481,
+        "displacementToDense": {
+          "sampledMaxCells": 0.00580222849136143,
+          "meanCells": 0.0010619862504054156
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.005879196583563512,
+          "meanCells": 0.0010325071519601161
+        }
+      },
+      {
+        "band": 12,
+        "name": "dense-bilinear",
+        "loops": 1,
+        "vertices": 1344,
+        "length": 34.65038858202875,
+        "area": 76.38116693496704,
+        "absoluteTurn": 24.724748975506603,
+        "maxTurnDeg": 51.46580604617527,
+        "displacementToDense": {
+          "sampledMaxCells": 2.9236225561601528e-15,
+          "meanCells": 5.478297600400118e-16
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 2.9236225561601528e-15,
+          "meanCells": 5.478297600400118e-16
+        }
+      },
+      {
+        "band": 12,
+        "name": "derived-binomial",
+        "loops": 1,
+        "vertices": 1313,
+        "length": 30.872065271824464,
+        "area": 70.00038906479045,
+        "absoluteTurn": 11.438540307522478,
+        "maxTurnDeg": 25.157350373502375,
+        "displacementToDense": {
+          "sampledMaxCells": 0.4419683453579507,
+          "meanCells": 0.20097782243163623
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.5051667195051326,
+          "meanCells": 0.21868840631781775
+        }
+      },
+      {
+        "band": 12,
+        "name": "four-corner-smoothstep",
+        "loops": 1,
+        "vertices": 1344,
+        "length": 36.27011100959003,
+        "area": 76.64195957671478,
+        "absoluteTurn": 35.97978417401778,
+        "maxTurnDeg": 31.721620498482928,
+        "displacementToDense": {
+          "sampledMaxCells": 0.11610048182213457,
+          "meanCells": 0.0356751464767663
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.11594610447935548,
+          "meanCells": 0.03407975169585101
+        }
+      },
+      {
+        "band": 12,
+        "name": "neighbor-cubic",
+        "loops": 1,
+        "vertices": 378,
+        "length": 36.55193591033795,
+        "area": 78.71130011653531,
+        "absoluteTurn": 33.70991360574386,
+        "maxTurnDeg": 38.09472263959502,
+        "displacementToDense": {
+          "sampledMaxCells": 0.1876171331186569,
+          "meanCells": 0.07472768184424929
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.18412128194350208,
+          "meanCells": 0.07186388562779057
+        }
+      },
+      {
+        "band": 12,
+        "name": "packed-position-model",
+        "loops": 1,
+        "vertices": 89,
+        "length": 34.63180938224375,
+        "area": 76.388671875,
+        "absoluteTurn": 24.161335975311882,
+        "maxTurnDeg": 49.804647330176834,
+        "displacementToDense": {
+          "sampledMaxCells": 0.00600328871330618,
+          "meanCells": 0.0011278584443653033
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.006104823932621886,
+          "meanCells": 0.00109268375240034
+        }
+      }
+    ]
+  },
+  {
+    "name": "stamp-smooth",
+    "timingMsPerBandSet": {
+      "production": 0.16314400000000207,
+      "dense-bilinear": 1.1058399999999984,
+      "derived-binomial": 1.5479160000000047
+    },
+    "rows": [
+      {
+        "band": 4,
+        "name": "production",
+        "loops": 1,
+        "vertices": 235,
+        "length": 78.02581979403666,
+        "area": 425.3156157867256,
+        "absoluteTurn": 47.54488792473519,
+        "maxTurnDeg": 44.60294048404384,
+        "displacementToDense": {
+          "sampledMaxCells": 0.008013787337022661,
+          "meanCells": 0.0013631344957095496
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.00802994519062003,
+          "meanCells": 0.0013000452265143243
+        }
+      },
+      {
+        "band": 4,
+        "name": "dense-bilinear",
+        "loops": 1,
+        "vertices": 2944,
+        "length": 78.07099009735698,
+        "area": 425.36984649991655,
+        "absoluteTurn": 48.62074244903524,
+        "maxTurnDeg": 46.62359160406334,
+        "displacementToDense": {
+          "sampledMaxCells": 4.6783755461770934e-15,
+          "meanCells": 7.977262393150823e-16
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 4.6783755461770934e-15,
+          "meanCells": 7.977262393150823e-16
+        }
+      },
+      {
+        "band": 4,
+        "name": "derived-binomial",
+        "loops": 1,
+        "vertices": 2944,
+        "length": 73.92218137123385,
+        "area": 429.09581478790705,
+        "absoluteTurn": 12.617944834592967,
+        "maxTurnDeg": 13.317079589104058,
+        "displacementToDense": {
+          "sampledMaxCells": 0.28066230377761997,
+          "meanCells": 0.09326240474246472
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.3030871264528021,
+          "meanCells": 0.09903655720171833
+        }
+      },
+      {
+        "band": 4,
+        "name": "four-corner-smoothstep",
+        "loops": 1,
+        "vertices": 2944,
+        "length": 81.39229417057487,
+        "area": 424.23815670932464,
+        "absoluteTurn": 71.79820841062255,
+        "maxTurnDeg": 32.65076848719193,
+        "displacementToDense": {
+          "sampledMaxCells": 0.11064203770893852,
+          "meanCells": 0.039893974578048046
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.10975972292848721,
+          "meanCells": 0.038179197522024484
+        }
+      },
+      {
+        "band": 4,
+        "name": "neighbor-cubic",
+        "loops": 1,
+        "vertices": 744,
+        "length": 78.88662015437642,
+        "area": 424.4860137428459,
+        "absoluteTurn": 56.51243219432446,
+        "maxTurnDeg": 32.307445998603015,
+        "displacementToDense": {
+          "sampledMaxCells": 0.05028277305698563,
+          "meanCells": 0.01742139486329515
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.04919152560592971,
+          "meanCells": 0.017325425565729715
+        }
+      },
+      {
+        "band": 4,
+        "name": "packed-position-model",
+        "loops": 1,
+        "vertices": 235,
+        "length": 78.03369084962222,
+        "area": 425.3184051513672,
+        "absoluteTurn": 47.619018111738406,
+        "maxTurnDeg": 42.64707518265711,
+        "displacementToDense": {
+          "sampledMaxCells": 0.007841364827180012,
+          "meanCells": 0.0013731671072322424
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.007896729141973712,
+          "meanCells": 0.0013168053974924442
+        }
+      },
+      {
+        "band": 8,
+        "name": "production",
+        "loops": 1,
+        "vertices": 163,
+        "length": 82.3527791732755,
+        "area": 377.25158014148474,
+        "absoluteTurn": 75.88753537373537,
+        "maxTurnDeg": 172.77944007556377,
+        "displacementToDense": {
+          "sampledMaxCells": 0.13997412665138492,
+          "meanCells": 0.01345721388369454
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.13900793919421375,
+          "meanCells": 0.014031899722148078
+        }
+      },
+      {
+        "band": 8,
+        "name": "dense-bilinear",
+        "loops": 1,
+        "vertices": 1028,
+        "length": 83.162907587742,
+        "area": 376.0839711725712,
+        "absoluteTurn": 82.27139940364441,
+        "maxTurnDeg": 174.11361553828706,
+        "displacementToDense": {
+          "sampledMaxCells": 4.5547642498830426e-15,
+          "meanCells": 6.890201874909462e-16
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 4.5547642498830426e-15,
+          "meanCells": 6.890201874909462e-16
+        }
+      },
+      {
+        "band": 8,
+        "name": "derived-binomial",
+        "loops": 1,
+        "vertices": 2564,
+        "length": 66.22273116228895,
+        "area": 335.71482662106604,
+        "absoluteTurn": 24.90335272570806,
+        "maxTurnDeg": 45.76328063392565,
+        "displacementToDense": {
+          "sampledMaxCells": 0.864662533858489,
+          "meanCells": 0.524043810108091
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 1.410201576483058,
+          "meanCells": 0.6218745198916615
+        }
+      },
+      {
+        "band": 8,
+        "name": "four-corner-smoothstep",
+        "loops": 1,
+        "vertices": 1028,
+        "length": 81.20387476700016,
+        "area": 379.3911047775106,
+        "absoluteTurn": 74.12931289050104,
+        "maxTurnDeg": 160.03635028637567,
+        "displacementToDense": {
+          "sampledMaxCells": 0.13515061959721864,
+          "meanCells": 0.04154548153428948
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.13486262484336065,
+          "meanCells": 0.04339472399613966
+        }
+      },
+      {
+        "band": 8,
+        "name": "neighbor-cubic",
+        "loops": 1,
+        "vertices": 750,
+        "length": 81.39088190301152,
+        "area": 381.3373471532214,
+        "absoluteTurn": 79.70073333062301,
+        "maxTurnDeg": 52.05461029259103,
+        "displacementToDense": {
+          "sampledMaxCells": 0.5029825753797614,
+          "meanCells": 0.06322441574191824
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.4678752012294384,
+          "meanCells": 0.06146273567675021
+        }
+      },
+      {
+        "band": 8,
+        "name": "packed-position-model",
+        "loops": 1,
+        "vertices": 163,
+        "length": 82.32865928496173,
+        "area": 377.1964111328125,
+        "absoluteTurn": 75.83495755112021,
+        "maxTurnDeg": 173.49305325250782,
+        "displacementToDense": {
+          "sampledMaxCells": 0.13834170134413257,
+          "meanCells": 0.013852776672333455
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.13818926204244547,
+          "meanCells": 0.01434500219982454
+        }
+      },
+      {
+        "band": 12,
+        "name": "production",
+        "loops": 1,
+        "vertices": 55,
+        "length": 24.20034355529965,
+        "area": 33.83489053497715,
+        "absoluteTurn": 19.170727636589696,
+        "maxTurnDeg": 132.25051686185975,
+        "displacementToDense": {
+          "sampledMaxCells": 0.0525006145332615,
+          "meanCells": 0.0035789581718600628
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.05181427502088872,
+          "meanCells": 0.0035139745153371033
+        }
+      },
+      {
+        "band": 12,
+        "name": "dense-bilinear",
+        "loops": 1,
+        "vertices": 404,
+        "length": 24.23172366458649,
+        "area": 33.755890261133516,
+        "absoluteTurn": 19.669213185033275,
+        "maxTurnDeg": 134.57273337233846,
+        "displacementToDense": {
+          "sampledMaxCells": 3.809478031463217e-15,
+          "meanCells": 8.869618947548695e-16
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 3.809478031463217e-15,
+          "meanCells": 8.869618947548695e-16
+        }
+      },
+      {
+        "band": 12,
+        "name": "derived-binomial",
+        "loops": 1,
+        "vertices": 768,
+        "length": 19.179702244424583,
+        "area": 28.156281463450455,
+        "absoluteTurn": 7.477135397095639,
+        "maxTurnDeg": 25.173757852660167,
+        "displacementToDense": {
+          "sampledMaxCells": 0.6322905577128353,
+          "meanCells": 0.22145735246734619
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 1.1364714204554354,
+          "meanCells": 0.32935407617585155
+        }
+      },
+      {
+        "band": 12,
+        "name": "four-corner-smoothstep",
+        "loops": 1,
+        "vertices": 404,
+        "length": 24.189551036324886,
+        "area": 34.4085067660331,
+        "absoluteTurn": 19.11300148909553,
+        "maxTurnDeg": 118.0851970950675,
+        "displacementToDense": {
+          "sampledMaxCells": 0.11080449539504102,
+          "meanCells": 0.03311189676236535
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.11364818313676338,
+          "meanCells": 0.033461369339618886
+        }
+      },
+      {
+        "band": 12,
+        "name": "neighbor-cubic",
+        "loops": 1,
+        "vertices": 250,
+        "length": 24.894149155216112,
+        "area": 34.81737387553193,
+        "absoluteTurn": 25.001344232790462,
+        "maxTurnDeg": 69.22223806602082,
+        "displacementToDense": {
+          "sampledMaxCells": 0.39337414576522534,
+          "meanCells": 0.06298157501876792
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.2672427458436306,
+          "meanCells": 0.05476974312574379
+        }
+      },
+      {
+        "band": 12,
+        "name": "packed-position-model",
+        "loops": 1,
+        "vertices": 55,
+        "length": 24.193961554629833,
+        "area": 33.8232421875,
+        "absoluteTurn": 19.17201341065407,
+        "maxTurnDeg": 131.49249994858883,
+        "displacementToDense": {
+          "sampledMaxCells": 0.05218181447610078,
+          "meanCells": 0.003812310426815198
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.05130905449889385,
+          "meanCells": 0.0037602753624544566
+        }
+      }
+    ]
+  },
+  {
+    "name": "integer-paraboloid-control",
+    "timingMsPerBandSet": {
+      "production": 0.23855599999999869,
+      "dense-bilinear": 1.604411999999993,
+      "derived-binomial": 2.3549279999999997
+    },
+    "rows": [
+      {
+        "band": 4,
+        "name": "production",
+        "loops": 1,
+        "vertices": 128,
+        "length": 88.80987169487481,
+        "area": 627.3315732653163,
+        "absoluteTurn": 6.339803604569977,
+        "maxTurnDeg": 5.626532793935493,
+        "displacementToDense": {
+          "sampledMaxCells": 0.0008025351992882279,
+          "meanCells": 0.000031635203431161305
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.0008027575038433866,
+          "meanCells": 0.000031634141260922057
+        }
+      },
+      {
+        "band": 4,
+        "name": "dense-bilinear",
+        "loops": 1,
+        "vertices": 3340,
+        "length": 88.81004043336137,
+        "area": 627.3287091532711,
+        "absoluteTurn": 6.302972384911229,
+        "maxTurnDeg": 5.647960107510837,
+        "displacementToDense": {
+          "sampledMaxCells": 4.2657839889376905e-15,
+          "meanCells": 1.2783418742162932e-15
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 4.2657839889376905e-15,
+          "meanCells": 1.2783418742162932e-15
+        }
+      },
+      {
+        "band": 4,
+        "name": "derived-binomial",
+        "loops": 1,
+        "vertices": 3712,
+        "length": 88.58339805029593,
+        "area": 624.191369413547,
+        "absoluteTurn": 6.286905886571822,
+        "maxTurnDeg": 4.873943636606963,
+        "displacementToDense": {
+          "sampledMaxCells": 0.037451449474771525,
+          "meanCells": 0.035366279494943954
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.03727706365212704,
+          "meanCells": 0.03537118710736434
+        }
+      },
+      {
+        "band": 4,
+        "name": "four-corner-smoothstep",
+        "loops": 1,
+        "vertices": 3340,
+        "length": 91.3716873864945,
+        "area": 627.8455332893261,
+        "absoluteTurn": 64.90441842794937,
+        "maxTurnDeg": 46.756794622495,
+        "displacementToDense": {
+          "sampledMaxCells": 0.1255262071392819,
+          "meanCells": 0.06068721009174784
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.12564646895077503,
+          "meanCells": 0.05932010706342407
+        }
+      },
+      {
+        "band": 4,
+        "name": "neighbor-cubic",
+        "loops": 1,
+        "vertices": 908,
+        "length": 88.85711022893842,
+        "area": 628.30261342124,
+        "absoluteTurn": 6.2831853071795845,
+        "maxTurnDeg": 1.1294666589573459,
+        "displacementToDense": {
+          "sampledMaxCells": 0.017551406556886633,
+          "meanCells": 0.010983957630829527
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.01754464295956959,
+          "meanCells": 0.010939336475175783
+        }
+      },
+      {
+        "band": 4,
+        "name": "packed-position-model",
+        "loops": 1,
+        "vertices": 128,
+        "length": 88.80786776536932,
+        "area": 627.3440551757812,
+        "absoluteTurn": 6.283185307181295,
+        "maxTurnDeg": 5.390679829834854,
+        "displacementToDense": {
+          "sampledMaxCells": 0.0018797192136483288,
+          "meanCells": 0.0006763493208790648
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.0018785611169932297,
+          "meanCells": 0.0006747929966150259
+        }
+      },
+      {
+        "band": 8,
+        "name": "production",
+        "loops": 1,
+        "vertices": 108,
+        "length": 73.20417407011928,
+        "area": 426.1574034624676,
+        "absoluteTurn": 6.33464567850075,
+        "maxTurnDeg": 6.655595070345755,
+        "displacementToDense": {
+          "sampledMaxCells": 0.0006697834886633618,
+          "meanCells": 0.00002598170725264026
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.0006698692918724278,
+          "meanCells": 0.000025985292115116163
+        }
+      },
+      {
+        "band": 8,
+        "name": "dense-bilinear",
+        "loops": 1,
+        "vertices": 2696,
+        "length": 73.20428332117558,
+        "area": 426.15549415723984,
+        "absoluteTurn": 6.2935111609473715,
+        "maxTurnDeg": 6.549969196512169,
+        "displacementToDense": {
+          "sampledMaxCells": 4.183928985569332e-15,
+          "meanCells": 1.3884188078149018e-15
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 4.183928985569332e-15,
+          "meanCells": 1.3884188078149018e-15
+        }
+      },
+      {
+        "band": 8,
+        "name": "derived-binomial",
+        "loops": 1,
+        "vertices": 2944,
+        "length": 72.93160762550907,
+        "area": 423.01587682966766,
+        "absoluteTurn": 6.286786616375479,
+        "maxTurnDeg": 5.504935103116847,
+        "displacementToDense": {
+          "sampledMaxCells": 0.04607636233636763,
+          "meanCells": 0.043032870528371285
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.045402383886496464,
+          "meanCells": 0.04298417299057762
+        }
+      },
+      {
+        "band": 8,
+        "name": "four-corner-smoothstep",
+        "loops": 1,
+        "vertices": 2696,
+        "length": 75.05853892198681,
+        "area": 426.3680153098326,
+        "absoluteTurn": 49.714634666838144,
+        "maxTurnDeg": 46.870039196058556,
+        "displacementToDense": {
+          "sampledMaxCells": 0.12789857151926012,
+          "meanCells": 0.05178754311963205
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.12758647285986208,
+          "meanCells": 0.050369586223773244
+        }
+      },
+      {
+        "band": 8,
+        "name": "neighbor-cubic",
+        "loops": 1,
+        "vertices": 748,
+        "length": 73.27290952057893,
+        "area": 427.24044851256207,
+        "absoluteTurn": 6.283185307179588,
+        "maxTurnDeg": 1.3379602456838673,
+        "displacementToDense": {
+          "sampledMaxCells": 0.021205423865186455,
+          "meanCells": 0.01481115336693689
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.021129588527475304,
+          "meanCells": 0.014775114734688446
+        }
+      },
+      {
+        "band": 8,
+        "name": "packed-position-model",
+        "loops": 1,
+        "vertices": 108,
+        "length": 73.20261169298166,
+        "area": 426.14715576171875,
+        "absoluteTurn": 6.319966516897131,
+        "maxTurnDeg": 6.065979249798453,
+        "displacementToDense": {
+          "sampledMaxCells": 0.0016286296629512166,
+          "meanCells": 0.0005842570067181108
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.0016338055108067373,
+          "meanCells": 0.0005842633703750793
+        }
+      },
+      {
+        "band": 12,
+        "name": "production",
+        "loops": 1,
+        "vertices": 72,
+        "length": 53.22192665090639,
+        "area": 225.11784795746098,
+        "absoluteTurn": 6.308796563835015,
+        "maxTurnDeg": 9.59484963350198,
+        "displacementToDense": {
+          "sampledMaxCells": 0.0005739899279569489,
+          "meanCells": 0.000020052127731420442
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.0005741558601651492,
+          "meanCells": 0.000020052172184343027
+        }
+      },
+      {
+        "band": 12,
+        "name": "dense-bilinear",
+        "loops": 1,
+        "vertices": 2052,
+        "length": 53.22199841895625,
+        "area": 225.1167494000954,
+        "absoluteTurn": 6.2919276028510565,
+        "maxTurnDeg": 9.700378590371596,
+        "displacementToDense": {
+          "sampledMaxCells": 3.625703671058966e-15,
+          "meanCells": 1.279366395624452e-15
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 3.625703671058966e-15,
+          "meanCells": 1.279366395624452e-15
+        }
+      },
+      {
+        "band": 12,
+        "name": "derived-binomial",
+        "loops": 1,
+        "vertices": 2176,
+        "length": 52.846316414529035,
+        "area": 221.9926568193672,
+        "absoluteTurn": 6.28563039141002,
+        "maxTurnDeg": 7.080573424636877,
+        "displacementToDense": {
+          "sampledMaxCells": 0.06454361225918061,
+          "meanCells": 0.05889639789947858
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.06465712516993834,
+          "meanCells": 0.058920748666848995
+        }
+      },
+      {
+        "band": 12,
+        "name": "four-corner-smoothstep",
+        "loops": 1,
+        "vertices": 2052,
+        "length": 54.643654032343456,
+        "area": 225.72630073414376,
+        "absoluteTurn": 37.93116132979757,
+        "maxTurnDeg": 43.129918732250054,
+        "displacementToDense": {
+          "sampledMaxCells": 0.132191288987754,
+          "meanCells": 0.05123815154112617
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.13223797860057243,
+          "meanCells": 0.049958919484491555
+        }
+      },
+      {
+        "band": 12,
+        "name": "neighbor-cubic",
+        "loops": 1,
+        "vertices": 540,
+        "length": 53.31315256057809,
+        "area": 226.17830933027005,
+        "absoluteTurn": 6.283185307179585,
+        "maxTurnDeg": 1.8431995608714755,
+        "displacementToDense": {
+          "sampledMaxCells": 0.02907602888269339,
+          "meanCells": 0.019980686179118346
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.029074504905891734,
+          "meanCells": 0.019919572054980673
+        }
+      },
+      {
+        "band": 12,
+        "name": "packed-position-model",
+        "loops": 1,
+        "vertices": 72,
+        "length": 53.21814790720307,
+        "area": 225.08172607421875,
+        "absoluteTurn": 6.320195851283171,
+        "maxTurnDeg": 9.545618554879464,
+        "displacementToDense": {
+          "sampledMaxCells": 0.0018316206790767833,
+          "meanCells": 0.000851181937689972
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.0018310659755354309,
+          "meanCells": 0.000851230465420511
+        }
+      }
+    ]
+  },
+  {
+    "name": "single-cell-band-control",
+    "timingMsPerBandSet": {
+      "production": 0.03162399999999252,
+      "dense-bilinear": 0.06361600000000181,
+      "derived-binomial": 0.05979599999998755
+    },
+    "rows": [
+      {
+        "band": 1,
+        "name": "production",
+        "loops": 1,
+        "vertices": 16,
+        "length": 2.8789104998652686,
+        "area": 0.6059417724609375,
+        "absoluteTurn": 6.283185307179586,
+        "maxTurnDeg": 64.6392835823477,
+        "displacementToDense": {
+          "sampledMaxCells": 0.005854383780128716,
+          "meanCells": 0.00252752557843923
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.0057975862882334315,
+          "meanCells": 0.0025073956292321893
+        }
+      },
+      {
+        "band": 1,
+        "name": "dense-bilinear",
+        "loops": 1,
+        "vertices": 128,
+        "length": 2.8823260045400976,
+        "area": 0.6135663986206055,
+        "absoluteTurn": 6.283185307179587,
+        "maxTurnDeg": 61.86798155914047,
+        "displacementToDense": {
+          "sampledMaxCells": 1.8498247598146517e-15,
+          "meanCells": 8.451011395887447e-16
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 1.8498247598146517e-15,
+          "meanCells": 8.451011395887447e-16
+        }
+      },
+      {
+        "band": 1,
+        "name": "derived-binomial",
+        "loops": 0,
+        "vertices": 0,
+        "length": 0,
+        "area": 0,
+        "absoluteTurn": 0,
+        "maxTurnDeg": 0,
+        "displacementToDense": null,
+        "reverseDisplacementFromDense": null
+      },
+      {
+        "band": 1,
+        "name": "four-corner-smoothstep",
+        "loops": 1,
+        "vertices": 128,
+        "length": 3.158875528869831,
+        "area": 0.7931627467417002,
+        "absoluteTurn": 6.283185307179587,
+        "maxTurnDeg": 30.764697203713773,
+        "displacementToDense": {
+          "sampledMaxCells": 0.09211096910502499,
+          "meanCells": 0.05888763509432838
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.09182904005767979,
+          "meanCells": 0.056092323342810814
+        }
+      },
+      {
+        "band": 1,
+        "name": "neighbor-cubic",
+        "loops": 1,
+        "vertices": 36,
+        "length": 3.438433985566137,
+        "area": 0.936285592006243,
+        "absoluteTurn": 6.283185307179586,
+        "maxTurnDeg": 29.52670414317404,
+        "displacementToDense": {
+          "sampledMaxCells": 0.1378710977338846,
+          "meanCells": 0.10236943711559565
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.13527547776540247,
+          "meanCells": 0.09928718258000913
+        }
+      },
+      {
+        "band": 1,
+        "name": "packed-position-model",
+        "loops": 1,
+        "vertices": 16,
+        "length": 2.878460055055344,
+        "area": 0.60546875,
+        "absoluteTurn": 6.283185307179586,
+        "maxTurnDeg": 64.87016724754916,
+        "displacementToDense": {
+          "sampledMaxCells": 0.006087685851296645,
+          "meanCells": 0.002694207410244813
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.006029309868941144,
+          "meanCells": 0.0026772373243862187
+        }
+      }
+    ]
+  },
+  {
+    "name": "single-cell-water-hole-control",
+    "timingMsPerBandSet": {
+      "production": 0.03367600000001403,
+      "dense-bilinear": 0.06629999999999199,
+      "derived-binomial": 0.06310400000000299
+    },
+    "rows": [
+      {
+        "band": 0,
+        "name": "production",
+        "loops": 2,
+        "vertices": 20,
+        "length": 130.87893197424782,
+        "area": 1023.3940353393555,
+        "absoluteTurn": 12.566370614359172,
+        "maxTurnDeg": 90,
+        "displacementToDense": {
+          "sampledMaxCells": 0.005461682109881718,
+          "meanCells": 0.00005732460462449369
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.005376246237791714,
+          "meanCells": 0.00005616947374276368
+        }
+      },
+      {
+        "band": 0,
+        "name": "dense-bilinear",
+        "loops": 2,
+        "vertices": 132,
+        "length": 130.88235259379263,
+        "area": 1023.3864040374756,
+        "absoluteTurn": 12.566370614359172,
+        "maxTurnDeg": 90,
+        "displacementToDense": {
+          "sampledMaxCells": 3.626603207115287e-15,
+          "meanCells": 3.276112294707741e-17
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 3.626603207115287e-15,
+          "meanCells": 3.276112294707741e-17
+        }
+      },
+      {
+        "band": 0,
+        "name": "derived-binomial",
+        "loops": 1,
+        "vertices": 4,
+        "length": 128,
+        "area": 1024,
+        "absoluteTurn": 6.283185307179586,
+        "maxTurnDeg": 90,
+        "displacementToDense": {
+          "sampledMaxCells": 0,
+          "meanCells": 0
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 15.69171561789036,
+          "meanCells": 0.3570463750283887
+        }
+      },
+      {
+        "band": 0,
+        "name": "four-corner-smoothstep",
+        "loops": 2,
+        "vertices": 132,
+        "length": 131.15891866332632,
+        "area": 1023.206815941327,
+        "absoluteTurn": 12.566370614359172,
+        "maxTurnDeg": 90,
+        "displacementToDense": {
+          "sampledMaxCells": 0.09209669739686308,
+          "meanCells": 0.0014584308860834192
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.09177033822236863,
+          "meanCells": 0.001283796984143012
+        }
+      },
+      {
+        "band": 0,
+        "name": "neighbor-cubic",
+        "loops": 2,
+        "vertices": 40,
+        "length": 131.43843398556612,
+        "area": 1023.0637144079938,
+        "absoluteTurn": 12.566370614359172,
+        "maxTurnDeg": 90,
+        "displacementToDense": {
+          "sampledMaxCells": 0.13760730510140576,
+          "meanCells": 0.0026883248800590735
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.13526350534731776,
+          "meanCells": 0.002273908157714092
+        }
+      },
+      {
+        "band": 0,
+        "name": "packed-position-model",
+        "loops": 2,
+        "vertices": 20,
+        "length": 130.87846005505534,
+        "area": 1023.39453125,
+        "absoluteTurn": 12.566370614359172,
+        "maxTurnDeg": 90,
+        "displacementToDense": {
+          "sampledMaxCells": 0.005635944943590685,
+          "meanCells": 0.00006149565540673513
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.005533678275515127,
+          "meanCells": 0.000061031776726377246
+        }
+      }
+    ]
+  },
+  {
+    "name": "layered-opening-control",
+    "timingMsPerBandSet": {
+      "production": 0.4806999999999971,
+      "dense-bilinear": 1.3439040000000022,
+      "derived-binomial": 2.3415120000000025
+    },
+    "rows": [
+      {
+        "band": 4,
+        "name": "production",
+        "loops": 2,
+        "vertices": 271,
+        "length": 102.80416597913404,
+        "area": 385.39865993152966,
+        "absoluteTurn": 53.879689418311116,
+        "maxTurnDeg": 46.77548150767961,
+        "displacementToDense": {
+          "sampledMaxCells": 0.008375293855281228,
+          "meanCells": 0.0010362706400063551
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.00841097032390555,
+          "meanCells": 0.0010151667660980405
+        }
+      },
+      {
+        "band": 4,
+        "name": "dense-bilinear",
+        "loops": 2,
+        "vertices": 3840,
+        "length": 102.85234331385969,
+        "area": 385.457172465776,
+        "absoluteTurn": 54.989587168554436,
+        "maxTurnDeg": 46.80775487493024,
+        "displacementToDense": {
+          "sampledMaxCells": 4.391198842038897e-15,
+          "meanCells": 5.791008313146402e-16
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 4.391198842038897e-15,
+          "meanCells": 5.791008313146402e-16
+        }
+      },
+      {
+        "band": 4,
+        "name": "derived-binomial",
+        "loops": 2,
+        "vertices": 3584,
+        "length": 93.77787787429192,
+        "area": 402.92128961208084,
+        "absoluteTurn": 19.94274295717624,
+        "maxTurnDeg": 43.28259061938452,
+        "displacementToDense": {
+          "sampledMaxCells": 0.8025391962621384,
+          "meanCells": 0.19093259707486251
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 1.0905243939002853,
+          "meanCells": 0.223734465802916
+        }
+      },
+      {
+        "band": 4,
+        "name": "four-corner-smoothstep",
+        "loops": 2,
+        "vertices": 3840,
+        "length": 106.94353332742891,
+        "area": 381.9319709198842,
+        "absoluteTurn": 77.97947765260633,
+        "maxTurnDeg": 55.602544986358765,
+        "displacementToDense": {
+          "sampledMaxCells": 0.13376581731488682,
+          "meanCells": 0.05272210920542572
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.10982650791982282,
+          "meanCells": 0.05120422824146375
+        }
+      },
+      {
+        "band": 4,
+        "name": "neighbor-cubic",
+        "loops": 2,
+        "vertices": 956,
+        "length": 103.99785287986413,
+        "area": 383.04496161140395,
+        "absoluteTurn": 64.67780832733673,
+        "maxTurnDeg": 35.76681914811559,
+        "displacementToDense": {
+          "sampledMaxCells": 0.10290385023780857,
+          "meanCells": 0.026826558300769437
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.1038561506411517,
+          "meanCells": 0.026578577302154193
+        }
+      },
+      {
+        "band": 4,
+        "name": "packed-position-model",
+        "loops": 2,
+        "vertices": 271,
+        "length": 102.80266955250036,
+        "area": 385.39500427246094,
+        "absoluteTurn": 53.86617175741011,
+        "maxTurnDeg": 47.20113121832263,
+        "displacementToDense": {
+          "sampledMaxCells": 0.008645426192372073,
+          "meanCells": 0.0012365454522623286
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.008698229433761353,
+          "meanCells": 0.0012148815021977323
+        }
+      },
+      {
+        "band": 8,
+        "name": "production",
+        "loops": 1,
+        "vertices": 172,
+        "length": 77.94497128259502,
+        "area": 386.48079681396484,
+        "absoluteTurn": 64.75968511183999,
+        "maxTurnDeg": 71.39813671125383,
+        "displacementToDense": {
+          "sampledMaxCells": 0.08182981483923223,
+          "meanCells": 0.00919114513524281
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.08203461161708363,
+          "meanCells": 0.0092382989918608
+        }
+      },
+      {
+        "band": 8,
+        "name": "dense-bilinear",
+        "loops": 1,
+        "vertices": 2944,
+        "length": 78.31210233681054,
+        "area": 385.75998747348785,
+        "absoluteTurn": 69.7556335829261,
+        "maxTurnDeg": 71.59802859144256,
+        "displacementToDense": {
+          "sampledMaxCells": 3.710102048561723e-15,
+          "meanCells": 6.341966326281328e-16
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 3.710102048561723e-15,
+          "meanCells": 6.341966326281328e-16
+        }
+      },
+      {
+        "band": 8,
+        "name": "derived-binomial",
+        "loops": 1,
+        "vertices": 2688,
+        "length": 67.07012964245622,
+        "area": 350.4076982911548,
+        "absoluteTurn": 20.500111774003287,
+        "maxTurnDeg": 26.7908870393209,
+        "displacementToDense": {
+          "sampledMaxCells": 0.687587940727596,
+          "meanCells": 0.45961586268566945
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.8810001191198491,
+          "meanCells": 0.5232304046502941
+        }
+      },
+      {
+        "band": 8,
+        "name": "four-corner-smoothstep",
+        "loops": 1,
+        "vertices": 2944,
+        "length": 79.42536525842502,
+        "area": 392.51296095793464,
+        "absoluteTurn": 72.68843356029808,
+        "maxTurnDeg": 65.71036842836679,
+        "displacementToDense": {
+          "sampledMaxCells": 0.10769229101076401,
+          "meanCells": 0.08586133110218246
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.10749535035733329,
+          "meanCells": 0.08526140514531007
+        }
+      },
+      {
+        "band": 8,
+        "name": "neighbor-cubic",
+        "loops": 1,
+        "vertices": 756,
+        "length": 77.24713992385786,
+        "area": 390.603324399407,
+        "absoluteTurn": 66.39687553496024,
+        "maxTurnDeg": 36.93846568612133,
+        "displacementToDense": {
+          "sampledMaxCells": 0.15961683420564937,
+          "meanCells": 0.061378847221327
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.15995159434085285,
+          "meanCells": 0.06305398939966399
+        }
+      },
+      {
+        "band": 8,
+        "name": "packed-position-model",
+        "loops": 1,
+        "vertices": 172,
+        "length": 77.93351867225832,
+        "area": 386.49267578125,
+        "absoluteTurn": 64.60072009674568,
+        "maxTurnDeg": 71.25651918917877,
+        "displacementToDense": {
+          "sampledMaxCells": 0.08194301908764505,
+          "meanCells": 0.00938489490675141
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.08211696964532188,
+          "meanCells": 0.009406956998466123
+        }
+      },
+      {
+        "band": 12,
+        "name": "production",
+        "loops": 1,
+        "vertices": 89,
+        "length": 34.633558436975115,
+        "area": 76.38902568817139,
+        "absoluteTurn": 24.14581513075584,
+        "maxTurnDeg": 49.65660536213481,
+        "displacementToDense": {
+          "sampledMaxCells": 0.00580222849136143,
+          "meanCells": 0.0010619862504054156
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.005879196583563512,
+          "meanCells": 0.0010325071519601161
+        }
+      },
+      {
+        "band": 12,
+        "name": "dense-bilinear",
+        "loops": 1,
+        "vertices": 1344,
+        "length": 34.65038858202875,
+        "area": 76.38116693496704,
+        "absoluteTurn": 24.724748975506603,
+        "maxTurnDeg": 51.46580604617527,
+        "displacementToDense": {
+          "sampledMaxCells": 2.9236225561601528e-15,
+          "meanCells": 5.478297600400118e-16
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 2.9236225561601528e-15,
+          "meanCells": 5.478297600400118e-16
+        }
+      },
+      {
+        "band": 12,
+        "name": "derived-binomial",
+        "loops": 1,
+        "vertices": 1313,
+        "length": 30.872065271824464,
+        "area": 70.00038906479045,
+        "absoluteTurn": 11.438540307522478,
+        "maxTurnDeg": 25.157350373502375,
+        "displacementToDense": {
+          "sampledMaxCells": 0.4419683453579507,
+          "meanCells": 0.20097782243163623
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.5051667195051326,
+          "meanCells": 0.21868840631781775
+        }
+      },
+      {
+        "band": 12,
+        "name": "four-corner-smoothstep",
+        "loops": 1,
+        "vertices": 1344,
+        "length": 36.27011100959003,
+        "area": 76.64195957671478,
+        "absoluteTurn": 35.97978417401778,
+        "maxTurnDeg": 31.721620498482928,
+        "displacementToDense": {
+          "sampledMaxCells": 0.11610048182213457,
+          "meanCells": 0.0356751464767663
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.11594610447935548,
+          "meanCells": 0.03407975169585101
+        }
+      },
+      {
+        "band": 12,
+        "name": "neighbor-cubic",
+        "loops": 1,
+        "vertices": 378,
+        "length": 36.55193591033795,
+        "area": 78.71130011653531,
+        "absoluteTurn": 33.70991360574386,
+        "maxTurnDeg": 38.09472263959502,
+        "displacementToDense": {
+          "sampledMaxCells": 0.1876171331186569,
+          "meanCells": 0.07472768184424929
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.18412128194350208,
+          "meanCells": 0.07186388562779057
+        }
+      },
+      {
+        "band": 12,
+        "name": "packed-position-model",
+        "loops": 1,
+        "vertices": 89,
+        "length": 34.63180938224375,
+        "area": 76.388671875,
+        "absoluteTurn": 24.161335975311882,
+        "maxTurnDeg": 49.804647330176834,
+        "displacementToDense": {
+          "sampledMaxCells": 0.00600328871330618,
+          "meanCells": 0.0011278584443653033
+        },
+        "reverseDisplacementFromDense": {
+          "sampledMaxCells": 0.006104823932621886,
+          "meanCells": 0.00109268375240034
+        }
+      }
+    ]
+  }
+]

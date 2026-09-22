@@ -1,0 +1,78 @@
+# Band smoothing investigation — offline findings, 2026-09-21
+
+Status: incomplete investigation; no production algorithm selected. Source examined at `4df27771dca0181dfd313cf85ec199cb42ae3be8`. Issue: [#503](https://github.com/Cujuju/Terrace/issues/503).
+
+The photographs still have no identified world, cell coordinates, raw patch, brush settings, or camera scale. These measurements use a synthetic production-sculpt reproduction. Its resemblance to the photographed failure is **unverified**; owner review and same-camera application comparisons remain necessary. No app was started/stopped, regression tests written, or production files changed.
+
+## Reproduction and evidence
+
+Run `node E:\Development\Projects\Terrace\scratch-band-investigation\run.mjs` from the repository. Node 24 imports production `applySculpt`, contour extraction, simplification, and per-band column sampling. The script generates disposable marcher variants from the current source; it does not patch the source modules. Node's typeless-package warning concerns these disposable files.
+
+- 64×64 initial map at canonical band 0; twelve soft, clicked, banded stamps at (32,32), radius 4; three at (35,30), radius 2. Amount is production `DEFAULT_SCULPT_AMOUNT`.
+- Smooth variant adds three lower smooth strokes at each of (30,27), (27,30), (36,32), (31,36), radius 6, lambda 50, clicked/banded. All unprovided options use the production defaults.
+- Controls: exact integer samples of a quadratic mound; one canonical one-cell terrace; one-cell water hole; layered columns with a lower cap at band 2 and roof starting at band 8.
+- Contours cover lattice coordinates [16,48]² and bands 4, 8, 12; small-feature controls use their own band. A hole control includes the rectangular outer domain, so its loop count decreases from two to one when its hole disappears.
+- Full inputs, spans, stroke sequence, source hash, settings, and output contour vertices are in [measurements.json.gz](E:/Development/Projects/Terrace/scratch-band-investigation/measurements.json.gz). Human-readable numeric results: [measurements-summary.json](E:/Development/Projects/Terrace/scratch-band-investigation/measurements-summary.json).
+
+The initial wider-brush trial intersected the measurement window. It was replaced by the smaller reproduction above before retaining these findings.
+
+## What the measurements establish
+
+Turning is total absolute tangent turn after resampling each loop at 0.25-cell arc intervals. It is a comparative diagnostic, **not an aesthetic acceptance threshold**. Displacement is sampled nearest-segment distance to the denser unchanged-field output, not a proven Hausdorff bound. Reverse distances are also retained. Compare the same band and fixture only.
+
+Selected band 12:
+
+| Reconstruction/extraction | Stamp turning, radians | Stamp-then-smooth turning | Maximum sampled movement, stamp / smoothed |
+|---|---:|---:|---:|
+| Production CPU | 24.15 | 19.17 | 0.01 / 0.05 cells |
+| Unchanged bilinear, 32 subdivisions | 24.72 | 19.67 | Reference |
+| Derived 3×3 binomial field, then bilinear | 11.44 | 7.48 | 0.44 / 0.63 cells |
+| Four-corner smoothstep reconstruction | 35.98 | 19.11 | 0.12 / 0.11 cells |
+| Neighbor-supported tensor cubic | 33.71 | 25.00 | 0.19 / 0.39 cells |
+
+Denser extraction preserves the dominant notches in this reproduction. It increases resolution along the same field; it does not remove its inter-cell slope changes. It is therefore insufficient **for this reproduction**, without establishing the photographed case's cause.
+
+The filter is separable [1,2,1]²/16, applied only to derived samples. Rational values are retained by scaling the field and threshold together. It reduces turning but reduces the selected cap area from 76.38 to 70.00 cells² (stamp) and 33.76 to 28.16 (smoothed). It erases the canonical one-cell terrace and closes the one-cell water hole. It moves the band-4 boundary of the layered-opening control by up to 0.80 cells. The unguarded filter does not meet feature preservation.
+
+Smoothstep uses the same four corner values with `s(t)=3t²−2t³`, evaluated by inverse-warping dense bilinear contour coordinates. It needs no halo and preserves corner values, but pulls tangents toward the grid. On the clean quadratic control, band-12 turning rises from about 6.29 to 37.93 radians. This particular four-corner alternative is unsuitable; this does not exclude every four-sample construction.
+
+The wider cubic is tensor Catmull–Rom, sampled on an eight-subcell grid with 1/256-height quantization for extraction. It interpolates existing samples, needs a 4×4 neighborhood, and improves the clean control, but increases turning on the sculpted examples. Its floating-point evaluation is an experimental shape comparison, **not a proposed deterministic implementation**. Its sample spacing limits precision of the measured comparison. An unconstrained cubic is not supported by these results.
+
+Modeling the GPU's final XZ rounding barely changes these selected turning measurements. At 0.25 world units per cell and 1024 packed units per world unit, each axis rounds by at most 1/512 cell; Euclidean rounding error is at most sqrt(2)/512 ≈ 0.002763 cells, **excluding clipping and earlier GPU arithmetic**. This is a bound on packing, not a live GPU parity measurement.
+
+## Separate saddle observation
+
+Both CPU `marchLevel` and WGSL `saddleCase` decide ambiguous connectivity using the four-corner mean. That is not always the connectivity of their bilinear field.
+
+Raw NW, NE, SW, SE heights `[9,0,-19,9]`, raw threshold 1, give relative field `8−9x−28y+37xy`. Its saddle is at (28/37,9/37), value 44/37 > 0, so the positive diagonal regions connect. Production extraction gives two loops; a 32×32 subdivision of that same bilinear square gives one. [Saved observation](E:/Development/Projects/Terrace/scratch-band-investigation/saddle-observation.json).
+
+This was independently evaluated during this session. It is not established as the photograph's failure. The main “dense-bilinear” rows retain the existing saddle decider; they are denser production traces, not independent topology truth for ambiguous squares.
+
+## Contracts verified in executable source
+
+Paths below are relative to `E:\Development\Projects\Terrace` only in the source descriptions; links are absolute.
+
+- [Shared field](E:/Development/Projects/Terrace/shared/src/drawnGround.ts): four-corner bilinear numerator, 1024 coordinate units, four extraction subdivisions, 65536 root-solve units. Axis root finding assumes a linear field on that axis. `drawnBandAt` and `drawnLayerCapAt` use the field and band-specific column samples.
+- [CPU contour extraction](E:/Development/Projects/Terrace/client/src/terrain/contours.ts) and [simplification](E:/Development/Projects/Terrace/client/src/terrain/contourSmoothing.ts): generated caps use within-cell isolines; simplification removes near-collinear points. Separate Chaikin lip smoothing does not change caps or risers.
+- [GPU kernel](E:/Development/Projects/Terrace/client/src/render/gpuMesher/mesherWgsl.ts): the per-square polyline feeds cap, riser, and lip emission. Count and emit share that path and resident inputs. A nonlinear reconstruction invalidates the current exact linear-axis quotient and potentially single-crossing assumptions.
+- [GPU window](E:/Development/Projects/Terrace/client/src/render/gpuMesher/terrainGpuInputs.ts): 17×17 raw samples and span descriptors, with a 2048-span-pair entry cap. Per-band samples are derived from spans; filtering top heights alone cannot represent buried layers.
+- [Mirror dependencies](E:/Development/Projects/Terrace/client/src/terrain/mirror.ts): edit invalidation follows current sample readers and seam pullback. Chunk arrival dirties itself, west, north, northwest. Radius-one symmetric reads require additional east/south/diagonal arrival dependencies as well as edit dependencies. `renderSampleCell` only handles the current seam cases. Only a wholesale received-set clear was found; no individual unload path was found by the targeted search.
+- [Picking](E:/Development/Projects/Terrace/client/src/terrain/pick/bandOwner.ts) uses `drawnLayerCapAt`; [face refinement](E:/Development/Projects/Terrace/client/src/terrain/pick/drawnFaceRefine.ts) also uses emitted segments. [Ground queries](E:/Development/Projects/Terrace/client/src/terrain/drawnGround.ts) delegate to shared math. Moving meshes alone leaves those answers inconsistent.
+- [CPU underside caps](E:/Development/Projects/Terrace/client/src/terrain/capEmission.ts) and GPU `emitCeilingLevel` use a separate binary coverage field with midpoint crossings and no refinement. This path was source-traced, not geometrically exercised by the per-band opening probe. Full overhang validity remains unverified.
+- [Sea geometry](E:/Development/Projects/Terrace/client/src/render/water.ts) uses [the shared surface scale](E:/Development/Projects/Terrace/client/src/worldScale.ts), below the band-0 cap. Land caps physically occlude it. River/traversal logic still reads raw heights; changing the derived field is not authorization to redefine their inputs. Complete freshwater/water-depth behavior remains unverified.
+
+## Arithmetic, capacity, and cost observations
+
+For the evaluated radius-one filter or tensor cubic, each cell square needs samples from offsets −1 through +2 on each axis: 4×4 unique raw samples. A 16×16-square chunk needs a 19×19 halo window rather than 17×17: 361 versus 289 entries, about 25% more lattice data. This widens reads, not brush writes. A CPU-precomputed ordinary filtered lattice could retain a 17×17 GPU upload, but layered fields would require separate treatment and shared-query parity; this has not been designed or benchmarked.
+
+The experimental filter carries an integer numerator with denominator 16. With input magnitudes bounded by 1559 including the verified open-column sentinel (−1559), a conservative magnitude bound after filtering is 24,944. Multiplying by the CPU solve weight 2³² remains below 2⁵³. This does **not** establish WGSL safety: scaled endpoint differences can exceed signed 32-bit range even when each endpoint fits. The current restoring-division bounds must be re-derived before using scaled samples on GPU.
+
+Enumerating the production marching table gives maximum unsimplified polygon lengths of 12 vertices at four subdivisions, 20 at eight, and 68 at 32. Current GPU `MAX_POLYLINE` is 16 and has truncating guards. Merely increasing the shared extraction constant would exceed that capacity. Any changed bound also affects private arrays, triangulation work, lip allocation and fallback behavior. Cubic edge extrema also invalidate raw-corner-only level ranges unless bounded explicitly.
+
+One offline timing run over three selected levels of the 32×32 stamp patch measured about 0.31 ms production, 1.27 ms dense, and 1.62 ms filtered+dense. Smoothed patch: 0.16, 1.11, 1.55 ms. These are 25-repeat mean extraction timings in Node, including loop simplification, without dedicated warmup, caps, uploads, GPU work, or rendering. They are neither application frame costs nor evidence of meeting the 140-fps requirement. Dense rows preserve unsimplified vertices for measurement, while timing runs simplify, so those quantities must not be equated.
+
+## Outstanding evidence
+
+The original world/location question remains pending. Neither screenshot reproduction nor owner-approved displacement/feature thresholds has been established. No same-camera visual comparison, actual CPU/GPU mesh parity run, cap/riser/underside closure check, seam/availability exercise, candidate integer-port proof, or edit-time/frame-cost measurement has occurred. Valley and full saddle/overhang/coast coverage are incomplete. No implementation plan can yet pass the project's evidence gate.
+
+The offline work rules out choosing denser extraction, unguarded filtering, this smoothstep, or this unconstrained cubic as a complete fix on the present evidence. It does not select a replacement. Application experiments require current-turn permission under [AGENTS.md](E:/Development/Projects/Terrace/AGENTS.md); writing regression tests additionally requires session permission. These are separate from the already-authorized disposable numeric investigation.
