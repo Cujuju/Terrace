@@ -1,3 +1,7 @@
 dense-contours.ts
 fine-contours.ts
 measurements.json
+.visual-model.mjs
+comparison-preview.html
+*-review.png
+visual-data.json

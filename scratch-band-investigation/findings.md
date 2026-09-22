@@ -2,6 +2,12 @@
 
 Status: incomplete investigation; no production algorithm selected. Source examined at `4df27771dca0181dfd313cf85ec199cb42ae3be8`. Issue: [#503](https://github.com/Cujuju/Terrace/issues/503).
 
+Owner visual feedback, subsequent review: “Actually, the derived field filter, not bad. Not bad at all.” Keep this candidate under consideration. Earlier aesthetic rejection based on turning measurements was premature; the owner judges the appearance. The numeric feature-loss observations remain separate engineering findings.
+
+Matched offline appearance comparisons now include all original candidates plus gentle quadratic Bézier rounding of the existing production polylines. `build-visual-data.mjs` verifies reproduced heights against the archived input, generates all bands for the two sculpt examples, and records display precision in `visual-provenance.json`. Controls display one band in top view. The renderer uses the contour vertices for both filled caps and risers, with common camera, palette, lighting, and depth-tested crease lines. These are diagnostic renders, not screenshots of the Terrace production GPU mesher. Layer-opening views are horizontal slices and do not demonstrate underside correctness.
+
+The new Bézier candidate trims each adjoining segment by the smaller of 0.15 cell and one quarter of the shorter segment, then joins the trim points through the original vertex as a quadratic control point. Eight straight samples render each curve. Boundary-marked vertices remain fixed. These are explicit appearance-trial parameters, not production defaults; no self-intersection, inter-band clearance, seam, or picking guarantee is claimed.
+
 The photographs still have no identified world, cell coordinates, raw patch, brush settings, or camera scale. These measurements use a synthetic production-sculpt reproduction. Its resemblance to the photographed failure is **unverified**; owner review and same-camera application comparisons remain necessary. No app was started/stopped, regression tests written, or production files changed.
 
 ## Reproduction and evidence

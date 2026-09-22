@@ -1,0 +1,123 @@
+<div id="terrace-band-review">
+  <div class="viz-controls">
+    <label class="form-label">Terrain
+      <select class="form-select" id="tbr-fixture">
+        <option value="stamp">Stamp only</option>
+        <option value="stamp-smooth">Stamp then smooth brush</option>
+        <option value="integer-paraboloid-control">Clean mound — band 12</option>
+        <option value="single-cell-band-control">One-cell terrace</option>
+        <option value="single-cell-water-hole-control">One-cell water hole</option>
+        <option value="layered-opening-control">Layer opening — band 4 slice</option>
+      </select>
+    </label>
+    <label class="form-label">View
+      <select class="form-select" id="tbr-view">
+        <option value="oblique">Oblique</option>
+        <option value="top">Top down</option>
+      </select>
+    </label>
+    <label class="form-label">Zoom <span id="tbr-zoom-label">1.0×</span>
+      <input class="form-range" id="tbr-zoom" type="range" min="1" max="2.5" step="0.1" value="1">
+    </label>
+    <label class="form-check"><input class="form-check-input" id="tbr-edges" type="checkbox" checked><span class="form-check-label">Crease lines</span></label>
+  </div>
+  <p class="text-small text-muted" id="tbr-status" aria-live="polite">Loading matched views…</p>
+  <div id="tbr-pairs"></div>
+</div>
+<style>
+  #terrace-band-review .tbr-pair { margin-block: 22px; }
+  #terrace-band-review .tbr-views { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 12px; }
+  #terrace-band-review figure { margin: 0; min-width: 0; }
+  #terrace-band-review canvas { display: block; width: 100%; aspect-ratio: 1.4; touch-action: auto; }
+  #terrace-band-review figcaption { margin-bottom: 6px; }
+  @media (max-width: 550px) { #terrace-band-review .tbr-views { grid-template-columns: minmax(0,1fr); } }
+</style>
+<script type="application/json" id="tbr-data">"__COMPRESSED_DATA__"</script>
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.js';
+const root=document.getElementById('terrace-band-review');
+const fixtureInput=root.querySelector('#tbr-fixture'),viewInput=root.querySelector('#tbr-view'),zoomInput=root.querySelector('#tbr-zoom'),edgeInput=root.querySelector('#tbr-edges');
+const status=root.querySelector('#tbr-status'),pairs=root.querySelector('#tbr-pairs');
+const methodNames=[['derived-binomial','Derived-field filter'],['gentle-bezier','Gentle Bézier corner rounding'],['dense-bilinear','Denser bilinear tracing'],['four-corner-smoothstep','Four-corner smoothstep'],['neighbor-cubic','Neighbor-supported cubic'],['packed-position-model','Position packing — numeric model']];
+const encoded=JSON.parse(document.getElementById('tbr-data').textContent);
+const bytes=Uint8Array.from(atob(encoded),c=>c.charCodeAt(0));
+const dataset=JSON.parse(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).text());
+const renderer=new THREE.WebGLRenderer({antialias:true,alpha:true,preserveDrawingBuffer:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setClearColor(0,0);
+renderer.outputColorSpace=THREE.SRGBColorSpace;
+renderer.toneMapping=THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure=1.25;
+let scenes=new Map(),figures=[],pending=false;
+const colorProbe=document.createElement('span');colorProbe.hidden=true;root.append(colorProbe);
+function themeColor(name){colorProbe.style.color=`var(${name})`;return new THREE.Color(getComputedStyle(colorProbe).color);}
+function dispose(){for(const scene of scenes.values())scene.traverse(o=>{o.geometry?.dispose();if(o.material)for(const m of [o.material].flat())m.dispose();});scenes.clear();}
+function buildScene(levels,fixture){
+  const scene=new THREE.Scene(),capPos=[],capColors=[],wallPos=[],wallColors=[],linePos=[];
+  const clay=themeColor('--orange'),ground=themeColor('--muted'),ink=themeColor('--foreground');
+  const full=fixture.full;
+  const add=(list,colors,a,b,c,col)=>{list.push(...a,...b,...c);for(let i=0;i<3;i++)colors.push(col.r,col.g,col.b);};
+  for(const level of levels){
+    const y=full?level.band:0, bottom=y-1;
+    const col=full?clay.clone().lerp(ground,0.12+0.38*(1-level.band/16)):clay.clone();
+    if(full&&level.band===0)col.copy(ground);
+    const wall=col.clone().multiplyScalar(0.67);
+    for(const poly of level.polygons){
+      const loops=poly.map(loop=>loop.map(p=>new THREE.Vector2(p[0],p[1]))),vertices=loops.flat();
+      const triangles=THREE.ShapeUtils.triangulateShape(loops[0],loops.slice(1));
+      for(const tri of triangles){let [a,b,c]=tri.map(i=>vertices[i]);if((b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x)>0)[b,c]=[c,b];add(capPos,capColors,[a.x,y,a.y],[b.x,y,b.y],[c.x,y,c.y],col);}
+      for(const loop of loops)for(let i=0;i<loop.length;i++){
+        const a=loop[i],b=loop[(i+1)%loop.length];
+        add(wallPos,wallColors,[a.x,y,a.y],[b.x,y,b.y],[b.x,bottom,b.y],wall);
+        add(wallPos,wallColors,[a.x,y,a.y],[b.x,bottom,b.y],[a.x,bottom,a.y],wall);
+        linePos.push(a.x,y+0.012,a.y,b.x,y+0.012,b.y);
+      }
+    }
+  }
+  function mesh(pos,colors){const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));g.setAttribute('color',new THREE.Float32BufferAttribute(colors,3));g.computeVertexNormals();scene.add(new THREE.Mesh(g,new THREE.MeshStandardMaterial({vertexColors:true,roughness:1,metalness:0,side:THREE.DoubleSide})));}
+  mesh(capPos,capColors);mesh(wallPos,wallColors);
+  const lines=new THREE.BufferGeometry();lines.setAttribute('position',new THREE.Float32BufferAttribute(linePos,3));
+  const edges=new THREE.LineSegments(lines,new THREE.LineBasicMaterial({color:ink,transparent:true,opacity:0.65,depthTest:true}));edges.name='creases';scene.add(edges);
+  const base=new THREE.Mesh(new THREE.PlaneGeometry(50,50),new THREE.MeshStandardMaterial({color:ground,roughness:1,side:THREE.DoubleSide}));base.rotation.x=-Math.PI/2;base.position.y=-1.02;scene.add(base);
+  scene.add(new THREE.HemisphereLight(themeColor('--background'),ground,2.3));
+  const light=new THREE.DirectionalLight(themeColor('--background'),3.2);light.position.set(-20,35,25);scene.add(light);
+  return scene;
+}
+function render(){
+  pending=false;const fixture=dataset.find(f=>f.name===fixtureInput.value),small=fixture.name.startsWith('single-cell'),top=viewInput.value==='top'||!fixture.full;
+  const zoom=Number(zoomInput.value);root.querySelector('#tbr-zoom-label').textContent=`${zoom.toFixed(1)}×`;
+  for(const {canvas,method}of figures){
+    const width=Math.max(1,canvas.clientWidth),height=Math.round(width/1.4),extent=(small?3.6:fixture.full?33:25)/zoom,aspect=width/height;
+    renderer.setSize(width,height,false);const scene=scenes.get(method);scene.getObjectByName('creases').visible=edgeInput.checked;
+    const camera=new THREE.OrthographicCamera(-extent*aspect/2,extent*aspect/2,extent/2,-extent/2,0.1,200);
+    const target=new THREE.Vector3(0,fixture.full?5.4:0,0);
+    camera.position.copy(target).add(top?new THREE.Vector3(0,70,0.001):new THREE.Vector3(30,38,46));camera.lookAt(target);
+    renderer.render(scene,camera);canvas.width=renderer.domElement.width;canvas.height=renderer.domElement.height;canvas.getContext('2d').drawImage(renderer.domElement,0,0);
+  }
+  status.textContent=fixture.full?'Same terrain inputs · same camera, lighting and color · actual outline vertices':'Single-band top-down comparison · same scale · actual outline vertices';
+}
+function schedule(){if(!pending){pending=true;requestAnimationFrame(render);}}
+function rebuild(){
+  dispose();pairs.replaceChildren();figures=[];const fixture=dataset.find(f=>f.name===fixtureInput.value);
+  for(const method of ['production',...methodNames.map(m=>m[0])])scenes.set(method,buildScene(fixture.modes[method],fixture));
+  for(const [method,title]of methodNames){
+    const section=document.createElement('section');section.className='tbr-pair';const heading=document.createElement('h3');heading.textContent=title;section.append(heading);
+    const views=document.createElement('div');views.className='tbr-views';section.append(views);
+    for(const [key,label]of [['production','Before — current geometry'],[method,'After — '+title]]){
+      const figure=document.createElement('figure'),caption=document.createElement('figcaption'),canvas=document.createElement('canvas');caption.className='text-small';caption.textContent=label;
+      canvas.setAttribute('role','img');canvas.setAttribute('aria-label',`${fixtureInput.selectedOptions[0].textContent}: ${label}`);figure.append(caption,canvas);views.append(figure);figures.push({canvas,method:key});
+    }
+    pairs.append(section);
+  }
+  viewInput.disabled=!fixture.full;schedule();
+}
+function remember(){window.openai?.setWidgetState?.({modelContent:{terrain:fixtureInput.value,view:viewInput.value,zoom:Number(zoomInput.value),creaseLines:edgeInput.checked},privateContent:null}).catch(()=>{});}
+function restore(state){const s=state?.modelContent;if(!s)return;if(dataset.some(d=>d.name===s.terrain))fixtureInput.value=s.terrain;if(['top','oblique'].includes(s.view))viewInput.value=s.view;if(s.zoom>=1&&s.zoom<=2.5)zoomInput.value=s.zoom;if(typeof s.creaseLines==='boolean')edgeInput.checked=s.creaseLines;}
+restore(window.openai?.widgetState);
+fixtureInput.addEventListener('change',()=>{rebuild();remember();});
+for(const input of [viewInput,zoomInput,edgeInput])input.addEventListener('input',()=>{schedule();remember();});
+window.addEventListener('openai:set_globals',e=>{restore(e.detail?.globals?.widgetState);rebuild();});
+new ResizeObserver(schedule).observe(root);
+new MutationObserver(()=>{rebuild();}).observe(document.documentElement,{attributes:true,attributeFilter:['class','style','data-theme']});
+rebuild();
+</script>
