@@ -10,6 +10,19 @@
         <option value="layered-opening-control">Layer opening — band 4 slice</option>
       </select>
     </label>
+    <div id="tbr-resolution-label" hidden><label class="form-label">Contour resolution
+      <select class="form-select" id="tbr-resolution">
+        <option value="production">Production — 4 subdivisions</option>
+        <option value="dense">Dense reference — 32 subdivisions</option>
+      </select>
+    </label></div>
+    <div id="tbr-protection-label" hidden><label class="form-label">Protection
+      <select class="form-select" id="tbr-protection">
+        <option value="protected-filter">Local feature protection</option>
+        <option value="strict-filter">Local protection + band clamp</option>
+        <option value="band-clamp-only">Band clamp only</option>
+      </select>
+    </label></div>
     <label class="form-label">View
       <select class="form-select" id="tbr-view">
         <option value="oblique">Oblique</option>
@@ -27,10 +40,12 @@
 <style>
   #terrace-band-review .tbr-pair { margin-block: 22px; }
   #terrace-band-review .tbr-views { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 12px; }
+  #terrace-band-review .tbr-triptych { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
   #terrace-band-review figure { margin: 0; min-width: 0; }
   #terrace-band-review canvas { display: block; width: 100%; aspect-ratio: 1.4; touch-action: auto; }
   #terrace-band-review figcaption { margin-bottom: 6px; }
   @media (max-width: 550px) { #terrace-band-review .tbr-views { grid-template-columns: minmax(0,1fr); } }
+  @media (max-width: 800px) { #terrace-band-review .tbr-triptych { grid-template-columns: minmax(0,1fr); } }
 </style>
 <script type="application/json" id="tbr-data">"__COMPRESSED_DATA__"</script>
 <script type="module">
@@ -38,10 +53,19 @@ import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.m
 const root=document.getElementById('terrace-band-review');
 const fixtureInput=root.querySelector('#tbr-fixture'),viewInput=root.querySelector('#tbr-view'),zoomInput=root.querySelector('#tbr-zoom'),edgeInput=root.querySelector('#tbr-edges');
 const status=root.querySelector('#tbr-status'),pairs=root.querySelector('#tbr-pairs');
+const reviewConfig=__REVIEW_CONFIG__;
+const resolutionInput=root.querySelector('#tbr-resolution'),protectionInput=root.querySelector('#tbr-protection');
 const methodNames=[['derived-binomial','Derived-field filter'],['gentle-bezier','Gentle Bézier corner rounding'],['dense-bilinear','Denser bilinear tracing'],['four-corner-smoothstep','Four-corner smoothstep'],['neighbor-cubic','Neighbor-supported cubic'],['packed-position-model','Position packing — numeric model']];
 const encoded=JSON.parse(document.getElementById('tbr-data').textContent);
 const bytes=Uint8Array.from(atob(encoded),c=>c.charCodeAt(0));
 const dataset=JSON.parse(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).text());
+if(reviewConfig.prototype){
+  root.querySelector('#tbr-resolution-label').hidden=false;
+  root.querySelector('#tbr-protection-label').hidden=false;
+  for(const [value,label]of [['one-cell-ridge-control','One-cell ridge'],['one-cell-channel-control','One-cell channel'],['one-cell-saddle-control','Diagonal saddle']]){
+    const option=document.createElement('option');option.value=value;option.textContent=label;fixtureInput.append(option);
+  }
+}
 const renderer=new THREE.WebGLRenderer({antialias:true,alpha:true,preserveDrawingBuffer:true});
 renderer.setPixelRatio(Math.min(devicePixelRatio,2));
 renderer.setClearColor(0,0);
@@ -50,7 +74,15 @@ renderer.toneMapping=THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure=1.25;
 let scenes=new Map(),figures=[],pending=false;
 const colorProbe=document.createElement('span');colorProbe.hidden=true;root.append(colorProbe);
-function themeColor(name){colorProbe.style.color=`var(${name})`;return new THREE.Color(getComputedStyle(colorProbe).color);}
+const colorCanvas=document.createElement('canvas');colorCanvas.width=colorCanvas.height=1;
+const colorContext=colorCanvas.getContext('2d',{willReadFrequently:true});
+function themeColor(name){
+  colorContext.clearRect(0,0,1,1);
+  colorProbe.style.color='var(--background)';colorContext.fillStyle=getComputedStyle(colorProbe).color;colorContext.fillRect(0,0,1,1);
+  colorProbe.style.color=`var(${name})`;colorContext.fillStyle=getComputedStyle(colorProbe).color;colorContext.fillRect(0,0,1,1);
+  const [r,g,b]=colorContext.getImageData(0,0,1,1).data;
+  return new THREE.Color().setRGB(r/255,g/255,b/255,THREE.SRGBColorSpace);
+}
 function dispose(){for(const scene of scenes.values())scene.traverse(o=>{o.geometry?.dispose();if(o.material)for(const m of [o.material].flat())m.dispose();});scenes.clear();}
 function buildScene(levels,fixture){
   const scene=new THREE.Scene(),capPos=[],capColors=[],wallPos=[],wallColors=[],linePos=[];
@@ -84,21 +116,35 @@ function buildScene(levels,fixture){
   return scene;
 }
 function render(){
-  pending=false;const fixture=dataset.find(f=>f.name===fixtureInput.value),small=fixture.name.startsWith('single-cell'),top=viewInput.value==='top'||!fixture.full;
+  pending=false;const fixture=dataset.find(f=>f.name===fixtureInput.value),small=fixture.name.startsWith('single-cell')||fixture.name==='one-cell-saddle-control',narrow=fixture.name==='one-cell-ridge-control'||fixture.name==='one-cell-channel-control',top=viewInput.value==='top'||!fixture.full;
   const zoom=Number(zoomInput.value);root.querySelector('#tbr-zoom-label').textContent=`${zoom.toFixed(1)}×`;
   for(const {canvas,method}of figures){
-    const width=Math.max(1,canvas.clientWidth),height=Math.round(width/1.4),extent=(small?3.6:fixture.full?33:25)/zoom,aspect=width/height;
+    const width=Math.max(1,canvas.clientWidth),height=Math.round(width/1.4),extent=(small?3.6:narrow?14:fixture.full?33:25)/zoom,aspect=width/height;
     renderer.setSize(width,height,false);const scene=scenes.get(method);scene.getObjectByName('creases').visible=edgeInput.checked;
     const camera=new THREE.OrthographicCamera(-extent*aspect/2,extent*aspect/2,extent/2,-extent/2,0.1,200);
     const target=new THREE.Vector3(0,fixture.full?5.4:0,0);
     camera.position.copy(target).add(top?new THREE.Vector3(0,70,0.001):new THREE.Vector3(30,38,46));camera.lookAt(target);
     renderer.render(scene,camera);canvas.width=renderer.domElement.width;canvas.height=renderer.domElement.height;canvas.getContext('2d').drawImage(renderer.domElement,0,0);
   }
-  status.textContent=fixture.full?'Same terrain inputs · same camera, lighting and color · actual outline vertices':'Single-band top-down comparison · same scale · actual outline vertices';
+  status.textContent=reviewConfig.prototype?`${resolutionInput.value==='production'?'Production resolution':'Dense reference'} · matched camera and lighting · ${fixture.full?'all terrace levels':'single-band slice'}`:fixture.full?'Same terrain inputs · same camera, lighting and color · actual outline vertices':'Single-band top-down comparison · same scale · actual outline vertices';
 }
 function schedule(){if(!pending){pending=true;requestAnimationFrame(render);}}
 function rebuild(){
   dispose();pairs.replaceChildren();figures=[];const fixture=dataset.find(f=>f.name===fixtureInput.value);
+  if(reviewConfig.prototype){
+    const modes=fixture.resolutions[resolutionInput.value];
+    const views=document.createElement('div');views.className='tbr-triptych';pairs.append(views);
+    for(const [method,label]of [['production','Original'],['full-filter','Full filter'],[protectionInput.value,protectionInput.selectedOptions[0].textContent]]){
+      scenes.set(method,buildScene(modes[method],fixture));
+      const figure=document.createElement('figure'),caption=document.createElement('figcaption'),canvas=document.createElement('canvas');
+      caption.textContent=label;
+      canvas.setAttribute('role','img');canvas.setAttribute('aria-label',`${fixtureInput.selectedOptions[0].textContent}: ${label}`);
+      figure.append(caption,canvas);
+      if(!fixture.full){const counts=document.createElement('div'),m=modes[method][0].metrics;counts.className='text-small';counts.textContent=`${m.components} solid region${m.components===1?'':'s'} · ${m.holes} hole${m.holes===1?'':'s'}`;figure.append(counts);}
+      views.append(figure);figures.push({canvas,method});
+    }
+    viewInput.disabled=!fixture.full;schedule();return;
+  }
   for(const method of ['production',...methodNames.map(m=>m[0])])scenes.set(method,buildScene(fixture.modes[method],fixture));
   for(const [method,title]of methodNames){
     const section=document.createElement('section');section.className='tbr-pair';const heading=document.createElement('h3');heading.textContent=title;section.append(heading);
@@ -111,13 +157,15 @@ function rebuild(){
   }
   viewInput.disabled=!fixture.full;schedule();
 }
-function remember(){window.openai?.setWidgetState?.({modelContent:{terrain:fixtureInput.value,view:viewInput.value,zoom:Number(zoomInput.value),creaseLines:edgeInput.checked},privateContent:null}).catch(()=>{});}
-function restore(state){const s=state?.modelContent;if(!s)return;if(dataset.some(d=>d.name===s.terrain))fixtureInput.value=s.terrain;if(['top','oblique'].includes(s.view))viewInput.value=s.view;if(s.zoom>=1&&s.zoom<=2.5)zoomInput.value=s.zoom;if(typeof s.creaseLines==='boolean')edgeInput.checked=s.creaseLines;}
+function remember(){window.openai?.setWidgetState?.({modelContent:{terrain:fixtureInput.value,view:viewInput.value,zoom:Number(zoomInput.value),creaseLines:edgeInput.checked,...(reviewConfig.prototype?{resolution:resolutionInput.value,protection:protectionInput.value}:{})},privateContent:null}).catch(()=>{});}
+function restore(state){const s=state?.modelContent??state;if(!s)return;if(dataset.some(d=>d.name===s.terrain))fixtureInput.value=s.terrain;if(['top','oblique'].includes(s.view))viewInput.value=s.view;if(s.zoom>=1&&s.zoom<=2.5)zoomInput.value=s.zoom;if(typeof s.creaseLines==='boolean')edgeInput.checked=s.creaseLines;if(['production','dense'].includes(s.resolution))resolutionInput.value=s.resolution;if(['protected-filter','strict-filter','band-clamp-only'].includes(s.protection))protectionInput.value=s.protection;}
 restore(window.openai?.widgetState);
 fixtureInput.addEventListener('change',()=>{rebuild();remember();});
+for(const input of [resolutionInput,protectionInput])input.addEventListener('change',()=>{rebuild();remember();});
 for(const input of [viewInput,zoomInput,edgeInput])input.addEventListener('input',()=>{schedule();remember();});
 window.addEventListener('openai:set_globals',e=>{restore(e.detail?.globals?.widgetState);rebuild();});
 new ResizeObserver(schedule).observe(root);
 new MutationObserver(()=>{rebuild();}).observe(document.documentElement,{attributes:true,attributeFilter:['class','style','data-theme']});
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change',rebuild);
 rebuild();
 </script>
