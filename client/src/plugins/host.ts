@@ -388,10 +388,10 @@ export function createClientPluginHost(
       drawnGroundYAt: (cellX, cellZ) => world.drawnGroundYAt(cellX, cellZ),
       onTerrainChanged(handler) {
         const name = plugin.name;
-        const wrapped = (): void => {
+        const wrapped = (dirty: ReadonlySet<number>): void => {
           const startMs = performance.now();
           try {
-            handler();
+            handler(dirty);
           } catch (error) {
             console.error(`[terrace] client plugin "${name}" threw in onTerrainChanged`, error);
           } finally {

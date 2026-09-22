@@ -90,6 +90,10 @@ export function quantizeDrawnCoord(v: number): number {
   return Math.floor(v * DRAWN_GROUND_COORD_DENOM) - CENTRE_COORD_UNITS;
 }
 
+export function drawnSampleCellIndex(coordinate: number): number {
+  return drawnCornerIndex(quantizeDrawnCoord(coordinate));
+}
+
 function clampCell(index: number, size: number): number {
   return index < 0 ? 0 : index > size - 1 ? size - 1 : index;
 }

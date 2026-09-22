@@ -1,10 +1,31 @@
 import { CELL_WORLD_SIZE, MAX_HEIGHT, MAX_RELIEF_WORLD_UNITS } from '@terrace/shared';
-import { treeKey, treeKindAt, treeVariation, type TreeCell } from '../protocol.ts';
-import type { TreePlacement } from './models.ts';
+import { FLORA_TREE_SCALE_MAX, treeKey, treeKindAt, treeVariation, type TreeCell } from '../protocol.ts';
+import { TRUNK_BOTTOM_RADIUS, type TreePlacement } from './models.ts';
 
 const HEIGHT_WORLD_SCALE = MAX_RELIEF_WORLD_UNITS / MAX_HEIGHT;
 
 export type GroundLookup = (x: number, y: number) => number | null;
+
+export const TREE_GROUND_REACH_CELLS = TRUNK_BOTTOM_RADIUS * FLORA_TREE_SCALE_MAX / CELL_WORLD_SIZE;
+
+export function supportedTreeGroundAt(
+  groundAt: GroundLookup,
+  x: number,
+  y: number,
+  worldSize: number,
+): number | null {
+  const radius = TRUNK_BOTTOM_RADIUS * treeVariation(x, y).scale / CELL_WORLD_SIZE;
+  if (x - radius < 0 || y - radius < 0 || x + radius > worldSize || y + radius > worldSize) return null;
+  const groundY = groundAt(x, y);
+  if (groundY === null) return null;
+  // The enclosing square supports every trunk yaw; branches may overhang.
+  for (const dx of [-radius, radius]) {
+    for (const dy of [-radius, radius]) {
+      if (groundAt(x + dx, y + dy) !== groundY) return null;
+    }
+  }
+  return groundY;
+}
 
 export interface PlacementResult {
   readonly placements: TreePlacement[];

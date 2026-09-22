@@ -29,6 +29,7 @@ import {
   parseStumpsPayload,
   stumpKey,
   treeKey,
+  treeCellOf,
   type CropCell,
   type FringeBySpecies,
   type FringeCell,
@@ -45,9 +46,10 @@ import { createGrassModels, type GrassModels } from './grassModels.ts';
 import { grassPlacementsFor } from './grassPlacement.ts';
 import { createFloraModels, type FloraModels } from './models.ts';
 import { cropOccupancy, treeOccupancy } from './occupancy.ts';
-import { placementsFor } from './placement.ts';
+import { placementsFor, supportedTreeGroundAt, TREE_GROUND_REACH_CELLS } from './placement.ts';
 import { createStumpModels, type StumpModels } from './stumpModels.ts';
 import { stumpPlacementsFor } from './stumpPlacement.ts';
+import { FloraGroundChanges } from './groundChanges.ts';
 
 let models: FloraModels | null = null;
 let cropModels: CropModels | null = null;
@@ -78,9 +80,20 @@ const pendingFringeGround = new Set<number>();
 
 const pendingStumps = new Set<number>();
 
+const treeGround = new FloraGroundChanges(
+  (ctx, x, y) => supportedTreeGroundAt((sx, sy) => ctx.drawnGroundYAt(sx, sy), x, y, ctx.worldSize()),
+  TREE_GROUND_REACH_CELLS,
+);
+const cropGround = new FloraGroundChanges();
+const grassGround = new FloraGroundChanges();
+const fringeGround = new FloraGroundChanges();
+const stumpGround = new FloraGroundChanges();
+const groundChanges = [treeGround, cropGround, grassGround, fringeGround, stumpGround];
+
 function rebuild(ctx: ClientPluginCtx): void {
   if (models === null) return;
-  const result = placementsFor(trees.values(), (x, y) => ctx.drawnGroundYAt(x, y));
+  treeGround.clear();
+  const result = placementsFor(trees.values(), (x, y) => treeGround.sample(ctx, x, y));
   models.apply(result.placements);
   pendingTrees.clear();
   for (const key of result.pendingCells) pendingTrees.add(key);
@@ -93,10 +106,10 @@ function retryTrees(ctx: ClientPluginCtx): void {
     const cell = trees.get(key);
     if (cell !== undefined) cells.push(cell);
   }
-  const result = placementsFor(cells, (x, y) => ctx.drawnGroundYAt(x, y));
+  const result = placementsFor(cells, (x, y) => treeGround.sample(ctx, x, y));
   pendingTrees.clear();
   for (const key of result.pendingCells) pendingTrees.add(key);
-  models.applyDelta(result.placements, []);
+  models.applyDelta(result.placements, result.pendingCells.map(treeCellOf));
 }
 
 function groundLookup(ctx: ClientPluginCtx): (x: number, y: number) => number | null {
@@ -105,7 +118,8 @@ function groundLookup(ctx: ClientPluginCtx): (x: number, y: number) => number | 
 
 function rebuildGrass(ctx: ClientPluginCtx): void {
   if (grassModels === null) return;
-  const result = grassPlacementsFor(grass.values(), groundLookup(ctx));
+  grassGround.clear();
+  const result = grassPlacementsFor(grass.values(), (x, y) => grassGround.sample(ctx, x, y));
   grassModels.apply(result.placements);
   pendingGrassGround.clear();
   for (const key of result.pendingCells) pendingGrassGround.add(key);
@@ -118,10 +132,10 @@ function retryGrassGround(ctx: ClientPluginCtx): void {
     const cell = grass.get(key);
     if (cell !== undefined) cells.push(cell);
   }
-  const result = grassPlacementsFor(cells, groundLookup(ctx));
+  const result = grassPlacementsFor(cells, (x, y) => grassGround.sample(ctx, x, y));
   pendingGrassGround.clear();
   for (const key of result.pendingCells) pendingGrassGround.add(key);
-  grassModels.applyDelta(result.placements, []);
+  grassModels.applyDelta(result.placements, result.pendingCells.map(treeCellOf));
 }
 
 function applyGrassDelta(
@@ -130,20 +144,25 @@ function applyGrassDelta(
   withered: readonly GrassCell[],
 ): void {
   if (grassModels === null) return;
-  for (const cell of withered) pendingGrassGround.delete(grassKey(cell.x, cell.y));
+  for (const cell of withered) {
+    const key = grassKey(cell.x, cell.y);
+    pendingGrassGround.delete(key);
+    grassGround.delete(key);
+  }
 
-  const result = grassPlacementsFor(sprouted, groundLookup(ctx));
+  const result = grassPlacementsFor(sprouted, (x, y) => grassGround.sample(ctx, x, y));
   for (const placement of result.placements) {
     pendingGrassGround.delete(grassKey(placement.cellX, placement.cellY));
   }
   for (const key of result.pendingCells) pendingGrassGround.add(key);
 
-  grassModels.applyDelta(result.placements, withered);
+  grassModels.applyDelta(result.placements, [...withered, ...result.pendingCells.map(treeCellOf)]);
 }
 
 function rebuildFringe(ctx: ClientPluginCtx): void {
   if (fringeModels === null) return;
-  const result = fringePlacementsFor(fringe, groundLookup(ctx));
+  fringeGround.clear();
+  const result = fringePlacementsFor(fringe, (x, y) => fringeGround.sample(ctx, x, y));
   fringeModels.apply(result.placements);
   pendingFringeGround.clear();
   for (const key of result.pendingCells) pendingFringeGround.add(key);
@@ -156,10 +175,10 @@ function retryFringeGround(ctx: ClientPluginCtx): void {
     const species = fringe.get(key);
     if (species !== undefined) plants.push([key, species]);
   }
-  const result = fringePlacementsFor(plants, groundLookup(ctx));
+  const result = fringePlacementsFor(plants, (x, y) => fringeGround.sample(ctx, x, y));
   pendingFringeGround.clear();
   for (const key of result.pendingCells) pendingFringeGround.add(key);
-  fringeModels.applyDelta(result.placements, []);
+  fringeModels.applyDelta(result.placements, result.pendingCells.map(treeCellOf));
 }
 
 function applyFringeDelta(
@@ -168,24 +187,29 @@ function applyFringeDelta(
   withered: readonly FringeCell[],
 ): void {
   if (fringeModels === null) return;
-  for (const cell of withered) pendingFringeGround.delete(fringeKey(cell.x, cell.y));
+  for (const cell of withered) {
+    const key = fringeKey(cell.x, cell.y);
+    pendingFringeGround.delete(key);
+    fringeGround.delete(key);
+  }
 
   const plants: Array<readonly [number, FringeSpecies]> = [];
   for (const cell of sprouted.reed) plants.push([fringeKey(cell.x, cell.y), 'reed']);
   for (const cell of sprouted.heather) plants.push([fringeKey(cell.x, cell.y), 'heather']);
 
-  const result = fringePlacementsFor(plants, groundLookup(ctx));
+  const result = fringePlacementsFor(plants, (x, y) => fringeGround.sample(ctx, x, y));
   for (const placement of result.placements) {
     pendingFringeGround.delete(fringeKey(placement.cellX, placement.cellY));
   }
   for (const key of result.pendingCells) pendingFringeGround.add(key);
 
-  fringeModels.applyDelta(result.placements, withered);
+  fringeModels.applyDelta(result.placements, [...withered, ...result.pendingCells.map(treeCellOf)]);
 }
 
 function rebuildStumps(ctx: ClientPluginCtx): void {
   if (stumpModels === null) return;
-  const result = stumpPlacementsFor(stumps.values(), (x, y) => ctx.drawnGroundYAt(x, y));
+  stumpGround.clear();
+  const result = stumpPlacementsFor(stumps.values(), (x, y) => stumpGround.sample(ctx, x, y));
   stumpModels.apply(result.placements);
   pendingStumps.clear();
   for (const key of result.pendingCells) pendingStumps.add(key);
@@ -198,15 +222,16 @@ function retryStumps(ctx: ClientPluginCtx): void {
     const cell = stumps.get(key);
     if (cell !== undefined) cells.push(cell);
   }
-  const result = stumpPlacementsFor(cells, (x, y) => ctx.drawnGroundYAt(x, y));
+  const result = stumpPlacementsFor(cells, (x, y) => stumpGround.sample(ctx, x, y));
   pendingStumps.clear();
   for (const key of result.pendingCells) pendingStumps.add(key);
-  stumpModels.applyDelta(result.placements, []);
+  stumpModels.applyDelta(result.placements, result.pendingCells.map(treeCellOf));
 }
 
 function rebuildCrops(ctx: ClientPluginCtx): void {
   if (cropModels === null) return;
-  const result = cropPlacementsFor(crops.values(), (x, y) => ctx.drawnGroundYAt(x, y));
+  cropGround.clear();
+  const result = cropPlacementsFor(crops.values(), (x, y) => cropGround.sample(ctx, x, y));
   cropModels.apply(result.placements);
   pendingCrops.clear();
   for (const key of result.pendingCells) pendingCrops.add(key);
@@ -219,10 +244,10 @@ function retryCrops(ctx: ClientPluginCtx): void {
     const cell = crops.get(key);
     if (cell !== undefined) cells.push(cell);
   }
-  const result = cropPlacementsFor(cells, (x, y) => ctx.drawnGroundYAt(x, y));
+  const result = cropPlacementsFor(cells, (x, y) => cropGround.sample(ctx, x, y));
   pendingCrops.clear();
   for (const key of result.pendingCells) pendingCrops.add(key);
-  cropModels.applyDelta(result.placements, []);
+  cropModels.applyDelta(result.placements, result.pendingCells.map(treeCellOf));
 }
 
 function retryPendingGround(ctx: ClientPluginCtx): void {
@@ -311,11 +336,15 @@ export const clientPlugin: TerraceClientPlugin = {
     pendingGrassGround.clear();
     pendingFringeGround.clear();
     pendingStumps.clear();
+    for (const ground of groundChanges) ground.clear();
 
     models = createFloraModels();
     ctx.layer.add(models.root);
     unmarkPickable.push(
-      ctx.markPickable(models.root, treeOccupancy(trees, groundLookup(ctx))),
+      ctx.markPickable(
+        models.root,
+        treeOccupancy(trees, (x, y) => supportedTreeGroundAt(groundLookup(ctx), x, y, ctx.worldSize())),
+      ),
     );
 
     cropModels = createCropModels();
@@ -408,7 +437,12 @@ export const clientPlugin: TerraceClientPlugin = {
       }),
     ];
 
-    unsubscribeTerrain = ctx.onTerrainChanged(() => {
+    unsubscribeTerrain = ctx.onTerrainChanged((dirty) => {
+      treeGround.invalidate(ctx, dirty, pendingTrees);
+      cropGround.invalidate(ctx, dirty, pendingCrops);
+      grassGround.invalidate(ctx, dirty, pendingGrassGround);
+      fringeGround.invalidate(ctx, dirty, pendingFringeGround);
+      stumpGround.invalidate(ctx, dirty, pendingStumps);
       retryPendingGround(ctx);
     });
   },
@@ -431,6 +465,7 @@ export const clientPlugin: TerraceClientPlugin = {
     pendingGrassGround.clear();
     pendingFringeGround.clear();
     pendingStumps.clear();
+    for (const ground of groundChanges) ground.clear();
 
     stumpModels?.dispose();
     stumpModels = null;

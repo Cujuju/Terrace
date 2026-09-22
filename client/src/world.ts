@@ -1,5 +1,6 @@
 import {
   CHUNK_SIZE,
+  drawnSampleCellIndex,
   DEFAULT_WORLD_SIZE,
   cellIndex,
   chunkIndex,
@@ -197,7 +198,7 @@ export interface World extends TerrainSink {
   terrainRevisionAt(x: number, y: number): number;
   drawnGroundYAt(cellX: number, cellZ: number): number | null;
   /** Fires when drawn ground may have arrived or moved: chunk drawn, snapshot, unlock, sculpt. */
-  onTerrainChanged(handler: () => void): () => void;
+  onTerrainChanged(handler: (dirty: ReadonlySet<number>) => void): () => void;
   chartSource(): ChartSource | null;
   drawBudget(): number;
   terrainLoadTrace(): TerrainLoadTrace | null;
@@ -282,14 +283,14 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
   let chunkRevisions: Int32Array | null = null;
   let terrainEpoch = 0;
 
-  const terrainChangedHandlers = new Set<() => void>();
+  const terrainChangedHandlers = new Set<(dirty: ReadonlySet<number>) => void>();
 
   const noteTerrainRevisions = (dirty: ReadonlySet<number>): void => {
     if (chunkRevisions === null || dirty.size === 0) return;
     for (const idx of dirty) {
       if (idx >= 0 && idx < chunkRevisions.length) chunkRevisions[idx]++;
     }
-    for (const handler of [...terrainChangedHandlers]) handler();
+    for (const handler of [...terrainChangedHandlers]) handler(dirty);
   };
 
   let framedWorldSize = 0;
@@ -645,23 +646,23 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
 
     drawnGroundYAt(cellX: number, cellZ: number): number | null {
       if (drawnGround === null || mirror === null) return null;
-      // The drawn field reads this cell and its east/south neighbours, clamped to the world.
       const max = mirror.map.size - 1;
-      const x0 = clampCell(Math.floor(cellX), max);
-      const z0 = clampCell(Math.floor(cellZ), max);
-      const x1 = clampCell(x0 + 1, max);
-      const z1 = clampCell(z0 + 1, max);
+      const sampleX = drawnSampleCellIndex(cellX);
+      const sampleZ = drawnSampleCellIndex(cellZ);
+      const x0 = clampCell(sampleX, max);
+      const z0 = clampCell(sampleZ, max);
+      const x1 = clampCell(sampleX + 1, max);
+      const z1 = clampCell(sampleZ + 1, max);
       const eastChunk = Math.floor(x1 / CHUNK_SIZE) !== Math.floor(x0 / CHUNK_SIZE);
       const southChunk = Math.floor(z1 / CHUNK_SIZE) !== Math.floor(z0 / CHUNK_SIZE);
       if (!cellDrawn(mirror, drawnGround, x0, z0)) return null;
       if (eastChunk && !cellDrawn(mirror, drawnGround, x1, z0)) return null;
       if (southChunk && !cellDrawn(mirror, drawnGround, x0, z1)) return null;
       if (eastChunk && southChunk && !cellDrawn(mirror, drawnGround, x1, z1)) return null;
-      // Gate on floored neighbours; sample the exact fractional spot.
       return drawnGround.capYAtFractional(cellX, cellZ);
     },
 
-    onTerrainChanged(handler: () => void): () => void {
+    onTerrainChanged(handler: (dirty: ReadonlySet<number>) => void): () => void {
       terrainChangedHandlers.add(handler);
       return () => {
         terrainChangedHandlers.delete(handler);
