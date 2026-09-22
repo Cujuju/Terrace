@@ -16,6 +16,13 @@ Status: offline prototype built; protected appearance awaits owner review.
 No production mesher, terrain storage, brush behavior, or ground query changed.
 Tracking: [#503](https://github.com/Cujuju/Terrace/issues/503).
 
+Implementation plan requested and written:
+`E:\Development\Projects\Terrace\docs\plans\terrain-band-smoothing.md`.
+It specifies shared/CPU/GPU integration, a live comparison setting, stale-build
+protection, validation, and a separate experiment for residual contour noise.
+Its implementation choices are proposals; this entry does not record visual
+approval of the protected candidate or authorize a default change.
+
 Follow-up inspection: the stamp-only band-1 full-filter and locally protected
 results have identical reported area, turning, and vertex counts. Dense
 extraction retains substantial turning there. Thus protection is not needed
