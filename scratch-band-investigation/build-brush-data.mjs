@@ -52,12 +52,14 @@ const noise = (x, y) => NOISE_OCTAVES.reduce((s, o) => s + o.amplitude * valueNo
 // ---------------------------------------------------------- fine band model
 // Mirrors the production stamp in band units: anchored target = click band + 1,
 // one band per press, core radius sqrt(r(r-1)), soft apron rings past the core.
-function fineStamp(bands, cx, cy, radius, profile, natural) {
+// Stepped: each band below the target reaches one ring (spacing cells) further out.
+const STEPPED_MAX_RINGS = 8;
+function fineStamp(bands, cx, cy, radius, profile, natural, spacing = 0) {
   const at = (fx, fy) => fy * FINE_SIZE + fx;
   const target = bands[at(cx * FINE, cy * FINE)] + 1;
   const core = Math.sqrt(footprintRadiusSquared(radius));
   const reach = profile === 'soft' ? softApronReachCells(radius) : 0;
-  const outer = Math.sqrt(footprintRadiusSquared(radius + reach)) + 2;
+  const outer = Math.sqrt(footprintRadiusSquared(radius + reach)) + 2 + STEPPED_MAX_RINGS * spacing;
   const next = Int16Array.from(bands);
   for (let fy = Math.max(0, Math.floor((cy - outer) * FINE)); fy <= Math.min(FINE_SIZE - 1, Math.ceil((cy + outer) * FINE)); fy++) {
     for (let fx = Math.max(0, Math.floor((cx - outer) * FINE)); fx <= Math.min(FINE_SIZE - 1, Math.ceil((cx + outer) * FINE)); fx++) {
@@ -65,7 +67,10 @@ function fineStamp(bands, cx, cy, radius, profile, natural) {
       const dist = Math.hypot(x - cx, y - cy) + (natural ? noise(x, y) : 0);
       let cellTarget = null;
       if (dist < core) cellTarget = target;
-      else if (reach > 0) {
+      else if (spacing > 0) {
+        const ring = Math.ceil((dist - core) / spacing);
+        if (ring <= STEPPED_MAX_RINGS) cellTarget = target - ring;
+      } else if (reach > 0) {
         for (let d = 1; d < reach; d++) {
           if (dist < Math.sqrt(footprintRadiusSquared(radius + d))) { cellTarget = target - softApronBandDrop(d); break; }
         }
@@ -132,11 +137,13 @@ function currentBrush(scene) {
   return map.cells;
 }
 
-function prototypeBrush(scene, natural) {
+function prototypeBrush(scene, natural, spacing = 0) {
   const bands = new Int16Array(FINE_SIZE * FINE_SIZE).fill(BASE_BAND);
-  for (const [x, y, r] of scene.clicks) fineStamp(bands, x, y, r, scene.profile, natural);
+  for (const [x, y, r] of scene.clicks) fineStamp(bands, x, y, r, scene.profile, natural, spacing);
   return edgeAwareHeights(bands);
 }
+// Ring widths shown for the stepped hard stamp, in cells.
+const STEP_SPACINGS = [1, 2];
 
 function filtered(cells) {
   const at = (x, y) => cells[Math.max(0, Math.min(SIZE - 1, y)) * SIZE + Math.max(0, Math.min(SIZE - 1, x))];
@@ -206,14 +213,17 @@ for (const scene of [...SCENES, GENESIS]) {
   const current = generated ? genesisCells : currentBrush(scene);
   const round = generated ? genesisCells : prototypeBrush(scene, false);
   const natural = generated ? genesisCells : prototypeBrush(scene, true);
+  // Soft stamps already step through their apron; only the hard stamp gets rings.
+  const stepped = STEP_SPACINGS.map((w) => generated || scene.profile !== 'hard' ? round : prototypeBrush(scene, false, w));
   let bandDiffs = 0;
   for (let i = 0; i < current.length; i++) bandDiffs += Number(drawnBandOfSample(current[i]) !== drawnBandOfSample(round[i]));
-  const top = Math.max(...[current, round, natural].map((c) => drawnBandOfSample(Math.max(...c))));
+  const top = Math.max(...[current, round, natural, ...stepped].map((c) => drawnBandOfSample(Math.max(...c))));
   const bottom = Math.min(0, ...[current].map((c) => drawnBandOfSample(Math.min(...c))));
   const bands = Array.from({ length: top + 2 - bottom }, (_, i) => bottom + i);
   const fields = { production: [current, 1], 'full-filter': [filtered(current), FILTER_DENOM],
     'edge-round': [round, 1], 'edge-natural': [natural, 1],
-    'edge-round-walls': [round, 0], 'edge-natural-walls': [natural, 0] };
+    'edge-round-walls': [round, 0], 'edge-natural-walls': [natural, 0],
+    ...Object.fromEntries(STEP_SPACINGS.map((w, i) => [`stepped-${w}`, [stepped[i], 1]])) };
   const modes = {};
   const turns = {};
   for (const [method, [field, scale]] of Object.entries(fields)) {
@@ -233,10 +243,10 @@ const page = '<style>:root{--background:#f6f4ef;--foreground:#1f2328;--muted:#7d
   .replace('__REVIEW_CONFIG__', JSON.stringify({ prototype: true }))
   .replace(/<select class="form-select" id="tbr-fixture">[\s\S]*?<\/select>/, `<select class="form-select" id="tbr-fixture">\n        ${fixtureOptions}\n      </select>`)
   .replace(/Protection\s*<select class="form-select" id="tbr-protection">[\s\S]*?<\/select>/,
-    'Prototype brush <select class="form-select" id="tbr-protection"><option value="edge-round">Edge-aware — round</option><option value="edge-natural">Edge-aware — natural</option><option value="edge-round-walls">Edge-aware — round, vertical walls</option><option value="edge-natural-walls">Edge-aware — natural, vertical walls</option></select>')
+    'Prototype brush <select class="form-select" id="tbr-protection"><option value="edge-round">Edge-aware — round</option><option value="edge-natural">Edge-aware — natural</option><option value="edge-round-walls">Edge-aware — round, vertical walls</option><option value="edge-natural-walls">Edge-aware — natural, vertical walls</option><option value="stepped-1">Edge-aware — round, stepped 1-cell rings</option><option value="stepped-2">Edge-aware — round, stepped 2-cell rings</option></select>')
   .replace(/for\(const \[value,label\]of \[\['one-cell-ridge-control'[\s\S]*?\]\]\)\{/, 'for(const [value,label]of []){')
   .replace("[['production','Original'],['full-filter','Full filter']", "[['production','Current brush'],['full-filter','Current brush + smoothing filter']")
-  .replace("['protected-filter','strict-filter','band-clamp-only','clamped-filter'].includes(s.protection)", "['edge-round','edge-natural','edge-round-walls','edge-natural-walls'].includes(s.protection)");
+  .replace("['protected-filter','strict-filter','band-clamp-only','clamped-filter'].includes(s.protection)", "['edge-round','edge-natural','edge-round-walls','edge-natural-walls','stepped-1','stepped-2'].includes(s.protection)");
 const output = process.argv[2] ?? new URL('brush-preview.html', import.meta.url);
 await writeFile(output, page);
 console.log(JSON.stringify(report, null, 2));
