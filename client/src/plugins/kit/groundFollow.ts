@@ -2,7 +2,6 @@ import {
   SHEER_RISE_TO_RUN,
   CELL_WORLD_SIZE,
   WALK_SPEED_FOR_COSTING_WORLD_UNITS_PER_SECOND,
-  DRAWN_FILTER_REACH,
   type ClimbPath,
 } from '@terrace/shared';
 import type { ClientPluginCtx } from '../types.ts';
@@ -91,11 +90,14 @@ export function newClimbGroundState(): ClimbGroundState {
   };
 }
 
+/** The drawn ground at (x, y) blends the corners around x - 1/2; one cell of margin covers them. */
+const SUPPORT_MARGIN_CELLS = 1;
+
 function supportRevision(ctx: Pick<ClientPluginCtx, 'terrainRevisionAt'>, x: number, y: number): number {
-  const west = Math.floor(x) - DRAWN_FILTER_REACH;
-  const north = Math.floor(y) - DRAWN_FILTER_REACH;
-  const east = Math.floor(x) + 1 + DRAWN_FILTER_REACH;
-  const south = Math.floor(y) + 1 + DRAWN_FILTER_REACH;
+  const west = Math.floor(x) - SUPPORT_MARGIN_CELLS;
+  const north = Math.floor(y) - SUPPORT_MARGIN_CELLS;
+  const east = Math.floor(x) + 1 + SUPPORT_MARGIN_CELLS;
+  const south = Math.floor(y) + 1 + SUPPORT_MARGIN_CELLS;
   return ctx.terrainRevisionAt(west, north) + ctx.terrainRevisionAt(east, north) +
     ctx.terrainRevisionAt(west, south) + ctx.terrainRevisionAt(east, south);
 }

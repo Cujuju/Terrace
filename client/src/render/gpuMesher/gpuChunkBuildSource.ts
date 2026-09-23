@@ -37,7 +37,6 @@ import {
   CHUNK_STATS_WORDS,
   COUNT_PASS_STAMP,
   ENTRY_CHUNK_IDX,
-  ENTRY_BAND_FIELDS,
   ENTRY_HEADER_WORDS,
   ENTRY_EXPOSED,
   ENTRY_LAYERED,
@@ -47,9 +46,6 @@ import {
   ENTRY_ORIGIN_X_CELLS,
   ENTRY_ORIGIN_Z_CELLS,
   ENTRY_VERTEX_LIMIT,
-  ENTRY_SURFACE_SCALE,
-  ENTRY_WORLD_SIZE,
-  ENTRY_RECEIVED_MASK,
   GPU_BATCH_CHUNKS,
   GPU_WINDOW_POOL,
   LIP_AX,
@@ -1011,12 +1007,8 @@ export async function createGpuChunkBuildSource(
     }
     const at = entry * ENTRY_HEADER_WORDS;
     headers.fill(0, at, at + ENTRY_HEADER_WORDS);
-    headers[at + ENTRY_SURFACE_SCALE] = data.surfaceScale;
-    headers[at + ENTRY_WORLD_SIZE] = data.worldSize;
-    headers[at + ENTRY_RECEIVED_MASK] = data.receivedMask;
     headers[at + ENTRY_CHUNK_IDX] = chunkIdx;
     headers[at + ENTRY_LAYERED] = data.layered ? 1 : 0;
-    headers[at + ENTRY_BAND_FIELDS] = data.bandFields ? 1 : 0;
     headers[at + ENTRY_EXPOSED] = data.exposed ? 1 : 0;
     headers[at + ENTRY_LOWEST_BAND] = data.chunkLowestBand;
     headers[at + ENTRY_ORIGIN_X_CELLS] = data.originXCells;

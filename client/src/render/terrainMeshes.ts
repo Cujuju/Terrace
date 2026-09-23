@@ -525,13 +525,6 @@ export function createTerrainMeshes(
   // replaces it when newer; the chunk stays queued for the latest.
   const displayedRevisions = new Map<number, number>();
   const answerRevisions = new WeakMap<ChunkAnswer, number>();
-  // Capture the chosen mode once. Shared sources may outlive this arena.
-  const buildMirror: TerrainMirror = {
-    map: mirror.map,
-    received: mirror.received,
-    surfaceMode: mirror.surfaceMode,
-    get surfaceRevision() { return mirror.surfaceRevision; },
-  };
 
   let loggedUnacceptedAnswer = false;
 
@@ -568,7 +561,7 @@ export function createTerrainMeshes(
     inFlight.add(chunkIdx);
     const submittedGeneration = generation;
     const revision = revisions.get(chunkIdx) ?? 0;
-    const answer = buildSource.build(buildMirror, chunkIdx, generation);
+    const answer = buildSource.build(mirror, chunkIdx, generation);
     if (answer instanceof Promise) void answer.then(
       (settled) => receive(chunkIdx, settled, submittedGeneration, revision),
       () => receive(chunkIdx, null, submittedGeneration, revision),

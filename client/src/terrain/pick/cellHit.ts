@@ -12,7 +12,6 @@ import { blockyCellCapY, drawnBandAtY, drawnBandCapY } from '../capEmission.ts';
 import type { TerrainMirror } from '../mirror.ts';
 import { columnOwningBand, drawnCapMet } from './bandOwner.ts';
 import { refineRiserToDrawnFace } from './drawnFaceRefine.ts';
-import { filteredHitInCell } from './filteredCellHit.ts';
 import { cellRevealed, scaleRayToCellSpace } from './rayMarch.ts';
 import type { DrawnCap, DrawnRisers, TerrainRayPick, Vec3 } from './types.ts';
 
@@ -34,27 +33,7 @@ export function terrainHitInCell(
   risers: DrawnRisers | null,
 ): TerrainRayPick | null {
   if (!cellRevealed(mirror, i, j)) return null;
-  if (mirror.surfaceMode !== 'binomial' || mirror.isBlockyCell?.(i, j)) {
-    return legacyTerrainHitInCell(mirror, i, j, origin, direction, tEnter, tExit, risers);
-  }
-  const hit = filteredHitInCell(mirror, i, j, origin, direction, tEnter, tExit, risers);
-  // Undersides retain their binary geometry and existing owner rules.
-  if (direction.y <= 0) return hit;
-  const underside = legacyTerrainHitInCell(mirror, i, j, origin, direction, tEnter, tExit, risers);
-  if (underside?.face !== 'underside') return hit;
-  return hit === null || underside.hitY < hit.hitY ? underside : hit;
-}
 
-function legacyTerrainHitInCell(
-  mirror: TerrainMirror,
-  i: number,
-  j: number,
-  origin: Vec3,
-  direction: Vec3,
-  tEnter: number,
-  tExit: number,
-  risers: DrawnRisers | null,
-): TerrainRayPick | null {
   // The bounded mesher fallback draws raw top-column boxes, including over
   // layered inputs. Query the geometry actually published for that chunk.
   if (mirror.isBlockyCell?.(i, j)) {
@@ -159,9 +138,7 @@ function legacyTerrainHitInCell(
         surfaceY: drawnSpanCapHeight(hitSpan) * HEIGHT_WORLD_SCALE,
       };
     } else if (direction.y < 0) {
-      const candidate = columnOwningBand(mirror, i, j, hitMet.u, hitMet.v, hitMet.band, hit.hitY);
-      if (!candidate && mirror.surfaceMode === 'binomial') return null;
-      const found = candidate ?? {
+      const found = columnOwningBand(mirror, i, j, hitMet.u, hitMet.v, hitMet.band, hit.hitY) ?? {
         x: i,
         y: j,
         spanIndex: count - 1,

@@ -112,30 +112,27 @@ function drawnBandIndependent(mirror: TerrainMirror, px: number, pz: number): nu
 }
 
 describe('drawnGround', () => {
-  it('fractional support agrees with CPU caps in both modes across asymmetric slopes and seams', () => {
+  it('fractional support agrees with CPU caps across asymmetric slopes and seams', () => {
     const mirror = terracedMirror();
     for (let z = 0; z < WORLD_SIZE; z++) for (let x = 0; x < WORLD_SIZE; x++) {
       mirror.map.cells[z * WORLD_SIZE + x] = bandLevelHeight(1) + BAND_HEIGHT * x + BAND_HEIGHT / 2 * z;
     }
-    for (const mode of ['raw', 'binomial'] as const) {
-      mirror.surfaceMode = mode;
-      const ground = groundOf(mirror);
-      for (const [x, z] of [[5.75, 6.75], [15.9, 10.2], [16.1, 10.2], [15.9, 16.1]]) {
-        const plan = planChunkCaps(mirror, Math.floor(x / CHUNK_SIZE), Math.floor(z / CHUNK_SIZE), {
-          top: TERRAIN_PALETTE, cliff: CLIFF_PALETTE,
-        });
-        let cap = -Infinity;
-        for (let level = 0; level < plan.levels.length; level++) {
-          if (plan.polygonsPerLevel[level].some(p => pointInLoop(x, z, p.outer) &&
-              !p.holes.some(hole => pointInLoop(x, z, hole)))) cap = Math.max(cap, plan.levels[level].capY);
-        }
-        expect(Number.isFinite(cap)).toBe(true);
-        expect(drawnGroundYAt(mirror, ground, x, z), `${mode} ${x},${z}`).toBe(cap);
+    const ground = groundOf(mirror);
+    for (const [x, z] of [[5.75, 6.75], [15.9, 10.2], [16.1, 10.2], [15.9, 16.1]]) {
+      const plan = planChunkCaps(mirror, Math.floor(x / CHUNK_SIZE), Math.floor(z / CHUNK_SIZE), {
+        top: TERRAIN_PALETTE, cliff: CLIFF_PALETTE,
+      });
+      let cap = -Infinity;
+      for (let level = 0; level < plan.levels.length; level++) {
+        if (plan.polygonsPerLevel[level].some(p => pointInLoop(x, z, p.outer) &&
+            !p.holes.some(hole => pointInLoop(x, z, hole)))) cap = Math.max(cap, plan.levels[level].capY);
       }
-      expect(ground.capYAtFractional(5, 6)).toBe(ground.capYAt(5, 6));
-      expect(ground.capYAtFractional(-1, -1)).toBe(ground.capYAt(0, 0));
-      expect(ground.capYAtFractional(WORLD_SIZE, WORLD_SIZE)).toBe(ground.capYAt(WORLD_SIZE - 1, WORLD_SIZE - 1));
+      expect(Number.isFinite(cap)).toBe(true);
+      expect(drawnGroundYAt(mirror, ground, x, z), `${x},${z}`).toBe(cap);
     }
+    expect(ground.capYAtFractional(5, 6)).toBe(ground.capYAt(5, 6));
+    expect(ground.capYAtFractional(-1, -1)).toBe(ground.capYAt(0, 0));
+    expect(ground.capYAtFractional(WORLD_SIZE, WORLD_SIZE)).toBe(ground.capYAt(WORLD_SIZE - 1, WORLD_SIZE - 1));
   });
 
   it('availability and blocky fallback choose the rendered region on either side of a seam', () => {

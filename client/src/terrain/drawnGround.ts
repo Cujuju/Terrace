@@ -4,7 +4,6 @@ import {
   drawnBandAt,
   drawnSampleCellIndex,
 } from '@terrace/shared';
-import { drawnSurface } from './drawnSurface.ts';
 import { drawnBandOfSample } from '@terrace/shared';
 import { isCellReceived, sampleRenderHeight } from './mirror.ts';
 import { drawnBandCapY } from './capEmission.ts';
@@ -76,7 +75,7 @@ export function createDrawnGround(mirror: TerrainMirror, store: DrawnGroundStore
     const fieldZ = drawnFieldCoordinate(z);
     return chart?.plan.blocky
       ? drawnBandOfSample(sampleRenderHeight(mirror, Math.floor(fieldX), Math.floor(fieldZ)))
-      : drawnBandAt(mirror.map, fieldX, fieldZ, drawnSurface(mirror));
+      : drawnBandAt(mirror.map, fieldX, fieldZ);
   };
 
   return {

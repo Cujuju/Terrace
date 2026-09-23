@@ -9,7 +9,6 @@ import {
 } from '@terrace/shared';
 import { BAND_WORLD_HEIGHT, HEIGHT_WORLD_SCALE } from '../../config.ts';
 import { drawnBandCapY } from '../capEmission.ts';
-import { drawnSurface } from '../drawnSurface.ts';
 import { isCellReceived } from '../mirror.ts';
 import type { TerrainMirror } from '../mirror.ts';
 import { CELL_CENTRE_OFFSET } from './rayMarch.ts';
@@ -35,13 +34,12 @@ export function drawnCapMet(
   // falling between samples.
   const bandsCrossed = Math.ceil(Math.abs(reach * ray.dy) / BAND_WORLD_HEIGHT);
   const samples = Math.max(DRAWN_CAP_SAMPLES_PER_CELL, bandsCrossed);
-  const surface = drawnSurface(mirror);
   for (let s = 0; s <= samples; s++) {
     const t = tEnter + (reach * s) / samples;
     const u = ray.ox + t * ray.dx;
     const v = ray.oz + t * ray.dz;
     // The layer at the ray's own height: a carved gap under a roof is open.
-    const band = drawnLayerCapAt(mirror.map, u, v, bandHoldingY(ray.oy + t * ray.dy), surface);
+    const band = drawnLayerCapAt(mirror.map, u, v, bandHoldingY(ray.oy + t * ray.dy));
     if (band !== null) {
       return { t, band, capY: band * BAND_WORLD_HEIGHT, drawnY: drawnBandCapY(band), u, v };
     }
@@ -61,12 +59,6 @@ const NEIGHBOUR_STEPS: readonly (readonly [number, number])[] = [
   [1, 0],
   [1, 1],
 ];
-
-// Four query corners plus their filter support fit within two cells of
-// the ray's current cell. Tie order is fixed, and ownership stays on raw spans.
-const FILTER_NEIGHBOUR_STEPS: readonly (readonly [number, number])[] =
-  Array.from({ length: 25 }, (_, i): readonly [number, number] => [Math.floor(i / 5) - 2, i % 5 - 2])
-    .filter(([x, y]) => x !== 0 || y !== 0);
 
 function spanStruckAt(
   mirror: TerrainMirror,
@@ -102,8 +94,7 @@ export function columnOwningBand(
   const last = mirror.map.size - 1;
   let owner: BandOwner | null = null;
   let nearest = Infinity;
-  const steps = mirror.surfaceMode === 'binomial' ? FILTER_NEIGHBOUR_STEPS : NEIGHBOUR_STEPS;
-  for (const [dx, dz] of steps) {
+  for (const [dx, dz] of NEIGHBOUR_STEPS) {
     const x = i + dx;
     const y = j + dz;
     if (x < 0 || y < 0 || x > last || y > last) continue;

@@ -25,7 +25,6 @@ export * from './rivers.ts';
 export * from './freshwater.ts';
 export * from './traversal.ts';
 export * from './drawnGround.ts';
-export * from './drawnFieldFilter.ts';
 export * from './climb.ts';
 export * from './stance.ts';
 export * from './farmland.ts';
