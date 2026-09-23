@@ -1,6 +1,6 @@
 # Edge-aware brushes
 
-Status: planned; no production code written. Owner direction 2026-09-23.
+Status: steps 1-3 on main (38b16f89); steps 4-7 on branch claude/edge-aware-brushes-b895a0 (9dc7b1b8), unmerged. Saved worlds not yet migrated.
 Goal: smooth, round band outlines from the stored terrain itself, without a
 render-time smoothing filter or the Smooth brush.
 
