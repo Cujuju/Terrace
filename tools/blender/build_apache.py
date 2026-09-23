@@ -1,13 +1,14 @@
 """Build low- and high-texture-resolution Apache GLBs with identical geometry.
 
 Run with Blender --background --python. Arguments after --: output directory.
-Writes apache.glb (256px atlases) and apache-high.glb (2048px atlases).
-No external textures or Python dependencies.
+Writes apache.glb (256px atlases) and apache-high.glb (2048px atlases), in KTX2.
+Requires Node, the repository's glTF Transform CLI, and KTX-Software on PATH.
 """
 
 import math
 import os
 import sys
+import tempfile
 
 import bmesh
 import bpy
@@ -16,6 +17,7 @@ from mathutils import Vector
 
 sys.path.insert(0, os.path.dirname(__file__))
 from export_glb import export_scene_glb
+from compress_apache import compress_glb
 
 FOOTPRINT = 1.0
 TRIANGLE_BUDGET = 1050
@@ -702,7 +704,13 @@ def build_asset(out, *, high_resolution=False):
     for obj in [root,*root.children_recursive]:
         obj.select_set(True)
     filename = 'apache-high.glb' if high_resolution else 'apache.glb'
-    export_scene_glb(os.path.join(out,filename), selected_only=True)
+    with tempfile.NamedTemporaryFile(prefix='apache-source-', suffix='.glb', delete=False) as stream:
+        source = stream.name
+    try:
+        export_scene_glb(source, selected_only=True)
+        compress_glb(source, os.path.join(out,filename))
+    finally:
+        os.unlink(source)
     print(f'APACHE: {count} triangles, {len(PARTS)} meshes, 1 material; '
           f'{ATLAS_SIZE}px atlases; swept footprint {FOOTPRINT}')
     return root
