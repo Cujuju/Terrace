@@ -18,6 +18,7 @@ function stubViewport(): Viewport {
 }
 
 const stubWorld = {
+  terrainBuildHeld: () => false,
   worldSize: () => 0,
   terrainSampleAt: () => null,
   drawnGroundYAt: () => null,

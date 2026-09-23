@@ -280,6 +280,7 @@ export function createClientPluginHost(
   const gatheredShade: GroundShadeDisc[] = [];
 
   const gatherGroundShade = (): void => {
+    if (holding()) return;
     if (groundShadeLookups.size === 0) {
       clearGroundShade();
       return;
@@ -340,6 +341,29 @@ export function createClientPluginHost(
   let warmupInFlight = false;
   let warmupQueued = false;
   let settlePassStarted = false;
+  let warmupDue = false;
+
+  // While a snapshot's terrain builds, plugins skip frames, their terrain changes are
+  // batched and their layers hidden. The world arms it; only the host releases it.
+  let buildHeld = false;
+  const holding = (): boolean => buildHeld || world.terrainBuildHeld();
+  const pluginLayers = new Set<Group>();
+  const heldTerrainChanges = new Map<(dirty: ReadonlySet<number>) => void, Set<number>>();
+
+  const engageBuildHold = (): void => {
+    buildHeld = true;
+    for (const layer of pluginLayers) layer.visible = false;
+    clearGroundShade();
+  };
+
+  const releaseBuildHold = (): void => {
+    buildHeld = false;
+    for (const layer of pluginLayers) layer.visible = true;
+    const changes = [...heldTerrainChanges];
+    heldTerrainChanges.clear();
+    for (const [deliver, dirty] of changes) deliver(dirty);
+    warmupDue = true;
+  };
 
   const runWarmup = (): void => {
     if (warmupInFlight) {
@@ -374,6 +398,8 @@ export function createClientPluginHost(
     const deferredFrameHandlers: FrameHandler[] = [];
     const layer = new Group();
     layer.name = `plugin:${plugin.name}`;
+    layer.visible = !holding();
+    pluginLayers.add(layer);
     viewport.scene.add(layer);
 
     const audioHandle = audioEngine.forPlugin(plugin.name);
@@ -388,7 +414,7 @@ export function createClientPluginHost(
       drawnGroundYAt: (cellX, cellZ) => world.drawnGroundYAt(cellX, cellZ),
       onTerrainChanged(handler) {
         const name = plugin.name;
-        const wrapped = (dirty: ReadonlySet<number>): void => {
+        const deliver = (dirty: ReadonlySet<number>): void => {
           const startMs = performance.now();
           try {
             handler(dirty);
@@ -398,7 +424,24 @@ export function createClientPluginHost(
             recordPluginAsync(name, performance.now() - startMs);
           }
         };
-        return track(world.onTerrainChanged(wrapped));
+        // The world may pass a reused set, so a held change is copied, never kept.
+        const wrapped = (dirty: ReadonlySet<number>): void => {
+          if (!holding()) {
+            deliver(dirty);
+            return;
+          }
+          let held = heldTerrainChanges.get(deliver);
+          if (held === undefined) {
+            held = new Set();
+            heldTerrainChanges.set(deliver, held);
+          }
+          for (const chunkIdx of dirty) held.add(chunkIdx);
+        };
+        const unsubscribe = world.onTerrainChanged(wrapped);
+        return track(() => {
+          unsubscribe();
+          heldTerrainChanges.delete(deliver);
+        });
       },
       onMessage(type, handler) {
         const key = `${plugin.name}:${type}`;
@@ -603,6 +646,7 @@ export function createClientPluginHost(
           lowSamples: 0,
         };
         const runner = (dt: number): void => {
+          if (holding()) return;
           if (throttle.skipRemaining > 0) {
             throttle.skipRemaining -= 1;
             throttle.pendingDt += dt;
@@ -679,6 +723,7 @@ export function createClientPluginHost(
       }
       layer.clear();
       viewport.scene.remove(layer);
+      pluginLayers.delete(layer);
     };
 
     const preload = plugin.preload;
@@ -736,6 +781,7 @@ export function createClientPluginHost(
     }
     entry.layer.clear();
     viewport.scene.remove(entry.layer);
+    pluginLayers.delete(entry.layer);
 
     if (skyRigClaimant === name) skyRigClaimant = null;
     skyRigRefusals.delete(name);
@@ -743,18 +789,21 @@ export function createClientPluginHost(
 
   configureGroundShade(groundShadeMaxFor(plugins));
 
-  for (const plugin of plugins) mountPlugin(plugin);
-
-  // Fires once at terrain settle, after boot has applied the AA setting; a later
-  // multisample toggle drops the canvas target and the next render recompiles.
-  const stopWarmupWatch = viewport.onFrame(() => {
-    if (!bootMarked(BOOT_MARKS.firstFrame)) return;
-    const trace = world.terrainLoadTrace();
-    if (trace === null || trace.queueEmptyAfterMs === null) return;
-    stopWarmupWatch();
+  // Pose phase, registered before any runner, so engage and release land before a plugin
+  // runs that frame. A release also flushes changes held when the world disarmed unseen.
+  const stopBuildHold = viewport.onFrame(() => {
+    const armed = world.terrainBuildHeld();
+    if (armed && !buildHeld) engageBuildHold();
+    else if (!armed && (buildHeld || heldTerrainChanges.size > 0)) releaseBuildHold();
+    // Fires after each build release, once boot has applied the AA setting; a later
+    // multisample toggle drops the canvas target and the next render recompiles.
+    if (!warmupDue || !bootMarked(BOOT_MARKS.firstFrame)) return;
+    warmupDue = false;
     warmedOnce = true;
     runWarmup();
-  });
+  }, 'pose');
+
+  for (const plugin of plugins) mountPlugin(plugin);
 
   const stopGroundShade = viewport.onFrame(gatherGroundShade);
   const stopSkyRigRefresh = viewport.onFrame(refreshSkyRig);
@@ -865,7 +914,8 @@ export function createClientPluginHost(
       stopSampling();
       stopGroundShade();
       stopSkyRigRefresh();
-      stopWarmupWatch();
+      stopBuildHold();
+      heldTerrainChanges.clear();
       for (const name of [...mounted.keys()]) unmountPlugin(name);
       for (const name of [...pendingMounts]) {
         mountGenerations.set(name, (mountGenerations.get(name) ?? 0) + 1);

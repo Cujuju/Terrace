@@ -204,6 +204,8 @@ export interface World extends TerrainSink {
   terrainLoadTrace(): TerrainLoadTrace | null;
   /** Chunks queued, in flight or waiting to be spliced; 0 once the terrain is fully drawn. */
   pendingTerrainCount(): number;
+  /** True from a join or world-change snapshot until the terrain it brought is drawn; plugins are held meanwhile. */
+  terrainBuildHeld(): boolean;
   /** Chunks the mesher drew blocky, ascending. */
   blockyChunks(): number[];
   /** What is meshing right now, which a runtime demotion can move away from the setting. */
@@ -518,6 +520,14 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
 
   createEffect(on(terrainMesher, () => rebuildTerrain(), { defer: true }));
 
+  // Only a snapshot arms it, so sculpts never hold plugins. A chunk whose build never
+  // succeeds keeps it armed, and the plugins held, for the rest of that world.
+  let snapshotBuildHeld = false;
+  // Pose phase: the host reads it at the start of the same frame, before any plugin runs.
+  const stopBuildHoldWatch = viewport.onFrame(() => {
+    if (snapshotBuildHeld && (meshes?.pendingCount() ?? 0) === 0) snapshotBuildHeld = false;
+  }, 'pose');
+
   const stopMesherDump = import.meta.env.DEV
     ? installMesherDump({
         camera: viewport.camera,
@@ -531,6 +541,8 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
 
   return {
     onSnapshot(msg: JoinSnapshotMessage): void {
+      // Before the first terrain notification below, so plugins never see it unheld.
+      snapshotBuildHeld = true;
       setWorldIdentity({
         name: msg.worldName ?? null,
         difficulty: msg.difficulty ?? null,
@@ -768,6 +780,9 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
     pendingTerrainCount(): number {
       return meshes?.pendingCount() ?? 0;
     },
+    terrainBuildHeld(): boolean {
+      return snapshotBuildHeld;
+    },
     blockyChunks(): number[] {
       return meshes?.drawnGround().blockyChunkIndices() ?? [];
     },
@@ -811,6 +826,7 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
     dispose(): void {
       clearExpiryTimer();
       terrainChangedHandlers.clear();
+      stopBuildHoldWatch();
       stopMesherDump?.();
       stopDeviceLostWatch?.();
       meshes?.dispose();

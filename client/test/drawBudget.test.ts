@@ -195,6 +195,7 @@ function stubViewport() {
 }
 
 const stubWorld = {
+  terrainBuildHeld: () => false,
   worldSize: () => 0,
   terrainMesherActive: () => 'cpu',
   terrainSampleAt: () => null,
