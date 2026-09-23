@@ -295,9 +295,15 @@ export function createRiverRig(
       emptyWaterVertices -= run.capacity;
     }
 
+    const base = run.offset * 3;
+    // A rebuild re-emits every tile near a dirty chunk; one that came out the same uploads nothing.
+    if (count === run.count) {
+      let same = true;
+      for (let i = 0; i < count * 3 && same; i++) same = waterPositions[base + i] === Math.fround(source[i]!);
+      if (same) return;
+    }
     if (count > run.capacity) growSlot(run, key, slotCapacityOf(count));
 
-    const base = run.offset * 3;
     for (let i = 0; i < count * 3; i++) waterPositions[base + i] = source[i]!;
     if (run.count > count) waterPositions.fill(0, base + count * 3, base + run.count * 3);
     noteWaterDirty(run.offset, run.offset + Math.max(run.count, count));

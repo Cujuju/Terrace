@@ -38,14 +38,17 @@ export function writeTextureRegion(
   const device = backend.device;
   const gpuTexture = backend.get(texture).texture;
   if (device === undefined || gpuTexture === undefined) return false;
+  // Packed first: the browser stages every byte the source layout spans, whole rows included.
+  const rowBytes = region.width * bytesPerTexel;
+  const packed = new Uint8Array(rowBytes * region.height);
+  for (let row = 0; row < region.height; row++) {
+    const from = ((region.y + row) * rowTexels + region.x) * bytesPerTexel;
+    packed.set(data.subarray(from, from + rowBytes), row * rowBytes);
+  }
   device.queue.writeTexture(
     { texture: gpuTexture, origin: { x: region.x, y: region.y } },
-    data,
-    {
-      offset: (region.y * rowTexels + region.x) * bytesPerTexel,
-      bytesPerRow: rowTexels * bytesPerTexel,
-      rowsPerImage: region.height,
-    },
+    packed,
+    { offset: 0, bytesPerRow: rowBytes, rowsPerImage: region.height },
     { width: region.width, height: region.height },
   );
   return true;

@@ -47,15 +47,30 @@ const POSITION_FLOATS_PER_VERTEX = 3;
 
 const TILE_CAPACITY_GROWTH_FACTOR = 2;
 
+const VERTICES_PER_SEGMENT = 2;
+
+/** Abandoned slots are packed away once they hold this share of a tile. */
+const TILE_COMPACT_HOLE_SHARE = 1 / 2;
+
+/** A run's slot: a power of two of segments, so a resize rarely outgrows it. */
+function slotCapacityOf(vertices: number): number {
+  const segments = Math.ceil(vertices / VERTICES_PER_SEGMENT);
+  let slot = 1;
+  while (slot < segments) slot *= 2;
+  return slot * VERTICES_PER_SEGMENT;
+}
+
 const NO_LIP_POSITIONS = new Float32Array(0);
 
 const RESTING_RENDER_ORDER = 500;
 
 const GRABBED_RENDER_ORDER = RESTING_RENDER_ORDER + 1;
 
+/** Vertices past `count` up to `capacity` are zero: zero-length segments that draw nothing. */
 interface ChunkRun {
   offset: number;
   count: number;
+  capacity: number;
   minX: number;
   minY: number;
   minZ: number;
@@ -68,7 +83,10 @@ interface EdgeTile {
   mesh: LineSegments;
   positions: Float32Array;
   attribute: BufferAttribute;
+  /** End of the last slot; everything past it is zero. */
   liveEnd: number;
+  /** Capacity of slots no run holds any more. */
+  holeVertices: number;
   runs: Map<number, ChunkRun>;
 }
 
@@ -200,7 +218,7 @@ export function createLayerEdgeOverlay(
     const mesh = new LineSegments(geometry, material);
     mesh.visible = restingVisible();
     mesh.renderOrder = RESTING_RENDER_ORDER;
-    const tile: EdgeTile = { mesh, positions, attribute, liveEnd: 0, runs: new Map() };
+    const tile: EdgeTile = { mesh, positions, attribute, liveEnd: 0, holeVertices: 0, runs: new Map() };
     group.add(mesh);
     tiles.set(tileIdx, tile);
     return tile;
@@ -250,6 +268,37 @@ export function createLayerEdgeOverlay(
     run.maxZ = maxZ;
   };
 
+  /** Packs every slot to the front, shrunk to fit: one whole-tile upload, rarely. */
+  const compactTile = (tile: EdgeTile): void => {
+    const runs = [...tile.runs.values()].sort((a, b) => a.offset - b.offset);
+    let packed = 0;
+    for (const run of runs) {
+      const capacity = slotCapacityOf(run.count);
+      tile.positions.copyWithin(
+        packed * POSITION_FLOATS_PER_VERTEX,
+        run.offset * POSITION_FLOATS_PER_VERTEX,
+        (run.offset + run.count) * POSITION_FLOATS_PER_VERTEX,
+      );
+      tile.positions.fill(
+        0,
+        (packed + run.count) * POSITION_FLOATS_PER_VERTEX,
+        (packed + capacity) * POSITION_FLOATS_PER_VERTEX,
+      );
+      run.offset = packed;
+      run.capacity = capacity;
+      packed += capacity;
+    }
+    tile.positions.fill(0, packed * POSITION_FLOATS_PER_VERTEX, tile.liveEnd * POSITION_FLOATS_PER_VERTEX);
+    tile.liveEnd = packed;
+    tile.holeVertices = 0;
+  };
+
+  const sameRun = (tile: EdgeTile, run: ChunkRun, source: Float32Array): boolean => {
+    const base = run.offset * POSITION_FLOATS_PER_VERTEX;
+    for (let i = 0; i < source.length; i++) if (tile.positions[base + i] !== source[i]) return false;
+    return true;
+  };
+
   const writeRun = (
     tileIdx: number,
     tile: EdgeTile,
@@ -258,11 +307,13 @@ export function createLayerEdgeOverlay(
   ): void => {
     const count = source.length / POSITION_FLOATS_PER_VERTEX;
     let run = tile.runs.get(chunkIdx);
+    if (run !== undefined && count === run.count && sameRun(tile, run, source)) return;
     if (run === undefined) {
       if (count === 0) return;
       run = {
         offset: tile.liveEnd,
         count: 0,
+        capacity: 0,
         minX: Infinity,
         minY: Infinity,
         minZ: Infinity,
@@ -273,54 +324,58 @@ export function createLayerEdgeOverlay(
       tile.runs.set(chunkIdx, run);
     }
 
-    const delta = count - run.count;
-    const regrown = delta > 0 && ensureTileCapacity(tile, tile.liveEnd + delta);
-
-    const tailStart = run.offset + run.count;
-    const tailCount = tile.liveEnd - tailStart;
-    if (delta !== 0 && tailCount > 0) {
-      tile.positions.copyWithin(
-        (tailStart + delta) * POSITION_FLOATS_PER_VERTEX,
-        tailStart * POSITION_FLOATS_PER_VERTEX,
-        tile.liveEnd * POSITION_FLOATS_PER_VERTEX,
-      );
-      for (const other of tile.runs.values()) {
-        if (other !== run && other.offset >= tailStart) other.offset += delta;
+    const floats = POSITION_FLOATS_PER_VERTEX;
+    const dirty: [number, number][] = [];
+    let regrown = false;
+    if (count > run.capacity) {
+      // Outgrown: the run moves to a new slot at the end; the old one becomes a hole.
+      if (run.capacity > 0) {
+        tile.positions.fill(0, run.offset * floats, (run.offset + run.count) * floats);
+        dirty.push([run.offset, run.offset + run.count]);
+        tile.holeVertices += run.capacity;
       }
+      const capacity = slotCapacityOf(count);
+      regrown = ensureTileCapacity(tile, tile.liveEnd + capacity);
+      run.offset = tile.liveEnd;
+      run.count = 0;
+      run.capacity = capacity;
+      tile.liveEnd += capacity;
     }
-    tile.positions.set(source, run.offset * POSITION_FLOATS_PER_VERTEX);
-    tile.liveEnd += delta;
+    tile.positions.set(source, run.offset * floats);
+    if (run.count > count) tile.positions.fill(0, (run.offset + count) * floats, (run.offset + run.count) * floats);
+    dirty.push([run.offset, run.offset + Math.max(count, run.count)]);
     run.count = count;
     measureRun(run, source);
 
-    const dirtyStart = run.offset;
-    if (count === 0) tile.runs.delete(chunkIdx);
-    if (tile.liveEnd === 0) {
+    if (count === 0) {
+      tile.runs.delete(chunkIdx);
+      tile.holeVertices += run.capacity;
+    }
+    if (tile.runs.size === 0) {
       disposeTile(tileIdx, tile);
       return;
     }
 
-    if (!regrown) {
-      const dirtyCount = delta === 0 ? count : tile.liveEnd - dirtyStart;
-      tile.attribute.addUpdateRange(
-        dirtyStart * POSITION_FLOATS_PER_VERTEX,
-        dirtyCount * POSITION_FLOATS_PER_VERTEX,
-      );
+    if (tile.holeVertices > tile.liveEnd * TILE_COMPACT_HOLE_SHARE) {
+      compactTile(tile);
+      tile.attribute.clearUpdateRanges();
+      tile.attribute.needsUpdate = true;
+    } else if (!regrown) {
+      for (const [from, to] of dirty) {
+        if (to > from) tile.attribute.addUpdateRange(from * floats, (to - from) * floats);
+      }
       tile.attribute.needsUpdate = true;
     }
     tile.mesh.geometry.setDrawRange(0, tile.liveEnd);
     updateTileBounds(tile);
   };
 
-  const dropChunk = (idx: number): void => {
+  /** Forgets everything the chunk drew except its lip run, which `rebuild` rewrites in place. */
+  const forgetChunk = (idx: number): void => {
     knownChunks.delete(idx);
     dropCellGrid(idx);
     dropBandGrid(idx);
     segmentsByChunk.delete(idx);
-    const tileIdx = tileIndexOfChunk(idx);
-    const tile = tiles.get(tileIdx);
-    if (tile === undefined || !tile.runs.has(idx)) return;
-    writeRun(tileIdx, tile, idx, NO_LIP_POSITIONS);
   };
 
   const NEIGHBOUR_OFFSETS = [[-1, 0], [1, 0], [0, -1], [0, 1]] as const;
@@ -441,18 +496,30 @@ export function createLayerEdgeOverlay(
   };
 
   const rebuild = (idx: number): void => {
-    dropChunk(idx);
-    if (!hasChunk(mirror, idx)) return;
+    const lips = rebuildChunk(idx);
+    const tileIdx = tileIndexOfChunk(idx);
+    const tile = tiles.get(tileIdx);
+    if (lips.length === 0) {
+      if (tile !== undefined && tile.runs.has(idx)) writeRun(tileIdx, tile, idx, NO_LIP_POSITIONS);
+      return;
+    }
+    writeRun(tileIdx, tile ?? createTile(tileIdx), idx, lips);
+  };
+
+  /** The chunk's grids and segments, rebuilt; returns its lip line positions. */
+  const rebuildChunk = (idx: number): Float32Array => {
+    forgetChunk(idx);
+    if (!hasChunk(mirror, idx)) return NO_LIP_POSITIONS;
     const cx = idx % chunksPerEdge;
     const cy = Math.floor(idx / chunksPerEdge);
-    if (!neighboursKnown(cx, cy)) return;
+    if (!neighboursKnown(cx, cy)) return NO_LIP_POSITIONS;
     knownChunks.add(idx);
     buildCellGrid(idx);
     buildBandGrid(idx);
     const chart = drawnGround.chartOf(cx, cy);
-    if (chart === null) return;
+    if (chart === null) return NO_LIP_POSITIONS;
     const { positions, flat, bands } = chart.lips;
-    if (positions.length < FLOATS_PER_SEGMENT) return;
+    if (positions.length < FLOATS_PER_SEGMENT) return NO_LIP_POSITIONS;
 
     const smoothedPositions = lipSmoothing
       ? smoothLipSegments(positions, 6, bands)
@@ -473,9 +540,7 @@ export function createLayerEdgeOverlay(
       );
     }
     segmentsByChunk.set(idx, perBand);
-
-    const tileIdx = tileIndexOfChunk(idx);
-    writeRun(tileIdx, tiles.get(tileIdx) ?? createTile(tileIdx), idx, lipPositions);
+    return lipPositions;
   };
 
   const grabbedMaterial = new LineBasicMaterial({
