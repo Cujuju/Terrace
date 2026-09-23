@@ -16,10 +16,12 @@ sys.path.insert(0, os.path.dirname(__file__))
 from export_glb import export_scene_glb
 
 FOOTPRINT = 1.0
-TRIANGLE_BUDGET = 1000
-ATLAS_SIZE = 1024
+TRIANGLE_BUDGET = 1050
+ATLAS_SIZE = 2048
 TILE_SIZE = ATLAS_SIZE // 4
-UV_PADDING = 10
+PAINT_SIZE = 256
+PAINT_SCALE = TILE_SIZE / PAINT_SIZE
+UV_PADDING = round(10 * PAINT_SCALE)
 PROFILE_PIXELS_PER_UNIT = 30.0
 PROFILE_MAST_X = 225.0
 PROFILE_DATUM_Y = 110.0
@@ -37,8 +39,8 @@ def profile_point(u, v, lateral=0):
 
 ROTOR_CENTRE = profile_point(225, 22)
 TAIL_ROTOR_CENTRE = profile_point(524, 43, .36)
-GUN_CENTRE = profile_point(143, 117)
-MUZZLE = profile_point(101, 125)
+GUN_CENTRE = profile_point(140, 117)
+MUZZLE = profile_point(95, 133)
 NOSE = profile_point(59, 98.5)
 TAIL_TIP = profile_point(515, 120)
 TOP = profile_point(225, 8)
@@ -59,6 +61,10 @@ PALETTE = [
 HULL, PANEL, VENT, GLASS, WINDSCREEN, BLADE, RUBBER, WING = range(8)
 TAIL, DARK, STEEL, ROCKET, MISSILE, SENSOR, MARKING, PLAIN = range(8, 16)
 PNVS = PANEL  # Dedicated upper sensor face; nacelles use the continuous MARKING tile.
+SENSOR_SHELL = 16  # Smooth olive shell, mapped to PLAIN rather than an optical face.
+POD_CENTRE = profile_point(70, 100)
+POD_HALF_WIDTH = .59
+POD_HALF_HEIGHT = .43
 
 
 def atlas():
@@ -66,7 +72,7 @@ def atlas():
     pixels = np.zeros((ATLAS_SIZE, ATLAS_SIZE, 4), dtype=np.float32)
     rough = np.ones_like(pixels)
     normals = np.ones_like(pixels)
-    yy, xx = np.mgrid[:TILE_SIZE, :TILE_SIZE]
+    yy, xx = np.mgrid[:TILE_SIZE, :TILE_SIZE] / PAINT_SCALE
     for tile, colour in enumerate(PALETTE):
         tx, ty = (tile % 4) * TILE_SIZE, (tile // 4) * TILE_SIZE
         p = pixels[ty:ty + TILE_SIZE, tx:tx + TILE_SIZE]
@@ -78,6 +84,7 @@ def atlas():
         height = np.zeros((TILE_SIZE, TILE_SIZE), dtype=np.float32)
 
         def rect(x0, y0, x1, y1, c):
+            x0,y0,x1,y1 = [round(v*PAINT_SCALE) for v in (x0,y0,x1,y1)]
             p[y0:y1, x0:x1, :3] = np.array(c) / 255
 
         def frame(x0, y0, x1, y1, c, w=2):
@@ -85,17 +92,17 @@ def atlas():
             rect(x0, y1 - w, x1, y1, c)
             rect(x0, y0, x0 + w, y1, c)
             rect(x1 - w, y0, x1, y1, c)
-            height[y0:y1,x0:x1] = .12
-            height[y0+w:y1-w,x0+w:x1-w] = .35
+            a,b,cx,d = [round(v*PAINT_SCALE) for v in (x0,y0,x1,y1)]
+            inset = round(w*PAINT_SCALE)
+            height[b:d,a:cx] = .12
+            height[b+inset:d-inset,a+inset:cx-inset] = .35
             # A narrow lip and soft grime outside the panel seam.
             rect(x0+w,y1-w-1,x1-w,y1-w,(min(c[0]+30,130),min(c[1]+30,135),min(c[2]+25,115)))
 
         def circle(cx, cy, radius, c):
-            yy, xx = np.ogrid[:TILE_SIZE, :TILE_SIZE]
             p[(xx - cx) ** 2 + (yy - cy) ** 2 <= radius ** 2, :3] = np.array(c) / 255
 
         def polygon(points, colour):
-            yy, xx = np.mgrid[:TILE_SIZE, :TILE_SIZE]
             inside = np.zeros((TILE_SIZE,TILE_SIZE),dtype=bool)
             for a,b in zip(points,points[1:]+points[:1]):
                 if a[1] == b[1]:
@@ -105,8 +112,8 @@ def atlas():
             p[inside,:3] = np.array(colour)/255
 
         def window_polygon(points, colour):
-            polygon([(UV_PADDING+(u-CANOPY_U_RANGE[0])/(CANOPY_U_RANGE[1]-CANOPY_U_RANGE[0])*(TILE_SIZE-2*UV_PADDING),
-                      UV_PADDING+(CANOPY_V_RANGE[1]-v)/(CANOPY_V_RANGE[1]-CANOPY_V_RANGE[0])*(TILE_SIZE-2*UV_PADDING))
+            polygon([(10+(u-CANOPY_U_RANGE[0])/(CANOPY_U_RANGE[1]-CANOPY_U_RANGE[0])*(PAINT_SIZE-20),
+                      10+(CANOPY_V_RANGE[1]-v)/(CANOPY_V_RANGE[1]-CANOPY_V_RANGE[0])*(PAINT_SIZE-20))
                      for u,v in points],colour)
 
         if tile in (WING, MARKING):
@@ -122,8 +129,8 @@ def atlas():
             rect(186,30,188,219,(57,64,47))
         if tile == HULL:
             def body_rect(u0,v0,u1,v1,c):
-                x0,x1 = [round(UV_PADDING+(u-BODY_U_RANGE[0])/(BODY_U_RANGE[1]-BODY_U_RANGE[0])*(TILE_SIZE-2*UV_PADDING)) for u in (u0,u1)]
-                y0,y1 = [round(UV_PADDING+(BODY_V_RANGE[1]-v)/(BODY_V_RANGE[1]-BODY_V_RANGE[0])*(TILE_SIZE-2*UV_PADDING)) for v in (v1,v0)]
+                x0,x1 = [10+(u-BODY_U_RANGE[0])/(BODY_U_RANGE[1]-BODY_U_RANGE[0])*(PAINT_SIZE-20) for u in (u0,u1)]
+                y0,y1 = [10+(BODY_V_RANGE[1]-v)/(BODY_V_RANGE[1]-BODY_V_RANGE[0])*(PAINT_SIZE-20) for v in (v1,v0)]
                 frame(x0,y0,x1,y1,c,1)
             for bounds in [(86,95,102,108),(166,95,184,114),(196,94,226,117),
                            (254,98,281,124),(330,98,338,117),(370,107,449,123)]:
@@ -131,7 +138,6 @@ def atlas():
             for u in (151,190,290,348,480):
                 body_rect(u,84,u+2,129,(56,64,39))
         if tile == WINDSCREEN:
-            yy, xx = np.mgrid[:TILE_SIZE, :TILE_SIZE]
             shine = np.clip((yy - xx * 0.24) / 256, 0, 1)[..., None]
             p[:, :, :3] = (np.array((17, 24, 27)) + shine * np.array((47, 56, 62))) / 255
             frame(10, 10, 246, 246, (57, 64, 44), 15)
@@ -194,22 +200,49 @@ def atlas():
             rect(192, 12, 207, 244, (190, 171, 78))
             rect(53, 12, 57, 244, (119, 125, 87))
         if tile in (SENSOR,PNVS):
-            p[:,:,:3] = np.array((54,60,46))/255
-            r[:,:,:3] = .73
-            lenses = [(169,126,61),(66,158,37),(66,81,26)] if tile == SENSOR else [(128,128,87)]
-            for cx,cy,radius in lenses:
-                circle(cx,cy,radius+9,(22,28,23))
-                circle(cx,cy,radius+5,(89,94,78))
-                circle(cx,cy,radius,(9,17,20))
-                circle(cx,cy,radius*.81,(22,36,41))
-                circle(cx-radius*.14,cy+radius*.16,radius*.62,(40,57,62))
-                circle(cx-radius*.25,cy+radius*.35,radius*.35,(68,87,93))
-                circle(cx-radius*.30,cy+radius*.43,radius*.12,(154,171,167))
-                distance = np.sqrt((xx-cx)**2+(yy-cy)**2)
-                height += .4*np.exp(-((distance-radius-5)/3)**2)
-                r[distance<radius,:3] = .14
-            for cx,cy in ((33,35),(223,35),(33,219),(223,219)):
-                circle(cx,cy,3,(115,121,103))
+            p[:,:,:3] = np.array((87,90,73))/255
+            p[:,:,:3] *= (.64+.43*yy/PAINT_SIZE)[...,None]
+            r[:,:,:3] = .76
+
+            def optical_window(points, colour):
+                polygon(points,(29,35,29))
+                centre = np.mean(points,axis=0)
+                rim = [tuple(centre+(np.array(pt)-centre)*.94) for pt in points]
+                inner = [tuple(centre+(np.array(pt)-centre)*.88) for pt in points]
+                polygon(rim,(136,120,96))
+                polygon(inner,colour)
+                # Identify only the just-painted aperture, then add thin-film colour
+                # and irregular sky reflections; the shroud remains rough paint.
+                mask = np.all(np.abs(p[:,:,:3]-np.array(colour)/255)<.0001,axis=-1)
+                reflection = .18*np.exp(-((yy-xx*.28-145)/30)**2)
+                spectral = np.stack((.06*np.sin(yy*.045),.04*np.sin(xx*.04),
+                                     .10*np.cos((xx+yy)*.035)),axis=-1)
+                p[mask,:3] += (reflection[...,None]+spectral)[mask]
+                r[mask,:3] = .13
+                height[mask] = -.20
+
+            if tile == SENSOR:
+                # Arrowhead: a broad arched window on aircraft right and a narrow
+                # divided capsule on aircraft left. Front view +Y is image-left.
+                arch = [(146,54),(222,54)]
+                arch.extend((184+42*math.cos(a),82+131*math.sin(a))
+                            for a in np.linspace(0,math.pi,36))
+                optical_window(arch,(110,116,107))
+                optical_window([(45,70),(62,57),(82,65),(91,86),(91,181),
+                                (82,205),(67,215),(51,207),(42,188),(40,92)],(57,90,111))
+                rect(42,141,92,146,(169,169,142))
+                circle(67,176,12,(42,52,112))
+                circle(208,34,6,(66,69,145))
+                rect(113,12,139,244,(35,40,33))
+                rect(118,12,121,244,(103,107,87))
+                rect(132,12,135,244,(74,78,62))
+            else:
+                optical_window([(47,47),(94,43),(99,207),(51,219)],(48,111,134))
+                optical_window([(126,46),(177,46),(192,66),(192,194),(177,214),
+                                (132,211),(122,192)],(72,91,99))
+                circle(75,163,12,(48,180,194))
+            for cx,cy in ((29,27),(226,27),(31,230),(227,230)):
+                circle(cx,cy,3,(29,34,28))
         if tile in (DARK, STEEL):
             r[:, :, :3] = 0.42
         if tile == MARKING:
@@ -227,10 +260,10 @@ def atlas():
         # Paint broad curvature, contact shadows and wear into the existing UVs.
         # These survive diffuse-only lighting and cost no additional triangles.
         if tile in (HULL,WING,TAIL,MARKING,PLAIN):
-            shade = .70+.38*(yy/TILE_SIZE)+.07*np.sin(xx*.018+yy*.007)
+            shade = .70+.38*(yy/PAINT_SIZE)+.07*np.sin(xx*.018+yy*.007)
             if tile == HULL:
-                u = BODY_U_RANGE[0]+(xx-UV_PADDING)/(TILE_SIZE-2*UV_PADDING)*(BODY_U_RANGE[1]-BODY_U_RANGE[0])
-                v = BODY_V_RANGE[1]-(yy-UV_PADDING)/(TILE_SIZE-2*UV_PADDING)*(BODY_V_RANGE[1]-BODY_V_RANGE[0])
+                u = BODY_U_RANGE[0]+(xx-10)/(PAINT_SIZE-20)*(BODY_U_RANGE[1]-BODY_U_RANGE[0])
+                v = BODY_V_RANGE[1]-(yy-10)/(PAINT_SIZE-20)*(BODY_V_RANGE[1]-BODY_V_RANGE[0])
                 shade -= .28*np.exp(-((u-274)/60)**4-((v-91)/7)**2)
                 shade -= .19*np.exp(-((u-225)/55)**4-((v-106)/8)**2)
                 shade += .13*np.exp(-((v-101)/12)**2)
@@ -238,9 +271,9 @@ def atlas():
                 shade += .14*np.exp(-((yy-184)/50)**2)
                 shade -= .18*np.exp(-((xx-28)/13)**2)
             p[:,:,:3] *= shade[...,None]
-            r[:,:,:3] = np.clip(.78+noise/120-.07*(yy/TILE_SIZE)[...,None],.55,.88)
+            r[:,:,:3] = np.clip(.78+noise/120-.07*(yy/PAINT_SIZE)[...,None],.55,.88)
         if tile in (GLASS,WINDSCREEN):
-            p[:,:,:3] *= (.79+.31*yy/TILE_SIZE)[...,None]
+            p[:,:,:3] *= (.79+.31*yy/PAINT_SIZE)[...,None]
             glass = (p[:,:,2]>p[:,:,0]*1.12) & (p[:,:,2]>.12)
             reflected_sky = np.exp(-((yy-xx*.28-160)/31)**2)
             glint = np.exp(-((xx*.42+yy-218)/3.5)**2)
@@ -251,10 +284,10 @@ def atlas():
             p[:,:,:3] *= (.60+.72*np.exp(-((xx-165)/58)**2))[...,None]
             r[:,:,:3] = .31
         if tile == DARK:
-            p[:,:,:3] *= (.66+.52*np.sin(math.pi*xx/TILE_SIZE)**2)[...,None]
+            p[:,:,:3] *= (.66+.52*np.sin(math.pi*xx/PAINT_SIZE)**2)[...,None]
             r[:,:,:3] = .78
         if tile == RUBBER:
-            p[:,:,:3] *= (.72+.36*yy/TILE_SIZE)[...,None]
+            p[:,:,:3] *= (.72+.36*yy/PAINT_SIZE)[...,None]
         dy,dx = np.gradient(height)
         tangent = np.stack((-dx*1.8,-dy*1.8,np.ones_like(dx)),axis=-1)
         tangent /= np.linalg.norm(tangent,axis=-1,keepdims=True)
@@ -356,6 +389,84 @@ def rod(name, start, end, radius, tile=STEEL, sides=6, cap=None, open_ends=False
         labels[2:] if open_ends else labels)
 
 
+def rotor_blade(name, outline, thickness, axis):
+    """Triangular airfoil section; the short open root sits inside the hub."""
+    vertices = []
+    for a,b in ((outline[0],outline[3]),(outline[1],outline[2])):
+        upper,lower = list(a),list(a)
+        upper[axis] += thickness/2
+        lower[axis] -= thickness/2
+        vertices.extend((upper,b,lower))
+    add(name,vertices,[(3,4,5),(0,3,4,1),(1,4,5,2),(2,5,3,0)],BLADE)
+
+
+def imaging_pod():
+    # Transverse drum: two rounded lobes and a recessed centre, with a real
+    # forward mounting strap. The axis is across the nose, not along it.
+    cx,cy,cz = POD_CENTRE
+    sides = 7
+    rings = [(-.58,.22,.28),(-.36,.37,.40),(0,.32,.35),
+             (.36,.37,.40),(.58,.22,.28)]
+    vertices = [(cx+rx*math.cos((i+.5)*math.tau/sides),cy+y,
+                 cz+rz*math.sin((i+.5)*math.tau/sides))
+                for y,rx,rz in rings for i in range(sides)]
+    faces = [tuple(reversed(range(sides)))]
+    labels = [SENSOR_SHELL]
+    for j in range(len(rings)-1):
+        for i in range(sides):
+            faces.append((j*sides+i,j*sides+(i+1)%sides,
+                          (j+1)*sides+(i+1)%sides,(j+1)*sides+i))
+            labels.append(SENSOR if math.cos((i+1)*math.tau/sides)>0 else SENSOR_SHELL)
+    faces.append(tuple(range((len(rings)-1)*sides,len(rings)*sides)))
+    labels.append(SENSOR_SHELL)
+    add('fuselage',vertices,faces,labels)
+    prism('fuselage',[profile_point(u,v) for u,v in [(62,88),(59,90),(60,113),(64,114)]],
+          .14,axis=1,tile=PLAIN)
+    # Upper sensor box, with clipped top corners and its own turntable.
+    upper = Vector(profile_point(72,81))
+    outline = [tuple(upper+Vector((0,y,z))) for y,z in
+               [(-.33,-.16),(.33,-.16),(.33,.11),(.22,.22),(-.22,.22),(-.33,.11)]]
+    start = len(PARTS['fuselage'][2])
+    prism('fuselage',outline,.32,axis=0,tile=PLAIN)
+    PARTS['fuselage'][2][start+1] = PNVS
+    rod('fuselage',profile_point(73,88),profile_point(73,85),.27,
+        tile=DARK,sides=4,open_ends=True)
+    for side in (-1,1):
+        rod('fuselage',profile_point(83,89,side*.24),profile_point(72,88,side*.25),
+            .105,tile=PLAIN,sides=3,open_ends=True)
+
+
+def gun_cradle():
+    """Keep the reference's open, raked support and guard silhouette, without hardware."""
+    rod('chin_gun',GUN_CENTRE,profile_point(140,120),.21,
+        tile=DARK,sides=6,open_ends=True)
+    for side in (-1,1):
+        prism('chin_gun',[profile_point(u,v,side*.16) for u,v in
+                         [(132,120),(138,120),(152,136),(145,137)]],
+              .065,axis=1,tile=PLAIN)
+    prism('chin_gun',[profile_point(u,v) for u,v in
+                     [(126,130),(150,131),(150,138),(126,138)]],.35,axis=1,tile=DARK)
+    rod('chin_gun',profile_point(128,133),profile_point(99,133),.037,
+        tile=DARK,sides=4,open_ends=True)
+    rod('chin_gun',profile_point(100,133),MUZZLE,.065,tile=STEEL,sides=4,cap=DARK)
+    for side in (-1,1):
+        points = [Vector(profile_point(u,v,side*.19)) for u,v in
+                  [(149,137),(125,140),(117,133)]]
+        vertices = []
+        for j,p in enumerate(points):
+            tangent = (points[min(j+1,2)]-points[max(0,j-1)]).normalized()
+            across = Vector((0,1,0))
+            normal = tangent.cross(across)
+            for i in range(3):
+                angle = i*math.tau/3
+                vertices.append(tuple(p+.028*(across*math.cos(angle)+normal*math.sin(angle))))
+        faces = [(j*3+i,j*3+(i+1)%3,(j+1)*3+(i+1)%3,(j+1)*3+i)
+                 for j in range(2) for i in range(3)]
+        add('chin_gun',vertices,faces,PLAIN)
+    rod('chin_gun',profile_point(117,133,-.19),profile_point(117,133,.19),
+        .028,tile=PLAIN,sides=3,open_ends=True)
+
+
 def gear_leg(side):
     # Splayed oleo, trailing knuckle, separate drag brace, and inboard axle.
     rings = [(164,114,.55,.12),(178,135,1.17,.095),(189,145,1.38,.085)]
@@ -399,7 +510,7 @@ def main_wheel(centre):
 
 def build_geometry():
     # Stations trace the owner's side elevation: image x, roof y, belly y, half-width.
-    stations = [(80,83,111,.34),(100,78,115,.47),(110,92,116,.52),
+    stations = [(80,83,111,.34),(100,78,115,.47),
                 (194,78,121,.73),(291,80,128,.80),
                 (322,80,133,.59),(346,85,133,.41),(380,88,127,.31),
                 (480,98,128,.18),(515,110,128,.10)]
@@ -448,11 +559,11 @@ def build_geometry():
                          profile_point(237,109,side*2.6),profile_point(197,108,side*2.6)],.08,tile=WING)
         # One pod and two silhouette missiles per wing; launch tubes are paint.
         rod('fuselage',profile_point(257,120,side*1.8),profile_point(197,120,side*1.8),.27,
-            tile=PLAIN,sides=7,cap=ROCKET)
+            tile=PLAIN,sides=6,cap=ROCKET)
         for row in (-1,1):
             my = side*2.38 + row*.13
             loft('fuselage',[(*profile_point(266,115,my),.075,.075),
-                            (*profile_point(194,115,my),.055,.055)],sides=4,tile=MISSILE,cap=DARK)
+                            (*profile_point(194,115,my),.055,.055)],sides=3,tile=MISSILE,cap=DARK)
         gear_leg(side)
     prism('fuselage',[profile_point(u,v) for u,v in [(298,128),(302,129),(302,137),(313,140),(298,140)]],
           .065,axis=1,tile=PLAIN)
@@ -474,7 +585,7 @@ def build_geometry():
                  (ROTOR_RADIUS-.16,.15,rotor_z-.02),(.10,.20,rotor_z)]
         outline = [(x*math.cos(angle)-y*math.sin(angle),
                     x*math.sin(angle)+y*math.cos(angle),z) for x,y,z in shape]
-        prism('main_rotor',outline,.035,tile=BLADE,open_root=True)
+        rotor_blade('main_rotor',outline,.035,axis=2)
     rod('fuselage',profile_point(225,22),profile_point(225,8),.10,tile=STEEL,sides=4)
     rod('fuselage',profile_point(225,9),profile_point(225,8),.22,tile=DARK,sides=4)
     cx, cy, cz = TAIL_ROTOR_CENTRE
@@ -486,21 +597,9 @@ def build_geometry():
         outline = [(cx+r*math.cos(a)-w*math.sin(a),blade_y,
                     cz+r*math.sin(a)+w*math.cos(a))
                    for r,w in ((.025,-.055),(1.55,-.12),(1.55,.12),(.025,.055))]
-        prism('tail_rotor',outline,.025,axis=1,tile=BLADE,open_root=True)
-    # Provisional imaging pod: owner requested a new housing/mounting reconstruction
-    # from closer frontal references; the current flat optical face is not final.
-    loft('fuselage',[(*profile_point(80,99),.36,.29),(*profile_point(67,99),.48,.37),
-                    (*NOSE,.42,.30)],sides=8,tile=DARK,cap=(DARK,SENSOR))
-    # Separate upper night-vision housing, seated on the nose deck.
-    loft('fuselage',[(*profile_point(82,85,.08),.30,.20),
-                    (*profile_point(69,85,.08),.27,.19)],sides=4,tile=PLAIN,cap=(PLAIN,PNVS))
-    rod('chin_gun',GUN_CENTRE,profile_point(145,131),.14,tile=DARK,sides=4,open_ends=True)
-    prism('chin_gun',[profile_point(u,v) for u,v in [(132,129),(149,130),(151,139),(134,137)]],
-          .25,axis=1,tile=DARK)
-    rod('chin_gun',profile_point(135,132),MUZZLE,.035,tile=DARK,sides=5,cap=DARK)
-    for side in (-1,1):
-        rod('chin_gun',profile_point(117,114,side*.16),profile_point(145,139,side*.16),
-            .026,tile=DARK,sides=3,open_ends=True)
+        rotor_blade('tail_rotor',outline,.025,axis=1)
+    imaging_pod()
+    gun_cradle()
 
 
 def make_mesh(name, material, parent, pivot, scale, centre):
@@ -515,7 +614,8 @@ def make_mesh(name, material, parent, pivot, scale, centre):
     bm.free()
     uv = mesh.uv_layers.new(name='UVMap')
     for face, tile in zip(mesh.polygons, tiles):
-        face.use_smooth = tile in (HULL,DARK,MARKING)
+        face.use_smooth = tile in (HULL,DARK,MARKING,SENSOR,SENSOR_SHELL)
+        atlas_tile = PLAIN if tile == SENSOR_SHELL else tile
         points = [mesh.vertices[mesh.loops[i].vertex_index].co for i in face.loop_indices]
         normal_axis = max(range(3), key=lambda a: abs(face.normal[a]))
         axes = [a for a in range(3) if a != normal_axis]
@@ -523,6 +623,10 @@ def make_mesh(name, material, parent, pivot, scale, centre):
         hi = [max(p[a] for p in points) for a in axes]
         for loop, p in zip(face.loop_indices, points):
             local = [(p[a]-lo[j])/max(hi[j]-lo[j],1e-8) for j,a in enumerate(axes)]
+            if tile == SENSOR:
+                model_point = p/scale+Vector(pivot)
+                local = [1-(model_point.y+POD_HALF_WIDTH)/(2*POD_HALF_WIDTH),
+                         (model_point.z-POD_CENTRE[2]+POD_HALF_HEIGHT)/(2*POD_HALF_HEIGHT)]
             if tile in (GLASS,HULL,MARKING):
                 model_point = p/scale + Vector(pivot)
                 u = PROFILE_MAST_X-model_point.x*PROFILE_PIXELS_PER_UNIT
@@ -531,7 +635,7 @@ def make_mesh(name, material, parent, pivot, scale, centre):
                                 HULL:(BODY_U_RANGE,BODY_V_RANGE),
                                 MARKING:(ENGINE_U_RANGE,ENGINE_V_RANGE)}[tile]
                 local = [(u-urange[0])/(urange[1]-urange[0]),(vrange[1]-v)/(vrange[1]-vrange[0])]
-            uv.data[loop].uv = tuple(((tile%4 if j==0 else tile//4)*TILE_SIZE +
+            uv.data[loop].uv = tuple(((atlas_tile%4 if j==0 else atlas_tile//4)*TILE_SIZE +
                 UV_PADDING + local[j]*(TILE_SIZE-2*UV_PADDING))/ATLAS_SIZE for j in range(2))
     obj = bpy.data.objects.new(name, mesh)
     bpy.context.collection.objects.link(obj)

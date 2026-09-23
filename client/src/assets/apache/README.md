@@ -27,18 +27,22 @@ Panel lips, recess shadows, hull curvature, wheel hubs and optical reflections
 are painted into the atlas. A tangent-space normal atlas supplies panel and
 lens-rim relief; roughness varies between paint, rubber, glass and metal.
 
-**Unfinished: front imaging pod.** The owner rejected the current broad,
-flat optical face as an incorrect simplification. Its housing, mounting and
-aperture layout are provisional pending closer front and front-quarter references.
-The rest of this revision is saved independently of that remaining correction.
+The imaging pod is a transverse drum with two rounded housings, a central
+mounting strap, asymmetric optical windows and a separate upper turret on a
+turntable. Assumption: the clearest Arrowhead front photograph supplies the
+window arrangement; the other supplied views guide the housing depth and mounts.
+The gun has paired rearward-raked supports, a low receiver, an open lower guard,
+and a level barrel with a wider muzzle. The owner accepted these shapes on
+2026-09-22. Lens coatings, seals and small fittings remain texture detail.
+Rotor blades use triangular airfoil sections to recover triangles for the pods.
 
 This is a reusable model asset, not a spawning or combat plugin.
 
 | Budget | Exported asset |
 | --- | --- |
-| Triangles | 998 (846 body, 52 main rotor, 52 tail rotor, 48 gun) |
+| Triangles | 1,050 (872 body, 40 main rotor, 40 tail rotor, 98 gun) |
 | Meshes / materials | 4 / 1, shared opaque PBR material |
-| Textures | Three embedded 1024² atlases: base colour, packed metallic/roughness, tangent normal |
+| Textures | Three embedded 2048² atlases: base colour, packed metallic/roughness, tangent normal |
 | Rest bounds, world units | X 0.997 × Y 0.260 × Z 0.776 |
 | Full rotor sweep | Fits a 1 × 1 world-unit footprint |
 
@@ -74,10 +78,15 @@ Rebuild and independently inspect in PowerShell:
 & 'E:\Program Files\Blender Foundation\Blender 5.2\blender.exe' --background --python-exit-code 1 --python 'E:\Development\Projects\Terrace\tools\blender\render_apache.py' -- 'E:\Development\Projects\Terrace\client\src\assets\apache\apache.glb' 'E:\Development\Projects\Terrace\tools\blender\out\apache'
 ```
 
-The builder refuses exports over 1,000 triangles and sizes from the complete
+The builder refuses exports over 1,050 triangles and sizes from the complete
 main and tail rotor sweeps. It uses Blender's bundled NumPy and the project's
 shared GLB export recipe. Reviewed with fresh-import bounds/material/UV checks
 and studio views; no running game was started or changed for verification.
+The shared material allows the existing `bakeRig` path to merge the four parts
+into one surface; `rigHerd` can instance that surface. These are integration
+capabilities, not a measured frame-time result. Assumption: three uncompressed
+RGBA8 2K maps with full mip chains occupy about 64 MiB of shared GPU texture
+memory. The PNG-compressed GLB file size does not describe resident GPU memory.
 The Apache-specific renderer adds a true orthographic side elevation, a quarter
 view and a game view, using fresh timestamped filenames to avoid cached previews.
 
