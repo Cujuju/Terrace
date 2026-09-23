@@ -1,4 +1,4 @@
-import { BufferAttribute, BufferGeometry, DynamicDrawUsage } from 'three';
+import { BufferAttribute, BufferGeometry } from 'three';
 import { CHUNK_SIZE } from '@terrace/shared';
 import { CELL_WORLD_SIZE } from '../../config.ts';
 import type { BrushFootprint } from './brushGeometry.ts';
@@ -36,18 +36,26 @@ interface LiveGeometry {
   readonly attribute: BufferAttribute;
 }
 
+const POSITION_COMPONENTS = 3;
+
+/** Two triangles hang under each ring edge. */
+const HEM_VERTICES_PER_RING_EDGE = 6;
+
 function makeLive(vertexCapacity: number): LiveGeometry {
   const geometry = new BufferGeometry();
-  const array = new Float32Array(vertexCapacity * 3);
-  const attribute = new BufferAttribute(array, 3);
-  attribute.setUsage(DynamicDrawUsage);
+  const array = new Float32Array(vertexCapacity * POSITION_COMPONENTS);
+  const attribute = new BufferAttribute(array, POSITION_COMPONENTS);
   geometry.setAttribute('position', attribute);
   geometry.setDrawRange(0, 0);
   return { geometry, array, attribute };
 }
 
+// Buffers are sized for the widest footprint; upload only the drawn head.
 function commit(live: LiveGeometry, vertexCount: number): void {
   live.geometry.setDrawRange(0, vertexCount);
+  if (vertexCount === 0) return;
+  live.attribute.clearUpdateRanges();
+  live.attribute.addUpdateRange(0, vertexCount * POSITION_COMPONENTS);
   live.attribute.needsUpdate = true;
 }
 
@@ -110,7 +118,7 @@ export function createConformedGeometry(
 ): ConformedGeometry {
   // Exact draped maxima, computed per footprint at construction: no resizes.
   const ring = makeLive(maxRingVerts);
-  const hem = makeLive(6 * (maxRingVerts - 1));
+  const hem = makeLive(HEM_VERTICES_PER_RING_EDGE * (maxRingVerts - 1));
   const grid = makeLive(2 * maxGridSegments);
   const extra = makeLive(2 * maxExtraSegments);
   // At most four mark cells touch one point; reused, never reallocated.
@@ -242,7 +250,7 @@ export function createConformedGeometry(
         hem.array[base + 16] = ya - RING_HEM_WORLD_UNITS;
         hem.array[base + 17] = az;
       }
-      commit(hem, 6 * (footprint.ringCount - 1));
+      commit(hem, HEM_VERTICES_PER_RING_EDGE * Math.max(0, ringCount - 1));
 
       lastFootprintId = footprintId;
       lastAimX = aimX;
