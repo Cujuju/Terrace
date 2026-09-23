@@ -1,0 +1,91 @@
+{
+  "glb_sha256": "9e876f4f63ce9dcee0e376ad016e58e796fd03302742de5ff0e12e735f6734ff",
+  "mesh_count": 1,
+  "primitive_count": 1,
+  "material_count": 1,
+  "triangles": 4260,
+  "exported_vertices": 8332,
+  "nodes": [
+    {
+      "mesh": 0,
+      "name": "Longhouse"
+    },
+    {
+      "children": [
+        0
+      ],
+      "name": "RootNode"
+    }
+  ],
+  "dimensions_gltf_y_up": [
+    0.746999979019165,
+    0.6769999861717224,
+    1.6190000772476196
+  ],
+  "uv_islands": 1940,
+  "uv_min_max": [
+    0.0029296875,
+    0.9969777464866638
+  ],
+  "uv_overlap_pairs": [],
+  "uv_candidate_pairs_checked": 2359,
+  "minimum_island_bounds_gap_pixels": 12.0020751953125,
+  "texel_density_min_max": [
+    411.50108330019276,
+    411.54182200043147
+  ],
+  "zero_area_triangles": 0,
+  "normal_length_error_max": 8.89616305066454e-08,
+  "tangent_normal_dot_max": 9.00584301414091e-05,
+  "compression_extensions": [],
+  "textures": {
+    "longhouse-normal": {
+      "format": "image/png",
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "matches_external_bytes": true
+    },
+    "longhouse-basecolor": {
+      "format": "image/png",
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "matches_external_bytes": true
+    },
+    "longhouse-metallicRoughness": {
+      "format": "image/png",
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "matches_external_bytes": true
+    }
+  },
+  "roughness_range": [
+    0.7803922295570374,
+    0.9803922176361084
+  ],
+  "metalness_range": [
+    0.0,
+    0.0
+  ],
+  "normal_map_length_error_max": 0.005536437034606934,
+  "blend": {
+    "mesh_count": 1,
+    "material_count": 1,
+    "vertices": 2496,
+    "triangles": 4260,
+    "uv_layers": [
+      "UVMap"
+    ],
+    "images_packed": true,
+    "objects": [
+      "Longhouse",
+      "RootNode"
+    ]
+  },
+  "passed": true
+}
