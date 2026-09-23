@@ -88,28 +88,17 @@ interface Survey {
   readonly before: Int32Array;
 }
 
-function nearestQuarters(shape: EdgeShape, x: number, y: number): number {
-  let best = Infinity;
-  for (const [cx, cy] of shape.centres) {
-    const dx = x - cx;
-    const dy = y - cy;
-    const d = dx * dx + dy * dy;
-    if (d < best) best = d;
-  }
-  return QUARTERS_PER_CELL_SQUARED * best;
-}
+/** Beyond every centre's square: no decision reads the cell. */
+const UNREACHED_QUARTERS = 0x7fffffff;
 
 function ceilingOf(map: Heightmap, shape: EdgeShape, i: number): number | null {
   const k = shape.spanOf(map, i);
   return k === null ? null : graspedCeiling(map, i, k);
 }
 
-/** A one-span column covers every band from bedrock to its top: the common case, read directly. */
-function coversBand(map: Heightmap, i: number, x: number, y: number, band: number): boolean {
-  return map.columnSpans.has(i)
-    ? columnCoversBand(map, x, y, band)
-    : band <= drawnBandOfSample(map.cells[i]!);
-}
+/** Top-band cache markers: a layered column asks its spans; off the map there is no neighbour. */
+const LAYERED = -0x80000000;
+const OUT_OF_MAP = LAYERED + 1;
 
 function survey(map: Heightmap, shape: EdgeShape): Survey {
   const outer = shape.rings[shape.rings.length - 1]!;
@@ -129,14 +118,23 @@ function survey(map: Heightmap, shape: EdgeShape): Survey {
   const y0 = minY - margin;
   const width = maxX + margin - x0 + 1;
   const height = maxY + margin - y0 + 1;
-  const quarters = new Int32Array(width * height);
+  const quarters = new Int32Array(width * height).fill(UNREACHED_QUARTERS);
   const before = new Int32Array(width * height).fill(UNSURVEYED);
+  // Each centre's square of `margin` holds every cell within reach of it, and their neighbours.
+  for (const [cx, cy] of shape.centres) {
+    for (let dy = -margin; dy <= margin; dy++) {
+      const row = (cy + dy - y0) * width + cx - x0;
+      for (let dx = -margin; dx <= margin; dx++) {
+        const q = QUARTERS_PER_CELL_SQUARED * (dx * dx + dy * dy);
+        if (q < quarters[row + dx]!) quarters[row + dx] = q;
+      }
+    }
+  }
   for (let gy = 0; gy < height; gy++) {
     for (let gx = 0; gx < width; gx++) {
       const g = gy * width + gx;
       const x = x0 + gx;
       const y = y0 + gy;
-      quarters[g] = nearestQuarters(shape, x, y);
       // fixedRadius(q) < reachFixed, squared through so no root is taken per cell.
       if (!inBounds(map, x, y) || quarters[g]! * HALF_FIXED_SQUARED >= reachFixed * reachFixed) continue;
       const i = cellIndex(map, x, y);
@@ -189,6 +187,10 @@ export function writeWithEdges(
   const ringFixed = shape.rings.map(fixedRadius);
   // Only a cell `write` moved to another band can stand inside a written edge.
   const moved = new Uint8Array(width * height);
+  let movedX0 = width;
+  let movedY0 = height;
+  let movedX1 = -1;
+  let movedY1 = -1;
   for (const i of changed) {
     const gx = cellX(map.size, i) - x0;
     const gy = cellY(map.size, i) - y0;
@@ -197,25 +199,47 @@ export function writeWithEdges(
     const was = before[g]!;
     if (was === UNSURVEYED) continue;
     const now = ceilingOf(map, shape, i);
-    if (now !== null && drawnBandOfSample(now) !== drawnBandOfSample(was)) moved[g] = 1;
+    if (now === null || drawnBandOfSample(now) === drawnBandOfSample(was)) continue;
+    moved[g] = 1;
+    if (gx < movedX0) movedX0 = gx;
+    if (gy < movedY0) movedY0 = gy;
+    if (gx > movedX1) movedX1 = gx;
+    if (gy > movedY1) movedY1 = gy;
   }
-  const firstRingOutside = (q: number): number => {
-    for (let r = 0; r < shape.rings.length; r++) if (shape.rings[r]! > q) return r;
-    return -1;
-  };
-
-  const writes: [number, number, number][] = [];
-  for (let gy = NEIGHBOUR_REACH_CELLS; gy < height - NEIGHBOUR_REACH_CELLS; gy++) {
-    for (let gx = NEIGHBOUR_REACH_CELLS; gx < width - NEIGHBOUR_REACH_CELLS; gx++) {
+  if (movedX1 < 0) return;
+  // Only a moved cell or its neighbour is decided; each reads its neighbours' bands once more out.
+  const fromX = Math.max(NEIGHBOUR_REACH_CELLS, movedX0 - NEIGHBOUR_REACH_CELLS);
+  const fromY = Math.max(NEIGHBOUR_REACH_CELLS, movedY0 - NEIGHBOUR_REACH_CELLS);
+  const toX = Math.min(width - 1 - NEIGHBOUR_REACH_CELLS, movedX1 + NEIGHBOUR_REACH_CELLS);
+  const toY = Math.min(height - 1 - NEIGHBOUR_REACH_CELLS, movedY1 + NEIGHBOUR_REACH_CELLS);
+  const top = new Int32Array(width * height);
+  for (let gy = fromY - NEIGHBOUR_REACH_CELLS; gy <= toY + NEIGHBOUR_REACH_CELLS; gy++) {
+    for (let gx = fromX - NEIGHBOUR_REACH_CELLS; gx <= toX + NEIGHBOUR_REACH_CELLS; gx++) {
+      const x = x0 + gx;
+      const y = y0 + gy;
+      if (!inBounds(map, x, y)) {
+        top[gy * width + gx] = OUT_OF_MAP;
+        continue;
+      }
+      const i = cellIndex(map, x, y);
+      top[gy * width + gx] = map.columnSpans.has(i) ? LAYERED : drawnBandOfSample(map.cells[i]!);
+    }
+  }
+  const rings = shape.rings;
+  const neighbourStep = NEIGHBOUR_OFFSETS.map(([ox, oy]) => oy * width + ox);
+  const decidedWidth = toX - fromX + 1;
+  const writeCell = new Int32Array(decidedWidth * (toY - fromY + 1));
+  const writeSpan = new Int32Array(writeCell.length);
+  const writeHeight = new Int32Array(writeCell.length);
+  let writeCount = 0;
+  for (let gy = fromY; gy <= toY; gy++) {
+    for (let gx = fromX; gx <= toX; gx++) {
       const g = gy * width + gx;
       const was = before[g]!;
       if (was === UNSURVEYED) continue;
       const selfMoved = moved[g] === 1;
       let nearMoved = selfMoved;
-      for (let n = 0; n < NEIGHBOUR_OFFSETS.length && !nearMoved; n++) {
-        const [ox, oy] = NEIGHBOUR_OFFSETS[n]!;
-        nearMoved = moved[g + oy * width + ox] === 1;
-      }
+      for (let n = 0; n < neighbourStep.length && !nearMoved; n++) nearMoved = moved[g + neighbourStep[n]!] === 1;
       if (!nearMoved) continue;
 
       const x = x0 + gx;
@@ -233,20 +257,35 @@ export function writeWithEdges(
       let onRing = false;
       let otherLower = false;
       let otherUpper = false;
-      for (const [ox, oy] of NEIGHBOUR_OFFSETS) {
-        const nx = x + ox;
-        const ny = y + oy;
-        if (!inBounds(map, nx, ny)) continue;
-        const ni = cellIndex(map, nx, ny);
-        const lower = !coversBand(map, ni, nx, ny, band);
-        const upper = !lower && coversBand(map, ni, nx, ny, band + 1);
+      for (let n = 0; n < neighbourStep.length; n++) {
+        const ng = g + neighbourStep[n]!;
+        const t = top[ng]!;
+        if (t === OUT_OF_MAP) continue;
+        let lower: boolean;
+        let upper: boolean;
+        if (t === LAYERED) {
+          const [ox, oy] = NEIGHBOUR_OFFSETS[n]!;
+          lower = !columnCoversBand(map, x + ox, y + oy, band);
+          upper = !lower && columnCoversBand(map, x + ox, y + oy, band + 1);
+        } else {
+          lower = band > t;
+          upper = !lower && band + 1 <= t;
+        }
         if (!lower && !upper) continue;
 
-        const ng = g + oy * width + ox;
         const nq = quarters[ng]!;
         const selfInner = ownQuarters < nq;
-        const ring = ownQuarters === nq ? -1 : firstRingOutside(selfInner ? ownQuarters : nq);
-        const straddles = ring >= 0 && shape.rings[ring]! <= (selfInner ? nq : ownQuarters);
+        const inner = selfInner ? ownQuarters : nq;
+        let ring = -1;
+        if (ownQuarters !== nq) {
+          for (let r = 0; r < rings.length; r++) {
+            if (rings[r]! > inner) {
+              ring = r;
+              break;
+            }
+          }
+        }
+        const straddles = ring >= 0 && rings[ring]! <= (selfInner ? nq : ownQuarters);
         // The inner cell sits higher on a raise, lower on a lower.
         const innerHigher = selfInner ? lower : upper;
         const innerMoved = selfInner ? selfMoved : moved[ng] === 1;
@@ -275,12 +314,17 @@ export function writeWithEdges(
           keptUpper < ringUpper ? keptUpper : ringUpper,
         ),
       );
-      if (next !== h && drawnBandOfSample(next) === band) writes.push([i, k, next]);
+      if (next !== h && drawnBandOfSample(next) === band) {
+        writeCell[writeCount] = i;
+        writeSpan[writeCount] = k;
+        writeHeight[writeCount] = next;
+        writeCount++;
+      }
     }
   }
   // Every decision reads the map as `write` left it; only then does anything move.
-  for (const [i, k, next] of writes) {
-    writeGraspedCeiling(map, i, k, next);
-    changed.add(i);
+  for (let w = 0; w < writeCount; w++) {
+    writeGraspedCeiling(map, writeCell[w]!, writeSpan[w]!, writeHeight[w]!);
+    changed.add(writeCell[w]!);
   }
 }
