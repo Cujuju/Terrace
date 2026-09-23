@@ -12,21 +12,25 @@ import {
   createSeededRng,
   type Heightmap,
 } from '@terrace/shared';
+import {
+  FRESH_SEABED_BANDS_BELOW_SEA,
+  FRESH_SEABED_HEIGHT,
+  GENESIS_ABYSS_BANDS_BELOW_SEA,
+  GENESIS_PEAK_BANDS,
+  drawGenesisField,
+  heightAtBandsBelowSea,
+  type GenesisStarterLand,
+} from './genesis-field.ts';
 import { initialUnlockFootprint } from './initial-unlock.ts';
 
-export const FRESH_SEABED_DEPTH_BELOW_SEA = 192;
-export const FRESH_SEABED_BANDS_BELOW_SEA = FRESH_SEABED_DEPTH_BELOW_SEA / BAND_HEIGHT;
-
-export const FRESH_SHELF_DEPTH_BELOW_SEA = FRESH_SEABED_DEPTH_BELOW_SEA / 3;
-export const FRESH_SHELF_BANDS_BELOW_SEA = FRESH_SHELF_DEPTH_BELOW_SEA / BAND_HEIGHT;
-
-function heightAtBandsBelowSea(bands: number): number {
-  return SEA_LEVEL - bands * BAND_HEIGHT;
-}
-
-export const FRESH_SEABED_HEIGHT = heightAtBandsBelowSea(FRESH_SEABED_BANDS_BELOW_SEA);
-
-export const FRESH_SHELF_HEIGHT = heightAtBandsBelowSea(FRESH_SHELF_BANDS_BELOW_SEA);
+export {
+  FRESH_SEABED_BANDS_BELOW_SEA,
+  FRESH_SEABED_DEPTH_BELOW_SEA,
+  FRESH_SEABED_HEIGHT,
+  FRESH_SHELF_BANDS_BELOW_SEA,
+  FRESH_SHELF_DEPTH_BELOW_SEA,
+  FRESH_SHELF_HEIGHT,
+} from './genesis-field.ts';
 
 function clampHeight(h: number): number {
   return h > MAX_HEIGHT ? MAX_HEIGHT : h < MIN_HEIGHT ? MIN_HEIGHT : h;
@@ -46,105 +50,52 @@ function genesisMix(a: number, b: number): number {
   return Math.imul(mixed, 0x85eb_ca6b) >>> 0;
 }
 
-const GENESIS_COARSEST_LATTICE_SPACING_CELLS = NEIGHBOURHOOD_CELLS * 4;
+const GENESIS_NOISE_MIN_BAND_OFFSET = -GENESIS_ABYSS_BANDS_BELOW_SEA;
+const GENESIS_NOISE_MAX_BAND_OFFSET = GENESIS_PEAK_BANDS;
 
-const GENESIS_NOISE_OCTAVES: readonly {
-  readonly spacingCells: number;
-  readonly amplitudeDivisor: number;
-}[] = [
-  { spacingCells: GENESIS_COARSEST_LATTICE_SPACING_CELLS, amplitudeDivisor: 1 },
-  { spacingCells: NEIGHBOURHOOD_CELLS * 2, amplitudeDivisor: 2 },
-  { spacingCells: NEIGHBOURHOOD_CELLS, amplitudeDivisor: 4 },
-  { spacingCells: NEIGHBOURHOOD_CELLS / 2, amplitudeDivisor: 8 },
-  { spacingCells: NEIGHBOURHOOD_CELLS / 4, amplitudeDivisor: 16 },
-];
+/** Land the continents cover before any guarantee pass: archipelagos at the low end, continents at the high. */
+const GENESIS_DRAWN_LAND_PERCENT_MIN = 15;
+const GENESIS_DRAWN_LAND_PERCENT_MAX = 45;
 
-const GENESIS_NOISE_MIN_DEPTH_BELOW_SEA = 640;
-const GENESIS_NOISE_MAX_HEIGHT_ABOVE_SEA = 256;
-const GENESIS_NOISE_MIN_BAND_OFFSET = -(GENESIS_NOISE_MIN_DEPTH_BELOW_SEA / BAND_HEIGHT);
-const GENESIS_NOISE_MAX_BAND_OFFSET = GENESIS_NOISE_MAX_HEIGHT_ABOVE_SEA / BAND_HEIGHT;
+/** The calmest world keeps this share of full hill and range relief. */
+const GENESIS_MIN_RELIEF_PERCENT = 40;
+const GENESIS_RELIEF_ONE = 256;
 
-const GENESIS_ROUGHNESS_SKEW_EXPONENT = 1 / 2;
+/** Relief draws are square-rooted, so calm worlds are rare. */
+const GENESIS_RELIEF_SKEW_EXPONENT = 1 / 2;
 
-const GENESIS_MIN_ROUGHNESS =
-  FRESH_SEABED_BANDS_BELOW_SEA /
-  ((GENESIS_NOISE_MAX_BAND_OFFSET - GENESIS_NOISE_MIN_BAND_OFFSET) / 2);
-
-const GENESIS_BASELINE_CEILING_DIVISOR = 4;
-const GENESIS_BASELINE_MIN_BAND_OFFSET = -FRESH_SEABED_BANDS_BELOW_SEA;
-const GENESIS_BASELINE_MAX_BAND_OFFSET =
-  GENESIS_NOISE_MAX_BAND_OFFSET / GENESIS_BASELINE_CEILING_DIVISOR;
-
-const GENESIS_BAND_FIXED_POINT_ONE = 256;
-
-interface GenesisNoiseOctave {
-  readonly spacingCells: number;
-  readonly bandOffsets: Int32Array;
-  readonly cols: number;
-}
+const GENESIS_SEED_RANGE = 0x1_0000_0000;
 
 export interface GenesisNoiseField {
-  readonly baselineBandOffset: number;
   readonly landLiftBands: number;
-  readonly octaves: readonly GenesisNoiseOctave[];
+  readonly size: number;
+  /** Whole-band offsets from sea level, before the land lift. */
+  readonly bands: Int16Array;
 }
 
-function buildGenesisNoiseField(size: number, rng: () => number): GenesisNoiseField {
-  const halfSpan = (GENESIS_NOISE_MAX_BAND_OFFSET - GENESIS_NOISE_MIN_BAND_OFFSET) / 2;
-  const baselineSpan = GENESIS_BASELINE_MAX_BAND_OFFSET - GENESIS_BASELINE_MIN_BAND_OFFSET;
-  const baselineBandOffset = Math.round(
-    GENESIS_BASELINE_MIN_BAND_OFFSET + rng() * baselineSpan,
+function buildGenesisNoiseField(
+  size: number,
+  rng: () => number,
+  starter: GenesisStarterLand,
+): GenesisNoiseField {
+  const landPercent = Math.floor(
+    GENESIS_DRAWN_LAND_PERCENT_MIN +
+      rng() * (GENESIS_DRAWN_LAND_PERCENT_MAX - GENESIS_DRAWN_LAND_PERCENT_MIN + 1),
   );
-  const roughness =
-    GENESIS_MIN_ROUGHNESS +
-    (1 - GENESIS_MIN_ROUGHNESS) * Math.pow(rng(), GENESIS_ROUGHNESS_SKEW_EXPONENT);
-
-  const octaves = GENESIS_NOISE_OCTAVES.map(({ spacingCells, amplitudeDivisor }) => {
-    const amplitude = (halfSpan * roughness) / amplitudeDivisor;
-    const cols = Math.floor((size - 1) / spacingCells) + 2;
-    const bandOffsets = new Int32Array(cols * cols);
-    for (let j = 0; j < cols; j++) {
-      const row = j * cols;
-      for (let i = 0; i < cols; i++) {
-        bandOffsets[row + i] = Math.round(
-          (rng() * 2 - 1) * amplitude * GENESIS_BAND_FIXED_POINT_ONE,
-        );
-      }
-    }
-    return { spacingCells, bandOffsets, cols };
-  });
-
-  return { baselineBandOffset, landLiftBands: 0, octaves };
-}
-
-function octaveBandAt(octave: GenesisNoiseOctave, x: number, y: number): number {
-  const spacing = octave.spacingCells;
-  const cols = octave.cols;
-  const offsets = octave.bandOffsets;
-
-  const gx = Math.floor(x / spacing);
-  const gy = Math.floor(y / spacing);
-  const fx = x - gx * spacing;
-  const fy = y - gy * spacing;
-
-  const topLeft = offsets[gy * cols + gx]!;
-  const topRight = offsets[gy * cols + gx + 1]!;
-  const bottomLeft = offsets[(gy + 1) * cols + gx]!;
-  const bottomRight = offsets[(gy + 1) * cols + gx + 1]!;
-
-  const top = topLeft * (spacing - fx) + topRight * fx;
-  const bottom = bottomLeft * (spacing - fx) + bottomRight * fx;
-  return Math.floor((top * (spacing - fy) + bottom * fy) / (spacing * spacing));
+  const reliefPercent =
+    GENESIS_MIN_RELIEF_PERCENT +
+    (100 - GENESIS_MIN_RELIEF_PERCENT) * Math.pow(rng(), GENESIS_RELIEF_SKEW_EXPONENT);
+  const relief = Math.floor((reliefPercent * GENESIS_RELIEF_ONE) / 100);
+  const seed = Math.floor(rng() * GENESIS_SEED_RANGE);
+  return {
+    landLiftBands: 0,
+    size,
+    bands: drawGenesisField(size, { landPercent, relief, seed, starter }),
+  };
 }
 
 function genesisNoiseRawBandAt(field: GenesisNoiseField, x: number, y: number): number {
-  let wanderFixed = 0;
-  for (const octave of field.octaves) wanderFixed += octaveBandAt(octave, x, y);
-  return (
-    field.baselineBandOffset +
-    field.landLiftBands +
-    Math.floor(wanderFixed / GENESIS_BAND_FIXED_POINT_ONE)
-  );
+  return field.bands[y * field.size + x]! + field.landLiftBands;
 }
 
 function genesisNoiseBandAt(field: GenesisNoiseField, x: number, y: number): number {
@@ -304,8 +255,8 @@ function genesisMinLandCells(size: number): number {
 }
 
 function genesisLandLiftBands(raw: Int16Array, size: number): number {
-  const floorBand = GENESIS_NOISE_MIN_BAND_OFFSET + GENESIS_BASELINE_MIN_BAND_OFFSET;
-  const ceilingBand = GENESIS_NOISE_MAX_BAND_OFFSET - GENESIS_BASELINE_MIN_BAND_OFFSET;
+  const floorBand = GENESIS_NOISE_MIN_BAND_OFFSET;
+  const ceilingBand = GENESIS_NOISE_MAX_BAND_OFFSET;
   const buckets = new Int32Array(ceilingBand - floorBand + 1);
   for (let index = 0; index < raw.length; index++) {
     let bands = raw[index]!;
@@ -673,17 +624,14 @@ function deepenedByTrenches(
 const GENESIS_BASIN_RADIUS_CELLS =
   Math.ceil(Math.sqrt(GENESIS_TRENCH_MIN_BASIN_CELLS / Math.PI)) +
   RAMP_CELLS_PER_BAND;
-const GENESIS_BASIN_DROP_BANDS =
-  Math.ceil(GENESIS_BASIN_RADIUS_CELLS / RAMP_CELLS_PER_BAND) +
-  FRESH_SEABED_BANDS_BELOW_SEA +
-  GENESIS_NOISE_MAX_BAND_OFFSET;
-
-const GENESIS_BASIN_REACH_CELLS =
-  GENESIS_BASIN_DROP_BANDS * RAMP_CELLS_PER_BAND;
+/** Bands a basin's rim sits above its centre: its radius at the ramp slope. */
+const GENESIS_BASIN_RIM_BANDS = Math.ceil(GENESIS_BASIN_RADIUS_CELLS / RAMP_CELLS_PER_BAND);
 
 export interface GenesisBasin {
   readonly anchorX: number;
   readonly anchorY: number;
+  /** Deep enough that the highest ground in its radius, after every top-up, lands below the seabed. */
+  readonly dropBands: number;
 }
 
 function basinDropBandsAt(
@@ -695,12 +643,13 @@ function basinDropBandsAt(
   for (const basin of basins) {
     const dx = x - basin.anchorX;
     const dy = y - basin.anchorY;
-    if (dx > GENESIS_BASIN_REACH_CELLS || dx < -GENESIS_BASIN_REACH_CELLS) continue;
-    if (dy > GENESIS_BASIN_REACH_CELLS || dy < -GENESIS_BASIN_REACH_CELLS) continue;
+    const reach = basin.dropBands * RAMP_CELLS_PER_BAND;
+    if (dx > reach || dx < -reach) continue;
+    if (dy > reach || dy < -reach) continue;
 
     const radius = Math.floor(Math.sqrt(dx * dx + dy * dy));
     const bands =
-      GENESIS_BASIN_DROP_BANDS - Math.floor(radius / RAMP_CELLS_PER_BAND);
+      basin.dropBands - Math.floor(radius / RAMP_CELLS_PER_BAND);
     if (bands > drop) drop = bands;
   }
   return drop;
@@ -745,10 +694,37 @@ function genesisBasinSite(heights: Int16Array, size: number, seed: number): Gene
   }
   const x = bestIndex % size;
   const y = (bestIndex - x) / size;
+  const anchorX = keepBasinInside(x, size);
+  const anchorY = keepBasinInside(y, size);
   return {
-    anchorX: keepBasinInside(x, size),
-    anchorY: keepBasinInside(y, size),
+    anchorX,
+    anchorY,
+    dropBands:
+      highestBandWithin(heights, size, anchorX, anchorY, GENESIS_BASIN_RADIUS_CELLS) +
+      GENESIS_LAND_TOPUP_ROUNDS +
+      FRESH_SEABED_BANDS_BELOW_SEA +
+      GENESIS_BASIN_RIM_BANDS,
   };
+}
+
+function highestBandWithin(
+  heights: Int16Array,
+  size: number,
+  cx: number,
+  cy: number,
+  radius: number,
+): number {
+  let highest = GENESIS_NOISE_MIN_BAND_OFFSET;
+  for (let y = Math.max(0, cy - radius); y <= Math.min(size - 1, cy + radius); y++) {
+    for (let x = Math.max(0, cx - radius); x <= Math.min(size - 1, cx + radius); x++) {
+      const dx = x - cx;
+      const dy = y - cy;
+      if (dx * dx + dy * dy > radius * radius) continue;
+      const bands = Math.floor(heights[y * size + x]! / BAND_HEIGHT);
+      if (bands > highest) highest = bands;
+    }
+  }
+  return highest;
 }
 
 function keepBasinInside(coordinate: number, size: number): number {
@@ -793,14 +769,15 @@ function renderStarterNeighbourhood(terrain: FreshGenesisTerrain, into: Int16Arr
 export function buildFreshGenesisTerrain(size: number, seed: number): FreshGenesisTerrain {
   const { startChunk, spanChunks } = initialUnlockFootprint(size);
   const unlockMinCell = startChunk * CHUNK_SIZE;
+  const unlockMaxCell = unlockMinCell + spanChunks * CHUNK_SIZE - 1;
   const rng = mulberry32Rng(seed);
-  const drawn = buildGenesisNoiseField(size, rng);
+  const drawn = buildGenesisNoiseField(size, rng, {
+    minCell: unlockMinCell,
+    maxCell: unlockMaxCell,
+    cells: GENESIS_STARTER_RISE_LAND_CELLS,
+  });
 
-  const raw = new Int16Array(size * size);
-  for (let y = 0; y < size; y++) {
-    const row = y * size;
-    for (let x = 0; x < size; x++) raw[row + x] = genesisNoiseRawBandAt(drawn, x, y);
-  }
+  const raw = drawn.bands;
 
   let landLiftBands = genesisLandLiftBands(raw, size);
   let basins: readonly GenesisBasin[] = [];
@@ -824,7 +801,7 @@ export function buildFreshGenesisTerrain(size: number, seed: number): FreshGenes
   const bare: FreshGenesisTerrain = {
     size,
     unlockMinCell,
-    unlockMaxCell: unlockMinCell + spanChunks * CHUNK_SIZE - 1,
+    unlockMaxCell,
     noise: { ...drawn, landLiftBands },
     basins,
     islands: [],
@@ -846,6 +823,10 @@ export function buildFreshGenesisTerrain(size: number, seed: number): FreshGenes
 }
 
 const GENESIS_LAND_TOPUP_ROUNDS = 4;
+
+/** Twice the minimum, counted halfway up the coast: the beach below it is land too, valleys trim some. */
+const GENESIS_STARTER_RISE_MARGIN = 2;
+const GENESIS_STARTER_RISE_LAND_CELLS = GENESIS_MIN_STARTER_LAND_CELLS * GENESIS_STARTER_RISE_MARGIN;
 
 function renderNoiseAndBasins(
   raw: Int16Array,
