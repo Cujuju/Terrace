@@ -36,7 +36,8 @@ export function resolvePick(map: Heightmap, pick: TerrainRayPick): ResolvedPick 
   // Its reject bound clamps to the drawn bottom, so a riser entry at the
   // blocky underside passes.
   const drawnBottomY = drawnBandCapY(span.floorBand - 1);
-  if (pick.hitY < drawnBottomY || pick.hitY > capY) return null;
+  const ownerY = pick.ownerHitY ?? pick.hitY;
+  if (ownerY < drawnBottomY || ownerY > capY) return null;
   void undersideY;
 
   // The pick named its band where the hit was decided; this only clamps it to
