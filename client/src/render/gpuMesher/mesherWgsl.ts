@@ -570,9 +570,9 @@ fn signedTurn(a : vec2f, b : vec2f, c : vec2f) -> f32 {
   return (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
 }
 
-// Ear clipping, as triangulation.ts clipEars: an ear turns with the polygon's winding
-// and holds no other live vertex. A thin L clipped from a sheer cliff keeps its centroid
-// outside itself, so a centroid fan spilled the cap over its own riser.
+// Ear clipping (triangulation.ts clipEars): an ear turns with the polygon's winding
+// and holds no other live vertex. A thin L's centroid falls outside it, so a
+// centroid fan is wrong.
 fn emitConcavePolygon(at : u32, n : u32, y : f32, slot : i32, flip : bool) -> u32 {
   var cursor = at;
   var area = 0.0;
@@ -771,9 +771,9 @@ fn emitSquare(square : i32, base : u32) -> u32 {
     lowCorner = min(lowCorner, band);
     highCorner = max(highCorner, band);
   }
-  // Caps under a square's own corners cover it whole but stand clear of each other in
-  // perspective. A layered chunk re-enters them through columnSampleAtBand; an exposed
-  // chunk has no drawn terrain beyond it to hide them (exposedChunk).
+  // A square's own-corner caps stand clear of each other in perspective. A layered
+  // chunk re-enters them via columnSampleAtBand; an exposed chunk (exposedChunk)
+  // has no terrain beyond to hide them.
   let lo = select(lowCorner, chunkLowestBand, chunkLayered || chunkExposed);
 
   var cursor = base;

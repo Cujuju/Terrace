@@ -289,7 +289,7 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
   let framedWorldSize = 0;
   let expiryTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // The last sculpt denial and how many arrived. ANY denial pulses the
+  // The last sculpt denial and how many arrived. Any denial pulses the
   // red-brush refused hold, fanned out by the main sink. This record only
   // selects the hint text.
   let lastDenial: {

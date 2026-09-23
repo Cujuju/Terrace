@@ -65,9 +65,8 @@ export const MAX_MERGED_POLYGON_VERTICES = 512;
 export const CHUNK_POLYGON_WORK_BUDGET =
   MAX_MERGED_POLYGON_VERTICES * MAX_MERGED_POLYGON_VERTICES;
 
-// Largest plan/emission triangle shortfall that still renders organically.
-// Observed sliver stalls miss 2-4 triangles of several thousand; anything
-// larger keeps the blocky-fallback containment.
+// Largest cap-triangle shortfall from an ear-clip stall that still renders
+// organically; a larger shortfall falls back to blocky.
 const CAP_SLIVER_SHORTFALL = 8;
 
 const COMPONENTS_PER_POSITION = 3;
@@ -333,7 +332,7 @@ export function drawnBandCapY(band: number): number {
  * world Y. Drawn caps are evenly spaced, so no shore case applies here.
  */
 export function drawnBandAtY(worldY: number): number {
-  // Normalize -0: band ids are compared exactly.
+  // Normalize -0 so band-id comparisons don't treat it as distinct from 0.
   return Math.ceil(worldY / BAND_WORLD_HEIGHT) + 0;
 }
 
@@ -612,8 +611,8 @@ export function planChunkCaps(
       }
     }
     ceilingsPerLevel.push(
-      // The old threshold test never matched band 0, whose drawn threshold is the
-      // shore threshold, so its ceilings vanished. Layered chunks ceiling every level.
+      // Layered chunks ceiling every level, including band 0, whose drawn
+      // threshold is the shore threshold.
       layered
         ? marchCeiling(mirror, originX, originZ, level.sampleBand)
         : [],

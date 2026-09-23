@@ -36,7 +36,6 @@ import {
   SKIRT_PICK_INSET,
   COLOR_ALPHA_INDEX,
   COMPONENTS_PER_COLOR,
-  // COMPONENTS_PER_NORMAL,
   VERTICES_PER_TRIANGLE,
   chunkCapTriangles,
   chunkContourLoops,
@@ -119,7 +118,6 @@ function vertexAt(buffers: ChunkGeometryBuffers, index: number): Vertex {
   };
 }
 
-// const SIGNED_BYTE_SCALE = 127;
 const UNSIGNED_BYTE_SCALE = 255;
 
 // What flat shading derives: the winding's face normal.
@@ -153,11 +151,6 @@ function trianglesOf(
       b,
       c,
       normal: faceNormal(a, b, c),
-      // normal: {
-      //   x: buffers.normals[base * COMPONENTS_PER_NORMAL] / SIGNED_BYTE_SCALE,
-      //   y: buffers.normals[base * COMPONENTS_PER_NORMAL + 1] / SIGNED_BYTE_SCALE,
-      //   z: buffers.normals[base * COMPONENTS_PER_NORMAL + 2] / SIGNED_BYTE_SCALE,
-      // },
       color: [
         buffers.colors[base * COMPONENTS_PER_COLOR] / UNSIGNED_BYTE_SCALE,
         buffers.colors[base * COMPONENTS_PER_COLOR + 1] / UNSIGNED_BYTE_SCALE,
@@ -1177,7 +1170,6 @@ describe('buffers', () => {
 
     expect(countsB).toEqual(countsA);
     expect(Array.from(second.positions)).toEqual(Array.from(first.positions));
-    // expect(Array.from(second.normals)).toEqual(Array.from(first.normals));
     expect(Array.from(second.colors)).toEqual(Array.from(first.colors));
   });
 });

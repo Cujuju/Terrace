@@ -82,8 +82,8 @@ export function graspSpanBandIn(
 
 /**
  * Cap band of the layer holding `spanBand` (the column top when null); after
- * a lower, the layer beneath. In the DRAWN banding pick, grasp and drag
- * plane share.
+ * a lower, the layer beneath. In the drawn banding pick, grasp and drag
+ * share a plane.
  */
 export function bandAtCellIn(
   mirror: TerrainMirror,

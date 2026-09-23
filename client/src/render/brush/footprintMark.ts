@@ -59,9 +59,8 @@ export interface Mark {
 const SIMULATION_SPAN_CELLS =
   2 * (sculptSweepRadius(MAX_BRUSH_RADIUS, 'soft', 'stamp', 'clicked') + FOOTPRINT_LATTICE_MARGIN_CELLS + 1);
 
-// Dry band-aligned simulation ground: at sea level, raise and lower
-// simulate different footprints, so the outline used to change size with
-// sculpt direction. Mid-terrain ground behaves the same both ways.
+// Mid-terrain simulation ground: raise and lower simulate the same
+// footprint here, so the outline never changes size with sculpt direction.
 const SIMULATION_GROUND_HEIGHT = 8 * BAND_HEIGHT;
 
 const SIMULATION_GROUND_BAND = drawnBandOfSample(SIMULATION_GROUND_HEIGHT);

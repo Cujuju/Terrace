@@ -92,7 +92,7 @@ export const SMOOTH_SPREAD_CELLS = Math.floor((MAX_HEIGHT - MIN_HEIGHT) / MAX_ST
 
 export const RAMP_CELLS_PER_BAND = BAND_HEIGHT / MAX_STEP;
 
-/** A stamp edge converges at radius + 2 cells, every radius: r1 2, r2 3, r4 6, r8 10, r16 18. */
+/** A stamp edge converges at radius + 2 cells, every radius. */
 export const SMOOTH_REACH_MARGIN_CELLS = 2;
 
 export const SMOOTH_PASSES_PER_SPREAD_CELL = 4;

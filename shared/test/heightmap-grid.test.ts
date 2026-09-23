@@ -113,7 +113,7 @@ describe('deep strata constants', () => {
 
   it('caps the player smooth cascade at the brush that started it', () => {
     expect(RAMP_CELLS_PER_BAND).toBe(BAND_HEIGHT / MAX_STEP);
-    // A stamp edge converges at radius + 2 cells; the margin is exactly that.
+    // A stamp edge converges at radius + 2 cells; the margin matches.
     for (const radius of [1, 2, 4, 8, MAX_BRUSH_RADIUS]) {
       expect([radius, smoothCascadeReachCells(radius)])
         .toEqual([radius, radius + SMOOTH_REACH_MARGIN_CELLS]);

@@ -17,7 +17,7 @@ import { cellRevealed, scaleRayToCellSpace } from './rayMarch.ts';
 import type { DrawnCap, DrawnRisers, TerrainRayPick, Vec3 } from './types.ts';
 
 /**
- * Slack for "the entry sits ON the cap": the entry y is marched, the cap
+ * Slack for "the entry sits on the cap": the entry y is marched, the cap
  * derived. A millionth of a band clears that rounding, far below any
  * aimable depth.
  */
@@ -70,7 +70,7 @@ export function terrainHitInCell(
     // The span's drawn foot, named once: the bottom of its floor band, which is
     // where the mesher puts that band's wall base.
     const baseY = drawnBandCapY(span.floorBand - 1);
-    // F1: test the wall crossing BEFORE the drawnCapMet gate. A grazing ray
+    // F1: test the wall crossing before the drawnCapMet gate. A grazing ray
     // can enter through the side wall without dipping below the drawn cap.
     let met: DrawnCap | null = null;
     if (k === count - 1 && ray !== null) {
@@ -93,7 +93,7 @@ export function terrainHitInCell(
     // floor as a ceiling polygon there, so reporting it matches the polygon
     // refinement without walking polygons.
     const drawnCeilingY = drawnSpanCapHeight(span) * HEIGHT_WORLD_SCALE;
-    // F8: an entry ON the column's own drawn cap is a level face. A flat cap
+    // F8: an entry on the column's own drawn cap is a level face. A flat cap
     // picks as tread whatever its height.
     const onOwnCap =
       Math.abs(entryY - drawnY) <= ON_CAP_WORLD_SLACK && drawnY === drawnCeilingY;

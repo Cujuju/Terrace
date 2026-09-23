@@ -472,7 +472,7 @@ export async function createGpuChunkBuildSource(
   );
 
   // The counts readback is fixed size and always mapped; the lips readback is copied and
-  // mapped afterwards, over exactly the records the counter reported.
+  // mapped afterwards, over only the records the counter reported.
   const statsBytes = STATS_BUFFER_WORDS * BYTES_PER_WORD;
   const readbackStatsAt = 0;
   const readbackLipCounterAt = alignUp(statsBytes, READBACK_SECTION_ALIGNMENT);
@@ -917,7 +917,7 @@ export async function createGpuChunkBuildSource(
   };
 
   // Two maps, in order: counts first, then that many bytes copied and
-  // mapped. Every path out of the count map releases lips exactly once.
+  // mapped. Every path out of the count map releases lips once.
   const dispatchBatch = (members: BatchMember[]): void => {
     const readback = dispatchCount(members);
     if (readback === null) {

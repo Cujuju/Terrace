@@ -36,8 +36,7 @@ export function dryRunDisplacement(
   const side = wantedX > wantedY ? wantedX : wantedY;
   if (side > worldSize) return null;
 
-  // The scratch's own edge stands in for the world's, so it may never fall
-  // inside the world: slide it back rather than clipping the stroke's reach.
+  // Scratch edge must not fall inside the world: slide it back, don't clip the stroke.
   const originX = Math.min(Math.max(0, box.minX - SCRATCH_HALO_CELLS), worldSize - side);
   const originY = Math.min(Math.max(0, box.minY - SCRATCH_HALO_CELLS), worldSize - side);
 

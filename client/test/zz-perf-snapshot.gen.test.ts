@@ -1,5 +1,4 @@
-// TEMPORARY — regenerates .terrace-perf/snapshot.json for the sculpt bench,
-// in-process from the server's own genesis (no server, no ports).
+// Regenerates .terrace-perf/snapshot.json for the sculpt bench, in-process (no server).
 import { writeFileSync } from 'node:fs';
 import { ensurePerfDir, PERF_SNAPSHOT } from './support/perfPaths.ts';
 import { it } from 'vitest';
@@ -17,13 +16,12 @@ import {
 
 const WORLD_SIZE = 512;
 const SEED = 20260826;
-const REVEALED_CHUNK_SPAN = 20; // 20 x 20 = 400 chunks, matching the brief's fixture
+const REVEALED_CHUNK_SPAN = 20;
 const SCULPT_ATTEMPTS = 400;
-/** Strokes that land on ground: the fixture's cost, whatever share of the window genesis made land. */
+/** Strokes that land on ground within the fixture window. */
 const SCULPT_STROKES = 198;
 const SCULPT_AMOUNT = 64;
 
-/** Genesis plus 198 strokes over 512² takes about two and a half minutes. */
 const GENERATE_TIMEOUT_MS = 300_000;
 
 it('writes a 512² snapshot with 400 revealed chunks', () => {
@@ -34,11 +32,10 @@ it('writes a 512² snapshot with 400 revealed chunks', () => {
       map.cells[y * WORLD_SIZE + x] = freshGenesisHeightAt(terrain, x, y);
     }
   }
-  // Genesis heights are whole bands, so no strict local maxima and no springs.
-  // Deterministic strokes over the highest ground add relief, and so rivers.
+  // Genesis heights are whole bands: no local maxima, no springs. Strokes add relief for rivers.
   const rand = (() => { let s0 = 0x9e3779b9; return () => ((s0 = (s0 * 1664525 + 1013904223) >>> 0) / 4294967296); })();
   const edge = chunksPerEdge(WORLD_SIZE);
-  // The 20x20 chunk window with the most high ground: springs need land.
+  // Window with the most high ground: springs need land.
   const highPerChunk = new Int32Array(edge * edge);
   for (let cy = 0; cy < edge; cy++) {
     for (let cx = 0; cx < edge; cx++) {

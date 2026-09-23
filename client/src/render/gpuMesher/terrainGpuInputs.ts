@@ -45,7 +45,7 @@ export const LIP_AX = 2;
 /** Chunks counted in one dispatch. Also the arena's backlog cap, so one drain is one batch. */
 export const GPU_BATCH_CHUNKS = 64;
 
-/** Two batches of entries stay resident, so an emit reads exactly what its count counted. */
+/** Two batches of entries stay resident, so an emit reads what its count counted. */
 export const GPU_WINDOW_POOL = 2 * GPU_BATCH_CHUNKS;
 
 // Every read-only per-entry input shares one storage buffer: WebGPU guarantees only eight

@@ -92,8 +92,8 @@ function loadBindings(): ControlBindings {
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== 'object' || parsed === null) return DEFAULT_BINDINGS;
     const record = parsed as Record<string, unknown>;
-    // Missing or invalid actions fall back individually, so stored bindings
-    // from before the alt row arrived keep the user's other four rows.
+    // Missing or invalid actions fall back individually, so a partial
+    // stored config still keeps its other valid rows.
     const read = (action: ControlAction): ControlBinding =>
       isBinding(record[action])
         ? (record[action] as ControlBinding)

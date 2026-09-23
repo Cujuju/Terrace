@@ -19,7 +19,7 @@ const DRAWN_CAP_SAMPLES_PER_CELL = 2 * ISOLINE_SAMPLES_PER_CELL;
 /** Band whose slab holds world height `y`: ((band - 1) cap, band cap]. */
 function bandHoldingY(y: number): number {
   const band = Math.ceil(y / BAND_WORLD_HEIGHT);
-  // Division can round a y sitting exactly on a cap into the band above.
+  // Division can round a y sitting on a cap into the band above.
   return (drawnBandCapY(band - 1) >= y ? band - 1 : band) + 0;
 }
 

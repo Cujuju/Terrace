@@ -17,8 +17,8 @@ import {
   type GoldenWorldName,
 } from './support/mesherFixtures.ts';
 
-// THROWAWAY probe for preview-mesher-parity.html: no headless WebGPU exists,
-// so CPU/GPU parity over the golden fixtures is answered here.
+// Probe for preview-mesher-parity.html: no headless WebGPU exists, so
+// CPU/GPU parity over the golden fixtures is answered here.
 
 // The GPU's vertexCount is the count pass's upper bound; unfilled slots go
 // degenerate. Area is what the two tessellations share, as in mesherDump.ts.
@@ -31,7 +31,7 @@ const CAP_TRIANGLE_Y_SPREAD_UNITS = 0;
 
 /**
  * Per-chunk area drift the snorm16 positions alone explain: the y quantum is
- * 1/64 of a world unit over thousands of triangles. Measured max is 0.013.
+ * 1/64 of a world unit over thousands of triangles.
  */
 const SNORM16_AREA_DRIFT_WORLD_UNITS = 0.05;
 

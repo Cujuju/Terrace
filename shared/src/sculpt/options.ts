@@ -10,9 +10,8 @@ export const FULL_HEIGHT_SPAN = MAX_HEIGHT - MIN_HEIGHT;
 export type SculptTool = 'stamp' | 'smooth' | 'drag' | 'carve';
 
 /**
- * Library-only operation: lay the brush down, then relax what it left. Plugin
- * terraforms are tuned against it. `SCULPT_TOOLS` omits it, so the wire can
- * never name it.
+ * Library-only: applies a stamp, then relaxes it. Plugins are tuned against
+ * this. Omitted from `SCULPT_TOOLS`, so the wire can't name it.
  */
 export type LibrarySculptTool = 'settle';
 
@@ -60,7 +59,6 @@ export const SMOOTH_FEATHER_MIN = 0;
 export const SMOOTH_FEATHER_MAX = 100;
 
 /** The smooth average: cross, gaussian blur, or median denoise. */
-/** The smooth average: cross, gaussian blur, or median denoise. */
 export type SmoothKernel = 'cross' | 'gauss' | 'median';
 
 export const SMOOTH_KERNELS: readonly SmoothKernel[] = ['cross', 'gauss', 'median'];
@@ -103,7 +101,6 @@ export interface SculptOptions {
   readonly smoothCooldown?: boolean;
   /** Round-half-even averages instead of truncating toward zero. */
   readonly smoothUnbiased?: boolean;
-  /** Smooth average kernel. */
   readonly smoothKernel?: SmoothKernel;
 }
 

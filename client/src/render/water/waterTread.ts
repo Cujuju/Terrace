@@ -88,7 +88,7 @@ export function appendRegionTile(
   const tilesPerEdge = chunksPerEdge(mirror.map.size);
   const tileX = (tile % tilesPerEdge) * CHUNK_SIZE;
   const tileZ = Math.floor(tile / tilesPerEdge) * CHUNK_SIZE;
-  // A band field, so the sheet's edge fans and walls exactly as the terrain's does.
+  // A band field, so the sheet's edge fans and walls the same way the terrain's does.
   loadBandField((i, j) => fieldAt(tileX + i, tileZ + j), region.surfaceBand);
   const segmentCount = marchLevel(threshold, tileX, tileZ, null);
   const loops = assembleLoops(segmentCount, tileX, tileZ, domainInside(threshold, null))

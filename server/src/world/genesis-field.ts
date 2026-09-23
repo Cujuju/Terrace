@@ -96,7 +96,7 @@ const RANGE_ONSET_GAIN = 3;
 const VALLEY_MIN_AREA_CELLS = (NEIGHBOURHOOD_CELLS * NEIGHBOURHOOD_CELLS) / 2;
 const VALLEY_MIN_AREA_LOG2 = 31 - Math.clz32(VALLEY_MIN_AREA_CELLS);
 
-/** No slope steeper than the narrowest terrace the edge encoding draws exactly: BAND_HEIGHT / EDGE_UNITS_PER_CELL cells. */
+/** No slope steeper than the narrowest terrace the edge encoding draws: BAND_HEIGHT / EDGE_UNITS_PER_CELL cells. */
 const MAX_SLOPE_PER_CELL = (SUB_BAND * EDGE_UNITS_PER_CELL) / BAND_HEIGHT;
 const VALLEY_WALL_PER_CELL = SUB_BAND / RAMP_CELLS_PER_BAND;
 /** Chamfer step lengths in 1/SIDE_FIXED: a side step is one, a diagonal sqrt(2). */

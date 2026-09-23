@@ -82,8 +82,8 @@ const gpuMesher = await createGpuChunkBuildSource(viewport.renderer, chunkBuildS
 // The join is issued right after the last await, so its round trip overlaps the rest of
 // boot; every callback below reaches its target lazily, and nothing runs before wiring.
 const connection = connect({
-  // ANY sculptDenied pulses the red-brush refused hold (the releaseStroke path);
-  // world.onSculptDenied resolves the prediction and selects the hint text.
+  // Every sculptDenied pulses the red-brush refused hold (releaseStroke);
+  // world.onSculptDenied resolves the prediction and picks the hint text.
   sink: () => deniedAwareSink,
   operator: {
     onRestorePointList: (msg) => applyRestorePointList(msg),
