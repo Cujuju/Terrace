@@ -47,6 +47,19 @@ const WATER_DEPTH_BIAS_UNITS = -1;
 
 const WATER_OPACITY = 0.8;
 
+const VERTICES_PER_TRIANGLE = 3;
+
+/** Empty slots are packed away once they hold this share of the water buffer. */
+const WATER_COMPACT_EMPTY_SHARE = 1 / 2;
+
+/** A run's slot: a power of two of triangles, so a resize rarely outgrows it and moves the tail. */
+function slotCapacityOf(vertices: number): number {
+  const triangles = Math.ceil(vertices / VERTICES_PER_TRIANGLE);
+  let slot = 1;
+  while (slot < triangles) slot *= 2;
+  return slot * VERTICES_PER_TRIANGLE;
+}
+
 const RIVER_ROUGHNESS = 0.85;
 const RIVER_METALNESS = 0;
 
@@ -184,9 +197,11 @@ export function createRiverRig(
   const waterMesh = new Mesh(new BufferGeometry(), waterMaterial);
   parent.add(waterMesh);
 
+  /** Vertices past `count` up to `capacity` are zero: degenerate triangles that draw nothing. */
   interface RegionRun {
     offset: number;
     count: number;
+    capacity: number;
   }
 
   const INITIAL_WATER_VERTEX_CAPACITY = 3072;
@@ -195,9 +210,12 @@ export function createRiverRig(
   let waterNormals = new Float32Array(INITIAL_WATER_VERTEX_CAPACITY * 3);
   let waterPositionAttribute = new BufferAttribute(waterPositions, 3);
   let waterNormalAttribute = new BufferAttribute(waterNormals, 3);
-  let liveWaterVertices = 0;
-  let waterDirtyFrom = Number.POSITIVE_INFINITY;
-  let waterDirtyTo = 0;
+  /** Every slot's capacity: the draw range. */
+  let usedWaterVertices = 0;
+  /** Capacity held by slots whose run is empty. */
+  let emptyWaterVertices = 0;
+  /** Flat [from, to) vertex pairs written since the last publish. */
+  const waterDirty: number[] = [];
   const waterRunOrder: number[] = [];
   const waterRuns = new Map<number, RegionRun>();
 
@@ -215,18 +233,16 @@ export function createRiverRig(
     const geometry = new BufferGeometry();
     geometry.setAttribute('position', waterPositionAttribute);
     geometry.setAttribute('normal', waterNormalAttribute);
-    geometry.setDrawRange(0, liveWaterVertices);
+    geometry.setDrawRange(0, usedWaterVertices);
     const previous = waterMesh.geometry;
     waterMesh.geometry = geometry;
     if (previous !== geometry) previous.dispose();
-    waterDirtyFrom = Number.POSITIVE_INFINITY;
-    waterDirtyTo = 0;
+    waterDirty.length = 0;
   };
   bindWaterGeometry();
 
   const noteWaterDirty = (fromVertex: number, toVertex: number): void => {
-    if (fromVertex < waterDirtyFrom) waterDirtyFrom = fromVertex;
-    if (toVertex > waterDirtyTo) waterDirtyTo = toVertex;
+    if (toVertex > fromVertex) waterDirty.push(fromVertex, toVertex);
   };
 
   const ensureWaterCapacity = (vertices: number): void => {
@@ -235,11 +251,29 @@ export function createRiverRig(
     let grown = Math.max(capacity, 1);
     while (grown < vertices) grown *= 2;
     const positions = new Float32Array(grown * 3);
-    positions.set(waterPositions.subarray(0, liveWaterVertices * 3));
+    positions.set(waterPositions.subarray(0, usedWaterVertices * 3));
     waterPositions = positions;
     waterNormals = new Float32Array(grown * 3);
     fillWaterNormals(0, grown);
     bindWaterGeometry();
+  };
+
+  /** Grows `run`'s slot to `capacity`, moving every later slot along. */
+  const growSlot = (run: RegionRun, key: number, capacity: number): void => {
+    const delta = capacity - run.capacity;
+    ensureWaterCapacity(usedWaterVertices + delta);
+    const tailStart = run.offset + run.capacity;
+    if (usedWaterVertices > tailStart) {
+      waterPositions.copyWithin((tailStart + delta) * 3, tailStart * 3, usedWaterVertices * 3);
+    }
+    waterPositions.fill(0, tailStart * 3, (tailStart + delta) * 3);
+    const from = waterRunOrder.indexOf(key) + 1;
+    for (let i = from; i < waterRunOrder.length; i++) {
+      waterRuns.get(waterRunOrder[i]!)!.offset += delta;
+    }
+    usedWaterVertices += delta;
+    run.capacity = capacity;
+    noteWaterDirty(run.offset, usedWaterVertices);
   };
 
   const spliceRun = (key: number, source: readonly number[], count: number): void => {
@@ -254,45 +288,49 @@ export function createRiverRig(
         }
       }
       const previous = at === 0 ? null : waterRuns.get(waterRunOrder[at - 1]!)!;
-      run = { offset: previous === null ? 0 : previous.offset + previous.count, count: 0 };
+      run = { offset: previous === null ? 0 : previous.offset + previous.capacity, count: 0, capacity: 0 };
       waterRunOrder.splice(at, 0, key);
       waterRuns.set(key, run);
+    } else if (run.count === 0 && count > 0) {
+      emptyWaterVertices -= run.capacity;
     }
 
-    const delta = count - run.count;
-    if (delta > 0) ensureWaterCapacity(liveWaterVertices + delta);
-    noteWaterDirty(run.offset, Math.max(liveWaterVertices, liveWaterVertices + delta));
-
-    const tailStart = run.offset + run.count;
-    const tailLength = liveWaterVertices - tailStart;
-    if (delta !== 0 && tailLength > 0) {
-      waterPositions.copyWithin(
-        (tailStart + delta) * 3,
-        tailStart * 3,
-        (tailStart + tailLength) * 3,
-      );
-    }
-    if (delta !== 0) {
-      const from = waterRunOrder.indexOf(key) + 1;
-      for (let i = from; i < waterRunOrder.length; i++) {
-        waterRuns.get(waterRunOrder[i]!)!.offset += delta;
-      }
-      liveWaterVertices += delta;
-      run.count = count;
-    }
+    if (count > run.capacity) growSlot(run, key, slotCapacityOf(count));
 
     const base = run.offset * 3;
     for (let i = 0; i < count * 3; i++) waterPositions[base + i] = source[i]!;
+    if (run.count > count) waterPositions.fill(0, base + count * 3, base + run.count * 3);
+    noteWaterDirty(run.offset, run.offset + Math.max(run.count, count));
+    if (run.count > 0 && count === 0) emptyWaterVertices += run.capacity;
+    run.count = count;
+  };
 
-    if (count === 0) {
-      waterRuns.delete(key);
-      waterRunOrder.splice(waterRunOrder.indexOf(key), 1);
+  /** Packs away empty slots and shrinks the rest to fit: one whole-buffer write, rarely. */
+  const compactWater = (): void => {
+    let packed = 0;
+    for (const key of Array.from(waterRunOrder)) {
+      const run = waterRuns.get(key)!;
+      if (run.count === 0) {
+        waterRuns.delete(key);
+        waterRunOrder.splice(waterRunOrder.indexOf(key), 1);
+        continue;
+      }
+      const capacity = slotCapacityOf(run.count);
+      waterPositions.copyWithin(packed * 3, run.offset * 3, (run.offset + run.count) * 3);
+      waterPositions.fill(0, (packed + run.count) * 3, (packed + capacity) * 3);
+      run.offset = packed;
+      run.capacity = capacity;
+      packed += capacity;
     }
+    waterPositions.fill(0, packed * 3, usedWaterVertices * 3);
+    noteWaterDirty(0, usedWaterVertices);
+    usedWaterVertices = packed;
+    emptyWaterVertices = 0;
   };
 
   const recomputeWaterBounds = (): void => {
     const geometry = waterMesh.geometry;
-    if (liveWaterVertices === 0) {
+    if (usedWaterVertices === emptyWaterVertices) {
       geometry.boundingSphere = new Sphere(new Vector3(0, 0, 0), 0);
       return;
     }
@@ -302,7 +340,7 @@ export function createRiverRig(
     let maxX = -Infinity;
     let maxY = -Infinity;
     let maxZ = -Infinity;
-    for (let v = 0; v < liveWaterVertices; v++) {
+    for (const run of waterRuns.values()) for (let v = run.offset; v < run.offset + run.count; v++) {
       const x = waterPositions[v * 3]!;
       const y = waterPositions[v * 3 + 1]!;
       const z = waterPositions[v * 3 + 2]!;
@@ -317,7 +355,7 @@ export function createRiverRig(
     const centreY = (minY + maxY) / 2;
     const centreZ = (minZ + maxZ) / 2;
     let maxSquared = 0;
-    for (let v = 0; v < liveWaterVertices; v++) {
+    for (const run of waterRuns.values()) for (let v = run.offset; v < run.offset + run.count; v++) {
       const dx = waterPositions[v * 3]! - centreX;
       const dy = waterPositions[v * 3 + 1]! - centreY;
       const dz = waterPositions[v * 3 + 2]! - centreZ;
@@ -722,16 +760,25 @@ export function createRiverRig(
   };
 
   const publishWaterBuffer = (): void => {
-    waterMesh.geometry.setDrawRange(0, liveWaterVertices);
-    if (waterDirtyTo <= waterDirtyFrom) return;
+    if (emptyWaterVertices > usedWaterVertices * WATER_COMPACT_EMPTY_SHARE) compactWater();
+    waterMesh.geometry.setDrawRange(0, usedWaterVertices);
+    if (waterDirty.length === 0) return;
+    const ranges: [number, number][] = [];
+    for (let i = 0; i < waterDirty.length; i += 2) ranges.push([waterDirty[i]!, waterDirty[i + 1]!]);
+    ranges.sort((a, b) => a[0] - b[0]);
     const stride = waterPositionAttribute.itemSize;
-    waterPositionAttribute.addUpdateRange(
-      waterDirtyFrom * stride,
-      (waterDirtyTo - waterDirtyFrom) * stride,
-    );
+    let [from, to] = ranges[0]!;
+    for (let i = 1; i <= ranges.length; i++) {
+      const next = ranges[i];
+      if (next !== undefined && next[0] <= to) {
+        if (next[1] > to) to = next[1];
+        continue;
+      }
+      waterPositionAttribute.addUpdateRange(from * stride, (to - from) * stride);
+      if (next !== undefined) [from, to] = next;
+    }
     waterPositionAttribute.needsUpdate = true;
-    waterDirtyFrom = Number.POSITIVE_INFINITY;
-    waterDirtyTo = 0;
+    waterDirty.length = 0;
   };
 
   const emitPendingTile = (job: DrainJob, entry: PendingTile): void => {

@@ -14,7 +14,7 @@ import {
   Vector3,
   type Object3D,
 } from 'three';
-import { MeshPhysicalNodeMaterial, type UniformNode } from 'three/webgpu';
+import { MeshPhysicalNodeMaterial, type Renderer, type UniformNode } from 'three/webgpu';
 import {
   diffuseColor,
   mix,
@@ -45,6 +45,7 @@ import {
   writeWaterCurveTexels,
 } from '../terrain/waterDepth.ts';
 import { compose } from './materialSlots.ts';
+import { writeTextureRegion } from './gpuTextureWrite.ts';
 import { applyGroundShade } from './groundShade.ts';
 import { makeBanded } from './water/waterBands.ts';
 
@@ -107,7 +108,10 @@ function makeDepthAware(
   material.specularColorNode = vec3(curves.g);
 }
 
-export interface WaterOptions {}
+export interface WaterOptions {
+  /** Lets a refresh write only its dirty chunks' texels instead of the whole curve texture. */
+  readonly renderer?: Renderer;
+}
 
 export const WATER_DRAW_OBJECTS = 1;
 
@@ -126,6 +130,24 @@ export function createWater(
   let curveBuffer = initialCurveBuffer;
   const worldSizeCells = uniform(initialWorldSize);
   const dirtyChunkScratch: number[] = [];
+
+  const writeDirtyRegions = (worldSize: number): boolean => {
+    const renderer = options.renderer;
+    if (renderer === undefined) return false;
+    const chunkCols = chunksPerEdge(worldSize);
+    for (const chunkIdx of dirtyChunkScratch) {
+      const region = {
+        x: (chunkIdx % chunkCols) * CHUNK_SIZE,
+        y: Math.floor(chunkIdx / chunkCols) * CHUNK_SIZE,
+        width: CHUNK_SIZE,
+        height: CHUNK_SIZE,
+      };
+      if (!writeTextureRegion(renderer, curveTexture, curveBuffer, WATER_CURVE_BYTES_PER_TEXEL, worldSize, region)) {
+        return false;
+      }
+    }
+    return true;
+  };
 
   const material = new MeshPhysicalNodeMaterial({
     color: WATER_COLOR,
@@ -239,21 +261,8 @@ export function createWater(
       if (dirtyChunkScratch.length === 0) return;
       const worldSize = worldSizeCells.value;
       writeWaterCurveTexels(curveBuffer, worldSize, mirror, dirtyChunkScratch);
-      if (dirtyChunkScratch.length > MAX_RANGED_REFRESH_CHUNKS) {
-        curveTexture.clearUpdateRanges();
-      } else {
-        const chunkCols = chunksPerEdge(worldSize);
-        for (const chunkIdx of dirtyChunkScratch) {
-          const x0 = (chunkIdx % chunkCols) * CHUNK_SIZE;
-          const y0 = Math.floor(chunkIdx / chunkCols) * CHUNK_SIZE;
-          for (let y = y0; y < y0 + CHUNK_SIZE; y++) {
-            curveTexture.addUpdateRange(
-              (y * worldSize + x0) * WATER_CURVE_BYTES_PER_TEXEL,
-              CHUNK_SIZE * WATER_CURVE_BYTES_PER_TEXEL,
-            );
-          }
-        }
-      }
+      if (dirtyChunkScratch.length <= MAX_RANGED_REFRESH_CHUNKS && writeDirtyRegions(worldSize)) return;
+      curveTexture.clearUpdateRanges();
       curveTexture.needsUpdate = true;
     },
     dispose(): void {

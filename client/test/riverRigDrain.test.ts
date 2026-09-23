@@ -42,11 +42,13 @@ function rigOn(mirror: ReturnType<typeof coneMirror>, now: () => number) {
   const triangles = (): string[] => {
     const pos = water.geometry.getAttribute('position') as BufferAttribute;
     const live = water.geometry.drawRange.count;
+    const DEGENERATE = Array(9).fill((0).toFixed(4)).join(",");
     const out: string[] = [];
     for (let v = 0; v < live; v += 3) {
       out.push(Array.from(pos.array.subarray(v * 3, v * 3 + 9), (n) => n.toFixed(4)).join(','));
     }
-    return out.sort();
+    // Unused slot space is zero-area padding.
+    return out.filter((t) => t !== DEGENERATE).sort();
   };
   return { rig, ground, pump: () => frame!(1 / 60), triangles };
 }

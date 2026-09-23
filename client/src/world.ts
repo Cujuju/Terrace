@@ -236,7 +236,7 @@ export interface WorldOptions {
 }
 
 export function createWorld(viewport: Viewport, options?: WorldOptions): World {
-  const water: Water = createWater(viewport.scene, DEFAULT_WORLD_SIZE);
+  const water: Water = createWater(viewport.scene, DEFAULT_WORLD_SIZE, { renderer: viewport.renderer });
   const fog: FrontierFog = createFrontierFog(viewport.scene, viewport.onFrame);
   const frontierLine: FrontierLine = createFrontierLine(viewport.scene);
   createEffect(() => {
