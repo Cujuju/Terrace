@@ -60,7 +60,7 @@ Swimmer correctness costs four additional queries per full update. Endpoint cach
 - #504 must integrate its published query snapshots with the corrected client coordinate boundary. #505 should retain this rendered-world-cell public contract.
 - Five hull probes establish the existing sampled clearance contract, not exact collision over every point of an animated hull. Arbitrary narrow obstacles between probes and held LOD frames are not proven collision-free.
 - The deployed client and server should be updated together. Older servers remain parseable and get continuous raw-height fallback, but lack the endpoint information needed for the full drawn-support guarantee.
-- The browser harness exercises production geometry and movement code; it is not a networked gameplay/pose review. #364 remains open. #412 has controlled endpoint evidence; neither related issue was closed automatically.
+- The original browser harness exercises production geometry and movement code. A subsequent networked visual review is recorded in `C:/Users/<user>/.t3/worktrees/Terrace/issue-506-impl-20260922/docs/investigations/issue-506-live-visual-2026-09-22.md`: endpoint and swimmer observations support this patch, but ibex head/cliff clipping prevents a clean visual pass. #364 remains open. #412 has controlled endpoint evidence; neither related issue was closed automatically.
 - #493's old instruction to restore walker footprint maxima is obsolete. The remaining swimmer fractional/unknown-support requirements are addressed explicitly here.
 - No authoritative sculpt math, smoothing protection, or generic interpolation engine was changed.
 
