@@ -110,7 +110,12 @@ export function createBrushPreview(
   const markCellBound = (2 * maxReachCells + 1) * (2 * maxReachCells + 1);
   const maxExtraSegments = CELL_BOUNDARY_EDGES * markCellBound;
   const conformed = createConformedGeometry(maxRingVerts, maxGridSegments, maxExtraSegments);
-  let liveCarve: { footprint: BrushFootprint | null; id: number; key: string } | null = null;
+  // The applier returns the same array while its answer holds; a new one rebuilds.
+  let liveCarve: {
+    footprint: BrushFootprint | null;
+    id: number;
+    cells: readonly (readonly [number, number])[];
+  } | null = null;
   /** The admitted cells as an outline, or null when the fixed buffers cannot hold it. */
   const liveFootprint = (
     radius: number,
@@ -214,12 +219,10 @@ export function createBrushPreview(
           show(true, true);
           return;
         }
-        const liveKey =
-          cells === null ? null : `${brush.radius}|${hover.x}|${hover.y}|${band}|${cells.length}`;
-        if (liveKey !== null && (liveCarve === null || liveCarve.key !== liveKey)) {
-          liveCarve = { footprint: liveFootprint(brush.radius, cells!), id: nextId++, key: liveKey };
+        if (cells !== null && (liveCarve === null || liveCarve.cells !== cells)) {
+          liveCarve = { footprint: liveFootprint(brush.radius, cells), id: nextId++, cells };
         }
-        const live = liveKey === null ? null : liveCarve;
+        const live = cells === null ? null : liveCarve;
         if (live !== null && live.footprint !== null) {
           tintFootprint();
           line.position.set(hover.x * CELL_WORLD_SIZE, 0, hover.y * CELL_WORLD_SIZE);
