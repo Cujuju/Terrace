@@ -1,8 +1,25 @@
 import {
-  DRAWN_FILTER_DENOM, DRAWN_FILTER_REACH, binomialDrawnSample,
+  DRAWN_FILTER_DENOM, DRAWN_FILTER_REACH, binomialDrawnSample, cellIndex,
   type DrawnFieldSource, type DrawnSurfaceField,
 } from '@terrace/shared';
-import { isCellReceived, sampleRenderBandHeight, sampleRenderHeight, type TerrainMirror } from './mirror.ts';
+import {
+  isCellReceived, renderSampleCell, sampleRenderBandHeight, sampleRenderHeight, type TerrainMirror,
+} from './mirror.ts';
+
+/** True when no layered column feeds this filtered sample, so every band reads the top value. */
+export function filteredSampleBandInvariant(mirror: TerrainMirror, x: number, y: number): boolean {
+  const { map } = mirror;
+  const clamp = (v: number): number => Math.max(0, Math.min(map.size - 1, v));
+  x = clamp(x);
+  y = clamp(y);
+  for (let j = -DRAWN_FILTER_REACH; j <= DRAWN_FILTER_REACH; j++) {
+    for (let i = -DRAWN_FILTER_REACH; i <= DRAWN_FILTER_REACH; i++) {
+      const cell = renderSampleCell(mirror, clamp(x + i), clamp(y + j));
+      if (map.columnSpans.has(cellIndex(map, cell.x, cell.y))) return false;
+    }
+  }
+  return true;
+}
 
 const fields = new WeakMap<TerrainMirror, DrawnSurfaceField>();
 const MAX_CACHED_SAMPLES = 32_768;

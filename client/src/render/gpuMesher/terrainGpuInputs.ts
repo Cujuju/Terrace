@@ -31,6 +31,8 @@ export const ENTRY_VERTEX_LIMIT = 9;
 export const ENTRY_SURFACE_SCALE = 8;
 export const ENTRY_WORLD_SIZE = 10;
 export const ENTRY_RECEIVED_MASK = 11;
+/** Set when a layered column anywhere in the input window can change a band's field. */
+export const ENTRY_BAND_FIELDS = 12;
 
 export const SQUARES_PER_CHUNK = CHUNK_SIZE * CHUNK_SIZE;
 
@@ -102,7 +104,9 @@ export interface WindowEntryData {
   readonly halo: number;
   readonly worldSize: number;
   readonly receivedMask: number;
+  /** A layered column in the chunk's own lattice: undersides and full-depth caps. */
   readonly layered: boolean;
+  readonly bandFields: boolean;
   readonly exposed: boolean;
   readonly chunkLowestBand: number;
   readonly highestBand: number;
@@ -197,7 +201,8 @@ export function extractWindowEntry(
     latticeEdge, halo,
     worldSize: map.size,
     receivedMask,
-    layered: floorBand !== null || (surface !== undefined && anyColumnLayered(map, x0, y0,
+    layered: floorBand !== null,
+    bandFields: floorBand !== null || (surface !== undefined && anyColumnLayered(map, x0, y0,
       Math.min(map.size, originXCells + CHUNK_SIZE + halo + 1) - x0,
       Math.min(map.size, originZCells + CHUNK_SIZE + halo + 1) - y0)),
     exposed: exposedChunk(mirror, cx, cy, chunkCols),

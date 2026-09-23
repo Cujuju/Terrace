@@ -99,6 +99,7 @@ export interface MesherDumpFacts {
   readonly cx: number;
   readonly cy: number;
   readonly layered: boolean;
+  readonly bandFields: boolean;
   readonly exposed: boolean;
   readonly chunkLowestBand: number;
   readonly highestBand: number;
@@ -304,6 +305,7 @@ function chunkFacts(mirror: TerrainMirror, chunkIdx: number): MesherDumpFacts | 
   return {
     chunkIdx, cx, cy,
     layered: entry.layered,
+    bandFields: entry.bandFields,
     exposed: entry.exposed,
     chunkLowestBand: entry.chunkLowestBand,
     highestBand: entry.highestBand,
