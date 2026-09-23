@@ -139,6 +139,14 @@ export const SPAN_BAND_WGSL = `fn drawnBandOfSample(h : i32) -> i32 {
 fn levelThreshold(level : i32) -> i32 {
   return level * BAND_HEIGHT + SHORE_THRESHOLD;
 }
+fn bandFloorHeight(band : i32) -> i32 {
+  return band * BAND_HEIGHT + SHORE_HEIGHT;
+}
+// shared/wallFoldedHeight: the height folded into bands band - 1 .. band, offset kept.
+fn wallFoldedHeight(h : i32, band : i32) -> i32 {
+  let own = drawnBandOfSample(h);
+  return bandFloorHeight(select(band - 1, band, own >= band)) + h - bandFloorHeight(own);
+}
 
 fn spanCountOf(local : i32) -> i32 {
   let packedCount = i32(cellDesc[local] >> SPAN_COUNT_SHIFT);
@@ -350,10 +358,10 @@ fn isolineUnits(nw : i32, ne : i32, sw : i32, se : i32, threshold : i32,
 ${SPAN_BAND_WGSL}
 
 // The field a level marches on: the plain cell height, or the column's sample at
-// that band once the chunk holds a layered column.
+// that band once the chunk holds a layered column, folded by the wall rule.
 fn levelHeight(local : i32, band : i32) -> i32 {
-  if (!chunkLayered) { return cellHeight[local]; }
-  return columnSampleAtBand(local, band);
+  if (!chunkLayered) { return wallFoldedHeight(cellHeight[local], band); }
+  return wallFoldedHeight(columnSampleAtBand(local, band), band);
 }
 
 fn crossingFraction(outsideHeight : i32, insideHeight : i32, threshold : i32) -> f32 {

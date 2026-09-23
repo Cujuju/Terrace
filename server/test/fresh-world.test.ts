@@ -6,6 +6,7 @@ import {
   NEIGHBOURHOOD_CELLS,
   SEA_LEVEL,
   isWater,
+  drawnBandOfSample,
 } from '@terrace/shared';
 import { describe, expect, it } from 'vitest';
 import { MIN_WORLD_SIZE } from '../src/config.ts';
@@ -143,18 +144,21 @@ describe('the depths genesis knows by name', () => {
 });
 
 describe('the whole field', () => {
-  it('keeps every height an integer, band-aligned, and inside [MIN_HEIGHT, MAX_HEIGHT]', () => {
+  it('keeps every height an integer inside [MIN_HEIGHT, MAX_HEIGHT], on the band genesis drew', () => {
     for (const size of [28, 40, 64].map((span) => span * CHUNK_SIZE)) {
       for (const seed of SEEDS.slice(0, 5)) {
         const world = World.createFresh(size, undefined, undefined, seed);
+        const drawn = render(buildFreshGenesisTerrain(size, seed), size);
         let allValid = true;
-        for (const h of world.map.cells) {
-          if (!Number.isInteger(h) || h % BAND_HEIGHT !== 0 || h < MIN_HEIGHT || h > MAX_HEIGHT) {
-            allValid = false;
-            break;
-          }
+        let bandsMoved = 0;
+        for (let i = 0; i < world.map.cells.length; i++) {
+          const h = world.map.cells[i]!;
+          if (!Number.isInteger(h) || h < MIN_HEIGHT || h > MAX_HEIGHT) allValid = false;
+          if (drawnBandOfSample(h) !== drawnBandOfSample(drawn[i]!)) bandsMoved++;
         }
         expect(allValid).toBe(true);
+        // Edge encoding moves heights within their bands; only a fallback abyss cell may differ.
+        expect(bandsMoved).toBeLessThanOrEqual(1);
       }
     }
   }, WORLD_GENERATION_TIMEOUT_MS);
@@ -350,7 +354,8 @@ describe('the trench pass', () => {
             SEA_LEVEL - GENESIS_TRENCH_FLOOR_BANDS_BELOW_SEA * BAND_HEIGHT,
           );
           expect(floor).toBeLessThanOrEqual(GENESIS_TRENCH_QUALIFYING_HEIGHT);
-          expect(floor % BAND_HEIGHT === 0).toBe(true);
+          // The floor keeps the band genesis cut; its height within it encodes the trench wall.
+          expect(drawnBandOfSample(floor)).toBe(drawnBandOfSample(freshGenesisHeightAt(terrain, anchor.x, anchor.y)));
         }
       }
     }
@@ -373,8 +378,11 @@ describe('the trench pass', () => {
           const is = after[index]!;
           if (was <= FRESH_SEABED_HEIGHT) deepBefore++;
           if (is <= FRESH_SEABED_HEIGHT) deepAfter++;
-          if (is > was) raised++;
-          else if (is < was && was > FRESH_SEABED_HEIGHT) movedDryLandOrShallows++;
+          // Edge encoding moves heights within their bands, so compare drawn bands.
+          if (drawnBandOfSample(is) > drawnBandOfSample(was)) raised++;
+          else if (drawnBandOfSample(is) < drawnBandOfSample(was) && was > FRESH_SEABED_HEIGHT) {
+            movedDryLandOrShallows++;
+          }
         }
 
         expect({ raised, movedDryLandOrShallows }).toEqual({

@@ -1,4 +1,5 @@
 import {
+  drawnLayerCapAt,
   drawnSpanCapHeight,
   drawnBandOfSample,
   drawnSpanIndexCoveringBand,
@@ -101,13 +102,19 @@ export function terrainHitInCell(
     const faceY = insideOnEntry ? entryY : onOrAboveCap ? capY : drawnCeilingY;
     const metY = insideOnEntry ? entryY : onOrAboveCap ? drawnY : drawnCeilingY;
     const planeT = insideOnEntry || dy === 0 ? tEnter : tEnter + (metY - entryY) / dy;
-    const t = met !== null && insideOnEntry && planeT < met.t ? met.t : planeT;
+    // The ray crossed the cap plane before reaching drawn ground: it strikes that
+    // ground's wall where it meets it, not open air over the plane.
+    const underCapAtMet =
+      met !== null && ray !== null && onOrAboveCap && planeT < met.t &&
+      drawnLayerCapAt(mirror.map, ray.ox + planeT * ray.dx, ray.oz + planeT * ray.dz, met.band) === null;
+    const strikesRiser = insideOnEntry || underCapAtMet;
+    const t = met !== null && strikesRiser && planeT < met.t ? met.t : planeT;
     if (t >= hitT) continue;
     // A riser strike delayed to the drawn met sits at the ray's height there,
     // so the owner search tests the layer the ray actually met.
-    const strikeY = insideOnEntry ? oy + t * dy : faceY;
+    const strikeY = strikesRiser ? oy + t * dy : faceY;
     hitT = t;
-    const face = insideOnEntry ? 'riser' : onOrAboveCap ? 'tread' : 'underside';
+    const face = strikesRiser ? 'riser' : onOrAboveCap ? 'tread' : 'underside';
     hit = {
       x: i,
       y: j,

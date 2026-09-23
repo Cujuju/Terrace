@@ -6,6 +6,7 @@ import {
   chunkIndex,
   drawnBandOfSample,
   drawnLevelThreshold,
+  wallFoldedHeight,
   BAND_HEIGHT,
   type ClimbPath,
 } from '@terrace/shared';
@@ -18,11 +19,16 @@ import {
   createDrawnGroundStore,
   publishPlannedWorld,
 } from '../src/terrain/drawnGroundStore.ts';
-import { createTerrainMirror, sampleHeight, type TerrainMirror } from '../src/terrain/mirror.ts';
+import {
+  createTerrainMirror,
+  sampleHeight,
+  sampleRenderHeight,
+  type TerrainMirror,
+} from '../src/terrain/mirror.ts';
 import {
   assembleLoops,
   domainInside,
-  loadSamples,
+  loadSampleField,
   marchLevel,
 } from '../src/terrain/contours.ts';
 import { simplifyLoop } from '../src/terrain/contourSmoothing.ts';
@@ -42,8 +48,8 @@ function groundOf(mirror: TerrainMirror): DrawnGround {
 
 const WORLD_SIZE = CHUNK_SIZE * 2;
 
-/** Off every isoline the fixture has: level-to-level crossings sit at uv = 1/2
- * and the shore sliver hugs the sea corner, so fifths clear them all. */
+/** Off every isoline the fixture has: every cell sits mid-band, so the wall
+ * rule puts each crossing at uv = 1/2, and fifths clear them all. */
 const OFF_CONTOUR = 1 / 5;
 
 function ringOf(x: number, z: number): number {
@@ -62,7 +68,7 @@ function terracedMirror(): TerrainMirror {
             ? bandLevelHeight(2)
             : ringOf(x, z) <= 12
               ? bandLevelHeight(1)
-              : 0;
+              : bandLevelHeight(-1);
     }
   }
   const tilesPerEdge = WORLD_SIZE / CHUNK_SIZE;
@@ -94,7 +100,9 @@ function drawnBandIndependent(mirror: TerrainMirror, px: number, pz: number): nu
     lowest = Math.min(lowest, drawnBandOfSample(mirror.map.cells[i]));
   }
   for (let band = highest; band >= lowest; band--) {
-    loadSamples(mirror, originX, originZ);
+    loadSampleField(
+      (i, j) => wallFoldedHeight(sampleRenderHeight(mirror, originX + i, originZ + j), band),
+    );
     const segmentCount = marchLevel(drawnLevelThreshold(band), originX, originZ, null);
     const wholeInside = domainInside(drawnLevelThreshold(band), null);
     const polygons: CapPolygon[] = groupLoops(

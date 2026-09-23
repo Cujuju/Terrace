@@ -6,6 +6,9 @@ import {
   cellIndex,
   cellX,
   cellY,
+  DRAWN_GROUND_CELL_CENTRE,
+  drawnBandAt,
+  drawnBandOfSample,
 } from '@terrace/shared';
 import {
   appendRegionSurface,
@@ -133,10 +136,17 @@ describe('water region tread', () => {
       coverCount(triangles, rim, worldOfCell(6)),
       'the rim cell itself must be under water',
     ).toBeGreaterThan(0);
-    expect(
-      coverCount(triangles, rim + 0.5 * CELL_WORLD_SIZE, worldOfCell(6), true),
-      'water is drawn out over the cliff edge',
-    ).toBe(0);
+    // The cliff edge is where the terrain draws its drop: water never runs past it.
+    const STEPS = 20;
+    const floorBand = drawnBandOfSample(FLOOR_HEIGHT);
+    for (let s = 0; s <= STEPS; s++) {
+      const u = 8 + s / STEPS;
+      if (coverCount(triangles, worldOfCell(u), worldOfCell(6), true) === 0) continue;
+      expect(
+        drawnBandAt(mirror.map, u + DRAWN_GROUND_CELL_CENTRE, 6 + DRAWN_GROUND_CELL_CENTRE),
+        `water is drawn out over the cliff edge at ${u}`,
+      ).toBeGreaterThanOrEqual(floorBand);
+    }
   });
 
   it('is one flat plane at the height it was given', () => {

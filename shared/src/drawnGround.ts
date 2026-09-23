@@ -16,7 +16,12 @@ export {
   drawnBandOfSample,
   drawnLevelThreshold,
 } from './bands.ts';
-import { DRAWN_GROUND_BAND_BIAS, bandLevelHeight, drawnBandOfSample } from './bands.ts';
+import {
+  DRAWN_GROUND_BAND_BIAS,
+  bandLevelHeight,
+  drawnBandOfSample,
+  wallFoldedHeight,
+} from './bands.ts';
 
 export const DRAWN_GROUND_COORD_DENOM = 1024;
 
@@ -98,10 +103,11 @@ function clampCell(index: number, size: number): number {
   return index < 0 ? 0 : index > size - 1 ? size - 1 : index;
 }
 
+/** The top ceiling, or the wall-rule field band `band` is drawn from. */
 function sampleOf(map: Heightmap, x: number, y: number, band: number | null): number {
   return band === TOP_CEILING_FIELD
     ? map.cells[cellIndex(map, x, y)]!
-    : columnSampleAtBand(map, x, y, band);
+    : wallFoldedHeight(columnSampleAtBand(map, x, y, band), band);
 }
 
 export function drawnCornerNumerator(
@@ -219,14 +225,51 @@ function anyCellLayered(map: Heightmap, qx: number, qz: number): boolean {
   return false;
 }
 
+/** Highest drawn band among the four corner tops a point blends. */
+function highestCornerBand(map: Heightmap, qx: number, qz: number): number {
+  const i0 = drawnCornerIndex(qx);
+  const j0 = drawnCornerIndex(qz);
+  let highest = -Infinity;
+  for (let dz = 0; dz <= 1; dz++) {
+    for (let dx = 0; dx <= 1; dx++) {
+      const x = clampCell(i0 + dx, map.size);
+      const y = clampCell(j0 + dz, map.size);
+      const band = drawnBandOfSample(sampleOf(map, x, y, TOP_CEILING_FIELD));
+      if (band > highest) highest = band;
+    }
+  }
+  return highest;
+}
+
+function lowestCornerBand(map: Heightmap, qx: number, qz: number): number {
+  const i0 = drawnCornerIndex(qx);
+  const j0 = drawnCornerIndex(qz);
+  let lowest = Infinity;
+  for (let dz = 0; dz <= 1; dz++) {
+    for (let dx = 0; dx <= 1; dx++) {
+      const x = clampCell(i0 + dx, map.size);
+      const y = clampCell(j0 + dz, map.size);
+      const band = drawnBandOfSample(sampleOf(map, x, y, TOP_CEILING_FIELD));
+      if (band < lowest) lowest = band;
+    }
+  }
+  return lowest;
+}
+
+/** Band `band` is solid at the point: its wall-rule field blends to its floor or above. */
+function bandSolidAt(map: Heightmap, qx: number, qz: number, band: number): boolean {
+  return bandOfNumerator(drawnFieldNumerator(map, qx, qz, band)) >= band;
+}
+
 export function drawnBandAt(map: Heightmap, x: number, z: number): number {
   const qx = quantizeDrawnCoord(x);
   const qz = quantizeDrawnCoord(z);
-  const top = bandOfNumerator(drawnFieldNumerator(map, qx, qz, null));
-  if (map.columnSpans.size === 0 || !anyCellLayered(map, qx, qz)) return top;
-  const lowest = lowestDrawnBandNear(map, qx, qz);
+  const top = highestCornerBand(map, qx, qz);
+  const layered = map.columnSpans.size !== 0 && anyCellLayered(map, qx, qz);
+  // Every corner covers the lowest corner band, so nothing below it needs a test.
+  const lowest = layered ? lowestDrawnBandNear(map, qx, qz) : lowestCornerBand(map, qx, qz);
   for (let band = top; band > lowest; band--) {
-    if (bandOfNumerator(drawnFieldNumerator(map, qx, qz, band)) >= band) return band;
+    if (bandSolidAt(map, qx, qz, band)) return band;
   }
   return lowest;
 }
@@ -238,15 +281,15 @@ export function drawnBandAt(map: Heightmap, x: number, z: number): number {
 export function drawnLayerCapAt(map: Heightmap, x: number, z: number, band: number): number | null {
   const qx = quantizeDrawnCoord(x);
   const qz = quantizeDrawnCoord(z);
-  const top = bandOfNumerator(drawnFieldNumerator(map, qx, qz, null));
   if (map.columnSpans.size === 0 || !anyCellLayered(map, qx, qz)) {
+    const top = drawnBandAt(map, x, z);
     return band <= top ? top : null;
   }
-  const solidAt = (b: number): boolean => bandOfNumerator(drawnFieldNumerator(map, qx, qz, b)) >= b;
-  if (!solidAt(band)) return null;
-  // A band's field never exceeds the top field, so `top` bounds the climb.
+  const top = highestCornerBand(map, qx, qz);
+  if (!bandSolidAt(map, qx, qz, band)) return null;
+  // A band's field never exceeds the one beneath it, so `top` bounds the climb.
   let cap = band;
-  while (cap < top && solidAt(cap + 1)) cap++;
+  while (cap < top && bandSolidAt(map, qx, qz, cap + 1)) cap++;
   return cap;
 }
 

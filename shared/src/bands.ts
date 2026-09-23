@@ -25,6 +25,16 @@ export function drawnBandOfSample(height: number): number {
   return Math.floor((height - DRAWN_SHORE_HEIGHT) / BAND_HEIGHT);
 }
 
+/**
+ * Wall rule: `height` folded into bands `band - 1 .. band`, keeping its in-band
+ * offset, so every band of a tall step draws where its one-band edge does.
+ */
+export function wallFoldedHeight(height: number, band: number): number {
+  const own = drawnBandOfSample(height);
+  const offset = height - bandFloorHeight(own);
+  return bandFloorHeight(own >= band ? band : band - 1) + offset;
+}
+
 /** Drawn-equality: height draws as band k. Equivalent to `drawnBandOfSample(height) === band`. */
 export function isHeightInBand(height: number, band: number): boolean {
   return height >= bandFloorHeight(band) && height < bandFloorHeight(band + 1);

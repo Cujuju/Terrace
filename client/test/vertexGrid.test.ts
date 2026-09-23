@@ -922,7 +922,8 @@ describe('skirt picking', () => {
   });
 
   it('breaks an exact tie toward the HIGHER side, which is what the inset is for', () => {
-    const { triangles } = writeEdge((i) => (i < 8 ? 0 : bandLevelHeight(1)));
+    // Both sides sit mid-band, so the wall rule puts the two-band step exactly between them.
+    const { triangles } = writeEdge((i) => (i < 8 ? bandLevelHeight(-1) : bandLevelHeight(1)));
     const band1Skirts = skirtsOf(triangles).filter(
       (t) => Math.max(t.a.y, t.b.y, t.c.y) === BAND_WORLD_HEIGHT,
     );

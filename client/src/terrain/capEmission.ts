@@ -11,6 +11,7 @@ import {
   spanAt,
   spanCapHeight,
   spanCount,
+  wallFoldedHeight,
 } from '@terrace/shared';
 import {
   BAND_WORLD_HEIGHT,
@@ -541,6 +542,9 @@ export interface ChunkCapPlan {
   readonly maxPolygonWork: number;
 }
 
+// Per-chunk scratch: the raw top field each plain level folds its wall-rule field from.
+const topSamples = new Int32Array(SAMPLE_COUNT);
+
 export function planChunkCaps(
   mirror: TerrainMirror,
   cx: number,
@@ -550,12 +554,18 @@ export function planChunkCaps(
   const originX = cx * CHUNK_SIZE;
   const originZ = cy * CHUNK_SIZE;
   loadSamples(mirror, originX, originZ);
+  topSamples.set(samples.subarray(0, SAMPLE_COUNT));
 
   const floorBand = buriedFloorBand(mirror, originX, originZ);
   const layered = floorBand !== null;
   const loadLevel = (band: number): void => {
     loadSampleField(
-      (i, j) => sampleRenderBandHeight(mirror, originX + i, originZ + j, band),
+      (i, j) => wallFoldedHeight(
+        layered
+          ? sampleRenderBandHeight(mirror, originX + i, originZ + j, band)
+          : topSamples[j * LATTICE_PER_CHUNK + i]!,
+        band,
+      ),
       CHUNK_SIZE,
     );
   };
@@ -571,7 +581,7 @@ export function planChunkCaps(
   const polygonsPerLevel: CapPolygon[][] = [];
   const ceilingsPerLevel: CapPolygon[][] = [];
   for (const level of levels) {
-    if (layered) loadLevel(level.sampleBand);
+    loadLevel(level.sampleBand);
     const segmentCount = marchLevel(
       level.threshold,
       originX,
@@ -865,7 +875,7 @@ export function chunkBandContourLoops(
   const originX = cx * CHUNK_SIZE;
   const originZ = cy * CHUNK_SIZE;
   loadSampleField(
-    (i, j) => sampleRenderBandHeight(mirror, originX + i, originZ + j, band),
+    (i, j) => wallFoldedHeight(sampleRenderBandHeight(mirror, originX + i, originZ + j, band), band),
     CHUNK_SIZE,
   );
   const threshold = drawnLevelThreshold(band);

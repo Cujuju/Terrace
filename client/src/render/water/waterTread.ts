@@ -5,6 +5,7 @@ import {
   chunksPerEdge,
   drawnBandOfSample,
   drawnLevelThreshold,
+  wallFoldedHeight,
 } from '@terrace/shared';
 import { CELL_WORLD_SIZE } from '../../config.ts';
 import { sampleHeight, type TerrainMirror } from '../../terrain/mirror.ts';
@@ -128,7 +129,8 @@ function regionFieldAt(
     const besideWet = CARDINAL_NEIGHBOURS.some(([dx, dy]) => wet(x + dx, y + dy));
     if (besideWet) {
       const real = sampleHeight(mirror, x, y);
-      if (drawnBandOfSample(real) !== region.surfaceBand) return real;
+      // The terrain's wall rule places this edge; the sheet follows it.
+      if (drawnBandOfSample(real) !== region.surfaceBand) return wallFoldedHeight(real, region.surfaceBand);
       return beyondRegion;
     }
     return beyondRegion;
