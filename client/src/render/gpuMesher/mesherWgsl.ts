@@ -59,6 +59,7 @@ import {
   ENTRY_SURFACE_SCALE,
   ENTRY_WORLD_SIZE,
   ENTRY_RECEIVED_MASK,
+  ENTRY_BAND_FIELDS,
   LIP_COUNTER_AT,
   LIP_RECORDS_AT,
   LIP_WORDS,
@@ -298,8 +299,11 @@ var<private> receivedMask : i32;
 var<workgroup> cellHeight : array<i32, LATTICE_CELLS>;
 var<workgroup> cellDesc : array<u32, LATTICE_CELLS>;
 var<workgroup> filteredTop : array<i32, LATTICE_CELLS>;
+// 1 where no layered column feeds the filtered sample: every band reads filteredTop.
+var<workgroup> bandInvariant : array<u32, LATTICE_CELLS>;
 
 var<private> chunkLayered : bool;
+var<private> chunkBandFields : bool;
 var<private> chunkExposed : bool;
 var<private> chunkLowestBand : i32;
 var<private> originCellX : i32;
@@ -359,10 +363,24 @@ fn isolineUnits(nw : i32, ne : i32, sw : i32, se : i32, threshold : i32,
 ${SPAN_BAND_WGSL}
 
 // The field a level marches on: the plain cell height, or the column's sample at
-// that band once the chunk holds a layered column.
+// that band once the input window holds a layered column.
 fn rawLevelHeight(local : i32, band : i32) -> i32 {
-  if (!chunkLayered) { return cellHeight[local]; }
+  if (!chunkBandFields) { return cellHeight[local]; }
   return columnSampleAtBand(local, band);
+}
+
+// Mirrors filteredLevelHeight's reads, including its world-edge clamp and fallback.
+fn filteredSupportPlain(inputLocal : i32) -> bool {
+  if (cellDesc[inputLocal] != 0u) { return false; }
+  let lx = clamp(originCellX + inputLocal % CHUNK_LATTICE - 1, 0, worldSize - 1) - originCellX + 1;
+  let lz = clamp(originCellZ + inputLocal / CHUNK_LATTICE - 1, 0, worldSize - 1) - originCellZ + 1;
+  let local = lz * CHUNK_LATTICE + lx;
+  for (var j = -1; j <= 1; j++) {
+    for (var i = -1; i <= 1; i++) {
+      if (cellDesc[local + j * CHUNK_LATTICE + i] != 0u) { return false; }
+    }
+  }
+  return true;
 }
 
 // Backend translation of shared/binomialDrawnSample. Missing input falls back
@@ -389,7 +407,7 @@ fn filteredLevelHeight(inputLocal : i32, band : i32) -> i32 {
 }
 
 fn levelHeight(local : i32, band : i32) -> i32 {
-  if (surfaceScale > 1 && !chunkLayered) { return filteredTop[local]; }
+  if (surfaceScale > 1 && bandInvariant[local] != 0u) { return filteredTop[local]; }
   return filteredLevelHeight(local, band);
 }
 
@@ -768,8 +786,11 @@ fn emitSquare(square : i32, base : u32) -> u32 {
     lowCorner = min(lowCorner, band);
     highCorner = max(highCorner, band);
   }
+  var squareBandFields = false;
   if (surfaceScale > 1) {
-    if (chunkLayered) {
+    squareBandFields = (bandInvariant[localRef[0]] & bandInvariant[localRef[1]]
+      & bandInvariant[localRef[2]] & bandInvariant[localRef[3]]) == 0u;
+    if (chunkLayered || squareBandFields) {
       for (var y = -1; y <= 2; y++) {
         for (var x = -1; x <= 2; x++) {
           highCorner = max(highCorner, drawnBandOfSample(cellHeight[nw + y * CHUNK_LATTICE + x]));
@@ -788,7 +809,7 @@ fn emitSquare(square : i32, base : u32) -> u32 {
   // Caps under a square's own corners cover it whole but stand clear of each other in
   // perspective. A layered chunk re-enters them through columnSampleAtBand; an exposed
   // chunk has no drawn terrain beyond it to hide them (exposedChunk).
-  let lo = select(lowCorner, chunkLowestBand, chunkLayered || chunkExposed);
+  let lo = select(lowCorner, chunkLowestBand, chunkLayered || chunkExposed || squareBandFields);
 
   var cursor = base;
   for (var level = lo; level <= highCorner; level++) {
@@ -819,6 +840,7 @@ fn ${MESHER_ENTRY_POINT}(@builtin(workgroup_id) wid : vec3u,
   worldSize = entryWord(header + ${wgslI32(ENTRY_WORLD_SIZE)});
   receivedMask = entryWord(header + ${wgslI32(ENTRY_RECEIVED_MASK)});
   chunkLayered = entryWord(header + ${wgslI32(ENTRY_LAYERED)}) != 0;
+  chunkBandFields = entryWord(header + ${wgslI32(ENTRY_BAND_FIELDS)}) != 0;
   chunkExposed = entryWord(header + ${wgslI32(ENTRY_EXPOSED)}) != 0;
   chunkLowestBand = entryWord(header + ${wgslI32(ENTRY_LOWEST_BAND)});
   originCellX = entryWord(header + ${wgslI32(ENTRY_ORIGIN_X_CELLS)});
@@ -826,10 +848,13 @@ fn ${MESHER_ENTRY_POINT}(@builtin(workgroup_id) wid : vec3u,
   localOriginX = f32(entryWord(header + ${wgslI32(ENTRY_LOCAL_ORIGIN_X_UNITS)})) / POSITION_XZ_UNITS;
   localOriginZ = f32(entryWord(header + ${wgslI32(ENTRY_LOCAL_ORIGIN_Z_UNITS)})) / POSITION_XZ_UNITS;
   entryPairBase = entry * WINDOW_SPAN_PAIRS;
-  if (surfaceScale > 1 && !chunkLayered) {
+  if (surfaceScale > 1) {
     for (var at = tid; at < ${wgslI32(LATTICE_PER_CHUNK ** 2)}u; at += WORKGROUP_THREADS) {
       let local = (i32(at) / ${wgslI32(LATTICE_PER_CHUNK)} + 1) * CHUNK_LATTICE + i32(at) % ${wgslI32(LATTICE_PER_CHUNK)} + 1;
-      filteredTop[local] = filteredLevelHeight(local, 0);
+      let plain = !chunkBandFields || filteredSupportPlain(local);
+      bandInvariant[local] = select(0u, 1u, plain);
+      // Only read where plain, so the band argument never matters.
+      if (plain) { filteredTop[local] = filteredLevelHeight(local, 0); }
     }
   }
   workgroupBarrier();

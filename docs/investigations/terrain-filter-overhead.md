@@ -53,6 +53,33 @@ The current diagnostic's microkernel section retains the historical protected
 reference and bare averaging loop; only its CPU/GPU pipeline uses the revised
 production filter (including missing-input checks).
 
+## September 22: raw-mode frame times and halo-layered fix
+
+Raw mode, `6f8adc70` (before smoothing) vs `a1081d47`. `client/scripts/mesherBench.mjs`,
+bench world, 1420×1300 window, runs alternated, median of 3 per cell:
+
+| Mesher | Stroke p50 / p95 / p99, ms | Stroke fps | Load to empty queue, ms |
+|---|---|---|---|
+| CPU before | 7.2 / 32.0 / 38.4 | 92.0 | 3445 |
+| CPU after | 7.3 / 32.1 / 35.9 | 91.1 | 3656 |
+| GPU before | 7.1 / 30.2 / 33.2 | 101.9 | 3229 |
+| GPU after | 7.2 / 29.2 / 33.8 | 98.7 | 3273 |
+
+Differences are within repeat-run spread; resident terrain bytes are identical.
+Idle frames sit at the 144 Hz display interval in both. The ~30 ms stroke p95
+predates smoothing.
+
+Halo-layered fix (`fb55202a`), smoothed mode, this harness, 2×10 pairs, median ms:
+
+| Path | Fixture | Before | After |
+|---|---|---:|---:|
+| CPU | terrace | 3.3 | 2.6 |
+| CPU | played, interior / near seam | 23.1 / 22.3 | 20.3 / 19.0 |
+| GPU | played, interior | 22.9 | 21.5 |
+
+Other cases and all raw-mode cases are within noise. Smoothed CPU rebuilds remain
+2.4× raw on terrace and 2.1× on played.
+
 ## Historical cost of protection separately from averaging
 
 Uncached evaluation of 16,384 top-field samples, using the same raw source:
