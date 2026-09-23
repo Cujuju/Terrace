@@ -48,77 +48,77 @@
     },
     {
       "name": "stamp-band-anchored",
-      "changed": 6,
-      "diffHash": "cd952e3f",
-      "hash": "2389763e"
+      "changed": 7,
+      "diffHash": "a0454fc0",
+      "hash": "36f2be8d"
     },
     {
       "name": "stamp-hard-raise-centre",
-      "changed": 2,
-      "diffHash": "1be14205",
-      "hash": "7f283d46"
+      "changed": 6,
+      "diffHash": "2334a1bc",
+      "hash": "0d866fa7"
     },
     {
       "name": "stamp-soft-raise",
-      "changed": 155,
-      "diffHash": "c7803a01",
-      "hash": "c811d88b"
+      "changed": 120,
+      "diffHash": "5cf09507",
+      "hash": "81d71316"
     },
     {
       "name": "stamp-soft-lower",
-      "changed": 97,
-      "diffHash": "8f7f8bf9",
-      "hash": "aff48fbb"
+      "changed": 101,
+      "diffHash": "f988278d",
+      "hash": "eef85426"
     },
     {
       "name": "stamp-hard-lower-free",
-      "changed": 21,
-      "diffHash": "e6613203",
-      "hash": "689680ab"
+      "changed": 37,
+      "diffHash": "e5202f5a",
+      "hash": "c65b3e6c"
     },
     {
       "name": "smooth-banded-raise",
-      "changed": 158,
-      "diffHash": "21c4bb64",
-      "hash": "9faa2d09"
+      "changed": 157,
+      "diffHash": "db60bf00",
+      "hash": "79ead053"
     },
     {
       "name": "smooth-free-lower",
-      "changed": 88,
-      "diffHash": "840a74d2",
-      "hash": "af777b3d"
+      "changed": 89,
+      "diffHash": "ed83915a",
+      "hash": "512789d9"
     },
     {
       "name": "edge-stamp-origin-corner",
-      "changed": 8,
-      "diffHash": "a4005e0d",
-      "hash": "4fcadd19"
+      "changed": 12,
+      "diffHash": "b07f11c6",
+      "hash": "48f3d93c"
     },
     {
       "name": "edge-stamp-far-column",
-      "changed": 35,
-      "diffHash": "f68f94e8",
-      "hash": "606e8dc5"
+      "changed": 39,
+      "diffHash": "bdb7fd5c",
+      "hash": "462576b8"
     },
     {
       "name": "edge-smooth-left-edge",
       "changed": 92,
       "diffHash": "23ae8e18",
-      "hash": "4470efbf"
+      "hash": "28c298b2"
     },
     {
       "name": "edge-drag-left-edge",
       "changed": 4,
       "diffHash": "b5f00e26",
-      "hash": "d8adaf62"
+      "hash": "702fdb0c"
     },
     {
       "name": "settle-library-tool",
-      "changed": 3021,
-      "diffHash": "70db94c8",
-      "hash": "06e2aa69"
+      "changed": 3022,
+      "diffHash": "72a3d5b4",
+      "hash": "3a44c8ec"
     }
   ],
   "layeredColumnsAfter": 1900,
-  "hashAfter": "06e2aa69"
+  "hashAfter": "3a44c8ec"
 }

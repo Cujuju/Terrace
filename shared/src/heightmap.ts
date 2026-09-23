@@ -18,7 +18,13 @@ import { cellIndex, type Heightmap } from './grid.ts';
 import { diffOf, type CellDiff } from './sculpt/diff.ts';
 import { canSpreadBandTo, graspedCeiling, layerSpanIndex } from './sculpt/grasp.ts';
 import { anchoredTargetHeight, forEachFootprintCell } from './sculpt/footprint.ts';
-import { applyBrush, applyLevelFillBrush, applySoftApron } from './sculpt/stamp.ts';
+import {
+  applyBrush,
+  applyLevelFillBrush,
+  applySoftApron,
+  stampEdgeShape,
+} from './sculpt/stamp.ts';
+import { writeWithEdges } from './sculpt/edges.ts';
 import { applyDragRegion } from './sculpt/drag.ts';
 import { applyCarve } from './sculpt/carve.ts';
 export { carveAdmittedCells } from './sculpt/carve.ts';
@@ -210,16 +216,25 @@ export function applySculpt(
     : 0;
   // Smooth never deposits: relaxation alone melts roughness within anchor bounds.
   if (deposits) {
-    // Radius names the flat under both profiles: the disc levels to the
-    // anchor, and soft hangs its sheet outside that edge.
-    if (profile === 'hard' || softCore) {
-      applyLevelFillBrush(map, cx, cy, radius, strokeAmount, changed, anchor, targetBand, spanBand);
+    const levels = profile === 'hard' || softCore;
+    const deposit = (): void => {
+      // Radius names the flat under both profiles: the disc levels to the
+      // anchor, and soft hangs its sheet outside that edge.
+      if (levels) {
+        applyLevelFillBrush(map, cx, cy, radius, strokeAmount, changed, anchor, targetBand, spanBand);
+      } else {
+        applyBrush(map, cx, cy, radius, strokeAmount, changed, profile, anchor, targetBand, spanBand);
+      }
+      if (softCore) {
+        applySoftApron(map, cx, cy, radius, strokeAmount, skirtCoreTarget, spanBand, changed);
+      }
+    };
+    if (tool === 'stamp' && levels) {
+      const shape = stampEdgeShape(cx, cy, radius, softCore, strokeAmount > 0, spanBand);
+      writeWithEdges(map, shape, changed, deposit);
     } else {
-      applyBrush(map, cx, cy, radius, strokeAmount, changed, profile, anchor, targetBand, spanBand);
+      deposit();
     }
-  }
-  if (softCore) {
-    applySoftApron(map, cx, cy, radius, strokeAmount, skirtCoreTarget, spanBand, changed);
   }
   if (relaxes) {
     let footprint: Set<number> | undefined;

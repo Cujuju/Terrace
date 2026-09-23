@@ -16,6 +16,7 @@ import {
   type ChunkPayload,
   type JoinSnapshotMessage,
   type SculptIntent,
+  drawnBandOfSample,
 } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE, TOUCH_STROKE_GRACE_MS } from '../src/config.ts';
 import {
@@ -1092,8 +1093,8 @@ describe('a foot-anchored grasp on a layered column', () => {
         DEFAULT_SCULPT_AMOUNT * intent.dir,
         sculptOptionsOf(intent),
       );
-      expect(spanAt(mirror.map, FOOT_COLUMN_X, LAYERED_ROW, 0).ceiling).toBe(
-        FOOT_TREAD_RAISED_CEILING,
+      expect(drawnBandOfSample(spanAt(mirror.map, FOOT_COLUMN_X, LAYERED_ROW, 0).ceiling)).toBe(
+        drawnBandOfSample(FOOT_TREAD_RAISED_CEILING),
       );
       expect(spanAt(mirror.map, FOOT_COLUMN_X, LAYERED_ROW, 1).ceiling).toBe(FOOT_ROOF_CEILING);
     } finally {

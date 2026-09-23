@@ -53,7 +53,7 @@ const COMMON: readonly StrokeScriptStep[] = [
     profile: 'hard',
     anchor: 'band',
     targetBand: { fromClick: 0 },
-    cx: 18,
+    cx: 19,
     // Aimed one cell south of arch flank.
     cy: 23,
     radius: 3,
@@ -65,7 +65,8 @@ const COMMON: readonly StrokeScriptStep[] = [
     profile: 'hard',
     anchor: 'clicked',
     cx: 58,
-    cy: 48,
+    // Off the played world's summit plateau, where a raise has no band left to cross.
+    cy: 52,
     radius: 4,
     amount: 16,
   },

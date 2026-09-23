@@ -19,6 +19,7 @@ import {
   sculptOptionsOf,
   strokeSweep,
   type SculptIntent,
+  drawnBandOfSample,
 } from '@terrace/shared';
 import {
   DEFAULT_WORLD_DIFFICULTY,
@@ -1160,9 +1161,13 @@ describe('charge follows effect — a stroke that changes nothing costs nothing'
     expect(outcome.applied).toBe(true);
     const diff = outcome.applied ? outcome.diff : [];
     expect(diff.length).toBeGreaterThan(0);
-    // The floor raise moves one cell a partial band, so the charge follows
-    // the effect instead of the nominal point price.
-    const units = diff.reduce((sum, cell) => sum + (cell.h - MIN_HEIGHT), 0);
+    // The charge follows the bands the floor raise crossed, not the nominal
+    // point price; the rim's in-band edge encoding is free.
+    const units = diff.reduce(
+      (sum, cell) =>
+        sum + (drawnBandOfSample(cell.h) - drawnBandOfSample(MIN_HEIGHT)) * BAND_HEIGHT,
+      0,
+    );
     expect(manaBalanceOf(PLAYER.id)).toBe(
       MANA_CAPACITY - displacementManaCost(units, MANA_PER_BAND_CELL, 'stamp'),
     );

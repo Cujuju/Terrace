@@ -19,6 +19,7 @@ import {
   smoothCascadeReachCells,
   WIRE_DEFAULT_SCULPT_OPTIONS,
   WORLD_UNIT_CELLS,
+  drawnBandOfSample,
 } from '../src/index.ts';
 import {
   footprintOf,
@@ -76,7 +77,8 @@ describe('applySculpt (the full server/prediction operation)', () => {
     for (let k = 0; k < STACKED_CLICKS; k++) {
       applySculpt(player, 32, 32, 2, DEFAULT_SCULPT_AMOUNT, WIRE_DEFAULT_SCULPT_OPTIONS);
     }
-    expect(heightAt(player, 32, 32)).toBe(MAX_HEIGHT);
+    expect(heightAt(player, 32, 32)).toBeLessThanOrEqual(MAX_HEIGHT);
+    expect(drawnBandOfSample(heightAt(player, 32, 32))).toBe(drawnBandOfSample(MAX_HEIGHT));
   });
 
   it('a smooth click on flat ground changes nothing: melt deposits no material', () => {

@@ -19,6 +19,7 @@ import {
   type Heightmap,
   type SculptIntent,
   type TerrainDiffMessage,
+  drawnBandOfSample,
 } from '@terrace/shared';
 import {
   applyChunkUnlock,
@@ -236,9 +237,10 @@ describe('brush tools and edge profiles (decision 2026-08-14)', () => {
 
     store.predict({ ...raise(CENTRE.x, CENTRE.y, MIN_BRUSH_RADIUS), tool: 'stamp' }, 0);
 
-    expect(heightAt(mirror.map, CENTRE.x, CENTRE.y)).toBe(bandLevelHeight(0));
-    expect(heightAt(mirror.map, CENTRE.x + 1, CENTRE.y)).toBe(0);
-    expect(heightAt(mirror.map, CENTRE.x, CENTRE.y + 1)).toBe(0);
+    // The neighbours keep their band; only their in-band edge encoding moves.
+    expect(drawnBandOfSample(heightAt(mirror.map, CENTRE.x, CENTRE.y))).toBe(0);
+    expect(drawnBandOfSample(heightAt(mirror.map, CENTRE.x + 1, CENTRE.y))).toBe(drawnBandOfSample(0));
+    expect(drawnBandOfSample(heightAt(mirror.map, CENTRE.x, CENTRE.y + 1))).toBe(drawnBandOfSample(0));
   });
 
   it('predicts the smooth tool as a no-op on flat ground, exactly like the server', () => {

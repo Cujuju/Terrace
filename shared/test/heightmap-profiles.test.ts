@@ -25,11 +25,12 @@ describe('applySculpt — edge profiles', () => {
     });
 
     // Flat sea reads as drawn band -1, so one hard raise lands the footprint
-    // on the shore band's level (9), not on raw 16 (which would skip the beach).
-    for (const i of footprint) expect(map.cells[i]).toBe(bandLevelHeight(0));
-    expect(heightAt(map, 24 + (radius - 1), 24)).toBe(bandLevelHeight(0));
-    expect(heightAt(map, 24, 24 - (radius - 1))).toBe(bandLevelHeight(0));
-    expect(heightAt(map, 24 + radius, 24)).toBe(0);
+    // on the shore band (0), not on raw 16's band (which would skip the beach).
+    for (const i of footprint) expect(drawnBandOfSample(map.cells[i]!)).toBe(0);
+    expect(drawnBandOfSample(heightAt(map, 24 + (radius - 1), 24))).toBe(0);
+    expect(drawnBandOfSample(heightAt(map, 24, 24 - (radius - 1)))).toBe(0);
+    expect(drawnBandOfSample(heightAt(map, 24 + radius, 24))).toBe(-1);
+    expect(heightAt(map, 24, 24)).toBe(bandLevelHeight(0));
   });
 
   it('soft is unchanged: full amount at the centre, linear falloff to a fifth at the ring', () => {
@@ -51,7 +52,7 @@ describe('applySculpt — edge profiles', () => {
     hard.cells.fill(bandLevelHeight(1));
     applySculpt(soft, 8, 8, 1, DEFAULT_SCULPT_AMOUNT, { tool: 'stamp', profile: 'soft' });
     applySculpt(hard, 8, 8, 1, DEFAULT_SCULPT_AMOUNT, { tool: 'stamp', profile: 'hard' });
-    expect(soft.cells).toEqual(hard.cells);
+    expect(Array.from(soft.cells, drawnBandOfSample)).toEqual(Array.from(hard.cells, drawnBandOfSample));
   });
 
   it('lowering mirrors raising under the hard profile too', () => {
@@ -63,8 +64,6 @@ describe('applySculpt — edge profiles', () => {
     // a lower on band -2's level. The mirror holds in drawn bands.
     const fp = footprintOf(32, 16, 16, 3);
     for (const i of fp) {
-      expect(up.cells[i]).toBe(bandLevelHeight(0));
-      expect(down.cells[i]).toBe(bandLevelHeight(-2));
       expect(drawnBandOfSample(up.cells[i])).toBe(0);
       expect(drawnBandOfSample(down.cells[i])).toBe(-2);
     }
@@ -82,9 +81,9 @@ describe('applySculpt — tools and profiles are orthogonal', () => {
     applySculpt(slumped, 32, 32, 4, DEFAULT_SCULPT_AMOUNT, STAMP_HARD_OPTS);
     applySculpt(slumped, 32, 32, 4, DEFAULT_SCULPT_AMOUNT, { tool: 'smooth', profile: 'hard' });
 
-    expect(heightAt(stamped, 35, 32)).toBe(bandLevelHeight(1));
-    expect(heightAt(stamped, 36, 32)).toBe(0);
-    expect(heightAt(slumped, 36, 32)).toBeGreaterThan(0);
+    expect(drawnBandOfSample(heightAt(stamped, 35, 32))).toBe(1);
+    expect(drawnBandOfSample(heightAt(stamped, 36, 32))).toBe(-1);
+    expect(heightAt(slumped, 36, 32)).toBeGreaterThan(heightAt(stamped, 36, 32));
     expectGradientLimitHolds(slumped);
   });
 

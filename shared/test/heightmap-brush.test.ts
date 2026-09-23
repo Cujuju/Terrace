@@ -9,6 +9,7 @@ import {
   MAX_HEIGHT,
   MIN_HEIGHT,
   quantizeToBand,
+  drawnBandOfSample,
 } from '../src/index.ts';
 import {
   footprintOf,
@@ -120,7 +121,8 @@ describe('applySculpt — the stamp tool', () => {
     const high = createHeightmap(16);
     high.cells.fill(MAX_HEIGHT - 1);
     applySculpt(high, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, { tool: 'stamp', profile: 'hard' });
-    expect(heightAt(high, 8, 8)).toBe(MAX_HEIGHT);
+    expect(heightAt(high, 8, 8)).toBeLessThanOrEqual(MAX_HEIGHT);
+    expect(drawnBandOfSample(heightAt(high, 8, 8))).toBe(drawnBandOfSample(MAX_HEIGHT));
 
     const low = createHeightmap(16);
     low.cells.fill(MIN_HEIGHT);

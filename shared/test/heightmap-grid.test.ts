@@ -32,6 +32,7 @@ import {
   SMOOTH_SPREAD_CELLS,
   WORLD_UNIT_CELLS,
 } from '../src/index.ts';
+import { EDGE_REGION_MARGIN_CELLS } from '../src/sculpt/edges.ts';
 
 describe('createHeightmap', () => {
   it('allocates a zeroed size×size grid', () => {
@@ -132,10 +133,12 @@ describe('sculptReachCells — one statement of how far a stroke can write', () 
     expect(sculptReachCells(RADIUS, 'soft', LIBRARY_SCULPT_TOOL, 'free'))
       .toBe(RADIUS + SMOOTH_SPREAD_CELLS);
     for (const tool of ['stamp', 'drag', 'carve'] as const) {
+      // An edge-aware brush re-encodes the cells just past its sweep.
+      const margin = tool === 'stamp' ? EDGE_REGION_MARGIN_CELLS : 0;
       for (const profile of ['soft', 'hard'] as const) {
         for (const anchor of ['clicked', 'free', 'band'] as const) {
           expect(sculptReachCells(RADIUS, profile, tool, anchor))
-            .toBe(sculptSweepRadius(RADIUS, profile, tool, anchor));
+            .toBe(sculptSweepRadius(RADIUS, profile, tool, anchor) + margin);
         }
       }
     }

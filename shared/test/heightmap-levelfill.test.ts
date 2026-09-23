@@ -57,10 +57,11 @@ describe('applySculpt — the level-fill brush (stamp + hard)', () => {
 
     applySculpt(map, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
 
-    // The footprint's lowest drawn band is 0, so the fill targets band 1's
-    // level: the laggard advances one drawn band and nothing passes the target.
-    expect(heightAt(map, 8, 8)).toBe(bandLevelHeight(1) - 1);
-    expect(heightAt(map, 7, 8)).toBe(bandLevelHeight(1));
+    // The footprint's lowest drawn band is 0, so the fill targets band 1: the
+    // laggard advances one drawn band and nothing passes the target.
+    expect(drawnBandOfSample(heightAt(map, 8, 8))).toBe(1);
+    expect(drawnBandOfSample(heightAt(map, 7, 8))).toBe(1);
+    for (const h of map.cells) expect(drawnBandOfSample(h)).toBeLessThanOrEqual(1);
   });
 
   it('advances at most ONE band per stroke, whatever the amount', () => {
@@ -82,7 +83,10 @@ describe('applySculpt — the level-fill brush (stamp + hard)', () => {
       applySculpt(levelled, 8, 8, 3, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
       applyBrush(flatDelta, 8, 8, 3, DEFAULT_SCULPT_AMOUNT, new Set<number>(), 'hard');
 
-      expect(levelled.cells).toEqual(flatDelta.cells);
+      // The stamp re-encodes its rim in-band; the drawn bands are the flat stamp's.
+      expect(Array.from(levelled.cells, drawnBandOfSample)).toEqual(
+        Array.from(flatDelta.cells, drawnBandOfSample),
+      );
       expect(heightAt(levelled, 8, 8)).toBe(bandLevelHeight(band + 1));
     }
   });
@@ -107,15 +111,19 @@ describe('applySculpt — the level-fill brush (stamp + hard)', () => {
     for (let stroke = 0; stroke < 3; stroke++) {
       applySculpt(up, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
       applySculpt(down, 8, 8, 2, -DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
-      for (let i = 0; i < up.cells.length; i++) expect(down.cells[i]).toBe(2 - up.cells[i]);
+      // Heights mirror to within the edge encoding; drawn band b mirrors to -1 - b.
+      for (let i = 0; i < up.cells.length; i++) {
+        expect(drawnBandOfSample(down.cells[i]!)).toBe(-1 - drawnBandOfSample(up.cells[i]!));
+      }
     }
   });
 
   it('clamps at the top and the bottom of the height range', () => {
+    // The top drawn band holds MAX_HEIGHT: a raise there has no band to cross.
     const nearTop = createHeightmap(16);
     nearTop.cells.fill(MAX_HEIGHT - 1);
-    applySculpt(nearTop, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
-    expect(heightAt(nearTop, 8, 8)).toBe(MAX_HEIGHT);
+    expect(applySculpt(nearTop, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL)).toEqual([]);
+    expect(drawnBandOfSample(heightAt(nearTop, 8, 8))).toBe(drawnBandOfSample(MAX_HEIGHT));
 
     const atTop = createHeightmap(16);
     atTop.cells.fill(MAX_HEIGHT);
@@ -137,21 +145,34 @@ describe('applySculpt — the level-fill brush (stamp + hard)', () => {
   it('reports only the cells it actually moved', () => {
     const map = createHeightmap(16);
     paintFootprintPlus(map, 8, 8, { n: 0, w: 1, c: 1, e: 1, s: 1 });
-    expect(applySculpt(map, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL)).toEqual([
-      { x: 8, y: 7, h: bandLevelHeight(0) },
-    ]);
+    const before = map.cells.slice();
+    const diff = applySculpt(map, 8, 8, 2, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
+    const moved = [];
+    for (let i = 0; i < map.cells.length; i++) {
+      if (map.cells[i] !== before[i]) moved.push({ x: i % 16, y: Math.floor(i / 16), h: map.cells[i] });
+    }
+    expect(diff).toEqual(moved);
+    // One cell crosses a band; the rest re-encode where its new edge lies.
+    const crossed = diff.filter((c) => drawnBandOfSample(c.h) !== drawnBandOfSample(before[c.y * 16 + c.x]!));
+    expect(crossed.map(({ x, y }) => [x, y])).toEqual([[8, 7]]);
+    expect(drawnBandOfSample(heightAt(map, 8, 7))).toBe(0);
   });
 
-  it('changes nothing outside its footprint', () => {
+  it('changes no band outside its footprint, and no height past a cell beyond its ring', () => {
     const map = texturedMap(48);
     const before = map.cells.slice();
     const footprint = footprintOf(48, 24, 24, 4);
+    // Radius 4's ring is sqrt(12); the edge encoding reaches one cell past it.
+    const ENCODED_REACH_SQUARED = (Math.sqrt(12) + 1) ** 2;
 
     applySculpt(map, 24, 24, 4, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
 
     for (let i = 0; i < map.cells.length; i++) {
       if (footprint.has(i)) continue;
-      expect(map.cells[i]).toBe(before[i]);
+      expect(drawnBandOfSample(map.cells[i]!)).toBe(drawnBandOfSample(before[i]!));
+      const dx = (i % 48) - 24;
+      const dy = Math.floor(i / 48) - 24;
+      if (dx * dx + dy * dy >= ENCODED_REACH_SQUARED) expect(map.cells[i]).toBe(before[i]);
     }
     let lowestDrawn = Number.POSITIVE_INFINITY;
     for (const i of footprint) lowestDrawn = Math.min(lowestDrawn, drawnBandOfSample(before[i]));
@@ -159,7 +180,7 @@ describe('applySculpt — the level-fill brush (stamp + hard)', () => {
     for (const i of footprint) {
       const expected =
         before[i] >= target ? before[i] : Math.min(before[i] + DEFAULT_SCULPT_AMOUNT, target);
-      expect(map.cells[i]).toBe(expected);
+      expect(drawnBandOfSample(map.cells[i]!)).toBe(drawnBandOfSample(expected));
     }
   });
 
@@ -171,15 +192,15 @@ describe('applySculpt — the level-fill brush (stamp + hard)', () => {
 
     applySculpt(map, 0, 0, 2, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
 
-    for (const [x, y] of corner) expect(heightAt(map, x, y)).toBe(bandLevelHeight(2));
-    expect(heightAt(map, 1, 1)).toBe(bandLevelHeight(1));
+    for (const [x, y] of corner) expect(drawnBandOfSample(heightAt(map, x, y))).toBe(2);
+    expect(drawnBandOfSample(heightAt(map, 1, 1))).toBe(1);
   });
 
   it('at radius 1 snaps an off-grid cell onto the band boundary', () => {
     const map = createHeightmap(16);
     map.cells[cellIndex(map, 8, 8)] = bandLevelHeight(1) + 4;
     applySculpt(map, 8, 8, 1, DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
-    expect(heightAt(map, 8, 8)).toBe(bandLevelHeight(2));
+    expect(drawnBandOfSample(heightAt(map, 8, 8))).toBe(2);
   });
 
   it('lowering an off-grid cell drops it a RENDERED band, not to its own floor', () => {
@@ -187,7 +208,9 @@ describe('applySculpt — the level-fill brush (stamp + hard)', () => {
     const map = createHeightmap(16);
     map.cells[cellIndex(map, 8, 8)] = bandLevelHeight(1) + OFF_BAND_FLOOR;
     applySculpt(map, 8, 8, 1, -DEFAULT_SCULPT_AMOUNT, LEVEL_FILL);
-    expect(heightAt(map, 8, 8)).toBe(bandLevelHeight(1) + OFF_BAND_FLOOR - DEFAULT_SCULPT_AMOUNT);
+    expect(drawnBandOfSample(heightAt(map, 8, 8))).toBe(
+      drawnBandOfSample(bandLevelHeight(1) + OFF_BAND_FLOOR) - 1,
+    );
     expect(bandOf(heightAt(map, 8, 8))).toBe(0);
   });
 

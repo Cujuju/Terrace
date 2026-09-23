@@ -3,6 +3,7 @@ import {
   displacementOf,
   sculptOptionsOf,
   snapshotSolidUnits,
+  strokeSolidMeasure,
   strokeReachBox,
   validateSculptIntent,
   type CellDiff,
@@ -107,7 +108,15 @@ export function handleSculptIntent(
   // The charge is what the stroke moved, so the ground must be read before it
   // moves. The reach box is the only bound the diff cannot outrun.
   const reach = strokeReachBox(world.size, effective);
-  const before = snapshotSolidUnits(world.map, reach.minX, reach.minY, reach.maxX, reach.maxY);
+  const measure = strokeSolidMeasure(sculptOptionsOf(effective).tool);
+  const before = snapshotSolidUnits(
+    world.map,
+    reach.minX,
+    reach.minY,
+    reach.maxX,
+    reach.maxY,
+    measure,
+  );
   const diff = applyServerSculpt(
     world,
     interceptors,
@@ -123,7 +132,7 @@ export function handleSculptIntent(
     effective,
     player,
     diff,
-    displacementOf(before, world.map, diff),
+    displacementOf(before, world.map, diff, measure),
   );
 
   if (intent.seq !== undefined) {

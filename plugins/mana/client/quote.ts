@@ -5,6 +5,7 @@ import {
   displacementOf,
   sculptOptionsOf,
   snapshotSolidUnits,
+  strokeSolidMeasure,
   strokeReachBox,
   type SculptIntent,
 } from '@terrace/shared';
@@ -58,7 +59,15 @@ export function dryRunDisplacement(
       : {}),
   };
   const reach = strokeReachBox(side, local);
-  const before = snapshotSolidUnits(scratch, reach.minX, reach.minY, reach.maxX, reach.maxY);
+  const measure = strokeSolidMeasure(sculptOptionsOf(local).tool);
+  const before = snapshotSolidUnits(
+    scratch,
+    reach.minX,
+    reach.minY,
+    reach.maxX,
+    reach.maxY,
+    measure,
+  );
   const diff = applySculpt(
     scratch,
     local.x,
@@ -67,5 +76,5 @@ export function dryRunDisplacement(
     DEFAULT_SCULPT_AMOUNT * local.dir,
     sculptOptionsOf(local),
   );
-  return displacementOf(before, scratch, diff);
+  return displacementOf(before, scratch, diff, measure);
 }

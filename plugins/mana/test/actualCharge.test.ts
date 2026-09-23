@@ -9,8 +9,10 @@ import {
   bandLevelHeight,
   displacementOf,
   forEachFootprintOffset,
+  sculptOptionsOf,
   snapshotSolidUnits,
   strokeReachBox,
+  strokeSolidMeasure,
   type SculptIntent,
   type SculptTool,
 } from '@terrace/shared';
@@ -79,6 +81,18 @@ function boot(fillHeight: number): Harness {
   return { world, host, api };
 }
 
+/** East of the centre already stands a band higher: a raise there has nothing to move. */
+function bootHalfRaised(): Harness {
+  const harness = boot(bandLevelHeight(GROUND_BAND));
+  const { map } = harness.world;
+  for (let y = 0; y < WORLD_SIZE; y++) {
+    for (let x = CENTRE.x + 1; x < WORLD_SIZE; x++) {
+      map.cells[y * WORLD_SIZE + x] = bandLevelHeight(GROUND_BAND + 1);
+    }
+  }
+  return harness;
+}
+
 interface Stroke {
   readonly applied: boolean;
   readonly units: number;
@@ -90,12 +104,14 @@ interface Stroke {
 function sculpt(harness: Harness, intent: SculptIntent): Stroke {
   const balanceBefore = manaBalanceOf(PLAYER.id) ?? 0;
   const box = strokeReachBox(harness.world.size, intent);
+  const measure = strokeSolidMeasure(sculptOptionsOf(intent).tool);
   const solids = snapshotSolidUnits(
     harness.world.map,
     box.minX,
     box.minY,
     box.maxX,
     box.maxY,
+    measure,
   );
   const outcome = handleSculptIntent(
     { world: harness.world, interceptors: harness.host },
@@ -103,7 +119,7 @@ function sculpt(harness: Harness, intent: SculptIntent): Stroke {
     intent,
   );
   const units = outcome.applied
-    ? displacementOf(solids, harness.world.map, outcome.diff)
+    ? displacementOf(solids, harness.world.map, outcome.diff, measure)
     : 0;
   return {
     applied: outcome.applied,
@@ -129,20 +145,19 @@ const expectedCharge = (units: number, tool: SculptTool = 'stamp'): number =>
   displacementManaCost(units, MANA_PER_BAND_CELL, tool);
 
 describe('the charge is the material the stroke moved', () => {
-  it('a raise out of the sea pays for one unit a cell, not a whole band', () => {
+  it('a raise out of the sea pays the band it crosses, as on land', () => {
     const harness = boot(SEA_FLOOR);
     const radius = 4;
     const onSea = sculpt(harness, press(radius, 'hard'));
 
+    // A stamp is charged by drawn band; its edge encoding is free.
     expect(onSea.applied).toBe(true);
-    expect(onSea.units).toBe(footprintCells(radius) * bandLevelHeight(0));
+    expect(onSea.units).toBe(footprintCells(radius) * BAND_HEIGHT);
     expect(onSea.charged).toBe(expectedCharge(onSea.units));
 
     const onLand = sculpt(boot(bandLevelHeight(GROUND_BAND)), press(radius, 'hard'));
-    expect(onLand.units).toBe((onSea.units / bandLevelHeight(0)) * BAND_HEIGHT);
-    expect(onSea.units * BAND_HEIGHT).toBe(
-      footprintCells(radius) * DEFAULT_SCULPT_AMOUNT * bandLevelHeight(0),
-    );
+    expect(onLand.units).toBe(onSea.units);
+    expect(onLand.units).toBe(footprintCells(radius) * DEFAULT_SCULPT_AMOUNT);
   });
 
   it('a soft stamp levels the core a hard one does, and pays the same fill', () => {
@@ -204,8 +219,8 @@ describe('the charge is the material the stroke moved', () => {
     expect(noOp.charged).toBe(0);
   });
 
-  it('admits on the nominal and charges the actual, so a sea raise leaves change', () => {
-    const harness = boot(SEA_FLOOR);
+  it('admits on the nominal and charges the actual, so a half-built footprint leaves change', () => {
+    const harness = bootHalfRaised();
     const intent = press(MAX_BRUSH_RADIUS, 'hard');
     const nominal = manaCostFor(PLAYER.id, intent);
 
@@ -216,10 +231,10 @@ describe('the charge is the material the stroke moved', () => {
   });
 
   it('denies a player who could afford the actual but not the nominal', () => {
-    const harness = boot(SEA_FLOOR);
     const intent = press(MAX_BRUSH_RADIUS, 'hard');
+    const actual = sculpt(bootHalfRaised(), intent).charged;
+    const harness = bootHalfRaised();
     const nominal = manaCostFor(PLAYER.id, intent);
-    const actual = expectedCharge(footprintCells(MAX_BRUSH_RADIUS) * DRAWN_SHORE_HEIGHT);
     expect(actual).toBeLessThan(nominal);
 
     // Enough for what the stroke will move, short of what it might have moved.

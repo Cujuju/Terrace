@@ -12,6 +12,7 @@ import {
   heightAt,
   MIN_BRUSH_RADIUS,
   type Heightmap,
+  drawnBandOfSample,
 } from '../src/index.ts';
 
 function mapWithPlateau(
@@ -96,14 +97,16 @@ describe('applySculpt with the drag anchor — a band extends sideways', () => {
       ...DRAG,
       targetBand: BAND,
     });
-    expect(diff.length).toBe(1);
-    expect(map.cells[cellIndex(map, 8, 8)]).toBe(HIGH);
+    // One cell crosses into the band; its neighbours re-encode the new edge in-band.
+    const crossed = diff.filter((c) => drawnBandOfSample(c.h) === BAND);
+    expect(crossed.map(({ x, y }) => [x, y])).toEqual([[8, 8]]);
+    const settled = map.cells[cellIndex(map, 8, 8)];
     const again = applySculpt(map, 8, 8, MIN_BRUSH_RADIUS, DEFAULT_SCULPT_AMOUNT, {
       ...DRAG,
       targetBand: BAND,
     });
     expect(again).toEqual([]);
-    expect(map.cells[cellIndex(map, 8, 8)]).toBe(HIGH);
+    expect(map.cells[cellIndex(map, 8, 8)]).toBe(settled);
   });
 
   it('is a NO-OP on a cell that touches no such ground — the anti-cheat rule', () => {
@@ -139,7 +142,7 @@ describe('applySculpt with the drag anchor — a band extends sideways', () => {
       ...DRAG,
       targetBand: grabbed,
     });
-    expect(map.cells[cellIndex(map, 8, 8)]).toBe(bandLevelHeight(grabbed));
+    expect(drawnBandOfSample(map.cells[cellIndex(map, 8, 8)]!)).toBe(grabbed);
 
     const clicked = createHeightmap(16);
     clicked.cells.fill(0);
@@ -159,8 +162,8 @@ describe('applySculpt with the drag anchor — a band extends sideways', () => {
         ...DRAG,
         targetBand: BAND,
       });
-      expect(map.cells[cellIndex(map, x, 12)]).toBe(HIGH);
-      expect(map.cells[cellIndex(map, x + 1, 12)]).toBe(0);
+      expect(drawnBandOfSample(map.cells[cellIndex(map, x, 12)]!)).toBe(BAND);
+      expect(drawnBandOfSample(map.cells[cellIndex(map, x + 1, 12)]!)).toBe(drawnBandOfSample(0));
     }
   });
 });

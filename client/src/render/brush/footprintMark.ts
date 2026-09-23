@@ -5,6 +5,7 @@ import {
   sculptSweepRadius,
   applySculpt,
   createHeightmap,
+  drawnBandOfSample,
   forEachFootprintOffset,
   sculptOptionsOf,
   type SculptIntent,
@@ -63,6 +64,8 @@ const SIMULATION_SPAN_CELLS =
 // sculpt direction. Mid-terrain ground behaves the same both ways.
 const SIMULATION_GROUND_HEIGHT = 8 * BAND_HEIGHT;
 
+const SIMULATION_GROUND_BAND = drawnBandOfSample(SIMULATION_GROUND_HEIGHT);
+
 export function oneClickMark(radius: number, tool: SculptTool, profile: SculptProfile): Mark {
   const keys = new Set<string>();
   const cells: (readonly [number, number])[] = [];
@@ -85,9 +88,9 @@ export function oneClickMark(radius: number, tool: SculptTool, profile: SculptPr
 
     for (let j = 0; j < SIMULATION_SPAN_CELLS; j++) {
       for (let i = 0; i < SIMULATION_SPAN_CELLS; i++) {
-        // Edited cells are detected by height change, not band change: a
-        // soft edge can move heights within one drawn band.
-        if (map.cells[j * SIMULATION_SPAN_CELLS + i]! === SIMULATION_GROUND_HEIGHT) continue;
+        // Edited cells are detected by band change: an edge-aware stamp also
+        // re-encodes the heights just outside its footprint, within their band.
+        if (drawnBandOfSample(map.cells[j * SIMULATION_SPAN_CELLS + i]!) === SIMULATION_GROUND_BAND) continue;
         const dx = i - centre;
         const dy = j - centre;
         const key = `${dx},${dy}`;

@@ -12,7 +12,7 @@ import {
   CARVE_DEFAULT_DEPTH_BANDS,
   MAX_DRAG_SWEEP_CELLS,
   bandLevelHeight,
-  columnSolidUnits,
+  drawnBandOfSample,
   displacementOf,
   sculptDisplacementUnits,
   sculptOptionsOf,
@@ -20,6 +20,7 @@ import {
   smooth,
   snapshotSolidUnits,
   strokeReachBox,
+  strokeSolidMeasure,
   type SculptIntent,
 } from '../src/index.ts';
 
@@ -36,9 +37,11 @@ function observedDisplacement(
   const options = { tool: 'stamp', profile, anchor: 'clicked' } as const;
   applySculpt(map, 32, 32, radius, amount, options);
 
+  // Band crossings only: the edge encoding moves rim heights within their bands.
   let total = 0;
   forEachFootprintOffset(sculptSweepRadius(radius, profile, 'stamp', 'clicked'), (dx, dy) => {
-    total += Math.abs(map.cells[(32 + dy) * size + (32 + dx)]! - start);
+    const now = map.cells[(32 + dy) * size + (32 + dx)]!;
+    total += Math.abs(drawnBandOfSample(now) - drawnBandOfSample(start)) * BAND_HEIGHT;
   });
   return total;
 }
@@ -171,7 +174,8 @@ interface Measured {
 
 function measure(map: ReturnType<typeof createHeightmap>, intent: SculptIntent): Measured {
   const box = strokeReachBox(WORLD, intent);
-  const before = snapshotSolidUnits(map, box.minX, box.minY, box.maxX, box.maxY);
+  const measure = strokeSolidMeasure(sculptOptionsOf(intent).tool);
+  const before = snapshotSolidUnits(map, box.minX, box.minY, box.maxX, box.maxY, measure);
   const diff = applySculpt(
     map,
     intent.x,
@@ -190,11 +194,17 @@ function measure(map: ReturnType<typeof createHeightmap>, intent: SculptIntent):
       continue;
     }
     const was = before.get(cellIndex(map, cell.x, cell.y))!;
-    const now = columnSolidUnits(map, cell.x, cell.y);
+    const now = measure(map, cell.x, cell.y);
     if (now > was) up += now - was;
     else down += was - now;
   }
-  return { units: displacementOf(before, map, diff), cells: diff.length, down, up, outsideReach };
+  return {
+    units: displacementOf(before, map, diff, measure),
+    cells: diff.length,
+    down,
+    up,
+    outsideReach,
+  };
 }
 
 function stamp(profile: 'soft' | 'hard', radius: number): SculptIntent {
@@ -225,15 +235,16 @@ describe('displacementOf — what a stroke actually moved', () => {
     );
   });
 
-  it('a raise out of the sea pays the one unit a cell it moved, not a band', () => {
+  it('a raise out of the sea pays the band it crossed, like any stamp', () => {
     const radius = 4;
     const measured = measure(flatWorld(SEA_FLOOR), stamp('hard', radius));
     let footprint = 0;
     forEachFootprintOffset(radius, () => {
       footprint++;
     });
-    expect(measured.units).toBe(footprint * bandLevelHeight(0));
-    expect((measured.units / bandLevelHeight(0)) * BAND_HEIGHT).toBe(
+    // A stamp is charged by drawn band, so the raw sea floor's depth does not count.
+    expect(measured.units).toBe(footprint * BAND_HEIGHT);
+    expect(measured.units).toBe(
       sculptDisplacementUnits(radius, 'stamp', 'hard', CARVE_DEFAULT_DEPTH_BANDS),
     );
   });

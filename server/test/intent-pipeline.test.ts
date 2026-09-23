@@ -84,11 +84,10 @@ describe('handleSculptIntent', () => {
     handleSculptIntent(makeDeps(raised, []), PLAYER, sculptMessage({ dir: 1 }));
 
     // Drawn contract: from genesis sea (0, band -1) a raise lands on the
-    // shore level while a lower lands on band -2's canonical level.
-    expect(lowered).toBe(bandLevelHeight(-2));
+    // shore band while a lower lands on band -2; the edge encoding sets the height.
     expect(drawnBandOfSample(lowered)).toBe(-2);
-    expect(raised.heightAt(UNLOCKED_CELL.x, UNLOCKED_CELL.y)).toBe(bandLevelHeight(0));
-    expect(lowered).toBe(stepTowardBand(SEA_LEVEL, false));
+    expect(drawnBandOfSample(raised.heightAt(UNLOCKED_CELL.x, UNLOCKED_CELL.y))).toBe(0);
+    expect(drawnBandOfSample(lowered)).toBe(drawnBandOfSample(stepTowardBand(SEA_LEVEL, false)));
   });
 
   it('rejects malformed messages without touching the world', () => {
@@ -395,8 +394,10 @@ describe('brush tool and edge profile passthrough (decision 2026-08-14)', () => 
   it('an intent naming NO tool is applied as a stamp (the wire default)', () => {
     handleSculptIntent(makeDeps(world, []), PLAYER, sculptMessage());
 
-    expect(world.heightAt(UNLOCKED_CELL.x, UNLOCKED_CELL.y)).toBe(bandLevelHeight(0));
-    expect(neighbourHeights(world, UNLOCKED_CELL.x, UNLOCKED_CELL.y)).toEqual([0, 0, 0, 0]);
+    expect(drawnBandOfSample(world.heightAt(UNLOCKED_CELL.x, UNLOCKED_CELL.y))).toBe(0);
+    expect(neighbourHeights(world, UNLOCKED_CELL.x, UNLOCKED_CELL.y).map(drawnBandOfSample)).toEqual(
+      [0, 0, 0, 0].map(drawnBandOfSample),
+    );
   });
 
   it('rejects an intent carrying an unknown tool or profile as malformed', () => {

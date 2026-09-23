@@ -17,6 +17,7 @@ import {
   WORLD_UNIT_CELLS,
   type Heightmap,
   type SculptOptions,
+  drawnBandOfSample,
 } from '../src/index.ts';
 import {
   CEILING_BANDS,
@@ -79,7 +80,7 @@ describe('smooth — cascades from stamped terrain (#12)', () => {
     // One extra stamp: the first hard stamp from the sea only reaches the
     // shore, so clamping the plateau at MAX_HEIGHT takes CEILING_BANDS + 1.
     stampPlateau(map, C, C, CEILING_BANDS + 1);
-    expect(heightAt(map, C, C)).toBe(MAX_HEIGHT);
+    expect(drawnBandOfSample(heightAt(map, C, C))).toBe(drawnBandOfSample(MAX_HEIGHT));
     applySculpt(map, C, C, 4, DEFAULT_SCULPT_AMOUNT, SMOOTH_HARD);
     expectGradientLimitHoldsWithin(map, C, C, smoothCascadeReachCells(4));
   });

@@ -167,11 +167,11 @@ describe('applySculpt — banded spill containment (issue #26)', () => {
 
   const SMOOTH_HARD_BANDED = { tool: 'smooth', profile: 'hard', spill: 'banded' } as const;
 
-  it('pins the standing residual of the #12 plateau scenario: 997 units of excess', () => {
+  it('pins the standing residual of the #12 plateau scenario: 994 units of excess', () => {
     const map = createHeightmap(128);
     stampPlateau(map, 64, 64, CEILING_BANDS - 1);
     applySculpt(map, 64, 64, 4, DEFAULT_SCULPT_AMOUNT, SMOOTH_HARD_BANDED);
-    expect(maxExcess(map)).toBe(997);
+    expect(maxExcess(map)).toBe(994);
   });
 
   it('banded strokes can NEVER repair the standing ring — the excess does not fall', () => {
@@ -192,35 +192,37 @@ describe('applySculpt — banded spill containment (issue #26)', () => {
     const fp = footprintOf(128, 64, 64, 4);
     applySculpt(map, 64, 64, 4, DEFAULT_SCULPT_AMOUNT, SMOOTH_HARD_BANDED);
     for (let i = 0; i < map.cells.length; i++) {
-      if (!fp.has(i)) expect(bandOf(map.cells[i])).toBe(bandOf(before[i]));
-    }
-  });
-
-  it('#12 cascade, banded: a fully clamped plateau is locked, not relaxed', () => {
-    const map = createHeightmap(128);
-    stampPlateau(map, 64, 64, CEILING_BANDS + 1);
-    expect(heightAt(map, 64, 64)).toBe(MAX_HEIGHT);
-    const before = Int16Array.from(map.cells);
-    const fp = footprintOf(128, 64, 64, 4);
-    // The brush is clamped at MAX and the sea ring sits at its drawn band's
-    // ceiling, so banded spill has no legal move: the diff is empty.
-    const diff = applySculpt(map, 64, 64, 4, DEFAULT_SCULPT_AMOUNT, SMOOTH_HARD_BANDED);
-    expect(diff).toEqual([]);
-    for (let i = 0; i < map.cells.length; i++) {
       if (!fp.has(i)) expect(drawnBandOfSample(map.cells[i])).toBe(drawnBandOfSample(before[i]));
     }
   });
 
-  it('#12 cascade, banded: the drawn box locks the standing ring — zero passes', () => {
+  it('#12 cascade, banded: a fully clamped plateau keeps every drawn band', () => {
+    const map = createHeightmap(128);
+    stampPlateau(map, 64, 64, CEILING_BANDS + 1);
+    expect(drawnBandOfSample(heightAt(map, 64, 64))).toBe(drawnBandOfSample(MAX_HEIGHT));
+    const before = Int16Array.from(map.cells);
+    // The brush is clamped at the top band and the sea ring encodes its edge
+    // in-band, so banded spill can only shift heights within their bands.
+    applySculpt(map, 64, 64, 4, DEFAULT_SCULPT_AMOUNT, SMOOTH_HARD_BANDED);
+    for (let i = 0; i < map.cells.length; i++) {
+      expect(drawnBandOfSample(map.cells[i])).toBe(drawnBandOfSample(before[i]));
+    }
+  });
+
+  it('#12 cascade, banded: the drawn box holds the standing ring in its band', () => {
     const map = createHeightmap(128);
     stampPlateau(map, 64, 64, CEILING_BANDS - 1);
     const changed = new Set<number>();
     applyBrush(map, 64, 64, 4, DEFAULT_SCULPT_AMOUNT, changed, 'hard');
-    // The sea around the plateau sits at its drawn band's ceiling, so the
-    // banded spill has nowhere legal to move: the ring cannot be repaired.
-    const passes = smooth(map, changed, undefined, footprintOf(128, 64, 64, 4));
-    expect(passes).toBe(0);
+    const before = Int16Array.from(map.cells);
+    const fp = footprintOf(128, 64, 64, 4);
+    // The sea ring encodes its edge in-band, so the banded spill may shift it
+    // within its drawn band, but never out of it: the ring cannot be repaired.
+    const passes = smooth(map, changed, undefined, fp);
     expect(passes).toBeLessThan(SMOOTH_PASS_LIMIT);
+    for (let i = 0; i < map.cells.length; i++) {
+      if (!fp.has(i)) expect(drawnBandOfSample(map.cells[i])).toBe(drawnBandOfSample(before[i]));
+    }
   });
 
   it('property: over random maps × radii × profiles, no outside cell ever changes band', () => {

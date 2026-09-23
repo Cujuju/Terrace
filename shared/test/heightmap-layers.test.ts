@@ -130,7 +130,7 @@ describe('an anchored smooth conserves height (2026-09-15)', () => {
   const TOWER_PRESSES = 6;
   const TRENCH_DEPTHS = [6, 20, 40];
   // Measured against the Laplacian melt; the limit below is a hang guard.
-  const CONVERGED_PRESSES = 32;
+  const CONVERGED_PRESSES = 29;
   const CONVERGENCE_LIMIT = 40;
   const SMOOTH_LOWER = sculptOptionsOf({
     type: 'sculpt', x: CLICK_X, y: ROW, radius: MAX_BRUSH_RADIUS, dir: -1, tool: 'smooth',

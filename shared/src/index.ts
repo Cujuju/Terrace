@@ -7,10 +7,13 @@ export * from './chunks.ts';
 export * from './sculpt/sweep.ts';
 export {
   SCULPT_PRESS_UNITS_PER_CELL,
+  columnBandUnits,
   columnSolidUnits,
   displacementOf,
   pressDisplacementUnits,
   snapshotSolidUnits,
+  strokeSolidMeasure,
+  type SolidMeasure,
 } from './sculpt/price.ts';
 export * from './protocol.ts';
 export * from './wire.ts';

@@ -9,6 +9,7 @@ import {
   createHeightmap,
   forEachFootprintOffset,
   sculptOptionsOf,
+  drawnBandOfSample,
 } from '@terrace/shared';
 import {
   createBrushPreview,
@@ -98,9 +99,9 @@ function renderedCells(
     );
     for (let j = 0; j < span; j++) {
       for (let i = 0; i < span; i++) {
-        // Edited cells are detected by height change, not band change: a
-        // soft edge can move heights within one drawn band.
-        if (map.cells[j * span + i]! !== DRY_GROUND) {
+        // Edited cells are detected by band change: an edge-aware stamp also
+        // re-encodes the heights just outside its footprint, within their band.
+        if (drawnBandOfSample(map.cells[j * span + i]!) !== drawnBandOfSample(DRY_GROUND)) {
           changed.add(`${i - centre},${j - centre}`);
         }
       }

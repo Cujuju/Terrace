@@ -21,6 +21,7 @@ import {
   pressDelta,
   spreadableFootprintCells,
 } from './footprint.ts';
+import { footprintRingQuarters, type EdgeShape } from './edges.ts';
 import { LIBRARY_DEFAULT_SCULPT_OPTIONS } from './options.ts';
 import type { SculptAnchor, SculptProfile, SculptTool } from './options.ts';
 
@@ -53,7 +54,7 @@ export function applyBrush(
     const k = graspedSpanIndex(map, i, spanBand);
     if (k === null) return;
     const before = graspedCeiling(map, i, k);
-    if (anchored && (raising ? before >= target : before <= target)) return;
+    if (anchored && hasReachedBand(before, target, raising)) return;
     const delta = brushDelta(pressDelta(amount, before, anchored), radius, dist, profile);
     if (delta === 0) return;
     let moved = before + delta;
@@ -68,6 +69,13 @@ export function applyBrush(
       changed.add(i);
     }
   });
+}
+
+/** A cell whose drawn band already reached the target's is done: its in-band height is its edge. */
+function hasReachedBand(height: number, target: number, raising: boolean): boolean {
+  const band = drawnBandOfSample(height);
+  const targetBand = drawnBandOfSample(target);
+  return raising ? band >= targetBand : band <= targetBand;
 }
 
 export function applyLevelFillBrush(
@@ -147,6 +155,33 @@ export function softApronBandDrop(distPastCore: number): number {
   return band < SOFT_APRON_MAX_BANDS ? band : SOFT_APRON_MAX_BANDS;
 }
 
+/** A stamp's outline: its core disc, then each apron ring where the drop steps. */
+export function stampEdgeShape(
+  cx: number,
+  cy: number,
+  radius: number,
+  aproned: boolean,
+  raising: boolean,
+  spanBand: number | null,
+): EdgeShape {
+  const rings = [footprintRingQuarters(radius)];
+  if (aproned) {
+    const reach = softApronReachCells(radius);
+    for (let d = 1; d < reach; d++) {
+      if (softApronBandDrop(d) !== softApronBandDrop(d + 1)) {
+        rings.push(footprintRingQuarters(radius + d));
+      }
+    }
+    rings.push(footprintRingQuarters(radius + reach));
+  }
+  return {
+    centres: [[cx, cy]],
+    rings,
+    raising,
+    spanOf: (map, i) => graspedSpanIndex(map, i, spanBand),
+  };
+}
+
 /** The apron only exists under a soft clicked stamp, which is an anchored stroke. */
 const APRON_IS_ANCHORED = true;
 
@@ -183,7 +218,7 @@ export function applySoftApron(
     const k = graspedSpanIndex(map, i, spanBand);
     if (k === null) return;
     const before = graspedCeiling(map, i, k);
-    if (raising ? before >= target : before <= target) return;
+    if (hasReachedBand(before, target, raising)) return;
     const moved = before + pressDelta(amount, before, APRON_IS_ANCHORED);
     const h = clampHeight(raising ? (moved > target ? target : moved) : (moved < target ? target : moved));
     if (h !== before) {
@@ -211,7 +246,7 @@ function fillTowardTarget(
     const k = graspedSpanIndex(map, i, spanBand);
     if (k === null) return;
     const h = graspedCeiling(map, i, k);
-    if (raising ? h >= targetHeight : h <= targetHeight) return;
+    if (hasReachedBand(h, targetHeight, raising)) return;
     const moved = h + pressDelta(amount, h, anchored);
     const next = raising
       ? moved > targetHeight ? targetHeight : moved

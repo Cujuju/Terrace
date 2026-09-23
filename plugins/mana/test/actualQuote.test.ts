@@ -13,6 +13,7 @@ import {
   sculptOptionsOf,
   snapshotSolidUnits,
   strokeReachBox,
+  strokeSolidMeasure,
   type Heightmap,
   type SculptIntent,
 } from '@terrace/shared';
@@ -63,7 +64,8 @@ const UNKNOWN_GROUND = {
 /** What the server would charge: the same applier, run on the same ground. */
 function serverDisplacement(map: Heightmap, intent: SculptIntent): number {
   const box = strokeReachBox(map.size, intent);
-  const before = snapshotSolidUnits(map, box.minX, box.minY, box.maxX, box.maxY);
+  const measure = strokeSolidMeasure(sculptOptionsOf(intent).tool);
+  const before = snapshotSolidUnits(map, box.minX, box.minY, box.maxX, box.maxY, measure);
   const diff = applySculpt(
     map,
     intent.x,
@@ -72,7 +74,7 @@ function serverDisplacement(map: Heightmap, intent: SculptIntent): number {
     DEFAULT_SCULPT_AMOUNT * intent.dir,
     sculptOptionsOf(intent),
   );
-  return displacementOf(before, map, diff);
+  return displacementOf(before, map, diff, measure);
 }
 
 beforeEach(async () => {
@@ -100,6 +102,17 @@ function stepped(height: number): Heightmap {
   for (let y = 0; y < WORLD_SIZE; y++) {
     for (let x = AIM.x; x < WORLD_SIZE; x++) {
       map.cells[cellIndex(map, x, y)] = bandLevelHeight(GROUND_BAND + 2);
+    }
+  }
+  return map;
+}
+
+/** East of the aim already stands a band higher: a raise there has nothing to move. */
+function halfRaised(height: number): Heightmap {
+  const map = groundedWorld(height);
+  for (let y = 0; y < WORLD_SIZE; y++) {
+    for (let x = AIM.x + 1; x < WORLD_SIZE; x++) {
+      map.cells[cellIndex(map, x, y)] = bandLevelHeight(GROUND_BAND + 1);
     }
   }
   return map;
@@ -245,9 +258,9 @@ describe('the HUD quote says whether it measured or guessed', () => {
     expect(quote.cost).toBe(displacementManaCost(moved!, MANA_PER_BAND_CELL, 'stamp'));
   });
 
-  it('quotes a raise out of the sea for what it moves, far under the nominal', () => {
-    const sea = groundedWorld(SEA_FLOOR);
-    state.setLocalTerritory(territoryOf(sea));
+  it('quotes a half-built footprint for what it moves, far under the nominal', () => {
+    const halfBuilt = halfRaised(bandLevelHeight(GROUND_BAND));
+    state.setLocalTerritory(territoryOf(halfBuilt));
     hud.setHoverPick(AIM);
     hud.setBrushRadius(MAX_BRUSH_RADIUS);
 

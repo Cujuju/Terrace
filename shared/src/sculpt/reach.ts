@@ -1,4 +1,5 @@
 import { SMOOTH_REACH_MARGIN_CELLS, SMOOTH_SPREAD_CELLS } from '../constants.ts';
+import { EDGE_REGION_MARGIN_CELLS } from './edges.ts';
 import { LIBRARY_SCULPT_TOOL } from './options.ts';
 import type { SculptAnchor, SculptOperation, SculptProfile } from './options.ts';
 import { sculptSweepRadius } from './stamp.ts';
@@ -20,5 +21,7 @@ export function sculptReachCells(
 ): number {
   if (tool === 'smooth') return radius + smoothCascadeReachCells(radius);
   if (tool === LIBRARY_SCULPT_TOOL) return radius + SMOOTH_SPREAD_CELLS;
-  return sculptSweepRadius(radius, profile, tool, anchor);
+  const sweep = sculptSweepRadius(radius, profile, tool, anchor);
+  // An edge-aware stamp re-encodes the cells just past its outermost ring.
+  return tool === 'stamp' ? sweep + EDGE_REGION_MARGIN_CELLS : sweep;
 }
