@@ -52,7 +52,7 @@ const VERTICES_PER_TRIANGLE = 3;
 /** Empty slots are packed away once they hold this share of the water buffer. */
 const WATER_COMPACT_EMPTY_SHARE = 1 / 2;
 
-/** A run's slot: a power of two of triangles, so a resize rarely outgrows it and moves the tail. */
+/** A run's slot: a power of two of triangles, so a resize rarely outgrows it. */
 function slotCapacityOf(vertices: number): number {
   const triangles = Math.ceil(vertices / VERTICES_PER_TRIANGLE);
   let slot = 1;
@@ -197,7 +197,7 @@ export function createRiverRig(
   const waterMesh = new Mesh(new BufferGeometry(), waterMaterial);
   parent.add(waterMesh);
 
-  /** Vertices past `count` up to `capacity` are zero: degenerate triangles that draw nothing. */
+  /** Vertices past `count` up to `capacity` are zero: degenerate triangles that draw nothing. Slots sit in no order. */
   interface RegionRun {
     offset: number;
     count: number;
@@ -212,11 +212,10 @@ export function createRiverRig(
   let waterNormalAttribute = new BufferAttribute(waterNormals, 3);
   /** Every slot's capacity: the draw range. */
   let usedWaterVertices = 0;
-  /** Capacity held by slots whose run is empty. */
+  /** Capacity of slots no run holds any more. */
   let emptyWaterVertices = 0;
   /** Flat [from, to) vertex pairs written since the last publish. */
   const waterDirty: number[] = [];
-  const waterRunOrder: number[] = [];
   const waterRuns = new Map<number, RegionRun>();
 
   const runKeyOf = (band: number, tile: number, tileCount: number): number =>
@@ -258,69 +257,57 @@ export function createRiverRig(
     bindWaterGeometry();
   };
 
-  /** Grows `run`'s slot to `capacity`, moving every later slot along. */
-  const growSlot = (run: RegionRun, key: number, capacity: number): void => {
-    const delta = capacity - run.capacity;
-    ensureWaterCapacity(usedWaterVertices + delta);
-    const tailStart = run.offset + run.capacity;
-    if (usedWaterVertices > tailStart) {
-      waterPositions.copyWithin((tailStart + delta) * 3, tailStart * 3, usedWaterVertices * 3);
-    }
-    waterPositions.fill(0, tailStart * 3, (tailStart + delta) * 3);
-    const from = waterRunOrder.indexOf(key) + 1;
-    for (let i = from; i < waterRunOrder.length; i++) {
-      waterRuns.get(waterRunOrder[i]!)!.offset += delta;
-    }
-    usedWaterVertices += delta;
-    run.capacity = capacity;
-    noteWaterDirty(run.offset, usedWaterVertices);
+  /** A new slot of `capacity` at the end of the buffer. */
+  const appendSlot = (capacity: number): number => {
+    ensureWaterCapacity(usedWaterVertices + capacity);
+    const offset = usedWaterVertices;
+    usedWaterVertices += capacity;
+    return offset;
   };
 
   const spliceRun = (key: number, source: readonly number[], count: number): void => {
     let run = waterRuns.get(key);
     if (run === undefined) {
       if (count === 0) return;
-      let at = waterRunOrder.length;
-      for (let i = 0; i < waterRunOrder.length; i++) {
-        if (waterRunOrder[i]! > key) {
-          at = i;
-          break;
-        }
-      }
-      const previous = at === 0 ? null : waterRuns.get(waterRunOrder[at - 1]!)!;
-      run = { offset: previous === null ? 0 : previous.offset + previous.capacity, count: 0, capacity: 0 };
-      waterRunOrder.splice(at, 0, key);
+      run = { offset: 0, count: 0, capacity: 0 };
       waterRuns.set(key, run);
-    } else if (run.count === 0 && count > 0) {
-      emptyWaterVertices -= run.capacity;
     }
 
-    const base = run.offset * 3;
     // A rebuild re-emits every tile near a dirty chunk; one that came out the same uploads nothing.
     if (count === run.count) {
+      const base = run.offset * 3;
       let same = true;
       for (let i = 0; i < count * 3 && same; i++) same = waterPositions[base + i] === Math.fround(source[i]!);
       if (same) return;
     }
-    if (count > run.capacity) growSlot(run, key, slotCapacityOf(count));
+    if (count > run.capacity) {
+      // Outgrown: the run moves to a new slot at the end; the old one becomes a hole.
+      if (run.capacity > 0) {
+        waterPositions.fill(0, run.offset * 3, (run.offset + run.count) * 3);
+        noteWaterDirty(run.offset, run.offset + run.count);
+        emptyWaterVertices += run.capacity;
+      }
+      run.capacity = slotCapacityOf(count);
+      run.offset = appendSlot(run.capacity);
+      run.count = 0;
+    }
 
+    const base = run.offset * 3;
     for (let i = 0; i < count * 3; i++) waterPositions[base + i] = source[i]!;
     if (run.count > count) waterPositions.fill(0, base + count * 3, base + run.count * 3);
     noteWaterDirty(run.offset, run.offset + Math.max(run.count, count));
-    if (run.count > 0 && count === 0) emptyWaterVertices += run.capacity;
     run.count = count;
+    if (count === 0) {
+      waterRuns.delete(key);
+      emptyWaterVertices += run.capacity;
+    }
   };
 
-  /** Packs away empty slots and shrinks the rest to fit: one whole-buffer write, rarely. */
+  /** Packs every slot to the front, shrunk to fit: one whole-buffer write, rarely. */
   const compactWater = (): void => {
+    const runs = [...waterRuns.values()].sort((a, b) => a.offset - b.offset);
     let packed = 0;
-    for (const key of Array.from(waterRunOrder)) {
-      const run = waterRuns.get(key)!;
-      if (run.count === 0) {
-        waterRuns.delete(key);
-        waterRunOrder.splice(waterRunOrder.indexOf(key), 1);
-        continue;
-      }
+    for (const run of runs) {
       const capacity = slotCapacityOf(run.count);
       waterPositions.copyWithin(packed * 3, run.offset * 3, (run.offset + run.count) * 3);
       waterPositions.fill(0, (packed + run.count) * 3, (packed + capacity) * 3);
@@ -755,7 +742,7 @@ export function createRiverRig(
       }
     }
 
-    for (const key of Array.from(waterRunOrder)) {
+    for (const key of Array.from(waterRuns.keys())) {
       if (currentKeys.has(key)) continue;
       spliceRun(key, EMPTY_TRIANGLES, 0);
     }
