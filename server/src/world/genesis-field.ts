@@ -1,5 +1,6 @@
 import {
   BAND_HEIGHT,
+  EDGE_UNITS_PER_CELL,
   GRASSLAND_MIN_HEIGHT,
   LAND_RAMP_ANCHOR_SPACING,
   NEIGHBOURHOOD_CELLS,
@@ -14,20 +15,21 @@ import {
 /** Heights carry this many sub-band steps until the final floor to whole bands. */
 const SUB_BAND = 256;
 
-/** Noise values run in [-NOISE_ONE, NOISE_ONE]. */
-const NOISE_ONE = 256;
+/** Noise values run in [-NOISE_ONE, NOISE_ONE]: fine enough that no contour steps between cells. */
+const NOISE_ONE = 1024;
 
 /** Fixed-point one for the interpolation fade. */
 const FADE_ONE = 1 << 16;
 
-/** Sixteen gradients 22.5 degrees apart, length NOISE_ONE, rounded once. */
+/** Sixteen gradients 22.5 degrees apart, length GRADIENT_ONE, rounded once. */
+const GRADIENT_ONE = 256;
 const GRADIENTS: readonly number[] = [
   256, 0, 237, 98, 181, 181, 98, 237, 0, 256, -98, 237, -181, 181, -237, 98,
   -256, 0, -237, -98, -181, -181, -98, -237, 0, -256, 98, -237, 181, -181, 237, -98,
 ];
 const GRADIENT_MASK = GRADIENTS.length / 2 - 1;
 
-/** A 2D gradient noise peaks at half a diagonal: sqrt(2) in NOISE_ONE fixed point rescales it to one. */
+/** A 2D gradient noise peaks at half a diagonal: sqrt(2), in GRADIENT_ONE fixed point, rescales it to one. */
 const SQRT2_FIXED = 362;
 
 /** Largest lattice spacing: keeps every interpolation product below 2^53. */
@@ -69,8 +71,8 @@ const FINE_WARP_SPACING = NEIGHBOURHOOD_CELLS;
 const FINE_WARP_REACH_CELLS = (FINE_WARP_SPACING * 5) / 16;
 
 /** The shelf falls to the fresh shelf depth over this much continental value, then the slope to the abyss. */
-const SHELF_WIDTH = 40;
-const SLOPE_WIDTH = 180;
+const SHELF_WIDTH = (NOISE_ONE * 5) / 32;
+const SLOPE_WIDTH = (NOISE_ONE * 45) / 64;
 
 /** Coasts climb from the beach to the grass line over this much continental value. */
 const COAST_RISE_WIDTH = NOISE_ONE / 4;
@@ -94,8 +96,8 @@ const RANGE_ONSET_GAIN = 3;
 const VALLEY_MIN_AREA_CELLS = (NEIGHBOURHOOD_CELLS * NEIGHBOURHOOD_CELLS) / 2;
 const VALLEY_MIN_AREA_LOG2 = 31 - Math.clz32(VALLEY_MIN_AREA_CELLS);
 
-/** Valley walls and every other slope genesis draws: at most one band per cell. */
-const MAX_SLOPE_PER_CELL = SUB_BAND;
+/** No slope steeper than the narrowest terrace the edge encoding draws exactly: BAND_HEIGHT / EDGE_UNITS_PER_CELL cells. */
+const MAX_SLOPE_PER_CELL = (SUB_BAND * EDGE_UNITS_PER_CELL) / BAND_HEIGHT;
 const VALLEY_WALL_PER_CELL = SUB_BAND / RAMP_CELLS_PER_BAND;
 /** Chamfer step lengths in 1/SIDE_FIXED: a side step is one, a diagonal sqrt(2). */
 const SIDE_FIXED = 256;
@@ -197,7 +199,8 @@ function noise(o: Octave, x: number, y: number): number {
   const top = d00 * FADE_ONE + (d10 - d00) * u;
   const bottom = d01 * FADE_ONE + (d11 - d01) * u;
   const blended = Math.floor((top * FADE_ONE + (bottom - top) * v) / FADE_ONE);
-  return Math.floor((blended * SQRT2_FIXED) / (s * FADE_ONE * NOISE_ONE));
+  const scaled = Math.floor((blended * NOISE_ONE) / (s * FADE_ONE));
+  return Math.floor((scaled * SQRT2_FIXED) / (GRADIENT_ONE * GRADIENT_ONE));
 }
 
 /** Octaves summed at halving weights. */
@@ -258,7 +261,7 @@ function raiseStarterLand(
   size: number,
   coast: number,
   starter: GenesisStarterLand,
-): void {
+): GenesisStarterRise | null {
   const { minCell: lo, maxCell: hi } = starter;
   let landCells = 0;
   let site = lo * size + lo;
@@ -271,7 +274,7 @@ function raiseStarterLand(
       if (c < lowest) lowest = c;
     }
   }
-  if (landCells >= starter.cells) return;
+  if (landCells >= starter.cells) return null;
 
   const siteX = (site % size) + warpX[site]!;
   const siteY = Math.floor(site / size) + warpY[site]!;
@@ -302,15 +305,16 @@ function raiseStarterLand(
       continent[i] = continent[i]! + starterRise(fade, high, x + warpX[i]! - siteX, y + warpY[i]! - siteY);
     }
   }
+  return { cell: site, amplitude: high };
 }
 
-/** Sea floor below the coast: shelf, slope, abyss. `depth` > 0. */
+/** Sea floor below the coast: shelf, slope, abyss, falling from the coast level so the shore has no step. */
 function seaFloor(depth: number): number {
-  if (depth < SHELF_WIDTH) return -Math.floor((depth * FRESH_SHELF_BANDS_BELOW_SEA * SUB_BAND) / SHELF_WIDTH);
-  const slope = Math.floor(
-    ((depth - SHELF_WIDTH) * (GENESIS_ABYSS_BANDS_BELOW_SEA - FRESH_SHELF_BANDS_BELOW_SEA) * SUB_BAND) / SLOPE_WIDTH,
-  );
-  return -FRESH_SHELF_BANDS_BELOW_SEA * SUB_BAND - slope;
+  const coastLevel = COAST_BANDS * SUB_BAND;
+  const shelfEdge = -FRESH_SHELF_BANDS_BELOW_SEA * SUB_BAND;
+  if (depth < SHELF_WIDTH) return coastLevel - Math.floor((depth * (coastLevel - shelfEdge)) / SHELF_WIDTH);
+  const abyss = -GENESIS_ABYSS_BANDS_BELOW_SEA * SUB_BAND;
+  return shelfEdge - Math.floor(((depth - SHELF_WIDTH) * (shelfEdge - abyss)) / SLOPE_WIDTH);
 }
 
 const NEIGHBOURS_BACK: readonly (readonly [number, number, number])[] = [
@@ -412,8 +416,24 @@ function carveValleys(e: Int32Array, size: number): void {
   }
 }
 
-/** Whole-band height offsets from sea level, one per cell, row-major. */
-export function drawGenesisField(size: number, shape: GenesisFieldShape): Int16Array {
+export interface GenesisStarterRise {
+  /** The cell the rise centres on: the starter square's highest continental value. */
+  readonly cell: number;
+  readonly amplitude: number;
+}
+
+export interface GenesisField {
+  /** Whole-band height offsets from sea level, one per cell, row-major. */
+  readonly bands: Int16Array;
+  /** Each cell's position within its band, in 1/GENESIS_FIELD_SUB_BAND. */
+  readonly fraction: Uint8Array;
+  /** Null where the continents already covered the starter square. */
+  readonly starterRise: GenesisStarterRise | null;
+}
+
+export const GENESIS_FIELD_SUB_BAND = SUB_BAND;
+
+export function drawGenesisField(size: number, shape: GenesisFieldShape): GenesisField {
   const { seed, relief } = shape;
   let salt = 0;
   const next = (spacing: number): Octave => octave(spacing, seed, ++salt);
@@ -445,7 +465,7 @@ export function drawGenesisField(size: number, shape: GenesisFieldShape): Int16A
     }
   }
   const coast = coastThreshold(continent, shape.landPercent);
-  raiseStarterLand(continent, warpX, warpY, size, coast, shape.starter);
+  const starterRise = raiseStarterLand(continent, warpX, warpY, size, coast, shape.starter);
 
   const e = new Int32Array(count);
   const coastFade = fadeTable(COAST_RISE_WIDTH);
@@ -463,7 +483,7 @@ export function drawGenesisField(size: number, shape: GenesisFieldShape): Int16A
             (fractal(hills, wx, wy) * SEABED_HILL_BANDS * offshore * relief) /
               (NOISE_ONE * SUB_BAND),
           );
-        e[i] = clamp(seabed, -GENESIS_ABYSS_BANDS_BELOW_SEA * SUB_BAND, 0);
+        e[i] = clamp(seabed, -GENESIS_ABYSS_BANDS_BELOW_SEA * SUB_BAND, COAST_BANDS * SUB_BAND - 1);
         continue;
       }
       const inland = clamp(Math.floor((c * SUB_BAND) / COAST_RISE_WIDTH), 0, SUB_BAND);
@@ -492,6 +512,11 @@ export function drawGenesisField(size: number, shape: GenesisFieldShape): Int16A
   chamfer(e, size, MAX_SLOPE_PER_CELL, false);
 
   const bands = new Int16Array(count);
-  for (let i = 0; i < count; i++) bands[i] = Math.floor(e[i]! / SUB_BAND);
-  return bands;
+  const fraction = new Uint8Array(count);
+  for (let i = 0; i < count; i++) {
+    const whole = Math.floor(e[i]! / SUB_BAND);
+    bands[i] = whole;
+    fraction[i] = e[i]! - whole * SUB_BAND;
+  }
+  return { bands, fraction, starterRise };
 }

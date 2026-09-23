@@ -13,7 +13,6 @@ import {
   RiverNetworkIndex,
   createChunkMask,
   createHeightmap,
-  encodeSmoothedEdges,
   heightAt,
   isChunkUnlocked,
   MAX_HEIGHT,
@@ -44,6 +43,7 @@ import {
   FRESH_SEABED_HEIGHT,
   buildFreshGenesisTerrain,
   carveFallbackAbyss,
+  encodeGenesisEdges,
   drawGenesisSeed,
   freshGenesisHeightAt,
 } from './genesis.ts';
@@ -167,8 +167,7 @@ export class World {
           `(deepest cell was ${deepestHeight}) — deep-water guarantee violated`,
       );
     }
-    // Genesis heights are whole bands: encode each cell's edge distance so outlines draw smooth.
-    encodeSmoothedEdges(map, 0, 0, size - 1, size - 1);
+    encodeGenesisEdges(map, terrain);
 
     const world = new World(
       map,

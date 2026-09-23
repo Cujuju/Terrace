@@ -237,12 +237,10 @@ describe('the island pass', () => {
     }
   }, WORLD_GENERATION_TIMEOUT_MS);
 
-  it('raises islands only where the noise fell short, and leaves the rest alone', () => {
-    const planned = SEEDS.map(
-      (seed) => buildFreshGenesisTerrain(WORLD_SIZE, seed).islands.length,
-    );
-    expect(planned.some((count) => count > 0)).toBe(true);
-    expect(planned.some((count) => count === 0)).toBe(true);
+  it('raises the starter land only where the continents fell short, and leaves the rest alone', () => {
+    const rises = SEEDS.map((seed) => buildFreshGenesisTerrain(WORLD_SIZE, seed).noise.starterRise);
+    expect(rises.some((rise) => rise !== null && rise.amplitude > 0)).toBe(true);
+    expect(rises.some((rise) => rise === null)).toBe(true);
   }, WORLD_GENERATION_TIMEOUT_MS);
 
   it('raises islands big enough for its own survey to count them', () => {
@@ -252,12 +250,13 @@ describe('the island pass', () => {
   it('lifts the terrain rather than stamping a shape on it', () => {
     const areas = new Set<number>();
     for (const seed of ISLAND_PASS_SEEDS) {
-      const terrain = buildFreshGenesisTerrain(WORLD_SIZE, seed);
-      if (terrain.islands.length === 0) continue;
+      const rise = buildFreshGenesisTerrain(WORLD_SIZE, seed).noise.starterRise;
+      if (rise === null) continue;
       const heights = World.createFresh(WORLD_SIZE, undefined, undefined, seed).map.cells;
-      for (const island of terrain.islands) {
-        areas.add(landmassAreaAt(heights, WORLD_SIZE, island.anchorX, island.anchorY));
-      }
+      const x = rise.cell % WORLD_SIZE;
+      const area = landmassAreaAt(heights, WORLD_SIZE, x, (rise.cell - x) / WORLD_SIZE);
+      expect(area).toBeGreaterThan(0);
+      areas.add(area);
     }
     expect(areas.size).toBeGreaterThan(2);
   }, WORLD_GENERATION_TIMEOUT_MS);

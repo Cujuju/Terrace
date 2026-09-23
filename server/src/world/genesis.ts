@@ -10,16 +10,20 @@ import {
   WORLD_UNIT_CELLS,
   cellsOverArea,
   createSeededRng,
+  drawnBandOfSample,
+  encodeLevelEdges,
   type Heightmap,
 } from '@terrace/shared';
 import {
   FRESH_SEABED_BANDS_BELOW_SEA,
   FRESH_SEABED_HEIGHT,
   GENESIS_ABYSS_BANDS_BELOW_SEA,
+  GENESIS_FIELD_SUB_BAND,
   GENESIS_PEAK_BANDS,
   drawGenesisField,
   heightAtBandsBelowSea,
   type GenesisStarterLand,
+  type GenesisStarterRise,
 } from './genesis-field.ts';
 import { initialUnlockFootprint } from './initial-unlock.ts';
 
@@ -71,6 +75,9 @@ export interface GenesisNoiseField {
   readonly size: number;
   /** Whole-band offsets from sea level, before the land lift. */
   readonly bands: Int16Array;
+  /** Each cell's position within its band, in 1/GENESIS_FIELD_SUB_BAND. */
+  readonly fraction: Uint8Array;
+  readonly starterRise: GenesisStarterRise | null;
 }
 
 function buildGenesisNoiseField(
@@ -90,7 +97,7 @@ function buildGenesisNoiseField(
   return {
     landLiftBands: 0,
     size,
-    bands: drawGenesisField(size, { landPercent, relief, seed, starter }),
+    ...drawGenesisField(size, { landPercent, relief, seed, starter }),
   };
 }
 
@@ -857,6 +864,19 @@ function starterIslandLandCells(terrain: FreshGenesisTerrain, heights: Int16Arra
     if (mass.cells >= GENESIS_MIN_ISLAND_CELLS) cells += mass.cells;
   }
   return cells;
+}
+
+/**
+ * Encodes every cell's edge distance from the continuous field genesis drew, so band
+ * outlines follow its contours. Passes move whole bands; each cell keeps its fraction.
+ */
+export function encodeGenesisEdges(map: Heightmap, terrain: FreshGenesisTerrain): void {
+  const { fraction } = terrain.noise;
+  const level = new Int32Array(map.cells.length);
+  for (let i = 0; i < level.length; i++) {
+    level[i] = drawnBandOfSample(map.cells[i]!) * GENESIS_FIELD_SUB_BAND + fraction[i]!;
+  }
+  encodeLevelEdges(map, level, GENESIS_FIELD_SUB_BAND);
 }
 
 export function carveFallbackAbyss(map: Heightmap, size: number): number {
