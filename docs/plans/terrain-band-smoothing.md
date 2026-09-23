@@ -38,13 +38,16 @@ history, including the rejected protected behavior and its measured overhead.
   a smoothed pit as in raw mode. Record: `docs/decisions/band-smoothing.md`.
 - Open: a height blur widens a 10-band cliff from 0.9 to 2.6 cells (shared-math
   check). Candidate: per-band field, heights clamped to ±1 band around each
-  threshold, same kernel. Offline prototype built; owner visual review pending
-  (`docs/decisions/band-smoothing.md`). Production port would touch
+  threshold, same kernel. Offline prototype built (`docs/decisions/band-smoothing.md`).
+  Owner review 2026-09-22: none of the viewer variants look good; band clamp
+  only does nothing useful; local feature protection stays rejected. Production port would touch
   `shared/src/drawnFieldFilter.ts`, `shared/src/drawnGround.ts`,
   `client/src/terrain/drawnSurface.ts`, `client/src/terrain/capEmission.ts`,
   `client/src/render/gpuMesher/terrainGpuInputs.ts`, `mesherWgsl.ts`.
-- Open: a layered column in the one-cell halo puts the whole chunk on the
-  layered path (`capEmission.ts`, GPU `ENTRY_LAYERED`).
+- Done (`fb55202a`): a layered column in the one-cell halo no longer puts the
+  whole chunk on the layered path. Undersides need a layered column in the
+  chunk's own lattice (`ENTRY_LAYERED`); band fields are per sample
+  (`ENTRY_BAND_FIELDS`). Geometry unchanged; parity passes both modes.
 - Open: CPU filter cost — nine closure reads per sample, per-sample receipt
   checks, a global cache cleared on every edit.
 - Done: `client/test/terrainMeshes.test.ts` now asserts the chart survives a
