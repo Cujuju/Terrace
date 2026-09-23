@@ -1,0 +1,37 @@
+[
+  {
+    "name": "Preserved original Terrace procedural base, coplanar merge and bevel improvements",
+    "first_face": 0,
+    "face_count": 274
+  },
+  {
+    "name": "Covered gable edge",
+    "first_face": 274,
+    "face_count": 6
+  },
+  {
+    "name": "Covered gable edge",
+    "first_face": 280,
+    "face_count": 6
+  },
+  {
+    "name": "Covered gable edge",
+    "first_face": 286,
+    "face_count": 6
+  },
+  {
+    "name": "Covered gable edge",
+    "first_face": 292,
+    "face_count": 6
+  },
+  {
+    "name": "Closed gable",
+    "first_face": 298,
+    "face_count": 5
+  },
+  {
+    "name": "Closed gable",
+    "first_face": 303,
+    "face_count": 5
+  }
+]

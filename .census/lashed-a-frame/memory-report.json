@@ -1,0 +1,94 @@
+{
+  "assumptions": {
+    "png_gpu_format": "RGBA8 with complete mip chain",
+    "compressed_gpu_format": "BC7 or ASTC 4x4, 16 bytes per 4x4 block, complete mip chain",
+    "excluded": "CPU decoded images, loader buffers, driver allocation overhead, shaders, framebuffer and instance buffers",
+    "sharing": "Terrace draws repeated structures with InstancedMesh; mesh and textures are shared, not duplicated per house."
+  },
+  "variants": {
+    "original": {
+      "triangles": 1036,
+      "exported_vertices": 2010,
+      "geometry_gpu_bytes": 102696,
+      "textures": [
+        {
+          "name": "lashed-a-frame-normal",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 1427275
+        },
+        {
+          "name": "lashed-a-frame-basecolor",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 2215041
+        },
+        {
+          "name": "lashed-a-frame-metallicRoughness",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 828819
+        }
+      ],
+      "png_gpu_total_bytes": 67211556,
+      "ktx2_bc7_astc_gpu_total_bytes": 16879992,
+      "png_glb_file_bytes": 3587640,
+      "ktx2_glb_file_bytes": 4575936,
+      "png_glb_sha256": "825062891832991a28f63b7826e98011693610a5c7172c819953f457fe779d03",
+      "ktx2_glb_sha256": "31bc91aa06e8c789233447cb6bdffcde1469a40a47443552e4b3262da22a0671",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    },
+    "low": {
+      "triangles": 580,
+      "exported_vertices": 1204,
+      "geometry_gpu_bytes": 61272,
+      "textures": [
+        {
+          "name": "lashed-a-frame-normal",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 405669
+        },
+        {
+          "name": "lashed-a-frame-basecolor",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 706062
+        },
+        {
+          "name": "lashed-a-frame-metallicRoughness",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 237433
+        }
+      ],
+      "png_gpu_total_bytes": 16838484,
+      "ktx2_bc7_astc_gpu_total_bytes": 4255656,
+      "png_glb_file_bytes": 1056844,
+      "ktx2_glb_file_bytes": 1412532,
+      "png_glb_sha256": "3a766cb01723c642aa442b32c2498b229d99b7b845f20d691d35cdaac6a57cad",
+      "ktx2_glb_sha256": "aec977478145ce728ab107a0bb652da24f884b8280945997f994d15ef0932f06",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    }
+  }
+}

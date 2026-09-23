@@ -1,0 +1,260 @@
+{
+  "original": [
+    {
+      "level": 0,
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "metalness_range": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "level": 1,
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "metalness_range": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "level": 2,
+      "dimensions": [
+        512,
+        512
+      ],
+      "metalness_range": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "level": 3,
+      "dimensions": [
+        256,
+        256
+      ],
+      "metalness_range": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "level": 4,
+      "dimensions": [
+        128,
+        128
+      ],
+      "metalness_range": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "level": 5,
+      "dimensions": [
+        64,
+        64
+      ],
+      "metalness_range": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "level": 6,
+      "dimensions": [
+        32,
+        32
+      ],
+      "metalness_range": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "level": 7,
+      "dimensions": [
+        16,
+        16
+      ],
+      "metalness_range": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "level": 8,
+      "dimensions": [
+        8,
+        8
+      ],
+      "metalness_range": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "level": 9,
+      "dimensions": [
+        4,
+        4
+      ],
+      "metalness_range": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "level": 10,
+      "dimensions": [
+        2,
+        2
+      ],
+      "metalness_range": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "level": 11,
+      "dimensions": [
+        1,
+        1
+      ],
+      "metalness_range": [
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "low": [
+    {
+      "level": 0,
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "metalness_range": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "level": 1,
+      "dimensions": [
+        512,
+        512
+      ],
+      "metalness_range": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "level": 2,
+      "dimensions": [
+        256,
+        256
+      ],
+      "metalness_range": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "level": 3,
+      "dimensions": [
+        128,
+        128
+      ],
+      "metalness_range": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "level": 4,
+      "dimensions": [
+        64,
+        64
+      ],
+      "metalness_range": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "level": 5,
+      "dimensions": [
+        32,
+        32
+      ],
+      "metalness_range": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "level": 6,
+      "dimensions": [
+        16,
+        16
+      ],
+      "metalness_range": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "level": 7,
+      "dimensions": [
+        8,
+        8
+      ],
+      "metalness_range": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "level": 8,
+      "dimensions": [
+        4,
+        4
+      ],
+      "metalness_range": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "level": 9,
+      "dimensions": [
+        2,
+        2
+      ],
+      "metalness_range": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "level": 10,
+      "dimensions": [
+        1,
+        1
+      ],
+      "metalness_range": [
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "passed": true
+}

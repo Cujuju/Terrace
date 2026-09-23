@@ -1,0 +1,94 @@
+{
+  "assumptions": {
+    "png_gpu_format": "RGBA8 with complete mip chain",
+    "compressed_gpu_format": "BC7 or ASTC 4x4, 16 bytes per 4x4 block, complete mip chain",
+    "excluded": "CPU decoded images, loader buffers, driver allocation overhead, shaders, framebuffer and instance buffers",
+    "sharing": "Terrace draws repeated structures with InstancedMesh; mesh and textures are shared, not duplicated per house."
+  },
+  "variants": {
+    "original": {
+      "triangles": 1772,
+      "exported_vertices": 3601,
+      "geometry_gpu_bytes": 183480,
+      "textures": [
+        {
+          "name": "smoke-pit-hut-normal",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 1235751
+        },
+        {
+          "name": "smoke-pit-hut-basecolor",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 2096453
+        },
+        {
+          "name": "smoke-pit-hut-metallicRoughness",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 551671
+        }
+      ],
+      "png_gpu_total_bytes": 67292340,
+      "ktx2_bc7_astc_gpu_total_bytes": 16960776,
+      "png_glb_file_bytes": 2832304,
+      "ktx2_glb_file_bytes": 4069484,
+      "png_glb_sha256": "816b5636f4e2d945e82fe09bef90a9903a9123b81a65803a7ca1ccfe0324ffe9",
+      "ktx2_glb_sha256": "2a6f01b6a0987dd096d97f5dfe7715a89051745c852882bbd1a43458a9bba936",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    },
+    "low": {
+      "triangles": 1116,
+      "exported_vertices": 2398,
+      "geometry_gpu_bytes": 121800,
+      "textures": [
+        {
+          "name": "smoke-pit-hut-normal",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 323487
+        },
+        {
+          "name": "smoke-pit-hut-basecolor",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 701214
+        },
+        {
+          "name": "smoke-pit-hut-metallicRoughness",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 142853
+        }
+      ],
+      "png_gpu_total_bytes": 16899012,
+      "ktx2_bc7_astc_gpu_total_bytes": 4316184,
+      "png_glb_file_bytes": 867252,
+      "ktx2_glb_file_bytes": 1291472,
+      "png_glb_sha256": "0f60b7aa1436766168c31317b2cc1c85e5f9c93ed3ca9707045ab3a0f610545b",
+      "ktx2_glb_sha256": "425ace5c827ddacf091caa1e332b82d3cc20ab635b3010dea966634e996790ef",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    }
+  }
+}

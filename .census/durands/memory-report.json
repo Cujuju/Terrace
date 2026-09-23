@@ -1,0 +1,94 @@
+{
+  "assumptions": {
+    "png_gpu_format": "RGBA8 with complete mip chain",
+    "compressed_gpu_format": "BC7 or ASTC 4x4, 16 bytes per 4x4 block, complete mip chain",
+    "excluded": "CPU decoded images, loader buffers, driver allocation overhead, shaders, framebuffer and instance buffers",
+    "sharing": "Terrace draws repeated structures with InstancedMesh; mesh and textures are shared, not duplicated per house."
+  },
+  "variants": {
+    "original": {
+      "triangles": 7016,
+      "exported_vertices": 15358,
+      "geometry_gpu_bytes": 779280,
+      "textures": [
+        {
+          "name": "durands-normal",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 1375557
+        },
+        {
+          "name": "durands-basecolor",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 2407063
+        },
+        {
+          "name": "durands-metallicRoughness",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 817149
+        }
+      ],
+      "png_gpu_total_bytes": 67888140,
+      "ktx2_bc7_astc_gpu_total_bytes": 17556576,
+      "png_glb_file_bytes": 4077508,
+      "ktx2_glb_file_bytes": 5381148,
+      "png_glb_sha256": "174acb7e3b2809d80b9cbe32a6e82a694f6f7fb458b2a9f759cf5fb057f975f7",
+      "ktx2_glb_sha256": "dee1f8295564b7bc2444e99a1f168448c96bd69ebdae43a1b3f05feff064db94",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    },
+    "low": {
+      "triangles": 4266,
+      "exported_vertices": 11615,
+      "geometry_gpu_bytes": 583116,
+      "textures": [
+        {
+          "name": "durands-normal",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 367161
+        },
+        {
+          "name": "durands-basecolor",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 831279
+        },
+        {
+          "name": "durands-metallicRoughness",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 114921
+        }
+      ],
+      "png_gpu_total_bytes": 17360328,
+      "ktx2_bc7_astc_gpu_total_bytes": 4777500,
+      "png_glb_file_bytes": 1482588,
+      "ktx2_glb_file_bytes": 1898588,
+      "png_glb_sha256": "802683900c418e8f8dba2efa1afa94d3357ba440b3950803adbfe6cdd22fe12d",
+      "ktx2_glb_sha256": "e3dd533e2ae71c3840842c9c1282ceee5a83f2f256674d54bf61e2d63a79ce23",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    }
+  }
+}

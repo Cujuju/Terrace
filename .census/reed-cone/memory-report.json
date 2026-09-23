@@ -1,0 +1,94 @@
+{
+  "assumptions": {
+    "png_gpu_format": "RGBA8 with complete mip chain",
+    "compressed_gpu_format": "BC7 or ASTC 4x4, 16 bytes per 4x4 block, complete mip chain",
+    "excluded": "CPU decoded images, loader buffers, driver allocation overhead, shaders, framebuffer and instance buffers",
+    "sharing": "Terrace draws repeated structures with InstancedMesh; mesh and textures are shared, not duplicated per house."
+  },
+  "variants": {
+    "original": {
+      "triangles": 1368,
+      "exported_vertices": 2789,
+      "geometry_gpu_bytes": 142080,
+      "textures": [
+        {
+          "name": "reed-cone-normal",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 1151401
+        },
+        {
+          "name": "reed-cone-basecolor",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 2016357
+        },
+        {
+          "name": "reed-cone-metallicRoughness",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 479464
+        }
+      ],
+      "png_gpu_total_bytes": 67250940,
+      "ktx2_bc7_astc_gpu_total_bytes": 16919376,
+      "png_glb_file_bytes": 2595200,
+      "ktx2_glb_file_bytes": 3791396,
+      "png_glb_sha256": "ae00a193ab700c943018b7918dd5ee0e2a40e98cfb5bce9c1f9139bee01636c1",
+      "ktx2_glb_sha256": "c9c062b18d6ba31e917759cbe7bbb13ff74dc21e9cb7500d196ddc16507ff08b",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    },
+    "low": {
+      "triangles": 728,
+      "exported_vertices": 1518,
+      "geometry_gpu_bytes": 77232,
+      "textures": [
+        {
+          "name": "reed-cone-normal",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 261620
+        },
+        {
+          "name": "reed-cone-basecolor",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 667538
+        },
+        {
+          "name": "reed-cone-metallicRoughness",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 114807
+        }
+      ],
+      "png_gpu_total_bytes": 16854444,
+      "ktx2_bc7_astc_gpu_total_bytes": 4271616,
+      "png_glb_file_bytes": 693552,
+      "ktx2_glb_file_bytes": 1123280,
+      "png_glb_sha256": "ff6594170c89f51efad1311ddd066322f6e46999748a5a4cb90e62e12c5cbdb5",
+      "ktx2_glb_sha256": "0304bfaba0909a91ba482f1ae459dbc586b133e850a2a17fed122c468134d1d1",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    }
+  }
+}

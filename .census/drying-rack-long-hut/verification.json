@@ -1,0 +1,103 @@
+{
+  "glb_sha256": "f0908a63e28e991781cbe7e8a7f7389013fa8fce352f32d07814f5751edbcd3f",
+  "mesh_count": 1,
+  "primitive_count": 1,
+  "material_count": 1,
+  "triangles": 952,
+  "exported_vertices": 2010,
+  "nodes": [
+    {
+      "mesh": 0,
+      "name": "drying-rack-long-hut"
+    },
+    {
+      "children": [
+        0
+      ],
+      "name": "RootNode"
+    }
+  ],
+  "dimensions_gltf_y_up": [
+    0.6285061836242676,
+    0.4775000214576721,
+    0.6914748847484589
+  ],
+  "uv_islands": 518,
+  "uv_min_max": [
+    0.0029296875,
+    0.9963100552558899
+  ],
+  "uv_overlap_pairs": [],
+  "uv_candidate_pairs_checked": 402,
+  "minimum_island_bounds_gap_pixels": 12.0003662109375,
+  "texel_density_min_max": [
+    890.5820342169282,
+    890.6215924132298
+  ],
+  "zero_area_triangles": 0,
+  "normal_length_error_max": 9.093381470037798e-08,
+  "tangent_normal_dot_max": 9.561431265403542e-05,
+  "compression_extensions": [],
+  "textures": {
+    "drying-rack-long-hut-normal": {
+      "format": "image/png",
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "matches_external_bytes": true
+    },
+    "drying-rack-long-hut-basecolor": {
+      "format": "image/png",
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "matches_external_bytes": true
+    },
+    "drying-rack-long-hut-metallicRoughness": {
+      "format": "image/png",
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "matches_external_bytes": true
+    }
+  },
+  "roughness_range": [
+    0.7803922295570374,
+    0.9803922176361084
+  ],
+  "metalness_range": [
+    0.0,
+    0.0
+  ],
+  "normal_map_length_error_max": 0.0052918195724487305,
+  "blend": {
+    "mesh_count": 1,
+    "material_count": 1,
+    "vertices": 554,
+    "triangles": 952,
+    "uv_layers": [
+      "UVMap"
+    ],
+    "images_packed": true,
+    "objects": [
+      "drying-rack-long-hut",
+      "RootNode"
+    ]
+  },
+  "bounds_gltf_y_up": {
+    "min": [
+      -0.3142530918121338,
+      0.0,
+      -0.24500000476837158
+    ],
+    "max": [
+      0.3142530918121338,
+      0.4775000214576721,
+      0.4464748799800873
+    ]
+  },
+  "passed": true
+}

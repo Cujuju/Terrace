@@ -1,0 +1,3453 @@
+{
+  "building_packages": 22,
+  "variants": 44,
+  "hash_scope": "Raw bytes in the delivered Windows workspace. Git may normalize text line endings on checkout; binary asset hashes remain unchanged.",
+  "file_count": 861,
+  "total_bytes": 745447832,
+  "files": {
+    "E:/Development/Projects/Terrace/.census/building-kit/asset_helpers.py": {
+      "bytes": 3594,
+      "sha256": "7384b86557059af01ad644fe43457272f634bcecc06738180e85bbd03363fd31"
+    },
+    "E:/Development/Projects/Terrace/.census/building-kit/audit_asset.py": {
+      "bytes": 6304,
+      "sha256": "b04b1bd29fb8173cd848ac77f1a3ef1025c288a968f4c837623990d7969a2d85"
+    },
+    "E:/Development/Projects/Terrace/.census/building-kit/audit_compression.py": {
+      "bytes": 1824,
+      "sha256": "6501dfcf1e13a8aa3a706b1c35b0b3b029e9076d79aaf31e91ba31910448f5c9"
+    },
+    "E:/Development/Projects/Terrace/.census/building-kit/audit_mips.py": {
+      "bytes": 1460,
+      "sha256": "f53ffb7dfcb3e56030a69deb9cfc2497f948dc0d64365eec166c2d015d48016d"
+    },
+    "E:/Development/Projects/Terrace/.census/building-kit/build_asset.py": {
+      "bytes": 17704,
+      "sha256": "e5c9bc3e02e0b43624545eea0f5f7b68d0df9372f72e7eba701d3952b7fc1b0a"
+    },
+    "E:/Development/Projects/Terrace/.census/building-kit/coastal-overview.png": {
+      "bytes": 4322160,
+      "sha256": "a40bd9f41309cf9cbb1bb376b41106417959514773060d4ca987b4f482ce9bf5"
+    },
+    "E:/Development/Projects/Terrace/.census/building-kit/contact_sheets.ps1": {
+      "bytes": 1772,
+      "sha256": "f9142ea583fa94b9f29de88e9353163f6fdbccc52717b3ad7124998a4c1846d6"
+    },
+    "E:/Development/Projects/Terrace/.census/building-kit/core-buildings.png": {
+      "bytes": 2999287,
+      "sha256": "f0fcd2e7f6225185dab918a4e73d5c3b675542f2ae1b81632790877340bd37d8"
+    },
+    "E:/Development/Projects/Terrace/.census/building-kit/delivery-summary.json": {
+      "bytes": 78641,
+      "sha256": "9a3ecea48ab5ce3c83d5fbc568b1a9e82efdccb87168f6c6f59f0db4912d9f42"
+    },
+    "E:/Development/Projects/Terrace/.census/building-kit/designs.py": {
+      "bytes": 24476,
+      "sha256": "26a7f5f899a2551d25391043ac00abcfcb87afb077ed4b025078c5dcdf73342b"
+    },
+    "E:/Development/Projects/Terrace/.census/building-kit/historical-additions.png": {
+      "bytes": 2370507,
+      "sha256": "497393039cffd8baef58537a8ac587db0561e12a0a23ff7a61dac2b97ee0a2ca"
+    },
+    "E:/Development/Projects/Terrace/.census/building-kit/imported-cottage-bounds.json": {
+      "bytes": 127,
+      "sha256": "5a3a29ca402b3bec67fd935decc37c860176784088180349e4456e6148ea1420"
+    },
+    "E:/Development/Projects/Terrace/.census/building-kit/inventory.mjs": {
+      "bytes": 3161,
+      "sha256": "c735454a2fa6e51c3259f5086dbeda251d7d3e22e7e2912e1e2e784396944b90"
+    },
+    "E:/Development/Projects/Terrace/.census/building-kit/overview.ps1": {
+      "bytes": 1287,
+      "sha256": "4cf3f0722ed2a89272089ff6da9fcd7de8ded435a42691f24afbb288ed0648ef"
+    },
+    "E:/Development/Projects/Terrace/.census/building-kit/package_runtime.py": {
+      "bytes": 5362,
+      "sha256": "5de5065f377ab85fec969b4f39a0f3db745108a16d8ae844b27b204f31d27459"
+    },
+    "E:/Development/Projects/Terrace/.census/building-kit/prepare_pipeline.py": {
+      "bytes": 7327,
+      "sha256": "ec3a953d605ecce4e141090eb184cd8ded0a2c9e228f79b9651f70b586108486"
+    },
+    "E:/Development/Projects/Terrace/.census/building-kit/ratings.json": {
+      "bytes": 4288,
+      "sha256": "4e2584eb5ec2bcb5ba4f89aa15c8df107476b09be4b4991f89c4e68a258ce94c"
+    },
+    "E:/Development/Projects/Terrace/.census/building-kit/README.md": {
+      "bytes": 19122,
+      "sha256": "c1cc41ab698cf7fea21cd0d305a2a11ad4ce79a4a3bb7534d6210309c7d3e1c9"
+    },
+    "E:/Development/Projects/Terrace/.census/building-kit/render_asset.py": {
+      "bytes": 2638,
+      "sha256": "b1b59cf63dcd1e296833e722e041535d8cb08abbf5aae3f8c5f4edc46a11884a"
+    },
+    "E:/Development/Projects/Terrace/.census/building-kit/run_delivery.py": {
+      "bytes": 1891,
+      "sha256": "6072e5bde3e188b5c654c3f087ae6f2faf723285aa1a78d83725921856b2cfa9"
+    },
+    "E:/Development/Projects/Terrace/.census/building-kit/source-inventory.json": {
+      "bytes": 3135628,
+      "sha256": "b0a33aab9074b922ab9605b8a25b1ae52be3ad1ba245fa737a0f46996d7aacf2"
+    },
+    "E:/Development/Projects/Terrace/.census/building-kit/verify_delivery.py": {
+      "bytes": 4906,
+      "sha256": "4429aee4d9bc091b060512baceff5b651eac75139c08fdacec8bdda7b37278dd"
+    },
+    "E:/Development/Projects/Terrace/.census/building-kit/write_catalog.py": {
+      "bytes": 10932,
+      "sha256": "8a2ba12cc008c0cd9e1a4d910ce92df97f263ef1fe07b796b7af45340e5ca3a9"
+    },
+    "E:/Development/Projects/Terrace/.census/building-kit/write_manifest.py": {
+      "bytes": 2567,
+      "sha256": "70a8d379cf5d40fb7a13dc535c0ef0aa63346fa9423709d9c8d0df3d88fe0c79"
+    },
+    "E:/Development/Projects/Terrace/.census/building-kit/write_reports.py": {
+      "bytes": 6853,
+      "sha256": "b91979c4306e8d36c7e2c96adf9d0cc16abf53d0ef6f225a6e0be0f0274e81a7"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/alignment-verification.json": {
+      "bytes": 62,
+      "sha256": "33d840d6f83755b45c50f293d5b6e32e4ea0ccaf0bc47ed7ca2de5be4f66596c"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/build-report.json": {
+      "bytes": 2669,
+      "sha256": "f3852292462f7a48d2d22a4bc0a3f5065fcf0eed1de8c396b1558da9bd30d256"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/camp-45deg.png": {
+      "bytes": 1008995,
+      "sha256": "56ed3423a73a2a706fd0e2f16a08375b47f21007eae0eb0d45b4a8480f500b53"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/camp-basecolor.ktx2": {
+      "bytes": 2011095,
+      "sha256": "670fbb0e4200ef2b1dc789722ed0a347dd557bf7c8ab2bd74b353645b05959db"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/camp-basecolor.png": {
+      "bytes": 1067288,
+      "sha256": "e322524888f14e7afb7b2b9ebf2b9136e684ccf1ae144a9407379d08b427d8f4"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/camp-closeup.png": {
+      "bytes": 1032033,
+      "sha256": "a31d1ae8f633b1f74f9496f813e985e8872684d46b3918ea90ee008a611a212f"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/camp-concept.png": {
+      "bytes": 1772153,
+      "sha256": "72b3229acbc897acd47dae30e2d0db952df04fea2ac963c857db02f46b46c35e"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/camp-ktx2.glb": {
+      "bytes": 4410524,
+      "sha256": "eb43d3da1b9a282551c223772f07011d08cc3341687d27dbf51f2254f9b6001b"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/camp-metallicRoughness.ktx2": {
+      "bytes": 759435,
+      "sha256": "f4891e47529cbd3bd45508ce2168c19c1be0a50eb4fd7a57c838fe9274be0c4f"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/camp-metallicRoughness.png": {
+      "bytes": 424785,
+      "sha256": "3d0aa525490a4fb2da20b58ec953ed9f452c8bd401380fcef0e3e64d84de4127"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/camp-normal.ktx2": {
+      "bytes": 1559513,
+      "sha256": "e683c5e3fed1dd534bd10c5f4bbb8dd12d48755661bbc49acca525f4e29fde2b"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/camp-normal.png": {
+      "bytes": 1781397,
+      "sha256": "5d5762733ec7ccb382d449bd360ea69f4b6b4fb8685eb00d979066eb521a50a5"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/camp.blend": {
+      "bytes": 3350683,
+      "sha256": "18adff61f5b7b041d665a13bbdca6b248a0ba773d3d48eea6a25858ecc92f9b7"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/camp.glb": {
+      "bytes": 3353736,
+      "sha256": "21804982c9d0befb5001337f7047ee4de51f890d81afee1c0c5eea4d29c5e0bd"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/comparison.png": {
+      "bytes": 2476978,
+      "sha256": "f1201b70558e6bbeb2b698a5190a4855197ee8f3eee33c8437825666f3d7f03c"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/compression-verification.json": {
+      "bytes": 1137,
+      "sha256": "9fe9e30cc8b73404cc13ab7f27872a410402df38073faa53db77c4a066af5c4a"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/concept-prompt.txt": {
+      "bytes": 877,
+      "sha256": "bdb0548411d8dabff9247b6df6b86aed54bad300a2dbd05b43603caa825139d0"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/delivery-verification.json": {
+      "bytes": 3248,
+      "sha256": "c0146053a307cdd6699659bccc8454d80cc836a63bfe5c073db53fb90150215f"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/low/build-report.json": {
+      "bytes": 2774,
+      "sha256": "6b2a085ba273b6c5f4b51b1c3bd9ca2a12b3623e7c7f96eab494bcc817eb08bd"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/low/camp-45deg.png": {
+      "bytes": 996296,
+      "sha256": "2baf55eace382c8023673521baa45616b23be8505b19104b90e1b14c21f65dda"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/low/camp-basecolor.ktx2": {
+      "bytes": 647108,
+      "sha256": "c40c1dc2830dba6c71ef40966b8c76f5a176167f013d305a300157cedcdafc88"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/low/camp-basecolor.png": {
+      "bytes": 399451,
+      "sha256": "b91c38e3df8b504c8ee88ca9d9d539faf0c85704cb058c5019e94128954605e5"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/low/camp-closeup.png": {
+      "bytes": 1011628,
+      "sha256": "75097b299815ef4770765413869ce11edf938078b2d9c9fc556621ffdba6c5e0"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/low/camp-ktx2.glb": {
+      "bytes": 1400108,
+      "sha256": "075091a42f578af634c1a28b81d9edac4e052af3bb31c5c115209c8706aa82dd"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/low/camp-metallicRoughness.ktx2": {
+      "bytes": 239682,
+      "sha256": "d27eb3febbb09daaea04d40dafe876385a5e50b2ba57a55e7eaa7c3b8bad8c94"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/low/camp-metallicRoughness.png": {
+      "bytes": 144345,
+      "sha256": "093f2c7eef4d05cb794c5039b518740b35d6861edd2bded6272edb2f0c002d87"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/low/camp-normal.ktx2": {
+      "bytes": 473175,
+      "sha256": "4b39c7974341e6e7f97ced44af4ee23c1baa47b67f103875b3a0961e04944cce"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/low/camp-normal.png": {
+      "bytes": 519084,
+      "sha256": "06bf1cd6146fa6f62f0385839a1555487268de62534e3d45bb2f059c20f32fa8"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/low/camp.blend": {
+      "bytes": 1156028,
+      "sha256": "030644d76460dc18aeffac534f3cfebf8fbdba5da3395e599510c6196c72b6ca"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/low/camp.glb": {
+      "bytes": 1102812,
+      "sha256": "6c427662cd085147f2c25cf8c2102d91a40e8b24ad1a47b89410f8a91be2b98a"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/low/parts.json": {
+      "bytes": 619,
+      "sha256": "e56874a8410410977e473a3d58a6b37f7556c5df7399f1be5020dca24f4b9af3"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/low/verification.json": {
+      "bytes": 2117,
+      "sha256": "4d2a7b1126e388c2ddf8dce540d12ad6c955d92d704f7b95ac004a306b45d45b"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/memory-report.json": {
+      "bytes": 3196,
+      "sha256": "0257e9456ffbb350a4c81ad65dcfb497676a20611217a3024a172f59b691fe81"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/mip-channel-verification.json": {
+      "bytes": 3660,
+      "sha256": "47446d1511326e49669aa01d1616956017eff40f75709acd52d2723a1ad8042f"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/parts.json": {
+      "bytes": 623,
+      "sha256": "07a70d275ee067290581f15166523fddd24a3e3a1b75cd9d2f30cf3dad2550ae"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/README.txt": {
+      "bytes": 6028,
+      "sha256": "72c89bdc1d62f66926c17ad338065c968127734d13489daae0e536bcd86f1f08"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/rebuild.py": {
+      "bytes": 168,
+      "sha256": "af184a882c34941a7c14f1d3e773a985ac91c7d2a1a892fe08dcf259eb58076d"
+    },
+    "E:/Development/Projects/Terrace/.census/camp/verification.json": {
+      "bytes": 2120,
+      "sha256": "367da773f75cf1d0bab481948f7c1c15c1aa045655c4ace0d36043cd772c50be"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/alignment-verification.json": {
+      "bytes": 62,
+      "sha256": "33d840d6f83755b45c50f293d5b6e32e4ea0ccaf0bc47ed7ca2de5be4f66596c"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/build-report.json": {
+      "bytes": 2677,
+      "sha256": "57d4592b0070317127503c9becc7c136ed2cdb35fe78711b1c058ee32e5d6030"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/comparison.png": {
+      "bytes": 2560537,
+      "sha256": "e0ba8a51169c10810ed1ee6dfa193b318698b808a3be677c8d28fc84bc2d6cce"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/compression-verification.json": {
+      "bytes": 1145,
+      "sha256": "ba513e3c5a4d9e59504d3647b46d16a326ea86fc7e7fdbe8646ed4d057b08e33"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/concept-prompt.txt": {
+      "bytes": 657,
+      "sha256": "1f4e6c6754503ca73e0bba65893dadebe6d27bc7889b70af58408db2db10241f"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/delivery-verification.json": {
+      "bytes": 3343,
+      "sha256": "c77ff0c7f5d509f87d8eda6d1c9bc0e688b6323e0a3ffec4ad22f0c2d49a6e36"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/drying-rack-long-hut-45deg.png": {
+      "bytes": 1013177,
+      "sha256": "403ebdab6972ab026952768e67b4a3fe4dbae00b87e7b78cfe17c0db3bc53509"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/drying-rack-long-hut-basecolor.ktx2": {
+      "bytes": 1855560,
+      "sha256": "3b9c6d8dbc1a36e723c6bbd9bf52477f39c847a9efc3e1a896011a598fb7781a"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/drying-rack-long-hut-basecolor.png": {
+      "bytes": 1128555,
+      "sha256": "9420c0a71afebcc0a5bc353201076da3dc03027790d366e7887872008ddc1a91"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/drying-rack-long-hut-closeup.png": {
+      "bytes": 1068572,
+      "sha256": "dc207f2d6b82c60886820cb237a756bef22213b1ff65092a992257d65686abe5"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/drying-rack-long-hut-concept.png": {
+      "bytes": 2378250,
+      "sha256": "79c696e06998a1e93b0f27e8e55025507281d416e9f15ff2181c5778546ab221"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/drying-rack-long-hut-ktx2.glb": {
+      "bytes": 3658236,
+      "sha256": "0cfced70fbe8dbc23a8f48d9bb4cc05da9f35ce3bb75e9a979fe3a4e3087ae81"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/drying-rack-long-hut-metallicRoughness.ktx2": {
+      "bytes": 638044,
+      "sha256": "1642e37f70d7771bc1e2fa5b0bdc7b7d263b73bd845838a6556fe82eb362022f"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/drying-rack-long-hut-metallicRoughness.png": {
+      "bytes": 373870,
+      "sha256": "9ed59aae4e6216a09d579163af6fdf874c110f253d145e0086a81d23b95c82b6"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/drying-rack-long-hut-normal.ktx2": {
+      "bytes": 1060282,
+      "sha256": "ec063e5b63f4c8fed0b7c73f3acdf4cfb584c3e7acdb681586b0b85dfceb920f"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/drying-rack-long-hut-normal.png": {
+      "bytes": 1189580,
+      "sha256": "6584906b6096d4d7a55ac2291dc3431da5880265212a521e2cd4bd39f08407cb"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/drying-rack-long-hut.blend": {
+      "bytes": 2749464,
+      "sha256": "c9f56713d1e3c66fecdf8e1b45dd1e6a0189be35abc0abfb74ba6d3ac5e2a64e"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/drying-rack-long-hut.glb": {
+      "bytes": 2796152,
+      "sha256": "f0908a63e28e991781cbe7e8a7f7389013fa8fce352f32d07814f5751edbcd3f"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/low/build-report.json": {
+      "bytes": 2783,
+      "sha256": "f63312bc8950948b1a3b6494ebaded56f8bffa1499c28012a5395952e6f80413"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/low/drying-rack-long-hut-45deg.png": {
+      "bytes": 1000626,
+      "sha256": "e38ce2178ae3d3af01ad950891f417e62762f40c8001f2d91a4f9176b27ca460"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/low/drying-rack-long-hut-basecolor.ktx2": {
+      "bytes": 625591,
+      "sha256": "0077314c5db446e537941c22a97bf8d1fd01e9753217333657d7688078bf35e5"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/low/drying-rack-long-hut-basecolor.png": {
+      "bytes": 380449,
+      "sha256": "edf9802394a11cc1d4db4a4feb9128b1a84c2b56616dcdbda24d6bc99d12b8f2"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/low/drying-rack-long-hut-closeup.png": {
+      "bytes": 1045586,
+      "sha256": "5662f6c6fe0795ed63035093d9811a47e05334cd3e4f0dbb654638cf5c885048"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/low/drying-rack-long-hut-ktx2.glb": {
+      "bytes": 1156944,
+      "sha256": "9b0b912d48031b12203d8813956d394245255dc401b0db84c727e5c80b5c6bed"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/low/drying-rack-long-hut-metallicRoughness.ktx2": {
+      "bytes": 160572,
+      "sha256": "a988ee1c9262bbe930b3393b44fe11c8ece89f5cc32fab7311cd7ce8899ce8ab"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/low/drying-rack-long-hut-metallicRoughness.png": {
+      "bytes": 89617,
+      "sha256": "2118fded5eb8d09c4f049f0937bdef9f97f8c37d9523dce8ba34d8872d56d025"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/low/drying-rack-long-hut-normal.ktx2": {
+      "bytes": 291345,
+      "sha256": "f6965aaa89ba0415d83597c80e4bf8fd713ef01ac163e23503a8530c6afd1f91"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/low/drying-rack-long-hut-normal.png": {
+      "bytes": 235293,
+      "sha256": "018c889c4329e63bb0d8af5de52c12b2d8bd41ad12f9bceca62a835102d28085"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/low/drying-rack-long-hut.blend": {
+      "bytes": 805690,
+      "sha256": "a9dd62f7de1444a9c72f77f363c9164a103221f65b591cfc85f4f9a2b4b4180c"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/low/drying-rack-long-hut.glb": {
+      "bytes": 784592,
+      "sha256": "0a7bfd29e8efa10b8541838fc4e25f9e13d834c6589636c1c33e98e7f170e722"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/low/parts.json": {
+      "bytes": 505,
+      "sha256": "1d380c2490c49388114235e25ee13e970b567925d3c5a6c62059674aef4ed8da"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/low/verification.json": {
+      "bytes": 2199,
+      "sha256": "a00f24aeaa888dfba3e111c9cfb5dad4ded99f91501a90c07f0e398b8f2f2bcd"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/memory-report.json": {
+      "bytes": 3293,
+      "sha256": "91006abde598a0b63a044bd1e458fee38134fa9e1f264234f1db3a6a5642dd7f"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/mip-channel-verification.json": {
+      "bytes": 3660,
+      "sha256": "47446d1511326e49669aa01d1616956017eff40f75709acd52d2723a1ad8042f"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/parts.json": {
+      "bytes": 505,
+      "sha256": "4d6fbc6639b11cf04fe74ba8e7388c5088c9fc52c3490cc65a7f91032711c7d7"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/README.txt": {
+      "bytes": 6211,
+      "sha256": "02740bed8ef1c4acfce72ac5c2580d11e3acca0129c19d74170b4c28612f1796"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/rebuild.py": {
+      "bytes": 184,
+      "sha256": "e6fa6b2a18fd0f7c96521124fb13be629f0ac9f56d1a0786729aa49c55039341"
+    },
+    "E:/Development/Projects/Terrace/.census/drying-rack-long-hut/verification.json": {
+      "bytes": 2200,
+      "sha256": "a19153c7005bf7de85127649df0e27251ba95d9f4d017fa9c4e9d0c780de79ff"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/alignment-verification.json": {
+      "bytes": 62,
+      "sha256": "33d840d6f83755b45c50f293d5b6e32e4ea0ccaf0bc47ed7ca2de5be4f66596c"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/build-report.json": {
+      "bytes": 2675,
+      "sha256": "2420b509f597ef52d8bc420d1e334f12a86361ebede67e7392790f24af9d9274"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/comparison.png": {
+      "bytes": 2338891,
+      "sha256": "4a5461de8b5675a0c440a41963b2a377247c2003798fb4a06d916606d68f1da7"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/compression-verification.json": {
+      "bytes": 1148,
+      "sha256": "8cdedd8a7caab57c579d7034fe52c0a29d8e5e2b115d7d6eaf68c809a4a755b0"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/concept-prompt.txt": {
+      "bytes": 884,
+      "sha256": "b77b99d52ef6f93d3fe9c313adfc3d7157cd22446dff85b5b5117b5a78db9d1e"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/delivery-verification.json": {
+      "bytes": 3266,
+      "sha256": "296192d22773c847f4094f9a9db0d0953a35cd2575c2bd6d5501b2cb33026633"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/durands-45deg.png": {
+      "bytes": 1004937,
+      "sha256": "a9d2d9cc8432a20bae9139f2b39b87bd81bedb76b157fb4c13124c66b4db4db6"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/durands-basecolor.ktx2": {
+      "bytes": 2407063,
+      "sha256": "633d73effcdd2e6251f3998e51db466ebe80a13b2df857a34675da177f3719bd"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/durands-basecolor.png": {
+      "bytes": 1483449,
+      "sha256": "5df28d90b960a1ae3fea91152d820451d3a62bc17dbac72eebf2e0370ad0fb05"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/durands-closeup.png": {
+      "bytes": 1040277,
+      "sha256": "0f65e964b66f6de9286cfa451d7bc65bdfcdb1914582039355805fa9fab1cd8c"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/durands-concept.png": {
+      "bytes": 1991482,
+      "sha256": "ae8f2e2bf5ff063793a4d903e5aab655eb357c2f94325577181392e335c992fb"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/durands-ktx2.glb": {
+      "bytes": 5381148,
+      "sha256": "dee1f8295564b7bc2444e99a1f168448c96bd69ebdae43a1b3f05feff064db94"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/durands-metallicRoughness.ktx2": {
+      "bytes": 817149,
+      "sha256": "fd6f5d2fa7c72c6271f9aad54d527452777ecd885c2cda3846a1bc5abad0e725"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/durands-metallicRoughness.png": {
+      "bytes": 464178,
+      "sha256": "845e2fad44b71d248cdaf7d8224f41ea19395cbe84b573e264202787be3db8ff"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/durands-normal.ktx2": {
+      "bytes": 1375557,
+      "sha256": "55f2496ada32909cdda3dc34ac4704347d383d2e518587fcae9ddb8cbc7ae9f5"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/durands-normal.png": {
+      "bytes": 1348707,
+      "sha256": "9767ade7c656b619de3a453167fd223a9223c37bc0fb42cc59b41414fb24fb74"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/durands.blend": {
+      "bytes": 3562688,
+      "sha256": "17b4d152dbe6f2cdf9d273a04045c2921a8b848c5e65270ecc8a0be929237b8e"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/durands.glb": {
+      "bytes": 4077508,
+      "sha256": "174acb7e3b2809d80b9cbe32a6e82a694f6f7fb458b2a9f759cf5fb057f975f7"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/low/build-report.json": {
+      "bytes": 2782,
+      "sha256": "2f2f55bff7fb1c94ca0e1f060e2bae015b82610a61ec25ee13abb1f154874b4b"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/low/durands-45deg.png": {
+      "bytes": 980993,
+      "sha256": "02530204faed38b960239c596c126ef85b372b205aa55e8b2b12f530dcc4b15a"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/low/durands-basecolor.ktx2": {
+      "bytes": 831279,
+      "sha256": "781e9aad1cdd0844a1ec28da1728e0bfa0b82f5557dfe010b1a052591fedd44d"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/low/durands-basecolor.png": {
+      "bytes": 630165,
+      "sha256": "cb874e3c566569de45878ca6b0d4dff3443edfd4b63ab06265dfab36b1be61e4"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/low/durands-closeup.png": {
+      "bytes": 1012839,
+      "sha256": "3e835630b177887ff602e094f5469a261eabe2659ad98b4e694f198482cd3f8c"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/low/durands-ktx2.glb": {
+      "bytes": 1898588,
+      "sha256": "e3dd533e2ae71c3840842c9c1282ceee5a83f2f256674d54bf61e2d63a79ce23"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/low/durands-metallicRoughness.ktx2": {
+      "bytes": 114921,
+      "sha256": "86007aace64731b6dcbec58ba470d113b48b53b38ff0285c4d477844f091e7b8"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/low/durands-metallicRoughness.png": {
+      "bytes": 52923,
+      "sha256": "451389cf41b99dd475845fb902a814ca318693c93c99eb6ccc305a963671eed1"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/low/durands-normal.ktx2": {
+      "bytes": 367161,
+      "sha256": "e0ebd3e689136e8e5c2160cab278addc2d815da4ea53bd6155ca08065bd6ba64"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/low/durands-normal.png": {
+      "bytes": 214496,
+      "sha256": "85695a8dca2d237cfae135bf4f3a945ce8f4525b4a4abf5a3dfd8d8cdfeda43e"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/low/durands.blend": {
+      "bytes": 1143102,
+      "sha256": "687fd28dc050f8628677256d6c361ce452a7ddc55fdda9712b004fc56097ee2d"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/low/durands.glb": {
+      "bytes": 1482588,
+      "sha256": "802683900c418e8f8dba2efa1afa94d3357ba440b3950803adbfe6cdd22fe12d"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/low/parts.json": {
+      "bytes": 260,
+      "sha256": "eca8511dc54637b20712b3983f88a4bcc5e70484f630f6366a8a44faf15c4aef"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/low/verification.json": {
+      "bytes": 2144,
+      "sha256": "a4f96a4895e207ce9869c5df8c497817c0b085bfefb8b7c1ea8845a1565e481b"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/memory-report.json": {
+      "bytes": 3221,
+      "sha256": "eed96c09a77d9e3b3ab55aa57e32879a254ab2bca517b0ba9029a9b98ca8779a"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/mip-channel-verification.json": {
+      "bytes": 3660,
+      "sha256": "47446d1511326e49669aa01d1616956017eff40f75709acd52d2723a1ad8042f"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/parts.json": {
+      "bytes": 260,
+      "sha256": "9a6e5bc05248f48e85c16a663fcd056088d4296f626030db231ebb785b43bacd"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/README.txt": {
+      "bytes": 6092,
+      "sha256": "13a0ee6f22fd583f621e971e584f1f3387a4bab3191383ce21528d0de177d7a0"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/rebuild.py": {
+      "bytes": 171,
+      "sha256": "5cd574446a4fa2da6478a628c44b94a4aa5c6e5f8dd9536c87a407cc08a10897"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/verification.json": {
+      "bytes": 2142,
+      "sha256": "f1159ddc41ed751cabb033a045a144e6a527884fb6cad535ad6a25b48e217518"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/alignment-verification.json": {
+      "bytes": 62,
+      "sha256": "33d840d6f83755b45c50f293d5b6e32e4ea0ccaf0bc47ed7ca2de5be4f66596c"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/build-report.json": {
+      "bytes": 2673,
+      "sha256": "be9e2843b439808bc5390f84266345d6c00a9a2c2e9297c03d124806b9747db7"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/comparison.png": {
+      "bytes": 2483133,
+      "sha256": "da7c286b89074dab601ea1afffc2b61ff6c772db94c44a974d43462a6b20749f"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/compression-verification.json": {
+      "bytes": 1139,
+      "sha256": "7a80953d1f6d53dff15cd9f28b808d92b173f6fd64a797610c47c33988169952"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/concept-prompt.txt": {
+      "bytes": 785,
+      "sha256": "30ca8b858eea2f8bb5b87ce625e119793df591210964a0af9259b36d53a96a50"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/delivery-verification.json": {
+      "bytes": 3242,
+      "sha256": "1d627a25b39cfa3cd95ea6e669803cd7ea638d5873332df18d582bae9a2a0f1d"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/hut-45deg.png": {
+      "bytes": 1016732,
+      "sha256": "7d7f244564cb51a0b94a9ddab49a8cd122e42fa309ac0999cf64bbedf7d9fa3f"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/hut-basecolor.ktx2": {
+      "bytes": 1887319,
+      "sha256": "8bf4fce083cbb1c5c10da8c2070a06df203b602e93dabfc85bf035dc2f970fb3"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/hut-basecolor.png": {
+      "bytes": 1014756,
+      "sha256": "561b57aa6377e0d5ad8e15a966766b001eb7d5df522ff8837ec23fa0905c3f15"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/hut-closeup.png": {
+      "bytes": 1006650,
+      "sha256": "6c684e175412527bcba81dbd0bbe4859474d4d1dad29927b372466ba4eea7bf1"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/hut-concept.png": {
+      "bytes": 2128335,
+      "sha256": "8ea369f6e0786f9572fcb07b3d75a3fb6130be36232343ed68ac94b2831a01e2"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/hut-ktx2.glb": {
+      "bytes": 3406224,
+      "sha256": "29139ad61557f4b367ddb0c91c508b2a3f7f8593f0f3befa1c23b32871c8e74b"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/hut-metallicRoughness.ktx2": {
+      "bytes": 414560,
+      "sha256": "b5a2194970c21d03c3e8e325a016063e7311ba4883d74b7a3e6482b30e639538"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/hut-metallicRoughness.png": {
+      "bytes": 189759,
+      "sha256": "654852e75b707f88121b52264bb54755403fbefcbbcb039b457e89e17dbf8daf"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/hut-normal.ktx2": {
+      "bytes": 979666,
+      "sha256": "36956321bdf696dc1b7eef334906f667e6bed9e67fa26c7608b5def38648096d"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/hut-normal.png": {
+      "bytes": 688357,
+      "sha256": "d4d7f9c29319b496fbc0c5105a11414e14b08a1df207192cf8eeca0ae6b53208"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/hut.blend": {
+      "bytes": 1952452,
+      "sha256": "e0df6e0792e8d4de5d4b3abb3e0be2ba03ffc3efd40fac0e1361d6d3025b9cc5"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/hut.glb": {
+      "bytes": 2017344,
+      "sha256": "c8d6e84c2c99799c6b5668fe5ae1102cf5bf882902c96186a56253ebacfb7fe6"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/low/build-report.json": {
+      "bytes": 2779,
+      "sha256": "dbb4a45419dc14ed1ac60435a6ccf6eb9ee04f98d8497bec8598a4a76db38de5"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/low/hut-45deg.png": {
+      "bytes": 1005106,
+      "sha256": "de97551d18b63db76fc599be33efe3557519c6e18858bfb441a36988d45b6eac"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/low/hut-basecolor.ktx2": {
+      "bytes": 648542,
+      "sha256": "d26b8264a9582a062b69f0b088743b1e8955410e416b8f865f28426d2abe44f7"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/low/hut-basecolor.png": {
+      "bytes": 398073,
+      "sha256": "f0c59e571890703669e0b6dd6188aa7807cf8fbf419ac5509833dd64b43adc61"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/low/hut-closeup.png": {
+      "bytes": 988998,
+      "sha256": "cab045f58228e9c27cedf6d251f4eca827a9da1cc507b16c786e3d6eab6132fc"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/low/hut-ktx2.glb": {
+      "bytes": 1070648,
+      "sha256": "4860e62c4945d92d621610e1d4f534b2629794839fe99ad9df3735fd641b3cc7"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/low/hut-metallicRoughness.ktx2": {
+      "bytes": 90375,
+      "sha256": "e2209eb3d4f32a2d47b9aa420df7d05f1df887cebe988fea5467b0e403d4aaf9"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/low/hut-metallicRoughness.png": {
+      "bytes": 41776,
+      "sha256": "70819096043470778ed4be6355bd60e2d2686cc7fb2175daa4298c245bfe316b"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/low/hut-normal.ktx2": {
+      "bytes": 274353,
+      "sha256": "b42f4ddf533018c328a75e524a085115803093ac265aed80c27e2a40cdf2eed2"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/low/hut-normal.png": {
+      "bytes": 164351,
+      "sha256": "742600de7381b9a387617753bbcdbf6a7b3bbab328337304f76fcbb6f5ae7239"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/low/hut.blend": {
+      "bytes": 696161,
+      "sha256": "668289fa6fc97757be5c4761d3fd885024f3134679ca75929a18f35454563360"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/low/hut.glb": {
+      "bytes": 661368,
+      "sha256": "6bf6891b00728c2bebcf6c86b5b9ee64b5b929ba796e4f80e7ad00c5b723b8d0"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/low/parts.json": {
+      "bytes": 157,
+      "sha256": "35717dffa14ef65fd600a42973706dfd2133465203543c54c0e741272b8894c1"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/low/verification.json": {
+      "bytes": 2118,
+      "sha256": "aa0b1b2d9bbf23b8bdc6f9a8bfe90d38a415dadf924cc849ad5f0b709558c889"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/memory-report.json": {
+      "bytes": 3190,
+      "sha256": "29b27147a15334517b1748927cfb38741a1547928b518ea22d01ef99c5560619"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/mip-channel-verification.json": {
+      "bytes": 3660,
+      "sha256": "47446d1511326e49669aa01d1616956017eff40f75709acd52d2723a1ad8042f"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/parts.json": {
+      "bytes": 157,
+      "sha256": "df379c347c4c5259113988b03f323c2d6c025d86831279a522b89ca91e24bccd"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/README.txt": {
+      "bytes": 5996,
+      "sha256": "58a01e8c109b2cff854770fd00c356eb1a7d484cad0ef12439c2c3fb7be35ff5"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/rebuild.py": {
+      "bytes": 167,
+      "sha256": "676cb436d95e96c893023cb95f07f99b38c7027bfd125543011180b372ef780b"
+    },
+    "E:/Development/Projects/Terrace/.census/hut/verification.json": {
+      "bytes": 2121,
+      "sha256": "6b428aa9b87c2f01a4b5f4e4d9ed4037ac83b89161bbc29bd2c8b022daac79d2"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/alignment-verification.json": {
+      "bytes": 62,
+      "sha256": "33d840d6f83755b45c50f293d5b6e32e4ea0ccaf0bc47ed7ca2de5be4f66596c"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/build-report.json": {
+      "bytes": 2073,
+      "sha256": "f3753f77f6615ea1b6d0db6cf1e95426c2130f9b175e17a2229a7dec0b2d98fc"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/comparison.png": {
+      "bytes": 2741050,
+      "sha256": "a2a12a6d493ffd0471da75fae30791ab6cedcc3dda97a8f2f691b44432c74086"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/compression-verification.json": {
+      "bytes": 1141,
+      "sha256": "e27c988b45d8047de3806df161d03371602a03d0c1612fc75f45755ca73dfd3d"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/concept-prompt.txt": {
+      "bytes": 763,
+      "sha256": "0cd192b684d071872aeda3f6ba892b702e46c9341202107994fe34c6bbc67426"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/delivery-verification.json": {
+      "bytes": 3350,
+      "sha256": "864288d4fd896b9df1782990f2789566c5f131fe3c8363eae4914b20356a0027"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/industrial-pump-house-45deg.png": {
+      "bytes": 1136220,
+      "sha256": "b9e5ceea64f79616cda7e4533e802f1a238aa8bd6a364845b0bb92a0f33e222d"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/industrial-pump-house-basecolor.ktx2": {
+      "bytes": 2300166,
+      "sha256": "177ebe581c067453389624d67ca3bde8496be4cf47be05f66049a4ec1d259544"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/industrial-pump-house-basecolor.png": {
+      "bytes": 1322721,
+      "sha256": "1506ada618dc70d4b7b5306dd0c0a6239a6ff10e1c6429eae75b978da424cc3f"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/industrial-pump-house-closeup.png": {
+      "bytes": 1102329,
+      "sha256": "e43ab395d3739305aa1c12943df7349d74353e34d738d6cd8907ee6f4cbe28a3"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/industrial-pump-house-concept.png": {
+      "bytes": 2015759,
+      "sha256": "63cd99e3541cbcafc5fb82fddbaf5fffeb60ad703458f5b1a5437aff0af0cd37"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/industrial-pump-house-ktx2.glb": {
+      "bytes": 4593528,
+      "sha256": "424a754fa6f9ccf898196c0a09d48af410cba7de03f1a8f8c5f84a84fc95087e"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/industrial-pump-house-metallicRoughness.ktx2": {
+      "bytes": 549020,
+      "sha256": "e323ac24fb1e0e37b49f1de5d2204bda9bca3a1c70577d56fba07a0f7c2180b1"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/industrial-pump-house-metallicRoughness.png": {
+      "bytes": 266046,
+      "sha256": "fa01faffd38db7dd7e3ef4b9063280c712b86cdbfe536d37af9958611f27458e"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/industrial-pump-house-normal.ktx2": {
+      "bytes": 1620260,
+      "sha256": "f777ab3dbe428828a364fc99914a7f6148c293d42cb35b46e622c30e9da67593"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/industrial-pump-house-normal.png": {
+      "bytes": 1262858,
+      "sha256": "e561b8eeedc6f0ad25d59ee34e070d875fbf0caa3f5b6254d2a8a545cb7b0bdd"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/industrial-pump-house.blend": {
+      "bytes": 2879803,
+      "sha256": "166c552a2b7440fd092de220d33de2184f6da8d8b15dfbcf593e041d0ec441fc"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/industrial-pump-house.glb": {
+      "bytes": 2975500,
+      "sha256": "90fe65a5e6eb45a8956eef4f67958f4cb83eb959ed799759c2d2ef733c978472"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/low/build-report.json": {
+      "bytes": 2178,
+      "sha256": "e2f5c2d9a69b8980c0650f7f25831e666811b777539886f5a99fa3e3d1824f35"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/low/industrial-pump-house-45deg.png": {
+      "bytes": 1120501,
+      "sha256": "53b725a6b17050c44ecc71a5160960460ea33a81356347ba4d46e4f2a0c2a135"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/low/industrial-pump-house-basecolor.ktx2": {
+      "bytes": 792407,
+      "sha256": "b0bd02d2a31198c8daad1f2099873d0afd8bbb8639adacd845d5bab354e8299d"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/low/industrial-pump-house-basecolor.png": {
+      "bytes": 520193,
+      "sha256": "35d9ed0b1a8cf351ceafeaa40ae97b195865d67b74447270a5511bc9d44a09e8"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/low/industrial-pump-house-closeup.png": {
+      "bytes": 1079908,
+      "sha256": "c3415dcf02957348d65c2a98e012535586bdc5fcd1583ea8db88af4d2cbfec19"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/low/industrial-pump-house-ktx2.glb": {
+      "bytes": 1717484,
+      "sha256": "4287b522ee6857042b7e06b18d1e8e16c312d52461b85da2998bc2a78be7ec45"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/low/industrial-pump-house-metallicRoughness.ktx2": {
+      "bytes": 237479,
+      "sha256": "bfccc6c33608c9fa43a5bf98b582e94956f3d70cb40ec61521c4dcfbb8cf911c"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/low/industrial-pump-house-metallicRoughness.png": {
+      "bytes": 105311,
+      "sha256": "dca7d915b986f4833d2f2853b7c80dcf9b4e6f7e700448111d6eaab55a421d83"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/low/industrial-pump-house-normal.ktx2": {
+      "bytes": 592997,
+      "sha256": "7a419c53e33696134a2576c8a0c4add9c54a6e89db08ddde2697d92bb956d0ce"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/low/industrial-pump-house-normal.png": {
+      "bytes": 485158,
+      "sha256": "04c32187df778fcd0a63d1c1d57ef8f533e1802ffb6984faf11124dce00bbd5d"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/low/industrial-pump-house.blend": {
+      "bytes": 1201188,
+      "sha256": "9199d56a1d5a997755faed327afc1df16c710e529467b577da3c6fe64efa1740"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/low/industrial-pump-house.glb": {
+      "bytes": 1205060,
+      "sha256": "42bed4f8889122484a7cae429a3cd3f252f95c6bfebb6244b4b96c40dd84fbac"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/low/parts.json": {
+      "bytes": 4080,
+      "sha256": "0168e888a27ce55df4f87c06d380ab54e9d31ee70e06dd345a9697e926f1f261"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/low/verification.json": {
+      "bytes": 2207,
+      "sha256": "8dcf6c14f353d6f75a05fe0bb219310b3a08a4461bd78308c20bfe5007374951"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/memory-report.json": {
+      "bytes": 3301,
+      "sha256": "0eda27c1e3cb26d7c2dff35c26c39e26c59cfc2108b7386ed1f3f9855a70417b"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/mip-channel-verification.json": {
+      "bytes": 3660,
+      "sha256": "47446d1511326e49669aa01d1616956017eff40f75709acd52d2723a1ad8042f"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/parts.json": {
+      "bytes": 4086,
+      "sha256": "94bbe983c8b3b806f667fd6a14474f5793c553a7ca0e16febb98480aee8dd50f"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/README.txt": {
+      "bytes": 6007,
+      "sha256": "2ee0a8546909ed28493430f126dd90b9877184465d99188a65f7beafa1de322a"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/rebuild.py": {
+      "bytes": 185,
+      "sha256": "073880b9cf4995b9765e34ff9f2c6fab85fb6be9aa629bd54380cc2a9eae614a"
+    },
+    "E:/Development/Projects/Terrace/.census/industrial-pump-house/verification.json": {
+      "bytes": 2207,
+      "sha256": "1b1201f4a6e7aa2e62f9b7a8f3c1d4fd1925202700c76a0704ef77b1119ce623"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/alignment-verification.json": {
+      "bytes": 62,
+      "sha256": "33d840d6f83755b45c50f293d5b6e32e4ea0ccaf0bc47ed7ca2de5be4f66596c"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/build-report.json": {
+      "bytes": 2623,
+      "sha256": "188fada66917f167927e71491e528483fd4f3b1ac2b51ea6ff111b3d8be0dbb5"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/comparison.png": {
+      "bytes": 2664334,
+      "sha256": "39fc9d3aafc16c6c8506eba2e498fa15e8e1a84eb9a1b9838c71b09a6a3bbf9e"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/compression-verification.json": {
+      "bytes": 1141,
+      "sha256": "862d5a5539b1d845156481285601b7dd772423f67073be93603ce8e26f317a77"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/concept-prompt.txt": {
+      "bytes": 619,
+      "sha256": "522aa997467812771a79d8f53ce2eedf550505f2974ae6ab0f40f33b7e282a85"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/delivery-verification.json": {
+      "bytes": 3308,
+      "sha256": "7862bc14505178db3c0f5eb7f8be5f3864de7d5b7e20f4f4aa7b7d3ef7cf1977"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/lashed-a-frame-45deg.png": {
+      "bytes": 1047907,
+      "sha256": "cfd6272bfeb42361b639bccf785c388a022fc3d3301c2513f972d40cd3247eb4"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/lashed-a-frame-basecolor.ktx2": {
+      "bytes": 2215041,
+      "sha256": "da44e0d5cf0e10ec2d18f17d9b715ff680180eb8603f38169806944706552321"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/lashed-a-frame-basecolor.png": {
+      "bytes": 1352397,
+      "sha256": "b4e2ee02cacbb9a9e1773a738e6a343aeb20147d1a29e0f9fd7f0762df32c8e2"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/lashed-a-frame-closeup.png": {
+      "bytes": 1029374,
+      "sha256": "b611ef2388203734457c74ea39763521fceb1b70e3348b322f4d03853183fd76"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/lashed-a-frame-concept.png": {
+      "bytes": 2365278,
+      "sha256": "735d8652d12c8c2840196b2173cf76e3e4f07693ff60b175047b80aab761e63b"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/lashed-a-frame-ktx2.glb": {
+      "bytes": 4575936,
+      "sha256": "31bc91aa06e8c789233447cb6bdffcde1469a40a47443552e4b3262da22a0671"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/lashed-a-frame-metallicRoughness.ktx2": {
+      "bytes": 828819,
+      "sha256": "dfd3db63635ea5a0f29d0998144de5abdb0dcbda388d65c9d51636e3724741ea"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/lashed-a-frame-metallicRoughness.png": {
+      "bytes": 494231,
+      "sha256": "6a61564cf021c5cd6a6dac046ab4dd5d581945404c8927d62f74e79816279cf8"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/lashed-a-frame-normal.ktx2": {
+      "bytes": 1427275,
+      "sha256": "836137817d130c395fede8650cf1d26d9de6078be44e53daf21130eed32db8d8"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/lashed-a-frame-normal.png": {
+      "bytes": 1636419,
+      "sha256": "b2e0dcd4a378899d5760f77f6219975dff1b6285368a0219c57e194eefb73395"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/lashed-a-frame.blend": {
+      "bytes": 3566966,
+      "sha256": "de2f89140978a01e9eb443654ca4cabd9018ee30510fa811f131f7119325c012"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/lashed-a-frame.glb": {
+      "bytes": 3587640,
+      "sha256": "825062891832991a28f63b7826e98011693610a5c7172c819953f457fe779d03"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/low/build-report.json": {
+      "bytes": 2729,
+      "sha256": "f91f36fd48cf4f3a40643ca6d3a2035c0f4b9fa5c77d1d59a1b9f1b92aa0f392"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/low/lashed-a-frame-45deg.png": {
+      "bytes": 1024420,
+      "sha256": "83c23adaf7443ce8c7b16ef76f11da2138c9ee4efe7573d37021993c95ee7209"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/low/lashed-a-frame-basecolor.ktx2": {
+      "bytes": 706062,
+      "sha256": "8d3424ac72d740e98849d2f466af50ede28e07282b722f5bbe5299d4e4979310"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/low/lashed-a-frame-basecolor.png": {
+      "bytes": 470087,
+      "sha256": "66ace30aa5165919db85cbfee13fa85de5864ae8986b7e4f863d34eb09d2594a"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/low/lashed-a-frame-closeup.png": {
+      "bytes": 998623,
+      "sha256": "215903a5802344a05c60c5a3a70090d06b59c4ea61952411093f98cff45ff874"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/low/lashed-a-frame-ktx2.glb": {
+      "bytes": 1412532,
+      "sha256": "aec977478145ce728ab107a0bb652da24f884b8280945997f994d15ef0932f06"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/low/lashed-a-frame-metallicRoughness.ktx2": {
+      "bytes": 237433,
+      "sha256": "ae14596048e2d546dabcd4e413fbd17b722cac8381082cc225617df57c17a337"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/low/lashed-a-frame-metallicRoughness.png": {
+      "bytes": 140570,
+      "sha256": "81b1be6c3eca8f9452256ae1013ab6da90f737a3d015de84ee161e73f4bbb2e8"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/low/lashed-a-frame-normal.ktx2": {
+      "bytes": 405669,
+      "sha256": "660d4a8d2e5290d6cd14edc868202a2610184ef642768d3324b637f487abdeff"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/low/lashed-a-frame-normal.png": {
+      "bytes": 383025,
+      "sha256": "5a1707b9c6cc1c123ca26d9c37cf5121870f32fbd868104b3213f5a1a644b250"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/low/lashed-a-frame.blend": {
+      "bytes": 1088940,
+      "sha256": "81bb6b889285107a8a8e02651ca31886578b1f857d364dc20504791a2d6027e3"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/low/lashed-a-frame.glb": {
+      "bytes": 1056844,
+      "sha256": "3a766cb01723c642aa442b32c2498b229d99b7b845f20d691d35cdaac6a57cad"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/low/parts.json": {
+      "bytes": 691,
+      "sha256": "ed639ac16afc78fdd4032467d7b76ac94af6174a9519a9083e1c7d0716a196c5"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/low/verification.json": {
+      "bytes": 2133,
+      "sha256": "c41822804446cd7228ba263c48ee3746f1f19ee607a9e4486f60334e74aea280"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/memory-report.json": {
+      "bytes": 3259,
+      "sha256": "7551e76bbe5b19edb857b9bdd3dc86abcad286840efc66ff71e326cd13d52e85"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/mip-channel-verification.json": {
+      "bytes": 3660,
+      "sha256": "47446d1511326e49669aa01d1616956017eff40f75709acd52d2723a1ad8042f"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/parts.json": {
+      "bytes": 695,
+      "sha256": "9f0145e0782ec1f56fba2a88be023de3dfb977feeb59db568a00dc0bfa7eabb5"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/README.txt": {
+      "bytes": 6093,
+      "sha256": "272e7501eadf1e5aa770a66721a5b77d912190590e7e8fa89db73c90637772c0"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/rebuild.py": {
+      "bytes": 178,
+      "sha256": "3392e6a2a6a1d1cecef5ecb42ba61f27bfe08741f0b0c4ce0c97d0aa2b2b3eca"
+    },
+    "E:/Development/Projects/Terrace/.census/lashed-a-frame/verification.json": {
+      "bytes": 2131,
+      "sha256": "c7cd426a961c09ee1d117b3686b2a4d0f0e3abb56f2338fc7942af069aa3344c"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/alignment-verification.json": {
+      "bytes": 62,
+      "sha256": "33d840d6f83755b45c50f293d5b6e32e4ea0ccaf0bc47ed7ca2de5be4f66596c"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/build-report.json": {
+      "bytes": 2072,
+      "sha256": "f4e10228dd9529064d0af85165c8451d185a49880d1fdbedc4cb2f17be68ed1e"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/comparison.png": {
+      "bytes": 2543325,
+      "sha256": "7ebe04fd9c13cc51110226aa294b134ffdb9034ce7d364513f43f0e6882c7ace"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/compression-verification.json": {
+      "bytes": 1137,
+      "sha256": "384bc2d86720f7901ceb7a88c291a00962283e9848a897c66f979f8edef6396f"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/concept-prompt.txt": {
+      "bytes": 687,
+      "sha256": "16b5fb031b9e8fe6275e3dc3a51a377e0bf634ba773b871acccb776f1d5f8c90"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/delivery-verification.json": {
+      "bytes": 3326,
+      "sha256": "a4ab33420ced962108a8fe52126b507fee0cf30284efd3394d8ca28824cb347a"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/low/build-report.json": {
+      "bytes": 2179,
+      "sha256": "2229ddcc7ae1eeea254484d3bfeb52c3b3417b3d48fe0b32b29957abe6121eca"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/low/medieval-dovecote-45deg.png": {
+      "bytes": 1064129,
+      "sha256": "4ddeafd5088e2b95d748ffa46817109dd7a7e82a8e4b8fe81c9768467ba9f7f9"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/low/medieval-dovecote-basecolor.ktx2": {
+      "bytes": 792003,
+      "sha256": "5fc7765504566b30d160836a806f6314486f11098f4c5401c18e79f1feb6affd"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/low/medieval-dovecote-basecolor.png": {
+      "bytes": 667298,
+      "sha256": "09cfdb3cd971eabb74deff0f37a6e99793034319e28fffd543e547862f5e3cbc"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/low/medieval-dovecote-closeup.png": {
+      "bytes": 1070853,
+      "sha256": "d4adb954c9d6e5d03057f080ebcf1eff216b41b698a96bcecf07db657a4d2f4c"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/low/medieval-dovecote-ktx2.glb": {
+      "bytes": 1705120,
+      "sha256": "149e207e5f639685b1132ff9745111dc23404f3e9896124fbc73da9b24fc5321"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/low/medieval-dovecote-metallicRoughness.ktx2": {
+      "bytes": 171816,
+      "sha256": "d37f4c42ed9e6fd330f3316a8bdd7589a1d0d499d5eb195eaf25202afefe22dc"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/low/medieval-dovecote-metallicRoughness.png": {
+      "bytes": 85912,
+      "sha256": "f923f1e64d547596b4e5c040f6cc9b691bcbe1750e5aa10c09fe118fd3573221"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/low/medieval-dovecote-normal.ktx2": {
+      "bytes": 698534,
+      "sha256": "9c3638caad59bdb5c802f64da9ef778af14cb659921e080c4f82766ede5e97c9"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/low/medieval-dovecote-normal.png": {
+      "bytes": 813228,
+      "sha256": "510d4c8cb72bbb2c55ef0f0eb0f70ce72b1f1908f07e21d4d0d8b0e0c4f596a5"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/low/medieval-dovecote.blend": {
+      "bytes": 1657813,
+      "sha256": "633e0b878657fcb14941f92353d707d71a91a4edbd6dedb3b3c82b52a30bf3ff"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/low/medieval-dovecote.glb": {
+      "bytes": 1608996,
+      "sha256": "e590c8fa6261d310c1878332c867cdcf0ff69692071fd4bb8c56c9a6c3337763"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/low/parts.json": {
+      "bytes": 2054,
+      "sha256": "6b744ae3b479bf332976a121ea7b4f4db09ac4af883871b8d0f262b9891c65df"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/low/verification.json": {
+      "bytes": 2190,
+      "sha256": "41f5e31b497551ff7fbe3f2973007e7b7da5064ba6d22b3e792d30f0341dab14"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/medieval-dovecote-45deg.png": {
+      "bytes": 1070948,
+      "sha256": "c3398a280e539a5991a41d7671d9c55cc94acd41afaae4bf73f229fafd40353a"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/medieval-dovecote-basecolor.ktx2": {
+      "bytes": 2239336,
+      "sha256": "60f2a5c4dae97723e367b8289392bebd8a158e678f16f1b0b04925277a3cd8c3"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/medieval-dovecote-basecolor.png": {
+      "bytes": 1683826,
+      "sha256": "9af6e80a5599c0cf68a595b345d85292bc7faa8621542d8362a9d9af753967d2"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/medieval-dovecote-closeup.png": {
+      "bytes": 1089943,
+      "sha256": "453bcf4d05e84a064709d4129401ff12afe4d1f714b3133d00639fc219179146"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/medieval-dovecote-concept.png": {
+      "bytes": 1918876,
+      "sha256": "22bf3325fc11eb71cc319ba58a65e158670715653f0727221c4c2cc66459b1e8"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/medieval-dovecote-ktx2.glb": {
+      "bytes": 4601972,
+      "sha256": "48559fc567aed4585ed69413afe75d55581e3fe9b53734da36f411cdeecb1b5f"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/medieval-dovecote-metallicRoughness.ktx2": {
+      "bytes": 344471,
+      "sha256": "e3a0cc421e65229774aca33a4810e140aa3be17a75cc2055bccb78a7ddfe9a53"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/medieval-dovecote-metallicRoughness.png": {
+      "bytes": 232232,
+      "sha256": "58d928e10ac9b739d95d18052fe8caff1fce85f0c92cd6a4513219d9449718f0"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/medieval-dovecote-normal.ktx2": {
+      "bytes": 1971650,
+      "sha256": "acce4446f46dda5de4a3c3f8ea55a55bca12213c65d2e42831d838e5e51d8117"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/medieval-dovecote-normal.png": {
+      "bytes": 2158185,
+      "sha256": "3f8ea7ae9eb1a564ea5b4bd528737380d3fffe0b0d06dc8b17cad8d7ada0e862"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/medieval-dovecote.blend": {
+      "bytes": 4108229,
+      "sha256": "72367595e67ce9452e64d9b6af0332742d628ddd58188f976f972d2fa40f0539"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/medieval-dovecote.glb": {
+      "bytes": 4120556,
+      "sha256": "e238908fc2aede5f8a90d3fbdc3e877afcb8e96d39c766a20a2de615276b66e2"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/memory-report.json": {
+      "bytes": 3273,
+      "sha256": "6100994a77ee6b97a2b1c22bacef9b7c893567a016d745314ff6864fea8ab912"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/mip-channel-verification.json": {
+      "bytes": 3660,
+      "sha256": "47446d1511326e49669aa01d1616956017eff40f75709acd52d2723a1ad8042f"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/parts.json": {
+      "bytes": 2057,
+      "sha256": "1dc293e24b117c16aba14b18195ca64a3523cd7becaad6eb8cab3f4cb19bd530"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/README.txt": {
+      "bytes": 5941,
+      "sha256": "a95384ad1615f147708e02f3b11e7eaf70488cfd765466cc56b99e391f0cbad8"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/rebuild.py": {
+      "bytes": 181,
+      "sha256": "1067dbf7a5c3ca3d748799756c45431fbccd93a3211cb26d09cbd76e52a93f88"
+    },
+    "E:/Development/Projects/Terrace/.census/medieval-dovecote/verification.json": {
+      "bytes": 2188,
+      "sha256": "1c3544e7ee16596eacb006d72b8479a17bee0af1dbbb080d52d1051ffc0c64d6"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/alignment-verification.json": {
+      "bytes": 62,
+      "sha256": "33d840d6f83755b45c50f293d5b6e32e4ea0ccaf0bc47ed7ca2de5be4f66596c"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/build-report.json": {
+      "bytes": 2680,
+      "sha256": "fca5d636765df5a53d6921d7dedf3fdfafef57b77eab212c83cae0f2577f644e"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/comparison.png": {
+      "bytes": 2716009,
+      "sha256": "17e82a71437c9e4d8c544a089dfed9b9f1cf4b281f96c1a25a24fd5ff978c78f"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/compression-verification.json": {
+      "bytes": 1144,
+      "sha256": "f10fb2b62118983a724d81aae9132e3d589065f89fb2f0d46b2a27739d27a302"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/concept-prompt.txt": {
+      "bytes": 686,
+      "sha256": "6d8a3c9e05212856cd72467710339e83436cb9e253fdaf352536a594d14d5bb7"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/delivery-verification.json": {
+      "bytes": 3313,
+      "sha256": "76796f38e757fd6abd95a7cb1ea44e51dc4554937e64ea4b30e83f7c9521cbf2"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/low/build-report.json": {
+      "bytes": 2784,
+      "sha256": "08b545c5d0e1ae713c51eba429f9841be1e9cacd13cab8eb75cae9d3ae3c4619"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/low/net-draped-cone-45deg.png": {
+      "bytes": 1027546,
+      "sha256": "8f9aa127905dc0a35756ca5403f7a8c5a175bcb96cb6dc0ce4371309e93c61cc"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/low/net-draped-cone-basecolor.ktx2": {
+      "bytes": 670760,
+      "sha256": "9d70af137b28e57a95e72e9ed552deb35cf544b957b5a59ea2a6a496457e6261"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/low/net-draped-cone-basecolor.png": {
+      "bytes": 386016,
+      "sha256": "19cff3dad8728c814099fc2b564e3931764de83511ab6d904f008f4f568c9a45"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/low/net-draped-cone-closeup.png": {
+      "bytes": 1042349,
+      "sha256": "cfa47c0361e6d1f26c060e8059aa8cecf3bd5a31d88fe127b0296f4175175037"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/low/net-draped-cone-ktx2.glb": {
+      "bytes": 1210488,
+      "sha256": "3b07a1f44e0bd3b946420c1c7e8bc1bb9696f60d2c6f04b3d00afbcfaf5822ea"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/low/net-draped-cone-metallicRoughness.ktx2": {
+      "bytes": 110804,
+      "sha256": "080180d5027c1a170532092b0ced1ab708c9ca72dd19e87f5f3d262f3411e421"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/low/net-draped-cone-metallicRoughness.png": {
+      "bytes": 42858,
+      "sha256": "be894e3132fb3f0f810a64da8e843806d8434db3639c0e6e2d19b25a6b36ac0d"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/low/net-draped-cone-normal.ktx2": {
+      "bytes": 251310,
+      "sha256": "a99fd5a296c70281d59f186e6babe8120e17057f3ff31e70cffc943af752e27e"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/low/net-draped-cone-normal.png": {
+      "bytes": 143947,
+      "sha256": "66c436c1c2e7b8f632bcfdc279d831b8801b2c1178473b7198a90483ee37e2b5"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/low/net-draped-cone.blend": {
+      "bytes": 693903,
+      "sha256": "d4ad164f5c058284a120ed3f7f8595121395b3f31cd8d53fbbee5fd42bc49803"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/low/net-draped-cone.glb": {
+      "bytes": 750232,
+      "sha256": "f50457c0669731a25c3bb90fbfc37cc079dbfaf9faacc03a24d99050b3aca1e3"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/low/parts.json": {
+      "bytes": 157,
+      "sha256": "39be8114050c3a78af35f159bf10b6a728d1faa309c9f01a68540498f731145d"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/low/verification.json": {
+      "bytes": 2183,
+      "sha256": "05c4c52cac8af10e97a925e61bd21a5e949da8e2efd0ba090a755149c475c866"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/memory-report.json": {
+      "bytes": 3266,
+      "sha256": "6e39d6a1a87d8ff5f28f9dbfa1ed472019cc27e727b975ac11601f2e8ad3a87a"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/mip-channel-verification.json": {
+      "bytes": 3660,
+      "sha256": "47446d1511326e49669aa01d1616956017eff40f75709acd52d2723a1ad8042f"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/net-draped-cone-45deg.png": {
+      "bytes": 1040072,
+      "sha256": "79013aae8572297e2cd65bdb672240614d743b175f7e90935efba85f0e30c6e8"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/net-draped-cone-basecolor.ktx2": {
+      "bytes": 2069918,
+      "sha256": "db6c08130b77ce12215fc5387bf2e8670254a4e41aa316c13a7434b2da7b1ca7"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/net-draped-cone-basecolor.png": {
+      "bytes": 1094852,
+      "sha256": "b677335eb97a7bc4df6d9cd0f106a8d877d889de1d4d73e5ff636713a99012d7"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/net-draped-cone-closeup.png": {
+      "bytes": 1055650,
+      "sha256": "78c573eeafb07767e58eaa9cb20830f2377ff680cd58de1beb067e7988d8b031"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/net-draped-cone-concept.png": {
+      "bytes": 2441635,
+      "sha256": "d1e5666737909e74a9bb25ab693107a02f3e7ae3ab8acc8cace9242111460615"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/net-draped-cone-ktx2.glb": {
+      "bytes": 4064092,
+      "sha256": "ef9fad0d07c20fbacd6ffca2a89d462f365de12369f85e83116ad8ca67314df0"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/net-draped-cone-metallicRoughness.ktx2": {
+      "bytes": 545985,
+      "sha256": "9affeae19954d086f4f7d4827455ce47b894060c0491904d64e5fb355131ce42"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/net-draped-cone-metallicRoughness.png": {
+      "bytes": 294257,
+      "sha256": "7bec8fb0acaeb1e6699913283ce7002c96b159e82a0c4e764debb078233f2cb3"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/net-draped-cone-normal.ktx2": {
+      "bytes": 1188963,
+      "sha256": "7c40bc1b17c8dc381b52f536d8f5ecaea408f94177e8d179f3b10517212a1af4"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/net-draped-cone-normal.png": {
+      "bytes": 1166992,
+      "sha256": "83f3bbb9662121f74fe339f01c5e61730be40df65ddebde4655c520bde9eca83"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/net-draped-cone.blend": {
+      "bytes": 2673156,
+      "sha256": "05f83ca66136fa94c26761c28472cec95b50b777e4f2fc62788fc1600659da5d"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/net-draped-cone.glb": {
+      "bytes": 2815120,
+      "sha256": "8be2d36b81ab0f62a8eec3ed25e4a6f62c0de699bc16a43b522af82abdb8e917"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/parts.json": {
+      "bytes": 158,
+      "sha256": "3936c3497f161ed936beb6abc5c78f525457efdf2115616b57f928fd7f341d68"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/README.txt": {
+      "bytes": 6140,
+      "sha256": "8c1f266e22cb5cfd6b4e39902e923c078d78ec0fa185242cd1ffdddafa5cbe82"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/rebuild.py": {
+      "bytes": 179,
+      "sha256": "74ce7f889e6854fb3ae3788137ad65e3e3f6a655d4d1b62c9ce88b7b613a62ec"
+    },
+    "E:/Development/Projects/Terrace/.census/net-draped-cone/verification.json": {
+      "bytes": 2183,
+      "sha256": "4cba4927962332adf68c85d8f1dea70548597c5f415a020e8c90d48f796199a1"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/alignment-verification.json": {
+      "bytes": 62,
+      "sha256": "33d840d6f83755b45c50f293d5b6e32e4ea0ccaf0bc47ed7ca2de5be4f66596c"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/build-report.json": {
+      "bytes": 2073,
+      "sha256": "129f0f15d201ddb0a4efec1accdb21760e1c8d287ca857a3bf812c48d91c6e09"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/comparison.png": {
+      "bytes": 2646319,
+      "sha256": "15959d126d513c05aa01894d1fb3a5a0432af46bbdb5a9273e15e1cf03aa02b4"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/compression-verification.json": {
+      "bytes": 1139,
+      "sha256": "6dfb79c862c7b3366a03c73c6d63295850083842ce75e740c09002b9b6e6717b"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/concept-prompt.txt": {
+      "bytes": 694,
+      "sha256": "92361acbb50ea1c2fe5bbdc011f5f772a3f1a5fffc35ec1ac10a5fa37c3bbe00"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/delivery-verification.json": {
+      "bytes": 3337,
+      "sha256": "db5f9292ddbb6557a7bbccfa2f98f03b78c273715ff5c5890f1e5e269b4d363c"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/low/build-report.json": {
+      "bytes": 2180,
+      "sha256": "9e11a11acb7480930c09575df168336cd94fc25f77bc612de0e0d99879c9d9a4"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/low/parts.json": {
+      "bytes": 2909,
+      "sha256": "1c6fdaa1ef78f007d0aedc081585b5dfe7744bd2845dfca7a75a38de4e4bfece"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/low/prehistoric-granary-45deg.png": {
+      "bytes": 1048738,
+      "sha256": "59c7aec6f359f1ce6bc2dfe30f414805c3a3b9c9e837d17757f4dc48e1096975"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/low/prehistoric-granary-basecolor.ktx2": {
+      "bytes": 609841,
+      "sha256": "eff1bfe9de624d18770ed09d4ba844f660918761ec1f37a463186454aaff770e"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/low/prehistoric-granary-basecolor.png": {
+      "bytes": 441756,
+      "sha256": "f5994b90057fbb4a888d604a956e1d347826e55c268fb73714148cf72c7913f3"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/low/prehistoric-granary-closeup.png": {
+      "bytes": 1065025,
+      "sha256": "45d30b06862426c6558967d71a80b8592bfb3f6f4cf4fe2133ef9301ec500a67"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/low/prehistoric-granary-ktx2.glb": {
+      "bytes": 1214492,
+      "sha256": "fa1c582c9f17936f7909d3c9fdfe768e56b6c5f7b69559f5c813c77b6b8c7d4d"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/low/prehistoric-granary-metallicRoughness.ktx2": {
+      "bytes": 204741,
+      "sha256": "ebbf4e793d5752e075185e8c1c5d4a804b80d6dc302a971992e5e2aabf3e1762"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/low/prehistoric-granary-metallicRoughness.png": {
+      "bytes": 109420,
+      "sha256": "8b475d9b38c642951d76aa23d78b038373022c269aabdb9bd91f09005adaa100"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/low/prehistoric-granary-normal.ktx2": {
+      "bytes": 347185,
+      "sha256": "f9e94f6698a255f626377054922919c84282461718d09a541e2edfb7b29886e5"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/low/prehistoric-granary-normal.png": {
+      "bytes": 307332,
+      "sha256": "6e04561592f8ac5dae09d2262ec06d95a087b62576dd03dfbb0e5e66933205a0"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/low/prehistoric-granary.blend": {
+      "bytes": 935120,
+      "sha256": "9964b5aa125da2ce04f9be029ac7b0d607fd71b612ab2591156949ede0e2eac9"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/low/prehistoric-granary.glb": {
+      "bytes": 911012,
+      "sha256": "a4ae35a5e611d24932ce7921b6e31bb7ba952ac4fe8063e2b09f4a203ab1827b"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/low/verification.json": {
+      "bytes": 2180,
+      "sha256": "c75715e17f7e68e153a7e6843a01b15141e3262a52d00becf30704a656997a75"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/memory-report.json": {
+      "bytes": 3284,
+      "sha256": "e7c694df6656596534cae0911a3a3a452defd13531d61c82ce05a5dda7bb3190"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/mip-channel-verification.json": {
+      "bytes": 3660,
+      "sha256": "47446d1511326e49669aa01d1616956017eff40f75709acd52d2723a1ad8042f"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/parts.json": {
+      "bytes": 2927,
+      "sha256": "a4342d0b9c304c77c410ba04e0f2a76e9019ce1317f8c902d158c848ba432a7c"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/prehistoric-granary-45deg.png": {
+      "bytes": 1058181,
+      "sha256": "ab025ba934a89fb73ede7b36686f9264426e88f57fe45f45c877f8fdec343f49"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/prehistoric-granary-basecolor.ktx2": {
+      "bytes": 1723424,
+      "sha256": "64786aa8d82d03d9b750c0ddf1c62591010484e8fa5400461db2db7cb57397a8"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/prehistoric-granary-basecolor.png": {
+      "bytes": 1166174,
+      "sha256": "b1a02f3953e5bd4e42a9cbf1d90ebed2f057d9f15781753b71a43fcd4ad98ff3"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/prehistoric-granary-closeup.png": {
+      "bytes": 1083331,
+      "sha256": "640940c8c5488b5ec5f85b8f888700c2aa091344315fde538e8574a4dd02b216"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/prehistoric-granary-concept.png": {
+      "bytes": 1991370,
+      "sha256": "797c0e4a16da3152c0f655c4ecc59ff211599ff04c11aeef3fd1906df26c5963"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/prehistoric-granary-ktx2.glb": {
+      "bytes": 3291488,
+      "sha256": "ab2b41af865ae60bcc28932d72ee8b732f3ef5c71c4d6c33ccd1de3f7c520150"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/prehistoric-granary-metallicRoughness.ktx2": {
+      "bytes": 541458,
+      "sha256": "4f11a785822c60a8081d7db56a359e9d12e658bd13a31d1bfee343a4a2dc9e92"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/prehistoric-granary-metallicRoughness.png": {
+      "bytes": 332440,
+      "sha256": "757e462e610c536637826973c76200fdf07b6137882ff36a80845759dbf76273"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/prehistoric-granary-normal.ktx2": {
+      "bytes": 945799,
+      "sha256": "470f41bdc993cd7e72463995c7074c362d18f750d7a8bbc328900b86a1b11837"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/prehistoric-granary-normal.png": {
+      "bytes": 1005579,
+      "sha256": "1e7812582ffdbd1586e0a9ba8f3fa944bc55ca24497872ac2f874dda5e9e02b8"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/prehistoric-granary.blend": {
+      "bytes": 2507551,
+      "sha256": "1732d4455abf63d1f5edcb8e1003b4c77a4d7664034dd4f03383e48f3f462769"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/prehistoric-granary.glb": {
+      "bytes": 2584792,
+      "sha256": "6bff6e3c418e067d88406dd442c80ebd38ea254a5ad083ed6f6cbb9f7eabf778"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/README.txt": {
+      "bytes": 6015,
+      "sha256": "51a5d0d8a8f3089770ae23df304eecfd3a0b370d2b2d0ba28c8d695ca09c07a5"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/rebuild.py": {
+      "bytes": 183,
+      "sha256": "593a190f2843a49f99873dfa0830a101d16e753b3bb21f731dfb6938e9b17719"
+    },
+    "E:/Development/Projects/Terrace/.census/prehistoric-granary/verification.json": {
+      "bytes": 2197,
+      "sha256": "507c6ef8f6dbedd894caaa2eefa732500028efb012d54890f44cfe45a9d97203"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/alignment-verification.json": {
+      "bytes": 62,
+      "sha256": "33d840d6f83755b45c50f293d5b6e32e4ea0ccaf0bc47ed7ca2de5be4f66596c"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/build-report.json": {
+      "bytes": 2652,
+      "sha256": "a84ad0673fec1471b42d5ca0b8299e3084e4cb34a4bc723737dc274047ae6516"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/comparison.png": {
+      "bytes": 2465199,
+      "sha256": "a57ba0a0c8ee37a527e14a0635e51b0ce6983a78a3102b8babb5308c291db2dd"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/compression-verification.json": {
+      "bytes": 1147,
+      "sha256": "a62d327070964b2db3457ec45a4ba748050555c81e72503aa9a58fcdb6787ede"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/concept-prompt.txt": {
+      "bytes": 625,
+      "sha256": "0f9c3d72f5ca630a996c92a0f8ceaa4ebc7ae40b42f7dcba80d47f14a232c94c"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/delivery-verification.json": {
+      "bytes": 3278,
+      "sha256": "bf5907b90e04f2d156e3e0e2b020953c7b8f11650f855f02256da9882c55b2ff"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/low/build-report.json": {
+      "bytes": 2757,
+      "sha256": "4afcdc5d13c3a4a774b6872d169dc218af8d60ce020d56d4287ec23b2e10fc48"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/low/parts.json": {
+      "bytes": 157,
+      "sha256": "91806519e947dd7f47dc8c815200283c7260ede24e34202d880626a26a9c7243"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/low/reed-cone-45deg.png": {
+      "bytes": 1007363,
+      "sha256": "73084e9efb47167ed3717a0b83de89a2156cbed9773f752858740434933c1801"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/low/reed-cone-basecolor.ktx2": {
+      "bytes": 667538,
+      "sha256": "88c9c6001194140ae4c7c74c1a07ecf066574d196cc994f41f6b50fc23bcade7"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/low/reed-cone-basecolor.png": {
+      "bytes": 401016,
+      "sha256": "cba62727c4a117bed4eac8120852c01c63e68f89502a0f33a0de61b37f874fa8"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/low/reed-cone-closeup.png": {
+      "bytes": 972751,
+      "sha256": "cd3f10d85e7173e671b9b4f11e5644e72875e9dee3b25c9c281691b71953be11"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/low/reed-cone-ktx2.glb": {
+      "bytes": 1123280,
+      "sha256": "0304bfaba0909a91ba482f1ae459dbc586b133e850a2a17fed122c468134d1d1"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/low/reed-cone-metallicRoughness.ktx2": {
+      "bytes": 114807,
+      "sha256": "6a5f03208a2a9f34029df4bff08355a3e455fb77986e9debbf0394950b540206"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/low/reed-cone-metallicRoughness.png": {
+      "bytes": 53535,
+      "sha256": "d8a1e290494cee5aa1920c00d9dd76112ccda02a53c47c73c7c78d2a498bc9b5"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/low/reed-cone-normal.ktx2": {
+      "bytes": 261620,
+      "sha256": "30cd456f7c43cdd7438ab04b7d268edb7ad52af70d2a27830e4d93b259609ee7"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/low/reed-cone-normal.png": {
+      "bytes": 159898,
+      "sha256": "c9c944b33f8cc8c562140e4b57042643c507ab00e8f3f3195ccce8100d69cbf2"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/low/reed-cone.blend": {
+      "bytes": 711487,
+      "sha256": "899c330d2a7aa7d0d36abd91036c3aa1f2d5845b16e9acbd61b5dc8a45d86b92"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/low/reed-cone.glb": {
+      "bytes": 693552,
+      "sha256": "ff6594170c89f51efad1311ddd066322f6e46999748a5a4cb90e62e12c5cbdb5"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/low/verification.json": {
+      "bytes": 2120,
+      "sha256": "7f2e47e6230640e0bbc15a9824ef0b86603db817f57bb584b49ca2b22a584b69"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/memory-report.json": {
+      "bytes": 3228,
+      "sha256": "b5a87bad5c9dddbb2f884cf344d5cf05372a2a8db2c929abb0c6d2d2d81a0daa"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/mip-channel-verification.json": {
+      "bytes": 3660,
+      "sha256": "47446d1511326e49669aa01d1616956017eff40f75709acd52d2723a1ad8042f"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/parts.json": {
+      "bytes": 157,
+      "sha256": "a0984180e6514bde4cb267da54c6e8f6f847bef3ccfa39b77781047423c63e78"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/README.txt": {
+      "bytes": 6051,
+      "sha256": "21c9f55dff9d53c4e3adc58f4305f6cd635da5a63daaa5ded56d5c52fdf0e82f"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/rebuild.py": {
+      "bytes": 173,
+      "sha256": "11b1c69821db306e2db8adf98b08308a62fe91277e9d6aa8e7d4bf625e55c700"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/reed-cone-45deg.png": {
+      "bytes": 1019103,
+      "sha256": "85e4f860398f3ed14326bac821365be2fba459ecc6bd238ff2ca7378879fbb1e"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/reed-cone-basecolor.ktx2": {
+      "bytes": 2016357,
+      "sha256": "5c77372c3ebbc5ca5cf5c719d98b82c84bf646d5dd7943073411fb80413f13ff"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/reed-cone-basecolor.png": {
+      "bytes": 1110387,
+      "sha256": "6282d338a14f6fa4dccea81160df2fe6004c7a750d278b033062346262c67d6a"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/reed-cone-closeup.png": {
+      "bytes": 988603,
+      "sha256": "52bdcda5381907d71537c5733ce6db2e5b2b130f80d0e917d52f1803963528df"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/reed-cone-concept.png": {
+      "bytes": 2524539,
+      "sha256": "ecbf93fcff500073b7390b9965f7b50db13ad8fcb5d6dffbd7649f3e6b8e46f5"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/reed-cone-ktx2.glb": {
+      "bytes": 3791396,
+      "sha256": "c9c062b18d6ba31e917759cbe7bbb13ff74dc21e9cb7500d196ddc16507ff08b"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/reed-cone-metallicRoughness.ktx2": {
+      "bytes": 479464,
+      "sha256": "04382531968b37234975336925e2a83fb9796a2963f44052bd4c84488c00d6da"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/reed-cone-metallicRoughness.png": {
+      "bytes": 271518,
+      "sha256": "a56ec808fce9916150e91bcbeb39ec79c8f3a172e0c355eec2a37365bea85c62"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/reed-cone-normal.ktx2": {
+      "bytes": 1151401,
+      "sha256": "5a0b894ea542d3889945700d3a15ceafab448df345b6638e90325261ea8da45d"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/reed-cone-normal.png": {
+      "bytes": 1069335,
+      "sha256": "ca6162af6a473ad1febbf05c7b8e2048b7a798ea17f8059c93f586cb4c97eaf0"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/reed-cone.blend": {
+      "bytes": 2531687,
+      "sha256": "c259e1147faafbd0373261d3c428ff9572832aab3aab03593295cfb88b3d7c87"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/reed-cone.glb": {
+      "bytes": 2595200,
+      "sha256": "ae00a193ab700c943018b7918dd5ee0e2a40e98cfb5bce9c1f9139bee01636c1"
+    },
+    "E:/Development/Projects/Terrace/.census/reed-cone/verification.json": {
+      "bytes": 2113,
+      "sha256": "28468af3dac1a9fbd969f21d7efd3103ac691e65de1d7215f6cd29022d897e2c"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/alignment-verification.json": {
+      "bytes": 62,
+      "sha256": "33d840d6f83755b45c50f293d5b6e32e4ea0ccaf0bc47ed7ca2de5be4f66596c"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/build-report.json": {
+      "bytes": 2075,
+      "sha256": "284c43bd2bc84093a95a7e5e8555423a87cb6ae182f457ebdc9d43293c41ab64"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/comparison.png": {
+      "bytes": 2834172,
+      "sha256": "a9e0e74f2a2cdc625b1a1fed6d36bbab9313b94c2655f9be54a7861006b1a323"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/compression-verification.json": {
+      "bytes": 1143,
+      "sha256": "4996a8e54508e522b96a1c85f9364ef4d7346a9b65d4b17042c44801f54c7df6"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/concept-prompt.txt": {
+      "bytes": 748,
+      "sha256": "47c34bac8a99c384e4f4a655d0de93fc1847dcc89f304ff44c2da649e1d14751"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/delivery-verification.json": {
+      "bytes": 3345,
+      "sha256": "d5579f295d2b97f0452e36672678e456020a23730ad3c33b333b5438a6383864"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/low/build-report.json": {
+      "bytes": 2180,
+      "sha256": "32709a94997003e885e830e821d8dbe2852b7c00642606b606200548a06483ed"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/low/parts.json": {
+      "bytes": 6279,
+      "sha256": "7d632bb7e14a5dfdad82f841d5d40082f325ac7d4c77ccff5e1068a914eaaaf3"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/low/renaissance-workshop-45deg.png": {
+      "bytes": 1107817,
+      "sha256": "85dd269b4d55e92f12ee395b8f774ba62d91ad8829cd858763ffcc0f2cc6e520"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/low/renaissance-workshop-basecolor.ktx2": {
+      "bytes": 789960,
+      "sha256": "696622f985a2e97739fb8301270e0845fb30d0c780b0e58ddfb73e6e9a732842"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/low/renaissance-workshop-basecolor.png": {
+      "bytes": 530236,
+      "sha256": "9743de5fab659dfe93a1e920b198c1a2ffd1efe55e08a54347e82d17f2075f27"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/low/renaissance-workshop-closeup.png": {
+      "bytes": 1081383,
+      "sha256": "bf2df2196027a97764e08da243b6ac0ad4d4de4ec1446e77d391fe635bb553d8"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/low/renaissance-workshop-ktx2.glb": {
+      "bytes": 1889108,
+      "sha256": "42464ef0d0227e3123bbc6832187fec0163fe2d60b38425552d2ac094e5168d1"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/low/renaissance-workshop-metallicRoughness.ktx2": {
+      "bytes": 350538,
+      "sha256": "5fc083ab1c37f74e68f4a720b7469c44870f4c8b5d965188e92e6581439c22fa"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/low/renaissance-workshop-metallicRoughness.png": {
+      "bytes": 173974,
+      "sha256": "59fb6103645ffea312e6b6b64f6640aecac6da621d21492502d2a7692c7692e8"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/low/renaissance-workshop-normal.ktx2": {
+      "bytes": 625520,
+      "sha256": "53bc0f9aaba75f2b044eb68800a9545b1fb13bc42b4ccb3c0e698d4ad814c9f9"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/low/renaissance-workshop-normal.png": {
+      "bytes": 587493,
+      "sha256": "6372fadcbcf25f9a0f36c89af4f7ec8b5a9b7df9dcb4cec0756d9215fe59e3dc"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/low/renaissance-workshop.blend": {
+      "bytes": 1396250,
+      "sha256": "b95252a55191f62ab58062bf9e548303f3c23a74b8024cec461cb25fdb4eebb3"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/low/renaissance-workshop.glb": {
+      "bytes": 1414596,
+      "sha256": "f0def996541b3e04db4249c77ee0ba2f437b29b74cf4438497ce89914f4990ac"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/low/verification.json": {
+      "bytes": 2202,
+      "sha256": "97636e0457796d301f1a7e0788fb995b33205cbb85ade386d90d1f5fea2df6f0"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/memory-report.json": {
+      "bytes": 3298,
+      "sha256": "22218c8ecf2f0f6594ce124ef8f8e53a258d578ac2ad726f892d9cdf35bd853a"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/mip-channel-verification.json": {
+      "bytes": 3660,
+      "sha256": "47446d1511326e49669aa01d1616956017eff40f75709acd52d2723a1ad8042f"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/parts.json": {
+      "bytes": 6305,
+      "sha256": "3f83d577d4b2af0e1f0cf7e007e983bd54aaea724296af3baafbb7e2a0e81c2b"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/README.txt": {
+      "bytes": 6018,
+      "sha256": "188aa0479940aed4a4cc9fd97bc40ba6b68debb59e7e2ae49be321c20ee2bc51"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/rebuild.py": {
+      "bytes": 184,
+      "sha256": "a47ab73d486fae63f3a9408cc06d9b8904f237848e12062ed89dfb0d3e0f6da3"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/renaissance-workshop-45deg.png": {
+      "bytes": 1118578,
+      "sha256": "90ce9c616b2446a54b8b1024b5a1881508091f7ecccca7f64941a105b9898f49"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/renaissance-workshop-basecolor.ktx2": {
+      "bytes": 2394728,
+      "sha256": "7d714ec8e69cd030dd687fab8d141219f8ff0246a4083d8ccc4efee5ee07c4b1"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/renaissance-workshop-basecolor.png": {
+      "bytes": 1412210,
+      "sha256": "bf04b342a7fdd871d246977b64731fb1e4d3819904d65f385c2bdefe43269b61"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/renaissance-workshop-closeup.png": {
+      "bytes": 1101460,
+      "sha256": "935b867180a94627a91d4a90ba1603f7f4ca194e1dcd0e67f19ce69964a433c4"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/renaissance-workshop-concept.png": {
+      "bytes": 2021204,
+      "sha256": "f1d4fecb31dad9ea7e36723c5a6ca9c0f32dc355576d4aff456a893beb37d5ba"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/renaissance-workshop-ktx2.glb": {
+      "bytes": 5571704,
+      "sha256": "510031c27d1ac779be067bf9811b90aa4c79b6f2e8bee97370ef4b38c8f056eb"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/renaissance-workshop-metallicRoughness.ktx2": {
+      "bytes": 1022052,
+      "sha256": "5ced76da2e40d8b170c546677d441a6021bba607d72f514f2a0cc2b65439e9b8"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/renaissance-workshop-metallicRoughness.png": {
+      "bytes": 527164,
+      "sha256": "394b8e3b0e665287a381e576c17905414136e2590160e7ae3b56b756d7e2675b"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/renaissance-workshop-normal.ktx2": {
+      "bytes": 1974463,
+      "sha256": "494169560deda5a2e445f1396f4a2d5b1f00b40f36de053c5f4c2a7de70ed1f2"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/renaissance-workshop-normal.png": {
+      "bytes": 1974343,
+      "sha256": "e9bc8fb1834a6f5e329edcabe6425acac4236e750a325f77bd5f387f80fb27c3"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/renaissance-workshop.blend": {
+      "bytes": 3998813,
+      "sha256": "8eab40cd084b9cf7f41d4ecd498fa87369587d700defbae31eec6f7acc563f1e"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/renaissance-workshop.glb": {
+      "bytes": 4093972,
+      "sha256": "27b74b18945a94a40a0430737e5798a5fb682f29f74a33df88e74d44f7dbcb19"
+    },
+    "E:/Development/Projects/Terrace/.census/renaissance-workshop/verification.json": {
+      "bytes": 2192,
+      "sha256": "3b336893e2b274a2ccf265407be9905d3b5a6d6abef02bc21c54741677dd8430"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/alignment-verification.json": {
+      "bytes": 62,
+      "sha256": "33d840d6f83755b45c50f293d5b6e32e4ea0ccaf0bc47ed7ca2de5be4f66596c"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/build-report.json": {
+      "bytes": 2074,
+      "sha256": "08b94fd23ff2205dd9456a9e47838f951bf1670c2002ffb407de21bc1506e707"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/comparison.png": {
+      "bytes": 2632536,
+      "sha256": "ae0bdabfd368543982c1798fa738b6b6537c484653f50c0e0a999e1e92f52ad7"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/compression-verification.json": {
+      "bytes": 1144,
+      "sha256": "7ccc9810689c2390186f653e21ea11c383d95f3a6c6cde773133e2b18ddd4c35"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/concept-prompt.txt": {
+      "bytes": 728,
+      "sha256": "6ad730438c17845e1f9af4bf934beaddfd538f3a4aff611a717f5c51dd03fc8d"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/delivery-verification.json": {
+      "bytes": 3302,
+      "sha256": "6ae965800243658e747547c1eb07afe5efaee05d1e9c843205b8d7a2d986b7d1"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/low/build-report.json": {
+      "bytes": 2180,
+      "sha256": "56f58533606dddcbdb8d5260bcdff6e91237ec888bae6a3da72193e84d6ab8b0"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/low/parts.json": {
+      "bytes": 4142,
+      "sha256": "edba6ac929acb7967bc954d1c2bb197dacc286b1fc781cf22fb5a090330163e8"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/low/roman-granary-45deg.png": {
+      "bytes": 1084285,
+      "sha256": "f7bf61b0b621c15ff800c88bdf4286cc43e3ecb19051a77262c5a2254a700264"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/low/roman-granary-basecolor.ktx2": {
+      "bytes": 795431,
+      "sha256": "6de11aecc74b030cfd27374c7d0aca86a74965ab195eed28df4d8c0fdf75da20"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/low/roman-granary-basecolor.png": {
+      "bytes": 508953,
+      "sha256": "70412b1c6a28351ac87a756c05cd5e3eedf2286ed8365518767b107ee7c7a8f5"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/low/roman-granary-closeup.png": {
+      "bytes": 1077922,
+      "sha256": "25c312a2faf3ede141247056e0e0f377eac094ee67424464a510f40e8546fab6"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/low/roman-granary-ktx2.glb": {
+      "bytes": 1815016,
+      "sha256": "4c8692c6cf88917bada2c005410d35ee45f16e8ccf981eb5d01d223ecf2fadcd"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/low/roman-granary-metallicRoughness.ktx2": {
+      "bytes": 283521,
+      "sha256": "8e1fa2d676a1975f66e1dbf7ac47dde66113b5513582548509c9e30ca3acea58"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/low/roman-granary-metallicRoughness.png": {
+      "bytes": 130554,
+      "sha256": "32ad64747b0895a2f3de589b79a17eeaf4e23befd837a4b836a3d51119410932"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/low/roman-granary-normal.ktx2": {
+      "bytes": 648486,
+      "sha256": "c801dc36396ba165bd059a88d91a380737d0b4e30ac4fe33118f045e2ff59ed6"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/low/roman-granary-normal.png": {
+      "bytes": 572217,
+      "sha256": "4075da86f47070c0cee4af13cd28618f48e60f5a4033fbc81b6b35b5b931faca"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/low/roman-granary.blend": {
+      "bytes": 1304503,
+      "sha256": "a033f28709471ec19cf30c8e6422477f59b10a8479bcb1e7ae079ca2b6c77013"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/low/roman-granary.glb": {
+      "bytes": 1299104,
+      "sha256": "f91ee754e07178c7ad1931e4ef674f22a94dd1ebb9cfbfc09506fa092d17c2b7"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/low/verification.json": {
+      "bytes": 2167,
+      "sha256": "b16e0788fff154d9b29814d04f7728484e139071596e9a8f347ce034d7c1b9df"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/memory-report.json": {
+      "bytes": 3253,
+      "sha256": "4fe13c87d6944ba1290aef9b4624cc95c47f5369e363a7ac79e241e71235b047"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/mip-channel-verification.json": {
+      "bytes": 3660,
+      "sha256": "47446d1511326e49669aa01d1616956017eff40f75709acd52d2723a1ad8042f"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/parts.json": {
+      "bytes": 4145,
+      "sha256": "7e38351d84b1851a39bdd2b8d5234df188cce5172e7fc9f8d53832e08d1442e8"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/README.txt": {
+      "bytes": 5933,
+      "sha256": "f1e2e81cc3813631c55cdb254062db42a2406f8c49c5496faf8ae076ea1d7e61"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/rebuild.py": {
+      "bytes": 177,
+      "sha256": "0af9e1dd63a0f42fc8affd7fce85f2d8dff17e6fb7be955f7d5c2d00e812c52d"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/roman-granary-45deg.png": {
+      "bytes": 1087822,
+      "sha256": "cb7f5d08820f91bf92b26874908c7d08e84b2021c0d9a2ae010654bb9c76e24b"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/roman-granary-basecolor.ktx2": {
+      "bytes": 2150284,
+      "sha256": "ae2e9e1b1bea4d5cae3c9ff69507566e84b6538575c072f74bf254a8ade32110"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/roman-granary-basecolor.png": {
+      "bytes": 1230668,
+      "sha256": "36fab077dc376d7e3bf25ed147b202fb0e0d38123deb43759eeb9c4e9faaa0d0"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/roman-granary-closeup.png": {
+      "bytes": 1087755,
+      "sha256": "c57c17be6f1b5dc91e83d9b16711c63c2c4696fedf2c5a80121900966c982bab"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/roman-granary-concept.png": {
+      "bytes": 2235533,
+      "sha256": "ee2b2fd699cde6f53fd96a1cb9a0145e64426126be879334e2889c13566051c2"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/roman-granary-ktx2.glb": {
+      "bytes": 4655108,
+      "sha256": "2e3ad1c8d302c6dc45fab3beefb85464b4f749506f2884a27a4f7d47e987ac8e"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/roman-granary-metallicRoughness.ktx2": {
+      "bytes": 630173,
+      "sha256": "03a61223508d183ff6d3aa7566542d33920f6e914959503d8a4303dac7cba054"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/roman-granary-metallicRoughness.png": {
+      "bytes": 328829,
+      "sha256": "de9c8a238778069a3bc649726ae13596921e39946fb24630f379803779cdcb44"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/roman-granary-normal.ktx2": {
+      "bytes": 1757592,
+      "sha256": "2108ad1cbd12042132b93283e1ec02bfe7d61f9f2e2a46e53d6907494b9343d2"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/roman-granary-normal.png": {
+      "bytes": 1581428,
+      "sha256": "570ce34aa187d56523f09a5c9a4a1f26d6cabd429003412c9b1884ba4025f856"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/roman-granary.blend": {
+      "bytes": 3194810,
+      "sha256": "c39aa1ebe2e7a8318bd1f8dce6c714df82998ca8f43e881316abafa779701de1"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/roman-granary.glb": {
+      "bytes": 3257776,
+      "sha256": "41f279199c1c1184cf6e103af54af70fc1b9c8a304e2fe082e97b8d7935c5093"
+    },
+    "E:/Development/Projects/Terrace/.census/roman-granary/verification.json": {
+      "bytes": 2168,
+      "sha256": "3d4fb298e393bf0c013342bf1fb1d44f901c1223451fdf63acc165d5bc7bdbf5"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/alignment-verification.json": {
+      "bytes": 62,
+      "sha256": "33d840d6f83755b45c50f293d5b6e32e4ea0ccaf0bc47ed7ca2de5be4f66596c"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/build-report.json": {
+      "bytes": 2787,
+      "sha256": "582049a68aa91464e1c2d81e711d3d8c75d34a3fbaa7d4ba8894532eb1bf1c10"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/comparison.png": {
+      "bytes": 2490080,
+      "sha256": "42e8bb52b0c27a31b59004efd6b6567ab119e7a730950b9ceca5f2f1ea30d08e"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/compression-verification.json": {
+      "bytes": 1148,
+      "sha256": "4d27594e2e2183a29f5245b885df38c8420419239090ecb0f4371f7e83237388"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/concept-prompt.txt": {
+      "bytes": 660,
+      "sha256": "da360eb0c33fd335762122f29a5d1bb0dcf63e68b244b9c542dd78314fd007e1"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/delivery-verification.json": {
+      "bytes": 3302,
+      "sha256": "7ba04ee9d30060f422b66cabe713a6d1f0485495f3e10ea55933332494e11ba0"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/low/build-report.json": {
+      "bytes": 2893,
+      "sha256": "eebab330accce150fc63e8a6c9518ff38d6da82c5288f4ba47631c5d7e94bba6"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/low/parts.json": {
+      "bytes": 157,
+      "sha256": "b3be35127d7e23728ce1e170e960201d2f645348d427a9d98bd9fb272e5d6d13"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/low/smoke-pit-hut-45deg.png": {
+      "bytes": 1005100,
+      "sha256": "779cd46b8af18a6ace2448f31045e2a42cdbbdd36efd41fe4d116b411fa3775d"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/low/smoke-pit-hut-basecolor.ktx2": {
+      "bytes": 701214,
+      "sha256": "ddb796cc009ce35322bc36856a7f102606744ad009aad73f978a82fe5d913fa9"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/low/smoke-pit-hut-basecolor.png": {
+      "bytes": 423461,
+      "sha256": "15b87479207b660c145406177f72c510461d2f90fb55fa93583317ca0e01cb07"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/low/smoke-pit-hut-closeup.png": {
+      "bytes": 1009918,
+      "sha256": "9f424acc4321f7d11ebf4b5c51ef1048092aa5bd0790277ba93966c9e6aae0ea"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/low/smoke-pit-hut-ktx2.glb": {
+      "bytes": 1291472,
+      "sha256": "425ace5c827ddacf091caa1e332b82d3cc20ab635b3010dea966634e996790ef"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/low/smoke-pit-hut-metallicRoughness.ktx2": {
+      "bytes": 142853,
+      "sha256": "8c7a19a399c92be0c2f32d14e85e23a26ddbd7b2b8ad9a99f2424a471ff5c41b"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/low/smoke-pit-hut-metallicRoughness.png": {
+      "bytes": 74733,
+      "sha256": "bc30c76f04da563cab4e5b6a7eb617d7ce93a8e2632480560c583a09f8763ed3"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/low/smoke-pit-hut-normal.ktx2": {
+      "bytes": 323487,
+      "sha256": "9c4cd0ac7bc139af3e675c53a7997bac0dbc11fb4b1a4eb19d2311f9d65d49bb"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/low/smoke-pit-hut-normal.png": {
+      "bytes": 245343,
+      "sha256": "dbf054a4d858c7f1fe7bfcb9a3c4848e89c17677665f44d15030b2c492ef48a6"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/low/smoke-pit-hut.blend": {
+      "bytes": 852873,
+      "sha256": "14a4ddce7b9053a866be444b9444363b9358b42b52c7ba1ce6649dd74b27113b"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/low/smoke-pit-hut.glb": {
+      "bytes": 867252,
+      "sha256": "0f60b7aa1436766168c31317b2cc1c85e5f9c93ed3ca9707045ab3a0f610545b"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/low/verification.json": {
+      "bytes": 2166,
+      "sha256": "8950197d368dd9ccfa5bdcf25b57e9f77aa41cd2e174d326df120413f5953ffa"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/memory-report.json": {
+      "bytes": 3254,
+      "sha256": "ae459af70c64e5cff41ff088ca6592a5c5093269ebba269d9b9e7769115faafd"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/mip-channel-verification.json": {
+      "bytes": 3660,
+      "sha256": "47446d1511326e49669aa01d1616956017eff40f75709acd52d2723a1ad8042f"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/parts.json": {
+      "bytes": 157,
+      "sha256": "69ec0eab2d9ef3b5505916fe5785ec60a05e318bc3db1d5a155d37a0810a6e67"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/README.txt": {
+      "bytes": 6265,
+      "sha256": "b601bf6f0edcccc2fcb7fde1f40b8040c2b75d9a89f1bd350a963a04cb90713e"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/rebuild.py": {
+      "bytes": 177,
+      "sha256": "dd817aa95f0d9f62bc5f9ea98aa45977a27189f4b6f0ae611c9218052d47c578"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/smoke-pit-hut-45deg.png": {
+      "bytes": 1013217,
+      "sha256": "a66d5660ad3260a398e194af3328eb66f4fbe92675fa5b05d0aeaf330674a2fc"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/smoke-pit-hut-basecolor.ktx2": {
+      "bytes": 2096453,
+      "sha256": "eed1da665f142ddad733df3c13d042b8d06499de5a1556b2f932db9bd8b36422"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/smoke-pit-hut-basecolor.png": {
+      "bytes": 1125090,
+      "sha256": "2567d7f25119050b26415e60b02cab942b1352111cd588710b362c5b9f108633"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/smoke-pit-hut-closeup.png": {
+      "bytes": 1026290,
+      "sha256": "e08c7d7c3bd38dd571703ea0c9d55fd0b06ae70f9b4e2b98ffd35aa880937d88"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/smoke-pit-hut-concept.png": {
+      "bytes": 2734394,
+      "sha256": "f4c1f887fa229a75dcb3c873da83c4a6d57cf1f605edc37784f7bbb719617d10"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/smoke-pit-hut-ktx2.glb": {
+      "bytes": 4069484,
+      "sha256": "2a6f01b6a0987dd096d97f5dfe7715a89051745c852882bbd1a43458a9bba936"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/smoke-pit-hut-metallicRoughness.ktx2": {
+      "bytes": 551671,
+      "sha256": "898c0bb6f4ca0c22a4bd27e92fe7fe58e7a3e5081af6c7d61c2739b6b936d2dd"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/smoke-pit-hut-metallicRoughness.png": {
+      "bytes": 316168,
+      "sha256": "06d9218bb4cf7e48823de1d674f8d9e688fc86ab4b1a0973ee391111ee3a721b"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/smoke-pit-hut-normal.ktx2": {
+      "bytes": 1235751,
+      "sha256": "e8473885a0588a37d9a84fc4344e8cc05a6df1ba0090450442d5c0167a046f20"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/smoke-pit-hut-normal.png": {
+      "bytes": 1205648,
+      "sha256": "eea27debc11f4dfd1c3a21a210a649845d4dad5339e25ae9af3c61694bd7fbc3"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/smoke-pit-hut.blend": {
+      "bytes": 2738523,
+      "sha256": "d6da8661b9f4488c08c36d9a810944282d7dbdde894476bcc5fd56e4eedf495b"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/smoke-pit-hut.glb": {
+      "bytes": 2832304,
+      "sha256": "816b5636f4e2d945e82fe09bef90a9903a9123b81a65803a7ca1ccfe0324ffe9"
+    },
+    "E:/Development/Projects/Terrace/.census/smoke-pit-hut/verification.json": {
+      "bytes": 2164,
+      "sha256": "5c1729f63ad519d6a5611d4c22905ba1af7f685ae49b27df66ca71967c89d84f"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/alignment-verification.json": {
+      "bytes": 62,
+      "sha256": "33d840d6f83755b45c50f293d5b6e32e4ea0ccaf0bc47ed7ca2de5be4f66596c"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/build-report.json": {
+      "bytes": 2677,
+      "sha256": "7491b03ed481e8ca3ab493bfce7cdcb7559f095aaed1b4a4a144ea3ad6bc572f"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/comparison.png": {
+      "bytes": 2563143,
+      "sha256": "f24fe357e4fada9f7a7fc11ba02d22f565f56b048d172d9ef8167bd9985697a6"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/compression-verification.json": {
+      "bytes": 1139,
+      "sha256": "3aa56e024ce58414536c80e6e3ece7798dd7c98a1cc9b8f53ba2f56cd33d87d3"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/concept-prompt.txt": {
+      "bytes": 651,
+      "sha256": "db1e54654fcc9bd2cce676b37167e5ee52017f67d667e5e663e18ee6561a8660"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/delivery-verification.json": {
+      "bytes": 3290,
+      "sha256": "e6fd415fcb87f3d5f5740578ecbd0ee111ff729689b36c97c98b0e3743078871"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/low/build-report.json": {
+      "bytes": 2782,
+      "sha256": "69ffefd3c9f8cd48faa928beff7375a90e6f8d27668e04ae3c0c66148fc84dc8"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/low/parts.json": {
+      "bytes": 443,
+      "sha256": "148d55efed57dc96ac51b4faf46bb79927da69088eb77bda453c13089c296325"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/low/stilted-hut-45deg.png": {
+      "bytes": 1034419,
+      "sha256": "84d359560ca73e6aff58a111347bbcd9662734a83805e86002ed758d7e92dfad"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/low/stilted-hut-basecolor.ktx2": {
+      "bytes": 614973,
+      "sha256": "5b7f014675ffaf0ad779f7d0835810f32273710ac5dd53d093b7ad79bba98cdd"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/low/stilted-hut-basecolor.png": {
+      "bytes": 375961,
+      "sha256": "c2ef7cf321b89f17037b6fa8d6647e52169dfb8a5d2402f75f29ff122183ff3a"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/low/stilted-hut-closeup.png": {
+      "bytes": 993755,
+      "sha256": "de1e69bdf05c4a62f17c5ce8a350ef785c6104c10d18f3c94a0e51f076822cb9"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/low/stilted-hut-ktx2.glb": {
+      "bytes": 1262204,
+      "sha256": "e7e2bca83caf0d88375b7d11703de212ea748d1223c1ac0162d427cb754f9bdf"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/low/stilted-hut-metallicRoughness.ktx2": {
+      "bytes": 225490,
+      "sha256": "a48c8894dce4fce2009c770ad5b43d21c44647ce4a260505a113b49525281fe8"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/low/stilted-hut-metallicRoughness.png": {
+      "bytes": 126647,
+      "sha256": "ba300fa6ee6c45c5d264a7de1815a4cbff67890266a03e880d9d16c41c86817f"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/low/stilted-hut-normal.ktx2": {
+      "bytes": 348483,
+      "sha256": "755c577e9e20751945c0b304cebdb5a7a0f863a168695408d4f69d049ab12b67"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/low/stilted-hut-normal.png": {
+      "bytes": 332223,
+      "sha256": "761f8ed97750a8e50c9b9f21493ec82c468bb56743e44a525585846a357f3898"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/low/stilted-hut.blend": {
+      "bytes": 924221,
+      "sha256": "a9680c456bd896d77d7526f27abd79a205a89795d16b0f4725c17dd5c43c7fb3"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/low/stilted-hut.glb": {
+      "bytes": 907876,
+      "sha256": "3c08691bac9cb148049d1706d0369850b9e2432b96ce0bfb165c0e69abdfe51b"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/low/verification.json": {
+      "bytes": 2154,
+      "sha256": "26af689ef7951a5ed8f8981585e712e3c00e2af744e112dff3468760a03e66f8"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/memory-report.json": {
+      "bytes": 3240,
+      "sha256": "b21d185887f6117c83f171e6affc4e9de67d98b83dd997b14dccd5a4f593025d"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/mip-channel-verification.json": {
+      "bytes": 3660,
+      "sha256": "47446d1511326e49669aa01d1616956017eff40f75709acd52d2723a1ad8042f"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/parts.json": {
+      "bytes": 445,
+      "sha256": "b742398dfeac83cc09b70730ed32dbc69f665282fd28dc3291bdd47f72be5215"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/README.txt": {
+      "bytes": 6080,
+      "sha256": "7fdd1279250fa757d2815c5db9ae0e97cc960af8b76ae752a9b9d711d6c0a3a3"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/rebuild.py": {
+      "bytes": 175,
+      "sha256": "1b2f56178c81b0e061bf4de023fdb052a827fa766e899edcfae0433bea876c78"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/stilted-hut-45deg.png": {
+      "bytes": 1059657,
+      "sha256": "9f6380626b8f728beda51a43c388b6bb88f8f20aae69fb6f4cb6bbde006efe48"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/stilted-hut-basecolor.ktx2": {
+      "bytes": 1947811,
+      "sha256": "e12890f52c89ac2b609be57d2d33565c24b46f8d2a398c1e2cc6459a12c817bd"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/stilted-hut-basecolor.png": {
+      "bytes": 1118566,
+      "sha256": "8bbbfdd5403fa90b70e92c0e8b420b6362170dc407e6d0156820cadd20599407"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/stilted-hut-closeup.png": {
+      "bytes": 1025518,
+      "sha256": "1194a0107f2cf9d1283aabc413d3c721f615b7eeb9fecf4fb53ed2bc913a1d5f"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/stilted-hut-concept.png": {
+      "bytes": 2220093,
+      "sha256": "85bd88671c080f2e9165ef8d7348af73099f7df50f4e4c2af665e16dec78173d"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/stilted-hut-ktx2.glb": {
+      "bytes": 4266876,
+      "sha256": "c84fb7c047952c32a24ebb9d8138c7f6d4ecb683d39bad34ea4527a6e242e1c8"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/stilted-hut-metallicRoughness.ktx2": {
+      "bytes": 822336,
+      "sha256": "5ba935e2bd87659f5350c38da44d40dcac01649f781ed50e74f541e14eeebb6d"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/stilted-hut-metallicRoughness.png": {
+      "bytes": 467564,
+      "sha256": "b65bab56177b97a4e4cc4990069526cf3dc37183157d9f4d54d0ad2cf99cec97"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/stilted-hut-normal.ktx2": {
+      "bytes": 1380954,
+      "sha256": "f569af16171cd890f4cb92c80e4fe9eb03ac3123f2bc3f845885eebff8569540"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/stilted-hut-normal.png": {
+      "bytes": 1463534,
+      "sha256": "ece29b82799ed0cad20bf5f04bb215d96af84d619a3eb478f32d3d9bfd727bed"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/stilted-hut.blend": {
+      "bytes": 3102372,
+      "sha256": "c0add95cc8e8bbe04aacee0ed2d5ab060009f2b5484e143927da94ea6c6d0cae"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/stilted-hut.glb": {
+      "bytes": 3165232,
+      "sha256": "c69c60927d051224dcaea639319e3e41c48366225435bd73a2c1033bd1a9e72e"
+    },
+    "E:/Development/Projects/Terrace/.census/stilted-hut/verification.json": {
+      "bytes": 2155,
+      "sha256": "196e5298302e78ed5aaf7436d79ba3229af88d4b094b242db89fc7a5682bd478"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/alignment-verification.json": {
+      "bytes": 62,
+      "sha256": "33d840d6f83755b45c50f293d5b6e32e4ea0ccaf0bc47ed7ca2de5be4f66596c"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/build-report.json": {
+      "bytes": 2675,
+      "sha256": "74dd85ad97709775161cb88948323b2839c51402416ec3220c7b741d011e1763"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/comparison.png": {
+      "bytes": 2923616,
+      "sha256": "f10e3bbfa9d0c0ae69dd903df9d5a4858ebee023dadeaca229dd967458c223b8"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/compression-verification.json": {
+      "bytes": 1145,
+      "sha256": "8cdc55499ab8f4493d3f0a55c6f591915e2b4ffe267d6d15b0eeae949d27c867"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/concept-prompt.txt": {
+      "bytes": 712,
+      "sha256": "8e1154de503b8c3b6220d2d746b0a1eb866c5cdfb7bc151eb05d89dd55e91403"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/delivery-verification.json": {
+      "bytes": 3302,
+      "sha256": "2c30349eb900ff34fa6dfac1e88c327df9c5ca22a97805e49ad0aa81f8ff4987"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/low/build-report.json": {
+      "bytes": 2779,
+      "sha256": "2c019be7d0bb8350a693cbaacde7c67616621a78e4830ab9c4a1686a5b9cebd2"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/low/parts.json": {
+      "bytes": 1478,
+      "sha256": "91ab087ca5c75434f99eaeb47b505551f250779ceb2113fa20b1f4c9894c9b4a"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/low/stone-cottage-45deg.png": {
+      "bytes": 1053825,
+      "sha256": "f77069e7ab6551d740b3d4f60d82777e24cabe39407fdc1717a2e6223f323d8a"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/low/stone-cottage-basecolor.ktx2": {
+      "bytes": 821123,
+      "sha256": "9ab430c1764c29679c019685662557b55434d513e7e0079af62153ce44056eb1"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/low/stone-cottage-basecolor.png": {
+      "bytes": 575400,
+      "sha256": "76d20d16ad1e6c5bdcf199ff6a4212f924896125ea0f2b24d6ff2c8a6143e71c"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/low/stone-cottage-closeup.png": {
+      "bytes": 1127782,
+      "sha256": "fad9c1a9ccab78ecd09db4d0ed387a3e95e46dd7272e4595dcbce6afa1dadb64"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/low/stone-cottage-ktx2.glb": {
+      "bytes": 1715688,
+      "sha256": "8b74770941c0163e37341723d402a2fe6c5bcdfbe8dc0ad50f4cbda4335f9d12"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/low/stone-cottage-metallicRoughness.ktx2": {
+      "bytes": 195558,
+      "sha256": "6666cdb422ac86ded6dcd3ae23edf07ebcdfe1d4b95f1dce68dd3a8cf942f328"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/low/stone-cottage-metallicRoughness.png": {
+      "bytes": 78754,
+      "sha256": "c31cdc334efbc3be520c9d6ba88b93754c3314321b75282cb110580efb388f7d"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/low/stone-cottage-normal.ktx2": {
+      "bytes": 536062,
+      "sha256": "17152110a11d789e02a36de7db637adda682ca09371a1213e61909d7e99fa220"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/low/stone-cottage-normal.png": {
+      "bytes": 482490,
+      "sha256": "afb0d1d064bd38ddd9bd54e578a2004fb1d64c433228c8b39f4123f62300b664"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/low/stone-cottage.blend": {
+      "bytes": 1254474,
+      "sha256": "829663dffeee9d1630831f68c8f0514b1b6581df95562f3424f9cfb2db7d9b73"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/low/stone-cottage.glb": {
+      "bytes": 1299384,
+      "sha256": "6f1d22bc7fe5fc14792f80d1c41ba456ef8cbd2888b468228ed99260c195cc8f"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/low/verification.json": {
+      "bytes": 2172,
+      "sha256": "c0b08d67e06e5079e89b3d42754f1724dbfd042b4ff702033f7418a29ae2a734"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/memory-report.json": {
+      "bytes": 3256,
+      "sha256": "b682fe2524f6fb3d64c9de0852861001a1e72e977e6631aec9e28b2f6785ba66"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/mip-channel-verification.json": {
+      "bytes": 3660,
+      "sha256": "47446d1511326e49669aa01d1616956017eff40f75709acd52d2723a1ad8042f"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/parts.json": {
+      "bytes": 1499,
+      "sha256": "3bef9ffdc69b0d8f0b11cd6b4920fc49435589d9383131602282dc7fdc756c78"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/README.txt": {
+      "bytes": 6125,
+      "sha256": "b03d8f57e8ec064c4334d14eb932a931bd0c9ff1d7a7eba977c60b1a577eebaf"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/rebuild.py": {
+      "bytes": 177,
+      "sha256": "fe37f7f3d7ffb35641ca5e19c079020af65852d64e3760cc50dcae291990cc88"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/stone-cottage-45deg.png": {
+      "bytes": 1112776,
+      "sha256": "e9e6dc4fd1b5e2d539c93d17c7e694928f53dfb9f05db6e989543757e8547aa0"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/stone-cottage-basecolor.ktx2": {
+      "bytes": 2786487,
+      "sha256": "7934c095678e649491ca94773f9647489137971c8dac98e0e536dc555c8e0747"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/stone-cottage-basecolor.png": {
+      "bytes": 1844562,
+      "sha256": "d5aba267ca0531e89abde7a4b28a0978495d9151a70f392ad53b0d99917bc2fc"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/stone-cottage-closeup.png": {
+      "bytes": 1197248,
+      "sha256": "3299402ef1b5e213bff2aa443aaed17d958cba47badc3a50454c5c87941b8b82"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/stone-cottage-concept.png": {
+      "bytes": 2126893,
+      "sha256": "690a960f68703dc7dc4befb79773c753854642faa07d1524e7a430c0708f9685"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/stone-cottage-ktx2.glb": {
+      "bytes": 6582960,
+      "sha256": "93cdb326de95a97a402ac2c6c42ac6e235b1b9c661097550b4746dd216a81c54"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/stone-cottage-metallicRoughness.ktx2": {
+      "bytes": 1129430,
+      "sha256": "202405a57c4b64e45a8da73615737f95146d2cf752d82282ea1aefe65824e91a"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/stone-cottage-metallicRoughness.png": {
+      "bytes": 606046,
+      "sha256": "a6cf9d6d36499ba2f0415f8b635e3d4db07240f5925f9530ee3e12372b3046e6"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/stone-cottage-normal.ktx2": {
+      "bytes": 2284133,
+      "sha256": "0c047cbb049ac0b055eb8ab56c33e94393061965fe880dd028c3497d6654b843"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/stone-cottage-normal.png": {
+      "bytes": 2361377,
+      "sha256": "86b39a220eff9eb198462ffed73bb0f09d5a2730f8dd9bfe8831f4270fc853dc"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/stone-cottage.blend": {
+      "bytes": 4945990,
+      "sha256": "6fd1184049ce92a236b73a30f9923f08251a9d7eead51ca089be393cb6af93d5"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/stone-cottage.glb": {
+      "bytes": 5194696,
+      "sha256": "468194ed93b02a7695d753ed50441d5c17467a3c18bfd1223819fbab2ddfa2b1"
+    },
+    "E:/Development/Projects/Terrace/.census/stone-cottage/verification.json": {
+      "bytes": 2171,
+      "sha256": "e7f79aab80c6c5c0d08e6c296dd9e9fe58389501d9706c11a83d8834bcd127ff"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/alignment-verification.json": {
+      "bytes": 81,
+      "sha256": "c51d708d1f173f590dfb8afdf910f82f736592b01c88d2685605479860f3c203"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/build-report.json": {
+      "bytes": 2282,
+      "sha256": "c3c8096f803fd4e5a991c317eb1cf19cf8475b10d55abd2440bdc70bb4cf6388"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/comparison.png": {
+      "bytes": 2801475,
+      "sha256": "b23afbe04155033389fe1b278b320804a2221bcefb75a33624ba805486c5410e"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/compression-verification.json": {
+      "bytes": 1144,
+      "sha256": "bc1e2696d1d9b2902b8515674ca3313dd5093ba6bfb98231fba11494fab6f9d2"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/concept-prompt.txt": {
+      "bytes": 1080,
+      "sha256": "9f01c1c6dc8819aa1f6a097ad4148d3f9de4669901e242175400ce03911ea54f"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/delivery-verification.json": {
+      "bytes": 3278,
+      "sha256": "528a0edcc82e81e3f71fd7cf99a7720e7f49485af19327126ac01f7a3240a0b8"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/low/build-report.json": {
+      "bytes": 2401,
+      "sha256": "e51ec6fc6f0db3e23adcd81a64351fe592cb569a5c15ad3e8db73e178883b205"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/low/parts.json": {
+      "bytes": 6868,
+      "sha256": "a63ab4fc5b7c85f4e890e90e730e8f8a3691bf70ab80c97a8c92307f2c925768"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/low/temple-45deg.png": {
+      "bytes": 1088547,
+      "sha256": "ea6189d2fd43472ab6990e3826e73db49e9f2234f3476e16e9c9a43895ebaeaf"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/low/temple-basecolor.ktx2": {
+      "bytes": 867180,
+      "sha256": "34a44ced99c1bdea40992e114702d5c2f413f3ccaa462ddf57ac4758633c5dad"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/low/temple-basecolor.png": {
+      "bytes": 716804,
+      "sha256": "9339de713e9061f8cd85b2934986873a305564f4766df2ce964ddb373c35cbfb"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/low/temple-closeup.png": {
+      "bytes": 1148306,
+      "sha256": "23e9ca6d6abaa60ab882ff9460f8f94f0f05f92bba25924c31f9692d5af883f9"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/low/temple-ktx2.glb": {
+      "bytes": 1621044,
+      "sha256": "9b421d5f2240c81b37da724062e36e11c2b9d2e1808c865778d9c52dfffce706"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/low/temple-metallicRoughness.ktx2": {
+      "bytes": 122007,
+      "sha256": "58e3db1693d8a042d1c65c6a7e296f51aaeff3deaea3dcff523bb4ec16272d64"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/low/temple-metallicRoughness.png": {
+      "bytes": 54847,
+      "sha256": "e3c524634dd33bbdb1417785b03c84d771f0a3bff37b3e17f79ff39ab9510355"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/low/temple-normal.ktx2": {
+      "bytes": 533139,
+      "sha256": "43d87d40538ccf9e11b20725f764398997860ccd66ffffd514f310051553a92c"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/low/temple-normal.png": {
+      "bytes": 471873,
+      "sha256": "0789639ab2b427e529924e9cdf62d1a10e24278adafac349869728d73828cac9"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/low/temple.blend": {
+      "bytes": 1344893,
+      "sha256": "2c0c1990d23fd8886f66dca338cd4bd1a3e2b89f4394c30537da2cc140f9fe21"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/low/temple.glb": {
+      "bytes": 1342036,
+      "sha256": "61900726fb2e1ac1cd9305b30b50ffe85eb2e5ac54a28ec5ab3d49ac9017937a"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/low/verification.json": {
+      "bytes": 2057,
+      "sha256": "9e1ab1bbb35822b641e3392598f5407d986b75accbdff709fa8435bb0edc1902"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/memory-report.json": {
+      "bytes": 3211,
+      "sha256": "4e46eb53a15e171e9b379c055c34e795f6552e49363a48873957cfa98d4858e5"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/mip-channel-verification.json": {
+      "bytes": 3660,
+      "sha256": "47446d1511326e49669aa01d1616956017eff40f75709acd52d2723a1ad8042f"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/parts.json": {
+      "bytes": 7650,
+      "sha256": "c8fec0a1f28a221bacf15566fc6e8ecfd4ac2cc18d52633378e0190d69f295f7"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/README.txt": {
+      "bytes": 5850,
+      "sha256": "1e287a0f0fe84341780bcf5457828e50922961d57de8e7940d4de958070aafdc"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/rebuild.py": {
+      "bytes": 170,
+      "sha256": "a1a954cc0021f5c92c12fe2d12fe64c2ec375ba7de5468ffd0e28c64c96f03f0"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/temple-45deg.png": {
+      "bytes": 1102801,
+      "sha256": "e28d62ac71914ca2c6f70a2b011b6f372efd8f694edeb065050f78ed830cc5b2"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/temple-basecolor.ktx2": {
+      "bytes": 2678852,
+      "sha256": "c46a7dace22195398ff52420a80fdb901a524667b4f1b365a4c73697e617184a"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/temple-basecolor.png": {
+      "bytes": 2088288,
+      "sha256": "8be008616695e43373ee7c78d7ce6452d9ddae8089b310dec6a2b4e7c3f43b2c"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/temple-closeup.png": {
+      "bytes": 1170770,
+      "sha256": "a2cb76760f76ecf3331bfaa7492e382d602c4225e00297bda542fb9342e2f1e3"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/temple-concept.png": {
+      "bytes": 2014330,
+      "sha256": "47e3c8dba034aa01cf2314a2400789611420d24e9f4492b8d757c03cb4d312cc"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/temple-ktx2.glb": {
+      "bytes": 4800724,
+      "sha256": "e28d9e6715ae130a8aac030027ad596e360a03a08a639df9135d85d190fa840f"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/temple-metallicRoughness.ktx2": {
+      "bytes": 317600,
+      "sha256": "b6172396931ab9504faa92824cea4cf387797ef96abbc1a47a828d3d22936f0e"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/temple-metallicRoughness.png": {
+      "bytes": 181291,
+      "sha256": "001cbc99a967a059874835a83bf1b47811462128a6a06c1220f5c10af921d9da"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/temple-normal.ktx2": {
+      "bytes": 1679404,
+      "sha256": "1be6fd1c1803f5ba38812f16c025e223082faa5fd78f6c6ea360e0b7722e07da"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/temple-normal.png": {
+      "bytes": 1479793,
+      "sha256": "2b085e6c028a243131ad3960bae03a020ec57def324feb6a3ba7ab6ef8933932"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/temple.blend": {
+      "bytes": 3773614,
+      "sha256": "0fb3838f543f5c5fb077782bf43a69cede64016676b33eafbbc62ac43d15c84b"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/temple.glb": {
+      "bytes": 3874024,
+      "sha256": "ec098d333a3e3f712f7f6d37c7e2c03ea040cceef0e6908a50a96ee0151873f7"
+    },
+    "E:/Development/Projects/Terrace/.census/temple/verification.json": {
+      "bytes": 2058,
+      "sha256": "774f47ca6491df8c2d4c2d937091ed2392b2d360b1c9a64f112cfc09ac9c3595"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/alignment-verification.json": {
+      "bytes": 62,
+      "sha256": "33d840d6f83755b45c50f293d5b6e32e4ea0ccaf0bc47ed7ca2de5be4f66596c"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/build-report.json": {
+      "bytes": 2125,
+      "sha256": "bb7669b174e269a509ebe8237c8b015d2ca7a21c4394809c4bfea4ff1d108d76"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/comparison.png": {
+      "bytes": 2770759,
+      "sha256": "b74288d22c06db64be9ca9fe5e048212ddf628884c9aaba8399b4293a9792605"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/compression-verification.json": {
+      "bytes": 1141,
+      "sha256": "2011829efb4a8675836bc718a1329043add76bdadbc38661e559e3a08704fcf3"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/concept-prompt.txt": {
+      "bytes": 859,
+      "sha256": "b719ff8a59404c2770b9e43c31ea1d80ff391788a3ac3887fa894a9f28a07497"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/delivery-verification.json": {
+      "bytes": 3297,
+      "sha256": "a7bca275dafcdb41ec89b3ab697f7c96ee26171e0d2342331f10b9f671c4abe8"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/low/build-report.json": {
+      "bytes": 2232,
+      "sha256": "ecaef1140d69d50140e1d63cc5932d6f0ecdd71f068f9a2d968d70144563fe99"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/low/parts.json": {
+      "bytes": 5506,
+      "sha256": "1bce60f6b9d6d2e1f84809825bb97775cfb070103174c82c2e5fcc6992da65b0"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/low/timber-house-45deg.png": {
+      "bytes": 1069699,
+      "sha256": "93b187a05210e175e509f8de53b8dad303482355b29ea7fdd458d6e499f6a733"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/low/timber-house-basecolor.ktx2": {
+      "bytes": 775576,
+      "sha256": "f43d24ddb1d5a481a367017a738db66195400ff5cd3c285b050d67363fc1ce40"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/low/timber-house-basecolor.png": {
+      "bytes": 510684,
+      "sha256": "cc1dad7fae638f97eb893638558f6462447b5948b4d18eeb864105224eb5bbc3"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/low/timber-house-closeup.png": {
+      "bytes": 1054941,
+      "sha256": "68d4e5fcb4505aabb57406992e3a1318b5f79f218d6c6683440f980ca748ec9e"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/low/timber-house-ktx2.glb": {
+      "bytes": 1929980,
+      "sha256": "bc8451127427235458e1cdf62b3564f57a6fb017646262ad06322fc764f4c581"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/low/timber-house-metallicRoughness.ktx2": {
+      "bytes": 376444,
+      "sha256": "c20ea1b690e47976403ca8e9edac8636061310717a804734ef9644b7e6becdc3"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/low/timber-house-metallicRoughness.png": {
+      "bytes": 181656,
+      "sha256": "a038cb04a59baf32c4013c324c2bed62ae637b83b4ea592f2efd9a003aacce00"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/low/timber-house-normal.ktx2": {
+      "bytes": 669577,
+      "sha256": "a8a0e11b4216c7166b72eb2a60e965f4fd3806e56962dc7780301918dc912361"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/low/timber-house-normal.png": {
+      "bytes": 603629,
+      "sha256": "96519a026f78d42a26d13d44866c45e69c590dd69beaef68d36db284c25e6b5c"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/low/timber-house.blend": {
+      "bytes": 1399510,
+      "sha256": "4250f84f8fd390604c556615919b2c5a20c31cfe8c93ce4f59b38be850645560"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/low/timber-house.glb": {
+      "bytes": 1404144,
+      "sha256": "ab582ee1f8c27021fe6fd6684c8d5d9bfbde96ac250f263257f965a09e187463"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/low/verification.json": {
+      "bytes": 2148,
+      "sha256": "bcb8bc3b82b884905f224e4b3ba9965854a553eeb519d35c58e12be343070892"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/memory-report.json": {
+      "bytes": 3250,
+      "sha256": "b7b79e38c576bf73b866bb9c7c3cc38bdc3dc7f4cac22fc020e4dc030e490e40"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/mip-channel-verification.json": {
+      "bytes": 3660,
+      "sha256": "47446d1511326e49669aa01d1616956017eff40f75709acd52d2723a1ad8042f"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/parts.json": {
+      "bytes": 5533,
+      "sha256": "648abe983e722e28f5b29afdb9ac8326ccc3f8af2450399ff36ee5f0ecf78cec"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/README.txt": {
+      "bytes": 5922,
+      "sha256": "7249c8868cba22ef356c38cf5b2206853082a686f9171dea99740bfb31a20ddc"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/rebuild.py": {
+      "bytes": 176,
+      "sha256": "94045f84556da356b0e39fc6e2ff036c412eab3acd3bd0def6124e7a6cedfbe5"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/timber-house-45deg.png": {
+      "bytes": 1087554,
+      "sha256": "1106b8fde6d6187cb75402087bbcfccf8d3baa8bd4660020d69334b35b33efdb"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/timber-house-basecolor.ktx2": {
+      "bytes": 2355651,
+      "sha256": "14f8d34ac0fa283c3a05a14d4546419fbc439930baa3e82e3b74540dd02d11ed"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/timber-house-basecolor.png": {
+      "bytes": 1408564,
+      "sha256": "eb04c1382728372d1628a6f8bdb11de1555d21a87494e3a64873972692662ca8"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/timber-house-closeup.png": {
+      "bytes": 1078101,
+      "sha256": "30e39e29bef24fb2070ff889fe1fcb983498b20370e950a7aa90f15b737a0c42"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/timber-house-concept.png": {
+      "bytes": 1837359,
+      "sha256": "f82b0765b2442b9af20541c9630358a9bf4ece55f7dc5ac7b4bc476a69327918"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/timber-house-ktx2.glb": {
+      "bytes": 5740492,
+      "sha256": "160d3aba70feb7bcc9ffdcd2bcc192112419f303c886638916a1986c1166c4f0"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/timber-house-metallicRoughness.ktx2": {
+      "bytes": 1074032,
+      "sha256": "dabee2d3a865ed40a4f663ae93adead63179978bf2dcb904714271ad13d3b14f"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/timber-house-metallicRoughness.png": {
+      "bytes": 556524,
+      "sha256": "391d9fc254061aa4a734c39c27fd8d17397ca25bd8551b8c7531ef7c5e895206"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/timber-house-normal.ktx2": {
+      "bytes": 2150483,
+      "sha256": "f7f75399995e28581e812e23cae08cb95933a33c8b96a42a3ddb88a154c5e469"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/timber-house-normal.png": {
+      "bytes": 2213323,
+      "sha256": "a4796ab82bdca0a0cf0848cd202e1f23add9507433d93532bf3e812e645655df"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/timber-house.blend": {
+      "bytes": 4259374,
+      "sha256": "d0b7eae9c35e93d3a44dd4abfe77e3175d20da3280fe5e9bce483af0fb081f60"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/timber-house.glb": {
+      "bytes": 4338524,
+      "sha256": "4d1aea6051a4fa05536780e0da2a4e0b8a19ac5041a90de97b7cb4a9ac0ec4c2"
+    },
+    "E:/Development/Projects/Terrace/.census/timber-house/verification.json": {
+      "bytes": 2162,
+      "sha256": "aa99e22ca9b40d7efd0db1cfb3754eca9d6a8b6d2f5fb8c4f9868c5f17a91b4c"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/alignment-verification.json": {
+      "bytes": 62,
+      "sha256": "33d840d6f83755b45c50f293d5b6e32e4ea0ccaf0bc47ed7ca2de5be4f66596c"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/build-report.json": {
+      "bytes": 2681,
+      "sha256": "f6b2822062b060eba2861d06ecfae08f40b4a5ae63e7723b443e527e10203f5a"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/comparison.png": {
+      "bytes": 2390370,
+      "sha256": "cfcce79eae325d8a1ea2c1fff129ebec692f6f921b3be2b19a5acdb59f18026f"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/compression-verification.json": {
+      "bytes": 1149,
+      "sha256": "3134c2d1ff515257fdd47f41bd1662b39d63aa8336b2035cbe5f576589c8d7cc"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/concept-prompt.txt": {
+      "bytes": 691,
+      "sha256": "13fee1a27c3c55e1fb2497516d25fcf11396cc9c535bc2e50cc0bb89d8ef8925"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/delivery-verification.json": {
+      "bytes": 3332,
+      "sha256": "e6a60387ca65f090b58d87f7b2aba90139a06cc27a158bca71580abb7c44a524"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/low/build-report.json": {
+      "bytes": 2782,
+      "sha256": "8eae65701429508247b70e65c40165cb36074c4bb8cfd6eefbfc38d6ebae832b"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/low/parts.json": {
+      "bytes": 157,
+      "sha256": "b4df0a3569dc98fa61679e4f10ce9b2bcf135affa6ba644a44bc09b7dd1955fd"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/low/turf-roof-on-stone-45deg.png": {
+      "bytes": 982228,
+      "sha256": "9e728b71af24bd1af39a8c93062faadae99a66f079a00317c430769ba1a946c2"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/low/turf-roof-on-stone-basecolor.ktx2": {
+      "bytes": 606080,
+      "sha256": "416191be5d68f9311f3e9b9e25bbda938e71acda70e2408348d316354f5d26c6"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/low/turf-roof-on-stone-basecolor.png": {
+      "bytes": 300814,
+      "sha256": "6887c59d102f63ccb6bd9fd48c76bd147a4d5d80f6c2d701265b1aa6a6a3148f"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/low/turf-roof-on-stone-closeup.png": {
+      "bytes": 979225,
+      "sha256": "87a68aedaa9152f4696d449f330b3b61ee514574924bf181f47153ee8f2693ab"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/low/turf-roof-on-stone-ktx2.glb": {
+      "bytes": 953044,
+      "sha256": "1dd887f0afb5f1fcb813839ff03cf3af50c1f547bfe6deb0777e02b74b499d70"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/low/turf-roof-on-stone-metallicRoughness.ktx2": {
+      "bytes": 77337,
+      "sha256": "5d0d1f39f800b25adb7eb42b4c0a1abb02487f751939431e52e519355f37955f"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/low/turf-roof-on-stone-metallicRoughness.png": {
+      "bytes": 36844,
+      "sha256": "a1c2de97788f2d4f55dd136c9e231964d009eb8a159994632093a13dfb2083c5"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/low/turf-roof-on-stone-normal.ktx2": {
+      "bytes": 186986,
+      "sha256": "4746af0fff8b2665bd64656927e6a1d28b0bce4e61ee035d9414ad9853473c56"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/low/turf-roof-on-stone-normal.png": {
+      "bytes": 116464,
+      "sha256": "ab0642d8d0892be03ffe8efe48d2f9269b71faa94e8d03c4106266cec94e5312"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/low/turf-roof-on-stone.blend": {
+      "bytes": 549415,
+      "sha256": "03710a65c6f35e3cd83bdf0649e515a5c612bdc0f1c9c8b2567bcc6ac37c42e3"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/low/turf-roof-on-stone.glb": {
+      "bytes": 536556,
+      "sha256": "5127f97ddc70a17749a657e6749f8622e3c75dc4b6ac13f0f8b22593f1fcdea0"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/low/verification.json": {
+      "bytes": 2191,
+      "sha256": "43f546a81ea8f641444cb6bcc7f0451f8e0daf221f90a56274d07188b62241e0"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/memory-report.json": {
+      "bytes": 3280,
+      "sha256": "074392984691e858d385ecbef235a2ce221728cdd1ab42dd2f7ca79cd7f3c5eb"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/mip-channel-verification.json": {
+      "bytes": 3660,
+      "sha256": "47446d1511326e49669aa01d1616956017eff40f75709acd52d2723a1ad8042f"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/parts.json": {
+      "bytes": 158,
+      "sha256": "c89d4346c2f54d63d691d189241dca76abc42eb8fc0c59502903a20d7d7349bb"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/README.txt": {
+      "bytes": 6200,
+      "sha256": "506a935d33a58d84332208c26205af5cb7ee01105ed729889da8d006d5c2446d"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/rebuild.py": {
+      "bytes": 182,
+      "sha256": "1f60c8c99573834bd1e23be826af4310125eea5d0bb3192d1c16c470ce3cb6e4"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/turf-roof-on-stone-45deg.png": {
+      "bytes": 1017661,
+      "sha256": "795aaf3cc66f7fc5f2b5aaca5276514c7c894d3d02096933319f0ba69ab84867"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/turf-roof-on-stone-basecolor.ktx2": {
+      "bytes": 1889068,
+      "sha256": "ea2612a0e4b0660e8de760dbbf9fd8f36fd3ee1c511d68998eb610446196da3a"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/turf-roof-on-stone-basecolor.png": {
+      "bytes": 977530,
+      "sha256": "03f91be50c37daf261446e8efd48cffd15c7b23724e71c0cbbdf4c829d46c84d"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/turf-roof-on-stone-closeup.png": {
+      "bytes": 1020602,
+      "sha256": "2c0c2aee8e36da5569340b8f11eee08fe5d880d3c731fee0927b2e9f300f2a16"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/turf-roof-on-stone-concept.png": {
+      "bytes": 2104969,
+      "sha256": "4db385fb5534c2c06e2ae31aeb5ed1578118a76d6d13d3253916b0e44a9c40c6"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/turf-roof-on-stone-ktx2.glb": {
+      "bytes": 3804768,
+      "sha256": "656ce98334235a7d483175dd3b9f7c668f81d4bc5a4a16645c1e85935d19b0a5"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/turf-roof-on-stone-metallicRoughness.ktx2": {
+      "bytes": 603689,
+      "sha256": "ccbc506bdc9e752a2211fb15ad160e672716acf425ef934aa3bbc3ac26edc680"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/turf-roof-on-stone-metallicRoughness.png": {
+      "bytes": 330508,
+      "sha256": "9a874680270a46da4fbcd06e63e31fb71c53b6f7411d8351981c5facac919ae1"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/turf-roof-on-stone-normal.ktx2": {
+      "bytes": 1072790,
+      "sha256": "2a3f95a4712988a2578b4208fd797c8a3b7520a6c24c3253bccf1a5f4b38be08"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/turf-roof-on-stone-normal.png": {
+      "bytes": 1047422,
+      "sha256": "30fbbb3a30ba59e48e39ea954854c5391fff1ad745994e6bbead7f28723d3259"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/turf-roof-on-stone.blend": {
+      "bytes": 2441221,
+      "sha256": "c8f8ba26ef71469c538a135dea6e448e9d73a9e9b1b37b7074b48582e9a5ee35"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/turf-roof-on-stone.glb": {
+      "bytes": 2594468,
+      "sha256": "a39dfea346af6521fea5d987d793d2207b377ede55794e1e79200f6262eb0112"
+    },
+    "E:/Development/Projects/Terrace/.census/turf-roof-on-stone/verification.json": {
+      "bytes": 2197,
+      "sha256": "450ee0d9a5653eb26df323ba747c0a8b05e81e8537c04a281154fb1ac27374ee"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/alignment-verification.json": {
+      "bytes": 62,
+      "sha256": "33d840d6f83755b45c50f293d5b6e32e4ea0ccaf0bc47ed7ca2de5be4f66596c"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/build-report.json": {
+      "bytes": 2674,
+      "sha256": "73d2916ef64dd6f3ef5109f6647b46e7e5d10e783ab6437937c379fca1f0211f"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/comparison.png": {
+      "bytes": 2357993,
+      "sha256": "743f5277034d26d705dc101fc77ee5321e73cf503f9f85abf6a7e957c3783f42"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/compression-verification.json": {
+      "bytes": 1146,
+      "sha256": "570501da4a1b6b13f6852c1643712db8805f6521464645691c604d05c30cdc31"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/concept-prompt.txt": {
+      "bytes": 645,
+      "sha256": "49a8859fed40b3bf55780d4df01ac14ca743d4461fad974c2fc93e2b2faddbf7"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/delivery-verification.json": {
+      "bytes": 3302,
+      "sha256": "0342f6f3069f7360a44f5aea7a671048cbff434b7669f2e703ed4acaed37b954"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/low/build-report.json": {
+      "bytes": 2780,
+      "sha256": "2d0a4295e4d9ad74ac066e767a17bd2bf80fb58f35bb127d74553a92482e6807"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/low/parts.json": {
+      "bytes": 157,
+      "sha256": "6e03cfec72dd9e2752b07f32e8453573417d82541b87336541b402a468959103"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/low/twin-hut-yard-45deg.png": {
+      "bytes": 980905,
+      "sha256": "93ed651d34072d2121fd2f6bac5dffd5289633e5690f14128fdb86d21e74d607"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/low/twin-hut-yard-basecolor.ktx2": {
+      "bytes": 684208,
+      "sha256": "d4cd1f4aef8a3baac936181927b0c94c2d34e33ce5357e54effdd4e6db63f7bb"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/low/twin-hut-yard-basecolor.png": {
+      "bytes": 426497,
+      "sha256": "e959b616ad8125103955bf2f11b0547717d13dd0d42b8ba1306d793ce9deb6a2"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/low/twin-hut-yard-closeup.png": {
+      "bytes": 1008229,
+      "sha256": "52635d50c9f1ba410651cca0549fa3c0bf4e54f3b0c3e13fa3409754cff31645"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/low/twin-hut-yard-ktx2.glb": {
+      "bytes": 1214372,
+      "sha256": "6cfb587bf272118f8f83a41714e6720d723d3f6292ade8aebf06b1ef54e1fc3f"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/low/twin-hut-yard-metallicRoughness.ktx2": {
+      "bytes": 107533,
+      "sha256": "e0043effc3d06a42a1c5a6d5ede9cc4cd99ca6bb221a43d103a5518d834291d3"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/low/twin-hut-yard-metallicRoughness.png": {
+      "bytes": 57604,
+      "sha256": "1b55e50a9f578088dc439dda236873b686b509ffb591f30e8cfa46351b71262a"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/low/twin-hut-yard-normal.ktx2": {
+      "bytes": 302278,
+      "sha256": "79ad3a8fe290fd7dac576d9bc7a9447becfb5be03c4f217be0b8c3c67f630d34"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/low/twin-hut-yard-normal.png": {
+      "bytes": 212251,
+      "sha256": "b1e5d8a406c5faceaa5cef51280e25c1fa9d1416a20ad816f23a0ea40badd999"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/low/twin-hut-yard.blend": {
+      "bytes": 808370,
+      "sha256": "72e9297095cdae6573c8623ca2079bd9ca3a4e58b2ed4f829812bc5ae5957567"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/low/twin-hut-yard.glb": {
+      "bytes": 816496,
+      "sha256": "71dc7103f2015057f71fb339deb70a9aed33ad78e55d55a485c2dce06dbd9e7e"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/low/verification.json": {
+      "bytes": 2166,
+      "sha256": "8bf6f08ec00d16adc024edc9391abfc4a089485917237c372b408455415f9204"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/memory-report.json": {
+      "bytes": 3254,
+      "sha256": "36f152883f28cc953091eeb3fa7b3b9b7c0b85c6a3a07ba362f494ae18daf928"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/mip-channel-verification.json": {
+      "bytes": 3660,
+      "sha256": "47446d1511326e49669aa01d1616956017eff40f75709acd52d2723a1ad8042f"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/parts.json": {
+      "bytes": 157,
+      "sha256": "6423e5fbd3ed0b37276252451daeae989f5b81fd3cb7ab5072e0536c97bc1f83"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/README.txt": {
+      "bytes": 6112,
+      "sha256": "2db66bfac750edb52e6e3798b024d3b349b1a73d02ff9d48da915bbd2d15a1da"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/rebuild.py": {
+      "bytes": 177,
+      "sha256": "460b6c83feca9baef1726734a18cb59598efc9fae64c9cf8b7201700f6c5d663"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/twin-hut-yard-45deg.png": {
+      "bytes": 994751,
+      "sha256": "af73437534dbf1e1fe17a6910cb061349dc1239a39bd130324b42b0b2da5fc2b"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/twin-hut-yard-basecolor.ktx2": {
+      "bytes": 2017113,
+      "sha256": "f893201fd50da020f309a1619a58fb2fd62d5d3ea74ad33c70980cc1b0c86a03"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/twin-hut-yard-basecolor.png": {
+      "bytes": 1139806,
+      "sha256": "92a5de6ab9a7a23a05db4d6e63e20783ef6979aa85367161bfc9f241b743de2f"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/twin-hut-yard-closeup.png": {
+      "bytes": 1031669,
+      "sha256": "42ac61e80fa43ade7b94329c6c6b3922aedd93441f1e497807de83029e7283d7"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/twin-hut-yard-concept.png": {
+      "bytes": 2415254,
+      "sha256": "e0b85cccd792b119ee256790777eb7d463e277cf061efc45352ad37c6b1c85f0"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/twin-hut-yard-ktx2.glb": {
+      "bytes": 3877348,
+      "sha256": "727f798ff23c384b3610918fd115dc661f23ef923e76e134952ae5fa5fc777e5"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/twin-hut-yard-metallicRoughness.ktx2": {
+      "bytes": 527737,
+      "sha256": "34f206a2289022afd9f3f607dd68f5b596a59beebc9f785f01225db4db4750ff"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/twin-hut-yard-metallicRoughness.png": {
+      "bytes": 293262,
+      "sha256": "142610c000e36ef0cf12f9a1b465cf0bc541710781c97fc28c3f23a8df358735"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/twin-hut-yard-normal.ktx2": {
+      "bytes": 1122758,
+      "sha256": "675aa28168a0dd8f42a15dd0aa8c0090d366191dd25fcad7720450e79029a057"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/twin-hut-yard-normal.png": {
+      "bytes": 1104651,
+      "sha256": "6f690e44cd6de5c3a095f27d371c626b6c83dd853807adf73633615bea607d71"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/twin-hut-yard.blend": {
+      "bytes": 2647223,
+      "sha256": "bc36a4d4fdb73e7242aed16112ef8cf84789c7cdd98c02aa74e2cbf6065886c8"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/twin-hut-yard.glb": {
+      "bytes": 2747248,
+      "sha256": "40a396e974caf073e34ef15628e46b4157b9c9f7250f990c6d5e27abcd071de1"
+    },
+    "E:/Development/Projects/Terrace/.census/twin-hut-yard/verification.json": {
+      "bytes": 2167,
+      "sha256": "3a97df2406fafb5b188df0b8eedc57a036d4708a47aebf250d0437352c442a02"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/alignment-verification.json": {
+      "bytes": 62,
+      "sha256": "33d840d6f83755b45c50f293d5b6e32e4ea0ccaf0bc47ed7ca2de5be4f66596c"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/build-report.json": {
+      "bytes": 2681,
+      "sha256": "bde12850be666a055d93c064c9236fb79db8c14336e0cb3718ed62199cf39729"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/comparison.png": {
+      "bytes": 2840702,
+      "sha256": "404cc5d523be8a9ab4f74c341d938a3fea74b88d66fd32a0e8803d5f46f99b53"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/compression-verification.json": {
+      "bytes": 1142,
+      "sha256": "8b0b7b2f7cf1b7b8c29fca4e0352b6dfd140c7df6462e134fb308dddf97e145e"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/concept-prompt.txt": {
+      "bytes": 645,
+      "sha256": "9e023f5875ee99efe8c4481db7116e66bfa82946729a16d582c2d3b7bee29225"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/delivery-verification.json": {
+      "bytes": 3302,
+      "sha256": "d91e925d6854fd3b79b0635ecacf531a5af0f532e610d33aba62e093cb0f47a6"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/low/build-report.json": {
+      "bytes": 2787,
+      "sha256": "df47a3fcfad51deb13518bb0b811306542fb39777c152653cb0e235275c69184"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/low/parts.json": {
+      "bytes": 157,
+      "sha256": "256e105ab084aeda1485803ff81a1d2ceff591f7b9dded1b07d08a0aac669524"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/low/upturned-hull-45deg.png": {
+      "bytes": 1052136,
+      "sha256": "caf901e242ddaab9b802b726f2ef3f8998e319a4c7f79a4c506a80b6270ce1a4"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/low/upturned-hull-basecolor.ktx2": {
+      "bytes": 595511,
+      "sha256": "a6fbd87b9dcf157517ed8b32f81f3dcd3aeda5a6658a902b6722a15ec393bce7"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/low/upturned-hull-basecolor.png": {
+      "bytes": 364140,
+      "sha256": "66a4cb2422f075317ebafba8bd230012e7b7760132849241c0396e51d83d2cd8"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/low/upturned-hull-closeup.png": {
+      "bytes": 1070417,
+      "sha256": "f2fa23684dc0dfdc92861a4a584fa0594ca434570d1308d096926e831971d76f"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/low/upturned-hull-ktx2.glb": {
+      "bytes": 1273064,
+      "sha256": "7784dc26aab810ce2ba9ebe1681abeebe391694933efa179f5643e3b893d3577"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/low/upturned-hull-metallicRoughness.ktx2": {
+      "bytes": 181835,
+      "sha256": "4bc1d0973dab0908c45fe6d2bc124dd03b6b5986b0e3f28387e4d33e83a59996"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/low/upturned-hull-metallicRoughness.png": {
+      "bytes": 104260,
+      "sha256": "160ede58e9cc64a70ff0160b838ac575245ae5e9f41dbe9739c20907dca4a054"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/low/upturned-hull-normal.ktx2": {
+      "bytes": 432511,
+      "sha256": "b523f52b9765b67263babee57f247531fd7d5866cc556a8bfe4d3b7d60e4fa9e"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/low/upturned-hull-normal.png": {
+      "bytes": 377785,
+      "sha256": "02fe1789d87f08136cab2fb25aba7b101ff72638120c5bf638a6d83102374548"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/low/upturned-hull.blend": {
+      "bytes": 937093,
+      "sha256": "b17c1cad5f5107b4b049af7e841cbb7441d079a65e42332c2d6f431d9cbf1b57"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/low/upturned-hull.glb": {
+      "bytes": 909184,
+      "sha256": "d484e030dccdf7a5a1093e413c53823efa35cf0acb8f8fd6447a5f1cd7287614"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/low/verification.json": {
+      "bytes": 2167,
+      "sha256": "9eb9892e1504cb3ae8d74bcb8630e8228a0d3e6e4626b17d7bd35a6b2b399b87"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/memory-report.json": {
+      "bytes": 3250,
+      "sha256": "8b90171ca12596200a0ac8ff9141b282f0bee76d36c1f416e365fa42e1056a03"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/mip-channel-verification.json": {
+      "bytes": 3660,
+      "sha256": "47446d1511326e49669aa01d1616956017eff40f75709acd52d2723a1ad8042f"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/parts.json": {
+      "bytes": 157,
+      "sha256": "21305587863b63096db35d971cb2d72b1e8f09ed3fbf8a73d86f6e2002061e6a"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/README.txt": {
+      "bytes": 6127,
+      "sha256": "aa2881b120f2bd0d4f251f161d12b328311c6923d351b7b4fbba488d58a69c50"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/rebuild.py": {
+      "bytes": 177,
+      "sha256": "1995acda9efb3cb125f301b3521e40ed79cc2faead21afafead28866b7e1c33a"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/upturned-hull-45deg.png": {
+      "bytes": 1083274,
+      "sha256": "d893f98aa843bc0628e4f55b5cbb5d20be04bea614cde43409c379f896e17bea"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/upturned-hull-basecolor.ktx2": {
+      "bytes": 1842076,
+      "sha256": "9e1e3f312bc1de41ac87ce4aa51a6098d156b6837e44e4df90d995d6b57d10fd"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/upturned-hull-basecolor.png": {
+      "bytes": 1088969,
+      "sha256": "63b86d52cb6c146b6a6bfb84469cfbc2eee45ea436c66cdbbae141347f96d19a"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/upturned-hull-closeup.png": {
+      "bytes": 1097263,
+      "sha256": "2b313c991239bba8b910510f510e0fe51e0a46caf2535f2541a2606220fcf2f9"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/upturned-hull-concept.png": {
+      "bytes": 2195577,
+      "sha256": "a84235a523dafaa8e437aee33d1f49274287329a0cb1a95ce3f9425f39133029"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/upturned-hull-ktx2.glb": {
+      "bytes": 4083004,
+      "sha256": "2db668267e95dac355f2a9ba82b34ac90f15842d70402ecbb8c8c8f76878a375"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/upturned-hull-metallicRoughness.ktx2": {
+      "bytes": 635650,
+      "sha256": "e5482b1fc2253f5b2242e7d8e63dacb377f68a707f83dc0f68a3f68b0404f4d3"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/upturned-hull-metallicRoughness.png": {
+      "bytes": 413842,
+      "sha256": "bbbda9400cced9e62d205a2fb9d130fef4f0e6efd52624cb189b4d8427e59985"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/upturned-hull-normal.ktx2": {
+      "bytes": 1510231,
+      "sha256": "803e7cccc28078cd042dd458dfc2567bdd40c17b94ae32e5e29906176270535a"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/upturned-hull-normal.png": {
+      "bytes": 1555268,
+      "sha256": "2a121fd4a087f47620ed7acd03deb7c35177873c1b384e97c8f810076be9c018"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/upturned-hull.blend": {
+      "bytes": 3106736,
+      "sha256": "e56d1d8fe65fe983c1969f58291639234768dd73c93eeec0e454396e00684df9"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/upturned-hull.glb": {
+      "bytes": 3152912,
+      "sha256": "336ad5c32a42649e9469f63f4298a108b57addb396d35ac6bd14e3d0180adc7f"
+    },
+    "E:/Development/Projects/Terrace/.census/upturned-hull/verification.json": {
+      "bytes": 2168,
+      "sha256": "b4526448696f04f34810adf43e40892826e510010bc9aaf23922a4cd05e1a851"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/alignment-verification.json": {
+      "bytes": 62,
+      "sha256": "33d840d6f83755b45c50f293d5b6e32e4ea0ccaf0bc47ed7ca2de5be4f66596c"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/build-report.json": {
+      "bytes": 2658,
+      "sha256": "ac5a49ba66af8d7d23885cf79fd7fb9c0d973f06b9c8d2259bf51dd47f6424fd"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/comparison.png": {
+      "bytes": 2122550,
+      "sha256": "70c28cbac03dfa9a10dc47812b69f7a133b2df919b5f7604555da5c10f1ddf18"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/compression-verification.json": {
+      "bytes": 1142,
+      "sha256": "9ba23432e278ae63539ba6e9e555f7622bbbaf328c607d02a0b3bddb1f2cb9bd"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/concept-prompt.txt": {
+      "bytes": 721,
+      "sha256": "121207b8081c6b9703250d1da1ba833c01f661d1a7c1a01d56ade6647193ebe1"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/delivery-verification.json": {
+      "bytes": 3284,
+      "sha256": "cad8356543a761de453742f78047748dd8263495009410ecacc4c785e73658bb"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/low/build-report.json": {
+      "bytes": 2761,
+      "sha256": "5e19a685d5db19694e96992f17cd34a96a561915417c619892afd8e4bd18e213"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/low/parts.json": {
+      "bytes": 157,
+      "sha256": "1e4b29ac450f09bda1d277379f9cbfa0af8b118e51a4e10571dfcffd5235aebd"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/low/verification.json": {
+      "bytes": 2111,
+      "sha256": "157cb5d725d6089ed4be1c61964cdfd1a5d78812a42a9d1cc8a9e88ee6af6fc4"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/low/watchtower-45deg.png": {
+      "bytes": 938460,
+      "sha256": "bda2ac0ae9271ab5edb32fee9624d4db64c5ee09d42f5f1f7e074444028be0ac"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/low/watchtower-basecolor.ktx2": {
+      "bytes": 696263,
+      "sha256": "85b3a5ca4f302ab3aef8b35408838df52b6024abcfdbc5ccdc672b2054d8b1b4"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/low/watchtower-basecolor.png": {
+      "bytes": 468693,
+      "sha256": "93022a7ec5616d94eb08604688ea518129c0484b2f16cb03f769d8cf7a131deb"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/low/watchtower-closeup.png": {
+      "bytes": 970589,
+      "sha256": "9d2da9b70e4a29d02e9a440503b8b9170e8d8217e64f06a61fb3a2a6868133ca"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/low/watchtower-ktx2.glb": {
+      "bytes": 1214860,
+      "sha256": "bffb90e3794a6ceac22664974be84dda76fec314fd8ffb80221c4518387ed0aa"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/low/watchtower-metallicRoughness.ktx2": {
+      "bytes": 79736,
+      "sha256": "f02c27424f18a8de9ce8a01824f8bf58e2e0d515c4f7377f5f5e52bdb868c228"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/low/watchtower-metallicRoughness.png": {
+      "bytes": 36137,
+      "sha256": "52db8454ee86c7aed9320ea7cc1850775bf7229abf65ecca770eaf3a5da84941"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/low/watchtower-normal.ktx2": {
+      "bytes": 318466,
+      "sha256": "94ebd518d88c8935cca16288279fca6037e4364bb80696d7fecb42aeb7b5b545"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/low/watchtower-normal.png": {
+      "bytes": 239925,
+      "sha256": "379141cabab8b231706357b9aad7d53f8cd39b5c69ac9ae37ff1834108be4ddf"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/low/watchtower.blend": {
+      "bytes": 847823,
+      "sha256": "0558ded1aea7b2457c27ed6a692a36def7e29dc67a4f70cbe1a35ed03c405de9"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/low/watchtower.glb": {
+      "bytes": 864944,
+      "sha256": "d7779737d181cd87ebd073677fa3137cc928673ebc6c57baa888bb8e07aa4f2e"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/memory-report.json": {
+      "bytes": 3235,
+      "sha256": "623f77beae8fbc608b2944396554cc5f00532cec0f046c3bf1621d6b6fddffb4"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/mip-channel-verification.json": {
+      "bytes": 3660,
+      "sha256": "47446d1511326e49669aa01d1616956017eff40f75709acd52d2723a1ad8042f"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/parts.json": {
+      "bytes": 158,
+      "sha256": "73057dc0635775eb13f03b4a80472e5d6e8122200f34f39d70afdf8b88400a27"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/README.txt": {
+      "bytes": 6056,
+      "sha256": "a731df8758445e085e5bdeaad2d4cd8b98d64e120c1edfd934449c7aba9195ab"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/rebuild.py": {
+      "bytes": 174,
+      "sha256": "83b31db15e49aa2567b81e69fc7d677270804df97825bf814735c8111b678c46"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/verification.json": {
+      "bytes": 2131,
+      "sha256": "9a66240eb1aedddf0c27b288dbfb811269f342dea78d6bd8573edb9dda05c7e5"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/watchtower-45deg.png": {
+      "bytes": 962963,
+      "sha256": "cd563b044183e2e1e7a5621be08cad76316856fe8b99c5308e695cfbdf85779c"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/watchtower-basecolor.ktx2": {
+      "bytes": 2367201,
+      "sha256": "a2675522eff5cb0a9fbc79ff6fde2d663cf7537e8e76dd6326195621305d8804"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/watchtower-basecolor.png": {
+      "bytes": 1604439,
+      "sha256": "1f835a3e3d7f9c2e2580c8542c399d43222b577b14f0d78312a3cc114d652563"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/watchtower-closeup.png": {
+      "bytes": 1003102,
+      "sha256": "d7846b1915d7859e605fb553bbb1e4e6a182ad9d62770dee64192ceee7bfc637"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/watchtower-concept.png": {
+      "bytes": 1557673,
+      "sha256": "735fa905f30f31d8edeebec7301eeb167856d387e671808bd30deb64c4c62f0f"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/watchtower-ktx2.glb": {
+      "bytes": 5267556,
+      "sha256": "0f3c66814828fb1f4794f478e6e6f80dbc7d2c82b1fca0107772064048b5fa3b"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/watchtower-metallicRoughness.ktx2": {
+      "bytes": 882487,
+      "sha256": "0119ac34796f2dc225a2eee94cc067007bfb7f8eeeeadc0dc9938fb99fd8b169"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/watchtower-metallicRoughness.png": {
+      "bytes": 512316,
+      "sha256": "93524048e3a8da38ecbadde254118d1631314fe0bc5ec2c490fe3dbf342166fe"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/watchtower-normal.ktx2": {
+      "bytes": 1671701,
+      "sha256": "66a1a929be6bc5d65abbd64461ab6da461afb0361a26928cdd93d44eb918fa68"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/watchtower-normal.png": {
+      "bytes": 1815444,
+      "sha256": "1b70614192210001b6d7ade997f751a34ae819e385b4b2bb2a7951922fb5c183"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/watchtower.blend": {
+      "bytes": 4053018,
+      "sha256": "3de2e6b485ee14d1abbf7a94b0081882eae426c060207d422cf168d81604edfb"
+    },
+    "E:/Development/Projects/Terrace/.census/watchtower/watchtower.glb": {
+      "bytes": 4278148,
+      "sha256": "b5b06b701ab72f8f46a7841606e61638dd5207228a3c8b1dca689bd6327129c8"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/alignment-verification.json": {
+      "bytes": 62,
+      "sha256": "33d840d6f83755b45c50f293d5b6e32e4ea0ccaf0bc47ed7ca2de5be4f66596c"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/build-report.json": {
+      "bytes": 2677,
+      "sha256": "bb5a0307d31d33bc22149ef853ae9fc8f166d1bbec4454b1a9cbb715db38efba"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/comparison.png": {
+      "bytes": 2401610,
+      "sha256": "27c9d9462e75297a9dbc4fd3f718efa444309f1bb1ff7e80651fd159bd6953b3"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/compression-verification.json": {
+      "bytes": 1143,
+      "sha256": "7637b2b59c911bca573caacb4eebaf3ec789ab81ef34760b2b7010bba70fe07e"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/concept-prompt.txt": {
+      "bytes": 647,
+      "sha256": "2aa531fcf81f994e30bdb2aab48a7b3625ade939dcfc0afde98e2451224172a1"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/delivery-verification.json": {
+      "bytes": 3308,
+      "sha256": "c9208a7c91fd83d483c920f5217036e32eeb45ad2636b383dae2fdadf0126db2"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/low/build-report.json": {
+      "bytes": 2781,
+      "sha256": "e5b827c1ddffea6325a426fcb6a2cb9cd2ef75c2ef4258f544d325267da797f0"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/low/parts.json": {
+      "bytes": 519,
+      "sha256": "52d369f58cc1b091955f5da6dc11a63ec6249b77e81518e68a776a04eac7f599"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/low/verification.json": {
+      "bytes": 2155,
+      "sha256": "fe8f1090a5661b271e5f2785aafc89da1f73af6f986ee9e004f9a100145e7220"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/low/windbreak-dome-45deg.png": {
+      "bytes": 992945,
+      "sha256": "27c5ea7fa83b3114d7bbf8fd271af6940c8c8b76fd9ec9bf01ac525ebe4c8030"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/low/windbreak-dome-basecolor.ktx2": {
+      "bytes": 723116,
+      "sha256": "0ce7d956a327829e9669696978136aceb2d53394c53bb9badcbc1d1c278f0da4"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/low/windbreak-dome-basecolor.png": {
+      "bytes": 421745,
+      "sha256": "daaa90db1f3a4df6edc8fb19265390dde741ef0207507f3a76c9d35a065b7a49"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/low/windbreak-dome-closeup.png": {
+      "bytes": 998426,
+      "sha256": "c236576fd6ba1fe347b73bd49153348dd7c7843a94107c24a98a0b56ce333845"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/low/windbreak-dome-ktx2.glb": {
+      "bytes": 1457020,
+      "sha256": "50396e918bfcc8b29f791144af6a536368fb9b5e79f96adee778fd3b25bfef63"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/low/windbreak-dome-metallicRoughness.ktx2": {
+      "bytes": 240931,
+      "sha256": "16ca6e41456aa9fbdedd0f0d87ba4f769ba51ac9436edee9bc36e52d168320a0"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/low/windbreak-dome-metallicRoughness.png": {
+      "bytes": 120310,
+      "sha256": "a583f23a806156bfe0921072787b6d3ff19d5d6bb043fcafbd5080cf6e0effe6"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/low/windbreak-dome-normal.ktx2": {
+      "bytes": 413716,
+      "sha256": "f4e447a351e617b0a9d8d51e9e5e5ee27cfb685970ef4dcde7e336646a39d055"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/low/windbreak-dome-normal.png": {
+      "bytes": 344869,
+      "sha256": "1990f8548b63bebbe203860cc79831125df78adf4f9246b7a5924333326f90f4"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/low/windbreak-dome.blend": {
+      "bytes": 988193,
+      "sha256": "ef8c4c6283e1daf4ce8bf701b3083b02a22dfb460bbcb430fe7d57d242c4b494"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/low/windbreak-dome.glb": {
+      "bytes": 965980,
+      "sha256": "bd8d6bd6c07617070e1a740d5241e9052f9e9e4f8c50d235e9cc6182f466e3ae"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/memory-report.json": {
+      "bytes": 3258,
+      "sha256": "66486767a400ee5c7ee736df307ba7e8c156147155269e76fcc3d99b8cc4e496"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/mip-channel-verification.json": {
+      "bytes": 3660,
+      "sha256": "47446d1511326e49669aa01d1616956017eff40f75709acd52d2723a1ad8042f"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/parts.json": {
+      "bytes": 519,
+      "sha256": "b321a332451afc1fae1aac45aa083c6095ee3c56a50958e95609283d521e859c"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/README.txt": {
+      "bytes": 6129,
+      "sha256": "00a97066cd31411eae3a5fac6e2d73e237b0d974028965d23b73088dfafb9ed6"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/rebuild.py": {
+      "bytes": 178,
+      "sha256": "9eee04464131a9cdc2f3425992eaac10a3e78c3a371825b81486aeebde498706"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/verification.json": {
+      "bytes": 2172,
+      "sha256": "d11aaa79c42c5b0d34b4056ab931c1f2576fbe7b926624452ffb7c04fa1fee3b"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/windbreak-dome-45deg.png": {
+      "bytes": 1011360,
+      "sha256": "8b357105ba3ab143c6b0392b3656c193f3b2795d7571442535798a494905d2a5"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/windbreak-dome-basecolor.ktx2": {
+      "bytes": 2360114,
+      "sha256": "62e92240e508c0dd84a491014303ab07f9df2fa3253226b74aeb4309ddbb00b0"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/windbreak-dome-basecolor.png": {
+      "bytes": 1281778,
+      "sha256": "15b587f9d98e1ad006de88ba93c48c82984e3067cda89c4cf1d082c306026834"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/windbreak-dome-closeup.png": {
+      "bytes": 1014417,
+      "sha256": "48f256701a5223f4623f5e22897ccdf14c788a33e4711f7db348f5efce7d4b3c"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/windbreak-dome-concept.png": {
+      "bytes": 2010222,
+      "sha256": "5d1c7bd842e4f4100968028955c75ac7d39f36e35ff15173f7a99fc758df4da4"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/windbreak-dome-ktx2.glb": {
+      "bytes": 4871796,
+      "sha256": "854ff589f21ae5f4e88a9aae083703a3177e153bb6fce96fed3ac250cd2d49a4"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/windbreak-dome-metallicRoughness.ktx2": {
+      "bytes": 798276,
+      "sha256": "7d5eca2ededadfaa542321ab5f63d5babe8715c8315d299edb40567943de6edc"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/windbreak-dome-metallicRoughness.png": {
+      "bytes": 425334,
+      "sha256": "0bcb65e0e8b1a0a8324c7fc2cad635e9d64512d628b276a29ce2b6fc7a6eff5e"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/windbreak-dome-normal.ktx2": {
+      "bytes": 1584784,
+      "sha256": "30e39e5d4efbff6de99e0b2314c4b5dee0e7eb4d0bce3963b942fc587ade1d9c"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/windbreak-dome-normal.png": {
+      "bytes": 1512575,
+      "sha256": "ea79e5eeb309c4d1fa41efc276fedc04dcb16fe630da9fdb8d11cdae0e5feba1"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/windbreak-dome.blend": {
+      "bytes": 3322694,
+      "sha256": "1b5c123850d484c526602e71fd0298725940bb6a3ccbbfe8e5c1fd0d6e2f0a2f"
+    },
+    "E:/Development/Projects/Terrace/.census/windbreak-dome/windbreak-dome.glb": {
+      "bytes": 3348100,
+      "sha256": "f3cd3090a2208b0534cd0459812e9f5b31c2d9c6cd36a7bb8f83f1f9f44c6d57"
+    }
+  }
+}

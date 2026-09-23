@@ -1,0 +1,232 @@
+[
+  {
+    "name": "Pump station footing",
+    "first_face": 0,
+    "face_count": 6
+  },
+  {
+    "name": "Brick pump house",
+    "first_face": 6,
+    "face_count": 6
+  },
+  {
+    "name": "Slate roof course 1",
+    "first_face": 12,
+    "face_count": 22
+  },
+  {
+    "name": "Slate roof course 2",
+    "first_face": 34,
+    "face_count": 22
+  },
+  {
+    "name": "Slate roof course 3",
+    "first_face": 56,
+    "face_count": 22
+  },
+  {
+    "name": "Slate roof course 4",
+    "first_face": 78,
+    "face_count": 22
+  },
+  {
+    "name": "Slate roof course 5",
+    "first_face": 100,
+    "face_count": 22
+  },
+  {
+    "name": "Slate roof course 1",
+    "first_face": 122,
+    "face_count": 22
+  },
+  {
+    "name": "Slate roof course 2",
+    "first_face": 144,
+    "face_count": 22
+  },
+  {
+    "name": "Slate roof course 3",
+    "first_face": 166,
+    "face_count": 22
+  },
+  {
+    "name": "Slate roof course 4",
+    "first_face": 188,
+    "face_count": 22
+  },
+  {
+    "name": "Slate roof course 5",
+    "first_face": 210,
+    "face_count": 22
+  },
+  {
+    "name": "Slate roof gable fascia",
+    "first_face": 232,
+    "face_count": 18
+  },
+  {
+    "name": "Slate roof gable fascia",
+    "first_face": 250,
+    "face_count": 18
+  },
+  {
+    "name": "Slate roof gable fascia",
+    "first_face": 268,
+    "face_count": 18
+  },
+  {
+    "name": "Slate roof gable fascia",
+    "first_face": 286,
+    "face_count": 18
+  },
+  {
+    "name": "Slate roof eave",
+    "first_face": 304,
+    "face_count": 22
+  },
+  {
+    "name": "Slate roof eave",
+    "first_face": 326,
+    "face_count": 22
+  },
+  {
+    "name": "Slate roof ridge",
+    "first_face": 348,
+    "face_count": 42
+  },
+  {
+    "name": "Closed gable",
+    "first_face": 390,
+    "face_count": 5
+  },
+  {
+    "name": "Closed gable",
+    "first_face": 395,
+    "face_count": 5
+  },
+  {
+    "name": "brick polygonal course",
+    "first_face": 400,
+    "face_count": 10
+  },
+  {
+    "name": "Open chimney crown",
+    "first_face": 410,
+    "face_count": 32
+  },
+  {
+    "name": "Recessed chimney flue",
+    "first_face": 442,
+    "face_count": 1
+  },
+  {
+    "name": "Recessed opening",
+    "first_face": 443,
+    "face_count": 6
+  },
+  {
+    "name": "Inset door",
+    "first_face": 449,
+    "face_count": 6
+  },
+  {
+    "name": "Door jamb",
+    "first_face": 455,
+    "face_count": 10
+  },
+  {
+    "name": "Door jamb",
+    "first_face": 465,
+    "face_count": 10
+  },
+  {
+    "name": "Lintel",
+    "first_face": 475,
+    "face_count": 10
+  },
+  {
+    "name": "Window opening",
+    "first_face": 485,
+    "face_count": 6
+  },
+  {
+    "name": "Window rail",
+    "first_face": 491,
+    "face_count": 6
+  },
+  {
+    "name": "Window rail",
+    "first_face": 497,
+    "face_count": 6
+  },
+  {
+    "name": "Window mullion",
+    "first_face": 503,
+    "face_count": 6
+  },
+  {
+    "name": "Window opening",
+    "first_face": 509,
+    "face_count": 6
+  },
+  {
+    "name": "Window rail",
+    "first_face": 515,
+    "face_count": 6
+  },
+  {
+    "name": "Window rail",
+    "first_face": 521,
+    "face_count": 6
+  },
+  {
+    "name": "Window mullion",
+    "first_face": 527,
+    "face_count": 6
+  },
+  {
+    "name": "Window opening",
+    "first_face": 533,
+    "face_count": 6
+  },
+  {
+    "name": "Window rail",
+    "first_face": 539,
+    "face_count": 6
+  },
+  {
+    "name": "Window rail",
+    "first_face": 545,
+    "face_count": 6
+  },
+  {
+    "name": "Window mullion",
+    "first_face": 551,
+    "face_count": 6
+  },
+  {
+    "name": "Window opening",
+    "first_face": 557,
+    "face_count": 6
+  },
+  {
+    "name": "Window rail",
+    "first_face": 563,
+    "face_count": 6
+  },
+  {
+    "name": "Window rail",
+    "first_face": 569,
+    "face_count": 6
+  },
+  {
+    "name": "Window mullion",
+    "first_face": 575,
+    "face_count": 6
+  },
+  {
+    "name": "Stone lintel",
+    "first_face": 581,
+    "face_count": 6
+  }
+]

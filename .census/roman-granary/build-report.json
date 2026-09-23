@@ -1,0 +1,126 @@
+{
+  "profile": "original",
+  "meshes": 1,
+  "materials": 1,
+  "vertices": 660,
+  "triangles": 1140,
+  "polygons": 556,
+  "parts": 45,
+  "islands": 556,
+  "texture_size": [
+    2048,
+    2048
+  ],
+  "gap_pixels": 12,
+  "density_pixels_per_game_unit": 787.0062929136074,
+  "dimensions": [
+    0.5453231334686279,
+    0.8600000143051147,
+    0.4814249575138092
+  ],
+  "origin": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "palette": {
+    "timber": [
+      0.3,
+      0.245,
+      0.19
+    ],
+    "wall": [
+      0.52,
+      0.455,
+      0.35
+    ],
+    "gable": [
+      0.46,
+      0.385,
+      0.285
+    ],
+    "roof": [
+      0.55,
+      0.335,
+      0.22
+    ],
+    "door": [
+      0.385,
+      0.28,
+      0.185
+    ],
+    "stone": [
+      0.43,
+      0.445,
+      0.42
+    ],
+    "cutstone": [
+      0.51,
+      0.515,
+      0.48
+    ],
+    "iron": [
+      0.16,
+      0.175,
+      0.17
+    ],
+    "dark": [
+      0.085,
+      0.07,
+      0.05
+    ],
+    "carving": [
+      0.32,
+      0.265,
+      0.2
+    ],
+    "thatch": [
+      0.6,
+      0.51,
+      0.33
+    ],
+    "plaster": [
+      0.66,
+      0.6,
+      0.47
+    ],
+    "turf": [
+      0.34,
+      0.42,
+      0.26
+    ],
+    "brick": [
+      0.53,
+      0.32,
+      0.24
+    ],
+    "canvas": [
+      0.65,
+      0.58,
+      0.44
+    ],
+    "fish": [
+      0.5,
+      0.55,
+      0.54
+    ],
+    "paint": [
+      0.4,
+      0.24,
+      0.19
+    ],
+    "slate": [
+      0.32,
+      0.37,
+      0.37
+    ]
+  },
+  "geometry_source": "New original Blender geometry and procedural texture paint; no imported meshes or textures.",
+  "texture_source": "Original procedural texture paint",
+  "image_generator": "Built-in image generator; exact backend model unverified",
+  "placement": {
+    "front_gltf": "+Z",
+    "origin": "Ground under footprint center",
+    "deliberate_difference": "New building: no existing gameplay envelope. Uniform fit inside 0.86 world-unit square; proposed asset only."
+  }
+}

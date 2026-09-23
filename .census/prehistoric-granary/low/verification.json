@@ -1,0 +1,103 @@
+{
+  "glb_sha256": "a4ae35a5e611d24932ce7921b6e31bb7ba952ac4fe8063e2b09f4a203ab1827b",
+  "mesh_count": 1,
+  "primitive_count": 1,
+  "material_count": 1,
+  "triangles": 524,
+  "exported_vertices": 988,
+  "nodes": [
+    {
+      "mesh": 0,
+      "name": "prehistoric-granary"
+    },
+    {
+      "children": [
+        0
+      ],
+      "name": "RootNode"
+    }
+  ],
+  "dimensions_gltf_y_up": [
+    0.7835990786552429,
+    0.8055399060249329,
+    0.8599999845027924
+  ],
+  "uv_islands": 230,
+  "uv_min_max": [
+    0.005859375,
+    0.993408203125
+  ],
+  "uv_overlap_pairs": [],
+  "uv_candidate_pairs_checked": 323,
+  "minimum_island_bounds_gap_pixels": 12.0,
+  "texel_density_min_max": [
+    319.03921994041707,
+    319.0420270807264
+  ],
+  "zero_area_triangles": 0,
+  "normal_length_error_max": 9.962657809836628e-08,
+  "tangent_normal_dot_max": 8.110142972750367e-06,
+  "compression_extensions": [],
+  "textures": {
+    "prehistoric-granary-normal": {
+      "format": "image/png",
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "matches_external_bytes": true
+    },
+    "prehistoric-granary-basecolor": {
+      "format": "image/png",
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "matches_external_bytes": true
+    },
+    "prehistoric-granary-metallicRoughness": {
+      "format": "image/png",
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "matches_external_bytes": true
+    }
+  },
+  "roughness_range": [
+    0.7803922295570374,
+    0.9803922176361084
+  ],
+  "metalness_range": [
+    0.0,
+    0.0
+  ],
+  "normal_map_length_error_max": 0.0057218074798583984,
+  "blend": {
+    "mesh_count": 1,
+    "material_count": 1,
+    "vertices": 328,
+    "triangles": 524,
+    "uv_layers": [
+      "UVMap"
+    ],
+    "images_packed": true,
+    "objects": [
+      "prehistoric-granary",
+      "RootNode"
+    ]
+  },
+  "bounds_gltf_y_up": {
+    "min": [
+      -0.39179953932762146,
+      0.0,
+      -0.39179953932762146
+    ],
+    "max": [
+      0.39179953932762146,
+      0.8055399060249329,
+      0.4682004451751709
+    ]
+  },
+  "passed": true
+}

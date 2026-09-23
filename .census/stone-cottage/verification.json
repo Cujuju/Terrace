@@ -1,0 +1,103 @@
+{
+  "glb_sha256": "468194ed93b02a7695d753ed50441d5c17467a3c18bfd1223819fbab2ddfa2b1",
+  "mesh_count": 1,
+  "primitive_count": 1,
+  "material_count": 1,
+  "triangles": 3688,
+  "exported_vertices": 7472,
+  "nodes": [
+    {
+      "mesh": 0,
+      "name": "stone-cottage"
+    },
+    {
+      "children": [
+        0
+      ],
+      "name": "RootNode"
+    }
+  ],
+  "dimensions_gltf_y_up": [
+    0.7396058440208435,
+    0.9600000381469727,
+    0.5299999713897705
+  ],
+  "uv_islands": 1771,
+  "uv_min_max": [
+    0.0029296875,
+    0.9969482421875
+  ],
+  "uv_overlap_pairs": [],
+  "uv_candidate_pairs_checked": 1785,
+  "minimum_island_bounds_gap_pixels": 12.00177001953125,
+  "texel_density_min_max": [
+    438.4758095541767,
+    438.52681872468537
+  ],
+  "zero_area_triangles": 0,
+  "normal_length_error_max": 8.944458818049839e-08,
+  "tangent_normal_dot_max": 9.689187672634603e-05,
+  "compression_extensions": [],
+  "textures": {
+    "stone-cottage-normal": {
+      "format": "image/png",
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "matches_external_bytes": true
+    },
+    "stone-cottage-basecolor": {
+      "format": "image/png",
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "matches_external_bytes": true
+    },
+    "stone-cottage-metallicRoughness": {
+      "format": "image/png",
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "matches_external_bytes": true
+    }
+  },
+  "roughness_range": [
+    0.7803922295570374,
+    0.9803922176361084
+  ],
+  "metalness_range": [
+    0.0,
+    0.0
+  ],
+  "normal_map_length_error_max": 0.005474269390106201,
+  "blend": {
+    "mesh_count": 1,
+    "material_count": 1,
+    "vertices": 2106,
+    "triangles": 3688,
+    "uv_layers": [
+      "UVMap"
+    ],
+    "images_packed": true,
+    "objects": [
+      "RootNode",
+      "stone-cottage"
+    ]
+  },
+  "bounds_gltf_y_up": {
+    "min": [
+      -0.36980292201042175,
+      0.0,
+      -0.26499998569488525
+    ],
+    "max": [
+      0.36980292201042175,
+      0.9600000381469727,
+      0.26499998569488525
+    ]
+  },
+  "passed": true
+}

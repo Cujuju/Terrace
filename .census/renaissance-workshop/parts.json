@@ -1,0 +1,357 @@
+[
+  {
+    "name": "Workshop footing",
+    "first_face": 0,
+    "face_count": 6
+  },
+  {
+    "name": "Ground workshop",
+    "first_face": 6,
+    "face_count": 6
+  },
+  {
+    "name": "Jettied upper floor",
+    "first_face": 12,
+    "face_count": 6
+  },
+  {
+    "name": "Upper post",
+    "first_face": 18,
+    "face_count": 10
+  },
+  {
+    "name": "Upper post",
+    "first_face": 28,
+    "face_count": 10
+  },
+  {
+    "name": "Upper post",
+    "first_face": 38,
+    "face_count": 10
+  },
+  {
+    "name": "Upper rail",
+    "first_face": 48,
+    "face_count": 10
+  },
+  {
+    "name": "Upper rail",
+    "first_face": 58,
+    "face_count": 10
+  },
+  {
+    "name": "Workshop brace",
+    "first_face": 68,
+    "face_count": 10
+  },
+  {
+    "name": "Upper post",
+    "first_face": 78,
+    "face_count": 10
+  },
+  {
+    "name": "Upper post",
+    "first_face": 88,
+    "face_count": 10
+  },
+  {
+    "name": "Upper post",
+    "first_face": 98,
+    "face_count": 10
+  },
+  {
+    "name": "Upper rail",
+    "first_face": 108,
+    "face_count": 10
+  },
+  {
+    "name": "Upper rail",
+    "first_face": 118,
+    "face_count": 10
+  },
+  {
+    "name": "Workshop brace",
+    "first_face": 128,
+    "face_count": 10
+  },
+  {
+    "name": "Workshop roof course 1",
+    "first_face": 138,
+    "face_count": 22
+  },
+  {
+    "name": "Workshop roof course 2",
+    "first_face": 160,
+    "face_count": 22
+  },
+  {
+    "name": "Workshop roof course 3",
+    "first_face": 182,
+    "face_count": 22
+  },
+  {
+    "name": "Workshop roof course 4",
+    "first_face": 204,
+    "face_count": 22
+  },
+  {
+    "name": "Workshop roof course 5",
+    "first_face": 226,
+    "face_count": 22
+  },
+  {
+    "name": "Workshop roof course 6",
+    "first_face": 248,
+    "face_count": 22
+  },
+  {
+    "name": "Workshop roof course 1",
+    "first_face": 270,
+    "face_count": 22
+  },
+  {
+    "name": "Workshop roof course 2",
+    "first_face": 292,
+    "face_count": 22
+  },
+  {
+    "name": "Workshop roof course 3",
+    "first_face": 314,
+    "face_count": 22
+  },
+  {
+    "name": "Workshop roof course 4",
+    "first_face": 336,
+    "face_count": 22
+  },
+  {
+    "name": "Workshop roof course 5",
+    "first_face": 358,
+    "face_count": 22
+  },
+  {
+    "name": "Workshop roof course 6",
+    "first_face": 380,
+    "face_count": 22
+  },
+  {
+    "name": "Workshop roof gable fascia",
+    "first_face": 402,
+    "face_count": 18
+  },
+  {
+    "name": "Workshop roof gable fascia",
+    "first_face": 420,
+    "face_count": 18
+  },
+  {
+    "name": "Workshop roof gable fascia",
+    "first_face": 438,
+    "face_count": 18
+  },
+  {
+    "name": "Workshop roof gable fascia",
+    "first_face": 456,
+    "face_count": 18
+  },
+  {
+    "name": "Workshop roof eave",
+    "first_face": 474,
+    "face_count": 22
+  },
+  {
+    "name": "Workshop roof eave",
+    "first_face": 496,
+    "face_count": 22
+  },
+  {
+    "name": "Workshop roof ridge",
+    "first_face": 518,
+    "face_count": 42
+  },
+  {
+    "name": "Closed gable",
+    "first_face": 560,
+    "face_count": 5
+  },
+  {
+    "name": "Closed gable",
+    "first_face": 565,
+    "face_count": 5
+  },
+  {
+    "name": "Front upper frame",
+    "first_face": 570,
+    "face_count": 10
+  },
+  {
+    "name": "Front upper frame",
+    "first_face": 580,
+    "face_count": 10
+  },
+  {
+    "name": "Front upper frame",
+    "first_face": 590,
+    "face_count": 10
+  },
+  {
+    "name": "Front upper rail",
+    "first_face": 600,
+    "face_count": 10
+  },
+  {
+    "name": "Front upper rail",
+    "first_face": 610,
+    "face_count": 10
+  },
+  {
+    "name": "Workshop upper window",
+    "first_face": 620,
+    "face_count": 6
+  },
+  {
+    "name": "Window sill",
+    "first_face": 626,
+    "face_count": 6
+  },
+  {
+    "name": "Window sill",
+    "first_face": 632,
+    "face_count": 6
+  },
+  {
+    "name": "Window mullion",
+    "first_face": 638,
+    "face_count": 6
+  },
+  {
+    "name": "Recessed opening",
+    "first_face": 644,
+    "face_count": 6
+  },
+  {
+    "name": "Inset door",
+    "first_face": 650,
+    "face_count": 6
+  },
+  {
+    "name": "Door jamb",
+    "first_face": 656,
+    "face_count": 10
+  },
+  {
+    "name": "Door jamb",
+    "first_face": 666,
+    "face_count": 10
+  },
+  {
+    "name": "Lintel",
+    "first_face": 676,
+    "face_count": 10
+  },
+  {
+    "name": "Shop counter opening",
+    "first_face": 686,
+    "face_count": 6
+  },
+  {
+    "name": "Counter ledge",
+    "first_face": 692,
+    "face_count": 6
+  },
+  {
+    "name": "Awning post",
+    "first_face": 698,
+    "face_count": 10
+  },
+  {
+    "name": "Awning post",
+    "first_face": 708,
+    "face_count": 10
+  },
+  {
+    "name": "Restrained shop awning",
+    "first_face": 718,
+    "face_count": 6
+  },
+  {
+    "name": "Window opening",
+    "first_face": 724,
+    "face_count": 6
+  },
+  {
+    "name": "Window rail",
+    "first_face": 730,
+    "face_count": 6
+  },
+  {
+    "name": "Window rail",
+    "first_face": 736,
+    "face_count": 6
+  },
+  {
+    "name": "Window mullion",
+    "first_face": 742,
+    "face_count": 6
+  },
+  {
+    "name": "Window opening",
+    "first_face": 748,
+    "face_count": 6
+  },
+  {
+    "name": "Window rail",
+    "first_face": 754,
+    "face_count": 6
+  },
+  {
+    "name": "Window rail",
+    "first_face": 760,
+    "face_count": 6
+  },
+  {
+    "name": "Window mullion",
+    "first_face": 766,
+    "face_count": 6
+  },
+  {
+    "name": "Window opening",
+    "first_face": 772,
+    "face_count": 6
+  },
+  {
+    "name": "Window rail",
+    "first_face": 778,
+    "face_count": 6
+  },
+  {
+    "name": "Window rail",
+    "first_face": 784,
+    "face_count": 6
+  },
+  {
+    "name": "Window mullion",
+    "first_face": 790,
+    "face_count": 6
+  },
+  {
+    "name": "Window opening",
+    "first_face": 796,
+    "face_count": 6
+  },
+  {
+    "name": "Window rail",
+    "first_face": 802,
+    "face_count": 6
+  },
+  {
+    "name": "Window rail",
+    "first_face": 808,
+    "face_count": 6
+  },
+  {
+    "name": "Window mullion",
+    "first_face": 814,
+    "face_count": 6
+  }
+]

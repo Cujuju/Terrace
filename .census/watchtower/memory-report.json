@@ -1,0 +1,94 @@
+{
+  "assumptions": {
+    "png_gpu_format": "RGBA8 with complete mip chain",
+    "compressed_gpu_format": "BC7 or ASTC 4x4, 16 bytes per 4x4 block, complete mip chain",
+    "excluded": "CPU decoded images, loader buffers, driver allocation overhead, shaders, framebuffer and instance buffers",
+    "sharing": "Terrace draws repeated structures with InstancedMesh; mesh and textures are shared, not duplicated per house."
+  },
+  "variants": {
+    "original": {
+      "triangles": 3096,
+      "exported_vertices": 6781,
+      "geometry_gpu_bytes": 344064,
+      "textures": [
+        {
+          "name": "watchtower-normal",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 1671701
+        },
+        {
+          "name": "watchtower-basecolor",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 2367201
+        },
+        {
+          "name": "watchtower-metallicRoughness",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 882487
+        }
+      ],
+      "png_gpu_total_bytes": 67452924,
+      "ktx2_bc7_astc_gpu_total_bytes": 17121360,
+      "png_glb_file_bytes": 4278148,
+      "ktx2_glb_file_bytes": 5267556,
+      "png_glb_sha256": "b5b06b701ab72f8f46a7841606e61638dd5207228a3c8b1dca689bd6327129c8",
+      "ktx2_glb_sha256": "0f3c66814828fb1f4794f478e6e6f80dbc7d2c82b1fca0107772064048b5fa3b",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    },
+    "low": {
+      "triangles": 1174,
+      "exported_vertices": 2318,
+      "geometry_gpu_bytes": 118308,
+      "textures": [
+        {
+          "name": "watchtower-normal",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 318466
+        },
+        {
+          "name": "watchtower-basecolor",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 696263
+        },
+        {
+          "name": "watchtower-metallicRoughness",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 79736
+        }
+      ],
+      "png_gpu_total_bytes": 16895520,
+      "ktx2_bc7_astc_gpu_total_bytes": 4312692,
+      "png_glb_file_bytes": 864944,
+      "ktx2_glb_file_bytes": 1214860,
+      "png_glb_sha256": "d7779737d181cd87ebd073677fa3137cc928673ebc6c57baa888bb8e07aa4f2e",
+      "ktx2_glb_sha256": "bffb90e3794a6ceac22664974be84dda76fec314fd8ffb80221c4518387ed0aa",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    }
+  }
+}

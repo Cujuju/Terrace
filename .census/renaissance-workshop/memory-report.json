@@ -1,0 +1,94 @@
+{
+  "assumptions": {
+    "png_gpu_format": "RGBA8 with complete mip chain",
+    "compressed_gpu_format": "BC7 or ASTC 4x4, 16 bytes per 4x4 block, complete mip chain",
+    "excluded": "CPU decoded images, loader buffers, driver allocation overhead, shaders, framebuffer and instance buffers",
+    "sharing": "Terrace draws repeated structures with InstancedMesh; mesh and textures are shared, not duplicated per house."
+  },
+  "variants": {
+    "original": {
+      "triangles": 1820,
+      "exported_vertices": 3487,
+      "geometry_gpu_bytes": 178296,
+      "textures": [
+        {
+          "name": "renaissance-workshop-normal",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 1974463
+        },
+        {
+          "name": "renaissance-workshop-basecolor",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 2394728
+        },
+        {
+          "name": "renaissance-workshop-metallicRoughness",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 1022052
+        }
+      ],
+      "png_gpu_total_bytes": 67287156,
+      "ktx2_bc7_astc_gpu_total_bytes": 16955592,
+      "png_glb_file_bytes": 4093972,
+      "ktx2_glb_file_bytes": 5571704,
+      "png_glb_sha256": "27b74b18945a94a40a0430737e5798a5fb682f29f74a33df88e74d44f7dbcb19",
+      "ktx2_glb_sha256": "510031c27d1ac779be067bf9811b90aa4c79b6f2e8bee97370ef4b38c8f056eb",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    },
+    "low": {
+      "triangles": 1180,
+      "exported_vertices": 2372,
+      "geometry_gpu_bytes": 120936,
+      "textures": [
+        {
+          "name": "renaissance-workshop-normal",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 625520
+        },
+        {
+          "name": "renaissance-workshop-basecolor",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 789960
+        },
+        {
+          "name": "renaissance-workshop-metallicRoughness",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 350538
+        }
+      ],
+      "png_gpu_total_bytes": 16898148,
+      "ktx2_bc7_astc_gpu_total_bytes": 4315320,
+      "png_glb_file_bytes": 1414596,
+      "ktx2_glb_file_bytes": 1889108,
+      "png_glb_sha256": "f0def996541b3e04db4249c77ee0ba2f437b29b74cf4438497ce89914f4990ac",
+      "ktx2_glb_sha256": "42464ef0d0227e3123bbc6832187fec0163fe2d60b38425552d2ac094e5168d1",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    }
+  }
+}
