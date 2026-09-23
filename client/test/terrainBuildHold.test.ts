@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Scene, type Object3D } from 'three';
+import { Group, Mesh, Scene, type Object3D } from 'three';
 import { createClientPluginHost } from '../src/plugins/host.ts';
 import type { TerraceClientPlugin } from '../src/plugins/types.ts';
 import type { FramePhase, Viewport } from '../src/render/scene.ts';
@@ -8,8 +8,7 @@ import type { Connection } from '../src/net/connection.ts';
 import { BOOT_MARKS } from '../src/bootMarks.ts';
 
 interface WarmupCall {
-  readonly layerVisible: boolean;
-  readonly layerWillShow: boolean;
+  readonly layerUndrawn: boolean;
   readonly finish: () => void;
 }
 
@@ -20,16 +19,12 @@ vi.mock('../src/render/settleWarmup.ts', () => ({
   warmHiddenDrawables: (
     viewport: Viewport,
     _sideFlip: unknown,
-    willShow: ReadonlySet<Object3D>,
+    undrawn: ReadonlySet<Object3D>,
   ): Promise<{ flipped: number }> => {
     const layer = viewport.scene.getObjectByName(warmup.layerName);
     return new Promise((resolve) => {
       const finish = (): void => resolve({ flipped: 0 });
-      warmup.calls.push({
-        layerVisible: layer?.visible ?? false,
-        layerWillShow: layer !== undefined && willShow.has(layer),
-        finish,
-      });
+      warmup.calls.push({ layerUndrawn: layer !== undefined && undrawn.has(layer), finish });
       if (warmup.auto) finish();
     });
   },
@@ -57,11 +52,18 @@ function rig(...plugins: TerraceClientPlugin[]) {
     drawnGroundYAt: () => null,
     pickCell: () => null,
   } as unknown as World;
+  const drawn: Object3D[] = [];
+  const renderObject = (object: Object3D): void => void drawn.push(object);
+  let renderObjectFunction: ((object: Object3D) => void) | null = null;
   const viewport = {
     scene,
     renderer: {
       domElement: { addEventListener: () => undefined, removeEventListener: () => undefined },
       info: { render: { calls: 0 } },
+      renderObject,
+      setRenderObjectFunction: (fn: ((object: Object3D) => void) | null) => {
+        renderObjectFunction = fn;
+      },
     },
     onFrame: (handler: (dt: number) => void, phase: FramePhase = 'draw') => {
       const set = phase === 'pose' ? pose : draw;
@@ -86,6 +88,12 @@ function rig(...plugins: TerraceClientPlugin[]) {
     host,
     scene,
     frame,
+    // What one render would draw of these objects, through whichever function is set.
+    draw: (...objects: Object3D[]): Object3D[] => {
+      drawn.length = 0;
+      for (const object of objects) (renderObjectFunction ?? renderObject)(object);
+      return [...drawn];
+    },
     arm: (): void => void (armed = true),
     disarm: (): void => void (armed = false),
     change: (...chunks: number[]): void => {
@@ -161,32 +169,38 @@ describe('the terrain build hold', () => {
     expect(kept).toHaveBeenCalledTimes(1);
   });
 
-  it('hides plugin layers while held, one mounted mid-hold included, and shows them on release', async () => {
+  it('draws no plugin object while held, one mounted mid-hold included, and never touches visibility', async () => {
+    const early = new Mesh();
+    const late = new Mesh();
+    const core = new Mesh();
     const r = rig(
-      { name: 'early', drawBudget: 0, attach: () => undefined },
-      { name: 'late', drawBudget: 0, attach: () => undefined },
+      { name: 'early', drawBudget: 0, attach: (ctx) => void ctx.layer.add(new Group().add(early)) },
+      { name: 'late', drawBudget: 0, attach: (ctx) => void ctx.layer.add(late) },
     );
+    r.scene.add(core);
     r.host.syncLivePlugins(['early']);
     r.arm();
     r.frame();
     r.host.syncLivePlugins(['early', 'late']);
-    expect(layerOf(r.scene, 'early')?.visible).toBe(false);
-    expect(layerOf(r.scene, 'late')?.visible).toBe(false);
-    await r.release();
+    expect(r.draw(early, late, core)).toEqual([core]);
     expect(layerOf(r.scene, 'early')?.visible).toBe(true);
     expect(layerOf(r.scene, 'late')?.visible).toBe(true);
+    await r.release();
+    expect(r.draw(early, late, core)).toEqual([early, late, core]);
   });
 
-  it('releases only after a warmup begun once the terrain was drawn, warming the hidden layers as shown', async () => {
+  it('releases only after a warmup begun once the terrain was drawn, warming the undrawn layers', async () => {
     warmup.auto = false;
     const log: string[] = [];
+    const mesh = new Mesh();
     const r = rig({
       name: 'a',
       drawBudget: 0,
       attach: (ctx) => {
+        ctx.layer.add(mesh);
         ctx.publishMovers(() => null);
-        ctx.onTerrainChanged(() => log.push(`changed:${String(ctx.layer.visible)}`));
-        ctx.onFrame(() => log.push(`frame:${String(ctx.layer.visible)}`));
+        ctx.onTerrainChanged(() => log.push(`changed:${String(r.draw(mesh).length)}`));
+        ctx.onFrame(() => log.push(`frame:${String(r.draw(mesh).length)}`));
       },
     });
     r.arm();
@@ -204,11 +218,8 @@ describe('the terrain build hold', () => {
     warmup.calls[1]!.finish();
     await settle();
     r.frame();
-    expect(log).toEqual(['changed:true', 'frame:true']);
-    expect(warmup.calls.map((c) => [c.layerVisible, c.layerWillShow])).toEqual([
-      [false, true],
-      [false, true],
-    ]);
+    expect(log).toEqual(['changed:1', 'frame:1']);
+    expect(warmup.calls.map((c) => c.layerUndrawn)).toEqual([true, true]);
   });
 
   it('a new snapshot while releasing voids that release; its own warmup releases it', async () => {
@@ -229,11 +240,9 @@ describe('the terrain build hold', () => {
     r.frame();
     r.frame();
     expect(onFrame).not.toHaveBeenCalled();
-    expect(layerOf(r.scene, 'a')?.visible).toBe(false);
     warmup.calls.at(-1)!.finish();
     await settle();
     r.frame();
     expect(onFrame).toHaveBeenCalledTimes(1);
-    expect(layerOf(r.scene, 'a')?.visible).toBe(true);
   });
 });

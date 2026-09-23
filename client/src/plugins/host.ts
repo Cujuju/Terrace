@@ -108,6 +108,10 @@ export const PLUGIN_SLOW_RUN_MS = 10;
 
 const NO_LAYERS: ReadonlySet<Object3D> = new Set();
 
+type RenderObjectFunction = NonNullable<
+  Parameters<Viewport['renderer']['setRenderObjectFunction']>[0]
+>;
+
 interface PluginFrameThrottle {
   skipRemaining: number;
   pendingDt: number;
@@ -345,7 +349,7 @@ export function createClientPluginHost(
   let warmupQueued: Promise<void> | null = null;
 
   // While a snapshot's terrain builds, plugins skip frames, their terrain changes are
-  // batched and their layers hidden. The world arms it; only the host releases it.
+  // batched and their layers go undrawn. The world arms it; only the host releases it.
   let buildHeld = false;
   const holding = (): boolean => buildHeld || world.terrainBuildHeld();
   const pluginLayers = new Set<Group>();
@@ -359,9 +363,8 @@ export function createClientPluginHost(
     const sideFlip: SideFlip = settlePassStarted ? 'forbidden' : 'allowed';
     settlePassStarted = true;
     warmedOnce = true;
-    // Held layers are shown on release, so they warm with the lights they will bring.
-    const willShow: ReadonlySet<Object3D> = buildHeld ? pluginLayers : NO_LAYERS;
-    return warmHiddenDrawables(viewport, sideFlip, willShow).then(
+    const undrawn: ReadonlySet<Object3D> = buildHeld ? pluginLayers : NO_LAYERS;
+    return warmHiddenDrawables(viewport, sideFlip, undrawn).then(
       () => undefined,
       (error: unknown) => {
         console.error('[terrace] shader warmup threw', error);
@@ -392,9 +395,18 @@ export function createClientPluginHost(
     for (const [deliver, dirty] of changes) deliver(dirty);
   };
 
+  // Skips drawing, never visibility: a hidden layer takes its light bank out of the lit
+  // set, re-keying every lit pipeline in the scene (see plugins/kit/lightBank.ts).
+  const drawUnlessHeld: RenderObjectFunction = (object, ...rest) => {
+    for (let node: Object3D | null = object; node !== null; node = node.parent) {
+      if (pluginLayers.has(node as Group)) return;
+    }
+    viewport.renderer.renderObject(object, ...rest);
+  };
+
   const engageBuildHold = (): void => {
     buildHeld = true;
-    for (const layer of pluginLayers) layer.visible = false;
+    viewport.renderer.setRenderObjectFunction(drawUnlessHeld);
     clearGroundShade();
     // Compiles alongside the terrain build, so the release pass mostly hits the cache.
     if (bootMarked(BOOT_MARKS.firstFrame)) void runWarmup();
@@ -404,7 +416,7 @@ export function createClientPluginHost(
     buildHeld = false;
     releaseWarmup = null;
     releaseReady = false;
-    for (const layer of pluginLayers) layer.visible = true;
+    viewport.renderer.setRenderObjectFunction(null);
     flushHeldTerrainChanges();
   };
 
@@ -420,7 +432,6 @@ export function createClientPluginHost(
     const deferredFrameHandlers: FrameHandler[] = [];
     const layer = new Group();
     layer.name = `plugin:${plugin.name}`;
-    layer.visible = !holding();
     pluginLayers.add(layer);
     viewport.scene.add(layer);
 
@@ -952,6 +963,7 @@ export function createClientPluginHost(
       stopGroundShade();
       stopSkyRigRefresh();
       stopBuildHold();
+      if (buildHeld) viewport.renderer.setRenderObjectFunction(null);
       heldTerrainChanges.clear();
       for (const name of [...mounted.keys()]) unmountPlugin(name);
       for (const name of [...pendingMounts]) {
