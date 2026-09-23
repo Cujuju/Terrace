@@ -1,0 +1,91 @@
+{
+  "source_sha256": "d7c40c2fe55a0513b9389ca337ecd4588a9f17fb4a2883aea4ae315e073487eb",
+  "vertices": 4216,
+  "triangles": 2094,
+  "islands": 1060,
+  "density_pixels_per_source_unit": 288.291015625,
+  "minimum_rectangle_gutter_pixels": 12,
+  "coverage_percent": 29.567337036132812,
+  "mesh_count": 1,
+  "material_count": 1,
+  "texture_size": [
+    1024,
+    1024
+  ],
+  "metalness": 0,
+  "normal_convention": "OpenGL +Y, explicit tangent handedness -1",
+  "source_geometry": "POSITION, NORMAL and indices byte-identical; nodes and scenes identical",
+  "geometry_byte_comparison": {
+    "POSITION": true,
+    "NORMAL": true,
+    "INDICES": true
+  },
+  "nodes_identical": true,
+  "scenes_identical": true,
+  "uv_min_max": [
+    0.005859375,
+    0.9940844774246216
+  ],
+  "overlapping_triangle_pairs": [],
+  "overlap_candidate_pairs_checked": 972,
+  "density_min_max": [
+    288.2803133340787,
+    288.30515283982726
+  ],
+  "measured_min_island_aabb_gap_pixels": 12.00274658203125,
+  "embedded_pngs": {
+    "timber-house-basecolor": {
+      "signature": true,
+      "size": [
+        1024,
+        1024
+      ],
+      "matches_external": true
+    },
+    "timber-house-normal": {
+      "signature": true,
+      "size": [
+        1024,
+        1024
+      ],
+      "matches_external": true
+    },
+    "timber-house-metallicRoughness": {
+      "signature": true,
+      "size": [
+        1024,
+        1024
+      ],
+      "matches_external": true
+    }
+  },
+  "metalness_blue_min_max": [
+    0.0,
+    0.0
+  ],
+  "blend": {
+    "meshes": 1,
+    "materials": 1,
+    "vertices": 4216,
+    "polygons": 2094,
+    "objects": [
+      [
+        "Cottage",
+        "MESH",
+        "RootNode"
+      ],
+      [
+        "RootNode",
+        "EMPTY",
+        null
+      ]
+    ],
+    "images_packed": true
+  },
+  "blender_tangent_max_deviation": 7.961270603118464e-05,
+  "blender_bitangent_signs": [
+    -1.0
+  ],
+  "source_unchanged": true,
+  "compression_extensions": []
+}
