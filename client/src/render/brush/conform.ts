@@ -313,6 +313,7 @@ export function createConformedGeometry(
       ring.geometry.dispose();
       hem.geometry.dispose();
       grid.geometry.dispose();
+      extra.geometry.dispose();
     },
   };
 }

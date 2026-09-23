@@ -69,6 +69,7 @@ export type CarveAdmits = (
   y: number,
   band: number,
   radius: number,
+  // Contract: the same array while the answer holds, a new one when it changes; never edited in place.
 ) => readonly (readonly [number, number])[] | null;
 
 export function createBrushPreview(
@@ -110,7 +111,7 @@ export function createBrushPreview(
   const markCellBound = (2 * maxReachCells + 1) * (2 * maxReachCells + 1);
   const maxExtraSegments = CELL_BOUNDARY_EDGES * markCellBound;
   const conformed = createConformedGeometry(maxRingVerts, maxGridSegments, maxExtraSegments);
-  // The applier returns the same array while its answer holds; a new one rebuilds.
+  // Rebuilt only when carveAdmits hands back a different array.
   let liveCarve: {
     footprint: BrushFootprint | null;
     id: number;

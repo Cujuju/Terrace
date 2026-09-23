@@ -482,6 +482,7 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
   } => {
     terrainEpoch++;
     chunkRevisions = new Int32Array(chunksPerEdge(worldSize) ** 2);
+    carveMemo = null;
     const nextMirror = createTerrainMirror(worldSize);
     mirror = nextMirror;
     const built = buildTerrain(nextMirror);
@@ -755,9 +756,10 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
       ) {
         return memo.cells;
       }
-      const cells = carveAdmittedCells(map, x, y, radius, band, depthBands).map(
-        (i) => [cellXIn(map.size, i) - x, cellYIn(map.size, i) - y] as const,
-      );
+      // Frozen: callers share this array until the answer changes.
+      const cells = Object.freeze(carveAdmittedCells(map, x, y, radius, band, depthBands).map(
+        (i) => Object.freeze([cellXIn(map.size, i) - x, cellYIn(map.size, i) - y] as const),
+      ));
       carveMemo = { map, terrainChanges, x, y, band, radius, depthBands, cells };
       return cells;
     },
@@ -860,10 +862,13 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
       stopMesherDump?.();
       stopDeviceLostWatch?.();
       meshes?.dispose();
+      layerEdges?.dispose();
       rig?.dispose();
       rig = null;
       meshes = null;
+      layerEdges = null;
       mirror = null;
+      carveMemo = null;
       drawnGround = null;
       predictions = null;
       water.dispose();
