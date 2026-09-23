@@ -106,6 +106,8 @@ export const PLUGIN_FRAME_SKIP_FRAMES = 2;
 /** Single runs past this log immediately; the window max column keeps the rest. */
 export const PLUGIN_SLOW_RUN_MS = 10;
 
+const NO_LAYERS: ReadonlySet<Object3D> = new Set();
+
 interface PluginFrameThrottle {
   skipRemaining: number;
   pendingDt: number;
@@ -338,10 +340,9 @@ export function createClientPluginHost(
   }
 
   let warmedOnce = false;
-  let warmupInFlight = false;
-  let warmupQueued = false;
   let settlePassStarted = false;
-  let warmupDue = false;
+  let warmupInFlight: Promise<void> | null = null;
+  let warmupQueued: Promise<void> | null = null;
 
   // While a snapshot's terrain builds, plugins skip frames, their terrain changes are
   // batched and their layers hidden. The world arms it; only the host releases it.
@@ -349,41 +350,62 @@ export function createClientPluginHost(
   const holding = (): boolean => buildHeld || world.terrainBuildHeld();
   const pluginLayers = new Set<Group>();
   const heldTerrainChanges = new Map<(dirty: ReadonlySet<number>) => void, Set<number>>();
+  // A warmup begun after the terrain was drawn; its finish lets the next frame release.
+  let releaseWarmup: Promise<void> | null = null;
+  let releaseReady = false;
+
+  const startWarmupPass = (): Promise<void> => {
+    // Only the settle pass runs before play, so only it may flip a shared material side.
+    const sideFlip: SideFlip = settlePassStarted ? 'forbidden' : 'allowed';
+    settlePassStarted = true;
+    warmedOnce = true;
+    // Held layers are shown on release, so they warm with the lights they will bring.
+    const willShow: ReadonlySet<Object3D> = buildHeld ? pluginLayers : NO_LAYERS;
+    return warmHiddenDrawables(viewport, sideFlip, willShow).then(
+      () => undefined,
+      (error: unknown) => {
+        console.error('[terrace] shader warmup threw', error);
+      },
+    );
+  };
+
+  // Settles once a pass begun at or after this call has finished; calls made while a pass
+  // runs share one follow-up pass.
+  const runWarmup = (): Promise<void> => {
+    if (warmupInFlight === null) {
+      const pass = startWarmupPass().finally(() => {
+        warmupInFlight = null;
+      });
+      warmupInFlight = pass;
+      return pass;
+    }
+    warmupQueued ??= warmupInFlight.then(() => {
+      warmupQueued = null;
+      return runWarmup();
+    });
+    return warmupQueued;
+  };
+
+  const flushHeldTerrainChanges = (): void => {
+    const changes = [...heldTerrainChanges];
+    heldTerrainChanges.clear();
+    for (const [deliver, dirty] of changes) deliver(dirty);
+  };
 
   const engageBuildHold = (): void => {
     buildHeld = true;
     for (const layer of pluginLayers) layer.visible = false;
     clearGroundShade();
+    // Compiles alongside the terrain build, so the release pass mostly hits the cache.
+    if (bootMarked(BOOT_MARKS.firstFrame)) void runWarmup();
   };
 
   const releaseBuildHold = (): void => {
     buildHeld = false;
+    releaseWarmup = null;
+    releaseReady = false;
     for (const layer of pluginLayers) layer.visible = true;
-    const changes = [...heldTerrainChanges];
-    heldTerrainChanges.clear();
-    for (const [deliver, dirty] of changes) deliver(dirty);
-    warmupDue = true;
-  };
-
-  const runWarmup = (): void => {
-    if (warmupInFlight) {
-      warmupQueued = true;
-      return;
-    }
-    warmupInFlight = true;
-    // Only the settle pass runs before play, so only it may flip a shared material side.
-    const sideFlip: SideFlip = settlePassStarted ? 'forbidden' : 'allowed';
-    settlePassStarted = true;
-    void warmHiddenDrawables(viewport, sideFlip)
-      .catch((error: unknown) => {
-        console.error('[terrace] shader warmup threw', error);
-      })
-      .finally(() => {
-        warmupInFlight = false;
-        if (!warmupQueued) return;
-        warmupQueued = false;
-        runWarmup();
-      });
+    flushHeldTerrainChanges();
   };
 
   const mountPlugin = (plugin: TerraceClientPlugin): void => {
@@ -617,7 +639,7 @@ export function createClientPluginHost(
       },
       // Before the settle pass, whatever the plugin added is covered by that pass.
       requestShaderWarmup(): void {
-        if (warmedOnce) runWarmup();
+        if (warmedOnce) void runWarmup();
       },
       modulateSkyRig(modify: (state: SkyRigState) => SkyRigState) {
         skyRigModifiers.push(modify);
@@ -710,7 +732,7 @@ export function createClientPluginHost(
       mounted.set(plugin.name, { plugin, layer, undo });
       // A plugin mounting after the settle warmup ran gets its own pass; the
       // already-compiled objects are cache hits.
-      if (warmedOnce) runWarmup();
+      if (warmedOnce) void runWarmup();
     };
 
     const dropUnattached = (): void => {
@@ -790,17 +812,32 @@ export function createClientPluginHost(
   configureGroundShade(groundShadeMaxFor(plugins));
 
   // Pose phase, registered before any runner, so engage and release land before a plugin
-  // runs that frame. A release also flushes changes held when the world disarmed unseen.
+  // runs that frame. Release waits for a warmup, so first show draws warmed materials.
   const stopBuildHold = viewport.onFrame(() => {
-    const armed = world.terrainBuildHeld();
-    if (armed && !buildHeld) engageBuildHold();
-    else if (!armed && (buildHeld || heldTerrainChanges.size > 0)) releaseBuildHold();
-    // Fires after each build release, once boot has applied the AA setting; a later
+    if (world.terrainBuildHeld()) {
+      if (!buildHeld) engageBuildHold();
+      // A new snapshot while releasing voids that release's warmup.
+      releaseWarmup = null;
+      releaseReady = false;
+      return;
+    }
+    if (!buildHeld) {
+      // The world armed and disarmed between two frames: deliver whatever it held.
+      if (heldTerrainChanges.size > 0) flushHeldTerrainChanges();
+      return;
+    }
+    if (releaseReady) {
+      releaseBuildHold();
+      return;
+    }
+    // Runs after each build, once boot has applied the AA setting; a later
     // multisample toggle drops the canvas target and the next render recompiles.
-    if (!warmupDue || !bootMarked(BOOT_MARKS.firstFrame)) return;
-    warmupDue = false;
-    warmedOnce = true;
-    runWarmup();
+    if (releaseWarmup !== null || !bootMarked(BOOT_MARKS.firstFrame)) return;
+    const warmed = runWarmup();
+    releaseWarmup = warmed;
+    void warmed.then(() => {
+      if (releaseWarmup === warmed) releaseReady = true;
+    });
   }, 'pose');
 
   for (const plugin of plugins) mountPlugin(plugin);

@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
-import { Scene } from 'three';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Scene, type Object3D } from 'three';
 import { createClientPluginHost } from '../src/plugins/host.ts';
 import type { TerraceClientPlugin } from '../src/plugins/types.ts';
 import type { FramePhase, Viewport } from '../src/render/scene.ts';
@@ -7,16 +7,38 @@ import type { World } from '../src/world.ts';
 import type { Connection } from '../src/net/connection.ts';
 import { BOOT_MARKS } from '../src/bootMarks.ts';
 
-const warmup = vi.hoisted(() => ({ calls: [] as boolean[], layerName: 'plugin:a' }));
+interface WarmupCall {
+  readonly layerVisible: boolean;
+  readonly layerWillShow: boolean;
+  readonly finish: () => void;
+}
+
+// Passes finish only when a test says so, unless `auto` finishes them on the spot.
+const warmup = vi.hoisted(() => ({ calls: [] as WarmupCall[], auto: true, layerName: 'plugin:a' }));
 
 vi.mock('../src/render/settleWarmup.ts', () => ({
-  warmHiddenDrawables: (viewport: Viewport): Promise<void> => {
-    warmup.calls.push(viewport.scene.getObjectByName(warmup.layerName)?.visible ?? false);
-    return Promise.resolve();
+  warmHiddenDrawables: (
+    viewport: Viewport,
+    _sideFlip: unknown,
+    willShow: ReadonlySet<Object3D>,
+  ): Promise<{ flipped: number }> => {
+    const layer = viewport.scene.getObjectByName(warmup.layerName);
+    return new Promise((resolve) => {
+      const finish = (): void => resolve({ flipped: 0 });
+      warmup.calls.push({
+        layerVisible: layer?.visible ?? false,
+        layerWillShow: layer !== undefined && willShow.has(layer),
+        finish,
+      });
+      if (warmup.auto) finish();
+    });
   },
 }));
 
 const FRAME_DT_S = 1 / 60;
+
+// Lets every promise continuation queued so far run.
+const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
 function rig(...plugins: TerraceClientPlugin[]) {
   const scene = new Scene();
@@ -56,9 +78,14 @@ function rig(...plugins: TerraceClientPlugin[]) {
   });
   // The world reuses one set per notification; so does this stub.
   const scratch = new Set<number>();
+  const frame = (): void => {
+    for (const handler of pose) handler(FRAME_DT_S);
+    for (const handler of draw) handler(FRAME_DT_S);
+  };
   return {
     host,
     scene,
+    frame,
     arm: (): void => void (armed = true),
     disarm: (): void => void (armed = false),
     change: (...chunks: number[]): void => {
@@ -66,30 +93,41 @@ function rig(...plugins: TerraceClientPlugin[]) {
       for (const chunk of chunks) scratch.add(chunk);
       for (const handler of terrainHandlers) handler(scratch);
     },
-    frame: (): void => {
-      for (const handler of pose) handler(FRAME_DT_S);
-      for (const handler of draw) handler(FRAME_DT_S);
+    // Terrain drawn, its warmup finishes, the next frame releases.
+    release: async (): Promise<void> => {
+      armed = false;
+      frame();
+      await settle();
+      frame();
     },
   };
 }
 
 const layerOf = (scene: Scene, name: string) => scene.getObjectByName(`plugin:${name}`);
 
+beforeAll(() => {
+  performance.mark(BOOT_MARKS.firstFrame);
+});
+
+beforeEach(() => {
+  warmup.calls.length = 0;
+  warmup.auto = true;
+});
+
 describe('the terrain build hold', () => {
-  it('skips plugin frames while held and resumes them on release', () => {
+  it('skips plugin frames while held and resumes them on release', async () => {
     const onFrame = vi.fn();
     const r = rig({ name: 'a', drawBudget: 0, attach: (ctx) => void ctx.onFrame(onFrame) });
     r.arm();
     r.frame();
     r.frame();
     expect(onFrame).not.toHaveBeenCalled();
-    r.disarm();
-    r.frame();
+    await r.release();
     expect(onFrame).toHaveBeenCalledTimes(1);
     expect(onFrame).toHaveBeenCalledWith(FRAME_DT_S);
   });
 
-  it('holds changes from the moment the world arms, and delivers their union once on release', () => {
+  it('holds changes from the moment the world arms, and delivers their union once on release', async () => {
     const seen: number[][] = [];
     const r = rig({
       name: 'a',
@@ -101,15 +139,14 @@ describe('the terrain build hold', () => {
     r.frame();
     r.change(2, 3);
     expect(seen).toEqual([]);
-    r.disarm();
-    r.frame();
+    await r.release();
     r.frame();
     expect(seen).toEqual([[1, 2, 3]]);
     r.change(4);
     expect(seen).toEqual([[1, 2, 3], [4]]);
   });
 
-  it('delivers nothing on release to a plugin unmounted during the hold', () => {
+  it('delivers nothing on release to a plugin unmounted during the hold', async () => {
     const gone = vi.fn();
     const kept = vi.fn();
     const r = rig(
@@ -119,13 +156,12 @@ describe('the terrain build hold', () => {
     r.arm();
     r.change(1);
     r.host.syncLivePlugins(['kept']);
-    r.disarm();
-    r.frame();
+    await r.release();
     expect(gone).not.toHaveBeenCalled();
     expect(kept).toHaveBeenCalledTimes(1);
   });
 
-  it('hides plugin layers while held, one mounted mid-hold included, and shows them on release', () => {
+  it('hides plugin layers while held, one mounted mid-hold included, and shows them on release', async () => {
     const r = rig(
       { name: 'early', drawBudget: 0, attach: () => undefined },
       { name: 'late', drawBudget: 0, attach: () => undefined },
@@ -136,15 +172,13 @@ describe('the terrain build hold', () => {
     r.host.syncLivePlugins(['early', 'late']);
     expect(layerOf(r.scene, 'early')?.visible).toBe(false);
     expect(layerOf(r.scene, 'late')?.visible).toBe(false);
-    r.disarm();
-    r.frame();
+    await r.release();
     expect(layerOf(r.scene, 'early')?.visible).toBe(true);
     expect(layerOf(r.scene, 'late')?.visible).toBe(true);
   });
 
-  it('on release shows layers and delivers changes before any plugin frame, then warms with layers shown', () => {
-    performance.mark(BOOT_MARKS.firstFrame);
-    warmup.calls.length = 0;
+  it('releases only after a warmup begun once the terrain was drawn, warming the hidden layers as shown', async () => {
+    warmup.auto = false;
     const log: string[] = [];
     const r = rig({
       name: 'a',
@@ -158,10 +192,48 @@ describe('the terrain build hold', () => {
     r.arm();
     r.change(1);
     r.frame();
-    expect(warmup.calls).toEqual([]);
+    expect(warmup.calls).toHaveLength(1);
     r.disarm();
     r.frame();
+    // The release pass queues behind the one the hold began with.
+    warmup.calls[0]!.finish();
+    await settle();
+    expect(warmup.calls).toHaveLength(2);
+    r.frame();
+    expect(log).toEqual([]);
+    warmup.calls[1]!.finish();
+    await settle();
+    r.frame();
     expect(log).toEqual(['changed:true', 'frame:true']);
-    expect(warmup.calls).toEqual([true]);
+    expect(warmup.calls.map((c) => [c.layerVisible, c.layerWillShow])).toEqual([
+      [false, true],
+      [false, true],
+    ]);
+  });
+
+  it('a new snapshot while releasing voids that release; its own warmup releases it', async () => {
+    warmup.auto = false;
+    const onFrame = vi.fn();
+    const r = rig({ name: 'a', drawBudget: 0, attach: (ctx) => void ctx.onFrame(onFrame) });
+    r.arm();
+    r.frame();
+    warmup.calls[0]!.finish();
+    await settle();
+    r.disarm();
+    r.frame();
+    r.arm();
+    r.frame();
+    for (const call of warmup.calls) call.finish();
+    await settle();
+    r.disarm();
+    r.frame();
+    r.frame();
+    expect(onFrame).not.toHaveBeenCalled();
+    expect(layerOf(r.scene, 'a')?.visible).toBe(false);
+    warmup.calls.at(-1)!.finish();
+    await settle();
+    r.frame();
+    expect(onFrame).toHaveBeenCalledTimes(1);
+    expect(layerOf(r.scene, 'a')?.visible).toBe(true);
   });
 });
