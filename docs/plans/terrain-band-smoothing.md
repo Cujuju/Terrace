@@ -64,6 +64,7 @@ steps at that edge.
   for now; a lower-variation natural stamp may be wanted after round works.
 - Owner: generated terrain would need its heights written edge-aware for the
   wall rule; accepted as required work, not a deal-breaker.
+- Step plan: `docs/plans/edge-aware-brushes.md`.
 
 ## Original implementation and plan (superseded where amended above)
 Prototype: `d4664f4e`; follow-up shape requirement: `ed67fc78`.
