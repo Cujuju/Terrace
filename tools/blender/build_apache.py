@@ -39,7 +39,7 @@ ROTOR_CENTRE = profile_point(225, 22)
 TAIL_ROTOR_CENTRE = profile_point(524, 43, .27)
 GUN_CENTRE = profile_point(138, 117)
 MUZZLE = profile_point(101, 125)
-NOSE = profile_point(61, 100)
+NOSE = profile_point(59, 98.5)
 TAIL_TIP = profile_point(515, 120)
 TOP = profile_point(225, 8)
 CANOPY_U_RANGE = (100, 200)
@@ -188,7 +188,7 @@ def atlas():
     material = bpy.data.materials.new('apache_olive_atlas')
     material.use_nodes = True
     material.use_backface_culling = True
-    bsdf = material.node_tree.nodes['Principled BSDF']
+    bsdf = next(node for node in material.node_tree.nodes if node.type == 'BSDF_PRINCIPLED')
     bsdf.inputs['Metallic'].default_value = 0.12
     for name, data, socket, space in (
         ('apache_basecolor', pixels, 'Base Color', 'sRGB'),
@@ -276,10 +276,10 @@ def main_wheel(centre):
 
 def build_geometry():
     # Stations trace the owner's side elevation: image x, roof y, belly y, half-width.
-    stations = [(80,90,110,.34),(104,87,114,.48),(150,84,119,.65),
-                (194,78,121,.73),(242,77,125,.78),(291,80,131,.80),
-                (322,80,132,.59),(346,86,132,.41),(380,92,127,.31),
-                (480,102,127,.18),(515,108,128,.10)]
+    stations = [(80,83,111,.34),(100,78,115,.47),(110,92,116,.52),
+                (194,78,121,.73),(291,80,128,.80),
+                (322,80,133,.59),(346,85,133,.41),(380,88,127,.31),
+                (480,98,128,.18),(515,110,128,.10)]
     vertices = []
     for u,top,bottom,width in stations:
         bevel = min(3,(bottom-top)/4)
@@ -293,9 +293,9 @@ def build_geometry():
     faces.append(tuple(range((len(stations)-1)*6,len(stations)*6)))
     add('fuselage',vertices,faces,HULL)
     # Six-sided angular tandem canopy, with painted frames on each glass face.
-    canopy = [(102,82,94,.47),(124,63,90,.54),(153,51,84,.61),
-              (184,48,79,.61),(199,46,77,.63),(235,46,77,.66),
-              (286,54,82,.65),(321,76,84,.49)]
+    canopy = [(100,78,94,.47),(116,64,91,.52),(143,52,85,.61),
+              (173,48,80,.61),(199,43,77,.63),(245,46,77,.66),
+              (290,56,82,.65),(321,76,84,.49)]
     verts = []
     for u,top,bottom,width in canopy:
         shoulder = float(np.interp(u,[s[0] for s in stations],[s[1] for s in stations]))+5
@@ -312,16 +312,18 @@ def build_geometry():
     faces.append(tuple(range((len(canopy)-1)*6,len(canopy)*6)))
     labels.append(PLAIN)
     add('fuselage', verts, faces, labels)
+    prism('fuselage',[profile_point(u,v) for u,v in
+                     [(176,49),(180,43),(195,42),(204,46)]],1.0,axis=1,tile=PLAIN)
     for side in (-1,1):
         y = side*.93
         engine_face_start = len(PARTS['fuselage'][2])
-        loft('fuselage', [(*profile_point(317,72,y),.38,.45),
-                         (*profile_point(306,70,y),.46,.49),
-                         (*profile_point(245,68,y),.46,.49)],sides=6,tile=PANEL,cap=VENT)
+        loft('fuselage', [(*profile_point(317,74,y),.38,.40),
+                         (*profile_point(306,72,y),.46,.45),
+                         (*profile_point(245,70,y),.46,.43)],sides=6,tile=PANEL,cap=VENT)
         outer_engine_face = 5 if side == 1 else 2
         PARTS['fuselage'][2][engine_face_start + 7 + outer_engine_face] = MARKING
-        loft('fuselage',[(*profile_point(245,68,y),.29,.30),
-                        (*profile_point(231,68,y),.25,.27)],sides=6,tile=PLAIN,cap=DARK)
+        loft('fuselage',[(*profile_point(245,70,y),.29,.30),
+                        (*profile_point(231,70,y),.25,.27)],sides=6,tile=PLAIN,cap=DARK)
         prism('fuselage',[profile_point(218,91,side*.65),profile_point(268,96,side*.65),
                          profile_point(277,107,side*2.6),profile_point(243,104,side*2.6)],.09,tile=WING)
         # One pod and two silhouette missiles per wing; launch tubes are paint.
@@ -337,7 +339,7 @@ def build_geometry():
         rod('fuselage',profile_point(187,120,side*.62),wheel,.065,tile=STEEL,sides=4)
         main_wheel(wheel)
     prism('fuselage',[profile_point(u,v) for u,v in
-                     [(483,105),(509,47),(524,26),(548,28),(513,116)]],.13,axis=1,tile=TAIL)
+                     [(480,102),(511,45),(531,20),(554,20),(551,43),(516,111)]],.13,axis=1,tile=TAIL)
     prism('fuselage',[profile_point(493,104,-1.2),profile_point(527,105,-1.2),
                      profile_point(527,105,1.2),profile_point(493,104,1.2)],.07,tile=WING)
     tail_wheel = profile_point(536,145)
@@ -345,9 +347,9 @@ def build_geometry():
     rod('fuselage',profile_point(519,125),tail_wheel,.045,sides=4)
     rod('fuselage',profile_point(536,145,-.09),profile_point(536,145,.09),.20,tile=RUBBER,sides=8)
     rod('fuselage',profile_point(225,46),ROTOR_CENTRE,.095)
-    rod('main_rotor',profile_point(225,26),profile_point(225,19),.35,tile=STEEL,sides=6)
+    rod('main_rotor',profile_point(225,26),profile_point(225,19),.35,tile=STEEL,sides=4)
     for i in range(4):
-        angle = math.radians(18) + i*math.pi/2
+        angle = i*math.pi/2
         rotor_z = ROTOR_CENTRE[2]
         shape = [(.28,-.14,rotor_z),(ROTOR_RADIUS,-.18,rotor_z-.02),
                  (ROTOR_RADIUS-.16,.15,rotor_z-.02),(.28,.20,rotor_z)]
@@ -355,18 +357,19 @@ def build_geometry():
                     x*math.sin(angle)+y*math.cos(angle),z) for x,y,z in shape]
         prism('main_rotor',outline,.035,tile=BLADE)
     rod('fuselage',profile_point(225,22),profile_point(225,8),.10,tile=STEEL,sides=4)
-    rod('fuselage',profile_point(225,9),profile_point(225,8),.22,tile=DARK,sides=6)
+    rod('fuselage',profile_point(225,9),profile_point(225,8),.22,tile=DARK,sides=5)
     cx, cy, cz = TAIL_ROTOR_CENTRE
     rod('tail_rotor',(cx,cy-.1,cz),(cx,cy+.1,cz),.13,sides=4)
-    for angle in (25,80,205,260):
+    for angle in (46,151,226,331):
         a = math.radians(angle)
         outline = [(cx+r*math.cos(a)-w*math.sin(a),cy,
                     cz+r*math.sin(a)+w*math.cos(a))
-                   for r,w in ((.1,-.09),(1.25,-.12),(1.25,.12),(.1,.09))]
+                   for r,w in ((.1,-.09),(1.55,-.12),(1.55,.12),(.1,.09))]
         prism('tail_rotor',outline,.025,axis=1,tile=BLADE)
-    loft('fuselage',[(*profile_point(80,100),.26,.26),(*profile_point(70,100),.36,.36),
-                    (*NOSE,.24,.25)],sides=6,tile=DARK,cap=SENSOR)
-    rod('fuselage',profile_point(79,84),profile_point(70,84),.14,tile=PLAIN,sides=6,cap=DARK)
+    loft('fuselage',[(*profile_point(80,99),.29,.29),(*profile_point(68,99),.36,.36),
+                    (*profile_point(62,98),.32,.32),
+                    (*NOSE,.12,.12)],sides=6,tile=DARK,cap=SENSOR)
+    rod('fuselage',profile_point(79,82),profile_point(70,82),.16,tile=PLAIN,sides=4,cap=DARK)
     rod('chin_gun',GUN_CENTRE,profile_point(143,132),.12,tile=DARK,sides=4)
     rod('chin_gun',profile_point(143,132),MUZZLE,.045,tile=STEEL)
     rod('chin_gun',profile_point(117,118),profile_point(143,136),.04,tile=DARK,sides=4)
@@ -416,11 +419,9 @@ def empty(name, location, parent=None):
     return obj
 
 
-def main():
-    args = sys.argv[sys.argv.index('--')+1:]
-    out = os.path.abspath(args[0])
+def build_asset(out):
     os.makedirs(out, exist_ok=True)
-    bpy.ops.wm.read_factory_settings(use_empty=True)
+    PARTS.clear()
     material = atlas()
     build_geometry()
     all_vertices = np.array([v for vertices,_,_ in PARTS.values() for v in vertices])
@@ -452,8 +453,20 @@ def main():
     if count > TRIANGLE_BUDGET:
         raise RuntimeError(f'{count} triangles exceeds {TRIANGLE_BUDGET}')
     bpy.context.view_layer.update()
-    export_scene_glb(os.path.join(out,'apache.glb'))
+    root['profile_scale'] = scale
+    root['profile_centre'] = list(centre)
+    bpy.ops.object.select_all(action='DESELECT')
+    for obj in [root,*root.children_recursive]:
+        obj.select_set(True)
+    export_scene_glb(os.path.join(out,'apache.glb'), selected_only=True)
     print(f'APACHE: {count} triangles, {len(PARTS)} meshes, 1 material; swept footprint {FOOTPRINT}')
+    return root
+
+
+def main():
+    args = sys.argv[sys.argv.index('--')+1:]
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    build_asset(os.path.abspath(args[0]))
 
 
 if __name__ == '__main__':

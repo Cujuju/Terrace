@@ -43,7 +43,7 @@ def bake_object_transforms():
     bpy.ops.object.select_all(action='DESELECT')
 
 
-def export_scene_glb(out_path):
+def export_scene_glb(out_path, *, selected_only=False):
     """Write the open scene to `out_path` with this project's one export recipe.
 
     Y-up (the convention's frame), textures embedded (no sidecar files nobody
@@ -59,6 +59,8 @@ def export_scene_glb(out_path):
     """
     bpy.ops.export_scene.gltf(
         filepath=out_path,
+        use_selection=selected_only,
+        use_active_scene=selected_only,
         export_format='GLB',
         export_yup=True,
         export_apply=True,
