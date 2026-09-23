@@ -38,12 +38,14 @@ function riserStandOf(
   ctx: Pick<ClientPluginCtx, 'drawnGroundYAt'>,
   mover: ClimbRiserMover,
   feetY: number,
-): { readonly x: number; readonly y: number } | null {
+  bodyReachCells?: number,
+): { readonly x: number; readonly y: number; readonly normalX: number; readonly normalY: number } | null {
   const path = mover.climbPath;
   if (path !== undefined && path.leg !== 'face' && !mover.falling) return null;
   const normalX = Math.round(Math.cos(path?.heading ?? mover.heading));
   const normalY = Math.round(Math.sin(path?.heading ?? mover.heading));
-  if (Math.abs(normalX) + Math.abs(normalY) !== 1) return null;
+  if (bodyReachCells === undefined && Math.abs(normalX) + Math.abs(normalY) !== 1) return null;
+  const normalLength = Math.hypot(normalX, normalY);
 
   const descending = path !== undefined && path.fromHeight > path.toHeight;
   const lowX = Math.floor(path === undefined ? mover.x : descending ? path.toX : path.fromX);
@@ -60,13 +62,15 @@ function riserStandOf(
     );
     if (capY === null) return null;
     if (capY <= feetY) continue;
-    const halfWidth = path === undefined ? CLIMB_BODY_HALF_WIDTH_CELLS : CELL_CENTRE_OFFSET -
+    const halfWidth = bodyReachCells ?? (path === undefined ? CLIMB_BODY_HALF_WIDTH_CELLS : CELL_CENTRE_OFFSET -
       ((path.footX - lowX - CELL_CENTRE_OFFSET) * normalX +
-       (path.footY - lowY - CELL_CENTRE_OFFSET) * normalY);
-    const stand = along - RISER_PROBE_HALF_STEP - halfWidth;
+       (path.footY - lowY - CELL_CENTRE_OFFSET) * normalY));
+    const stand = along - RISER_PROBE_HALF_STEP - halfWidth / normalLength;
     return {
       x: normalX === 0 ? mover.x : lowX + normalX * stand,
       y: normalY === 0 ? mover.y : lowY + normalY * stand,
+      normalX: normalX / normalLength,
+      normalY: normalY / normalLength,
     };
   }
   return null;
@@ -84,6 +88,7 @@ export function advanceClimbRiserShift(
   mover: ClimbRiserMover,
   feetY: number,
   dt: number,
+  bodyReachCells?: number,
 ): void {
   if (mover.climbEndProgress !== undefined) {
     const remaining = 1 - shift.endProgress;
@@ -94,8 +99,17 @@ export function advanceClimbRiserShift(
     return;
   }
   shift.endProgress = 0;
-  const stand = mover.climbHeight === null ? null : riserStandOf(ctx, mover, feetY);
+  const stand = mover.climbHeight === null ? null : riserStandOf(ctx, mover, feetY, bodyReachCells);
   const budget = RISER_SHIFT_CELLS_PER_SECOND * Math.max(0, dt);
   shift.x = chase(shift.x, stand === null ? 0 : stand.x - mover.x, budget);
   shift.y = chase(shift.y, stand === null ? 0 : stand.y - mover.y, budget);
+  if (stand !== null && bodyReachCells !== undefined) {
+    // Contact clearance is a constraint; easing outward would leave the head inside the face.
+    const penetration = (mover.x + shift.x - stand.x) * stand.normalX +
+      (mover.y + shift.y - stand.y) * stand.normalY;
+    if (penetration > 0) {
+      shift.x -= stand.normalX * penetration;
+      shift.y -= stand.normalY * penetration;
+    }
+  }
 }

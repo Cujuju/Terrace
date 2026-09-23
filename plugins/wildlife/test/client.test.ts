@@ -1,4 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { Box3, Group, Mesh, MeshBasicMaterial, MeshLambertMaterial } from 'three';
+import { buildIbex, IBEX_ENVELOPE } from '../client/species/ibex.ts';
+import type { SpeciesJoints, SpeciesModelPool } from '../client/species/speciesModel.ts';
+import { applyMoverBodyTilt } from '../../../client/src/plugins/kit/moverBodyTilt.ts';
+import { advanceClimbRiserShift, newClimbRiserShift } from '../../../client/src/plugins/kit/climbRiser.ts';
 import { cellsAcross, beginClimb, climbingWalkerProfile, climbWireOf } from '@terrace/shared';
 import { SEA_SURFACE_WORLD_Y as DRAWN_SEA_SURFACE_WORLD_Y } from '../../../client/src/worldScale.ts';
 import {
@@ -53,6 +58,45 @@ function entity(
     ...overrides,
   };
 }
+
+describe('ibex cliff clearance', () => {
+  it('keeps the animated ibex clear of a face at every size and grid heading', () => {
+    const pool: SpeciesModelPool = {
+      keepGeometry: (geometry) => geometry,
+      lambert: (color) => new MeshLambertMaterial({ color }),
+      unlit: (color) => new MeshBasicMaterial({ color }),
+      part: (geometry, material, x, y, z) => {
+        const mesh = new Mesh(geometry, material); mesh.position.set(x, y, z); return mesh;
+      },
+      rigged: () => { const root = new Group(), rig = new Group(); root.add(rig); return { root, rig }; },
+    };
+    const model = buildIbex(pool);
+    for (const gait of ['climb', 'fall'] as const) for (let frame = 0; frame < 120; frame++) {
+      const seconds = frame / 60;
+      model.animate(model.joints as SpeciesJoints, seconds, 0, gait);
+      applyMoverBodyTilt(model.root, gait, seconds, 0);
+      const bounds = new Box3().setFromObject(model.root, true);
+      expect(bounds.max.x, `${gait} at ${seconds}s`).toBeLessThanOrEqual(IBEX_ENVELOPE.climbReach);
+    }
+    for (const scale of Object.values(WILDLIFE_SIZE_MODEL_SCALE)) for (let direction = 0; direction < 8; direction++) {
+      const heading = direction * Math.PI / 4;
+      const nx = Math.round(Math.cos(heading)), ny = Math.round(Math.sin(heading));
+      const normalLength = Math.hypot(nx, ny);
+      const reach = cellsAcross(IBEX_ENVELOPE.climbReach * scale);
+      const mover = { x: 8.5, y: 8.5, heading, climbHeight: 64 };
+      const ctx = { drawnGroundYAt: (x: number, y: number) => (x - 8) * nx + (y - 8) * ny >= 0.5 ? 2 : 0 };
+      const shift = newClimbRiserShift();
+      advanceClimbRiserShift(shift, ctx, mover, 1, 1 / 60, reach);
+      const front = (mover.x + shift.x - 8) * nx + (mover.y + shift.y - 8) * ny + reach * normalLength;
+      expect(front).toBeLessThan(0.5);
+    }
+    model.root.traverse((object) => {
+      if (!(object instanceof Mesh)) return;
+      object.geometry.dispose();
+      for (const material of Array.isArray(object.material) ? object.material : [object.material]) material.dispose();
+    });
+  });
+});
 
 describe('entities payload parsing', () => {
   it('carries server climb anchors through parsing and interpolation', () => {

@@ -1,5 +1,5 @@
 import { Group } from 'three';
-import { CELL_WORLD_SIZE } from '@terrace/shared';
+import { CELL_WORLD_SIZE, cellsAcross } from '@terrace/shared';
 import type {
   ClientPluginCtx,
   TerraceClientPlugin,
@@ -20,6 +20,7 @@ import { loadRigAsset } from '../../../client/src/render/rigAsset.ts';
 import { disposeSpeciesAssets, installSpeciesAsset } from './species/assetSpecies.ts';
 import { SPECIES_ASSETS } from './species/assets.ts';
 import { modelScaleFor } from './modelScale.ts';
+import { IBEX_ENVELOPE } from './species/ibex.ts';
 import {
   drawnGroundSampler,
   followClimbGroundY,
@@ -200,7 +201,9 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     // neither consumes the hold interval nor claims a gait it never captured.
     view.lodGait = gait;
     view.sinceFullSeconds = 0;
-    advanceClimbRiserShift(view.riserShift, ctx, entity, drawnY, sinceFull);
+    const modelScale = modelScaleFor(entity.species, sizeClass);
+    advanceClimbRiserShift(view.riserShift, ctx, entity, drawnY, sinceFull,
+      entity.species === 'ibex' ? cellsAcross(IBEX_ENVELOPE.climbReach * modelScale) : undefined);
     const drawnX = (entity.x + view.riserShift.x) * CELL_WORLD_SIZE;
     const drawnZ = (entity.y + view.riserShift.y) * CELL_WORLD_SIZE;
     if (kind === 'walker' && previousDrawnY !== null) {
@@ -215,7 +218,6 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     view.lastFullX = drawnX;
     view.lastFullZ = drawnZ;
     const column = BODY_COLUMNS[entity.species];
-    const modelScale = modelScaleFor(entity.species, sizeClass);
     view.drawnBodyBottomY = drawnY + column.bellyY * modelScale;
     view.drawnBodyHeight = (column.crownY - column.bellyY) * modelScale;
     models.draw(

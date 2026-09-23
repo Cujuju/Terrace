@@ -43,6 +43,8 @@ export const IBEX_ENVELOPE = {
   length: (0.90 + 0.55) * IBEX_SCALE,
   bodyHalfLength: (BODY_LENGTH / 2) * IBEX_SCALE,
   height: 1.42 * IBEX_SCALE,
+  // Covers the muzzle plus climb lean, and the rearward reach of the fall tumble.
+  climbReach: 1.2 * IBEX_SCALE,
 } as const;
 
 export const buildIbex: SpeciesModelBuilder = (pool) => {
