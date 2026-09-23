@@ -3,15 +3,18 @@
 Original stylized AH-64/Longbow asset for Terrace. Geometry and texture artwork
 are generated locally; there are no downloaded meshes or texture dependencies.
 Silhouette reference: [Boeing AH-64 Apache](https://www.boeing.com/defense/military-rotorcraft/ah-64-apache).
+Cockpit, gear, nose and tail were revised against the owner's supplied side-view
+photograph: compact sloping tandem glazing, solid rear housing, splayed braced
+main legs, thick shouldered tires and an aft-swept tail-wheel support.
 
 This is a reusable model asset, not a spawning or combat plugin.
 
 | Budget | Exported asset |
 | --- | --- |
-| Triangles | 988 (788 body, 92 main rotor, 68 tail rotor, 40 gun) |
+| Triangles | 992 (824 body, 68 main rotor, 60 tail rotor, 40 gun) |
 | Meshes / materials | 4 / 1, shared opaque PBR material |
 | Textures | Embedded 1024² base colour and 1024² packed metallic/roughness |
-| Rest bounds, world units | X 0.976 × Y 0.290 × Z 0.897 |
+| Rest bounds, world units | X 0.977 × Y 0.295 × Z 0.877 |
 | Full rotor sweep | Fits a 1 × 1 world-unit footprint |
 
 The saucer diameter is `SAUCER_DIAMETER_CELLS * CELL_WORLD_SIZE = 1` world unit.
