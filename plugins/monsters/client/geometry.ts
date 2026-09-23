@@ -1,4 +1,5 @@
 import {
+  BufferAttribute,
   BufferGeometry,
   CatmullRomCurve3,
   DataTexture,
@@ -462,6 +463,104 @@ export interface LambertOptions {
   readonly furFrequency?: number;
 }
 
+export function buildOrganicSurface(parts: BufferGeometry[], skin: SkinFinish): BufferGeometry {
+  const merged = mergeGeometries(parts);
+  for (const part of parts) part.dispose();
+  const welded = mergeVertices(merged, WELD_TOLERANCE);
+  merged.dispose();
+  welded.computeVertexNormals();
+  if (skin.wrinkleDepth > 0) {
+    carveWrinkles(welded, skin.wrinkleDepth, skin.wrinkleFrequency);
+    welded.computeVertexNormals();
+  }
+  applyShadeVariation(welded, skin.shadeVariation, skin.shadeFrequency);
+  return welded;
+}
+
+/** An organic surface as transferable arrays: what the template worker hands back. */
+export interface SurfaceArrays {
+  readonly attributes: ReadonlyArray<{
+    readonly name: string;
+    readonly array: Float32Array;
+    readonly itemSize: number;
+  }>;
+  readonly index: Uint16Array | Uint32Array | null;
+}
+
+export function surfaceArraysOf(geometry: BufferGeometry): SurfaceArrays {
+  return {
+    attributes: Object.entries(geometry.attributes).map(([name, attribute]) => ({
+      name,
+      array: attribute.array as Float32Array,
+      itemSize: attribute.itemSize,
+    })),
+    index: (geometry.index?.array as Uint16Array | Uint32Array | undefined) ?? null,
+  };
+}
+
+export function surfaceTransfers(surface: SurfaceArrays): ArrayBuffer[] {
+  const buffers = surface.attributes.map((attribute) => attribute.array.buffer as ArrayBuffer);
+  if (surface.index !== null) buffers.push(surface.index.buffer as ArrayBuffer);
+  return buffers;
+}
+
+function geometryOfSurface(surface: SurfaceArrays): BufferGeometry {
+  const geometry = new BufferGeometry();
+  for (const { name, array, itemSize } of surface.attributes) {
+    geometry.setAttribute(name, new Float32BufferAttribute(array, itemSize));
+  }
+  if (surface.index !== null) geometry.setIndex(new BufferAttribute(surface.index, 1));
+  return geometry;
+}
+
+const FNV_PRIME = 16777619;
+const FNV_OFFSET = 2166136261;
+// A second, independent stream: two 32-bit hashes make an accidental key match negligible.
+const FNV_OFFSET_ALT = 0x9e3779b9;
+
+/** Identifies a surface by everything `buildOrganicSurface` reads, so a match is the same output. */
+export function organicSurfaceKey(parts: readonly BufferGeometry[], skin: SkinFinish): string {
+  let a = FNV_OFFSET;
+  let b = FNV_OFFSET_ALT;
+  let words = 0;
+  const mix = (word: number): void => {
+    a = Math.imul(a ^ word, FNV_PRIME);
+    b = Math.imul(b ^ word, FNV_PRIME) ^ (b >>> 13);
+    words++;
+  };
+  const mixWords = (view: ArrayLike<number>): void => {
+    mix(view.length);
+    for (let i = 0; i < view.length; i++) mix(view[i]!);
+  };
+  const skinWords = new Uint32Array(
+    new Float64Array([skin.wrinkleDepth, skin.wrinkleFrequency, skin.shadeVariation, skin.shadeFrequency]).buffer,
+  );
+  mixWords(skinWords);
+  mix(parts.length);
+  for (const part of parts) {
+    for (const name of Object.keys(part.attributes).sort()) {
+      const attribute = part.getAttribute(name);
+      for (let i = 0; i < name.length; i++) mix(name.charCodeAt(i));
+      mix(attribute.itemSize);
+      const array = attribute.array;
+      // Float bits, not values: two floats that truncate to one integer must not collide.
+      mixWords(
+        array instanceof Float32Array
+          ? new Uint32Array(array.buffer, array.byteOffset, array.length)
+          : (array as ArrayLike<number>),
+      );
+    }
+    mixWords(part.index?.array ?? []);
+  }
+  return `${(a >>> 0).toString(36)}.${(b >>> 0).toString(36)}.${words.toString(36)}`;
+}
+
+/** Where the workshop takes precomputed surfaces from, or reports the ones it builds. */
+export interface SurfaceExchange {
+  readonly bank?: ReadonlyMap<string, SurfaceArrays>;
+  readonly record?: (key: string, geometry: BufferGeometry) => void;
+}
+
 export interface ModelWorkshop {
   segments(base: number): number;
   keepGeometry<T extends BufferGeometry>(geometry: T): T;
@@ -478,7 +577,7 @@ export interface ModelWorkshop {
   dispose(): void;
 }
 
-export function createWorkshop(): ModelWorkshop {
+export function createWorkshop(exchange: SurfaceExchange = {}): ModelWorkshop {
   const geometries: BufferGeometry[] = [];
   const materials: Material[] = [];
   const rigs: RigBlueprint[] = [];
@@ -549,17 +648,19 @@ export function createWorkshop(): ModelWorkshop {
     },
 
     organicSurface(parts: BufferGeometry[], skin: SkinFinish): BufferGeometry {
-      const merged = mergeGeometries(parts);
-      for (const part of parts) part.dispose();
-      const welded = mergeVertices(merged, WELD_TOLERANCE);
-      merged.dispose();
-      welded.computeVertexNormals();
-      if (skin.wrinkleDepth > 0) {
-        carveWrinkles(welded, skin.wrinkleDepth, skin.wrinkleFrequency);
-        welded.computeVertexNormals();
+      const { bank, record } = exchange;
+      if (bank === undefined && record === undefined) {
+        return keepGeometry(buildOrganicSurface(parts, skin));
       }
-      applyShadeVariation(welded, skin.shadeVariation, skin.shadeFrequency);
-      return keepGeometry(welded);
+      const key = organicSurfaceKey(parts, skin);
+      const banked = bank?.get(key);
+      if (banked !== undefined) {
+        for (const part of parts) part.dispose();
+        return keepGeometry(geometryOfSurface(banked));
+      }
+      const built = buildOrganicSurface(parts, skin);
+      record?.(key, built);
+      return keepGeometry(built);
     },
 
     dispose(): void {

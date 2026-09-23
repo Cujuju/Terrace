@@ -5,7 +5,13 @@ import {
   type YetiVariant,
 } from '../protocol.ts';
 import { createCthulhuFactory } from './cthulhu.ts';
-import { createWorkshop } from './geometry.ts';
+import {
+  createWorkshop,
+  surfaceArraysOf,
+  surfaceTransfers,
+  type ModelWorkshop,
+  type SurfaceArrays,
+} from './geometry.ts';
 import { createKrakenFactory } from './kraken.ts';
 import { buildYetiVariant } from './yeti.ts';
 
@@ -19,13 +25,13 @@ export interface MonsterModels {
   dispose(): void;
 }
 
-type TemplateKey = `yeti:${YetiVariant}` | Exclude<MonsterKind, 'yeti'>;
+export type TemplateKey = `yeti:${YetiVariant}` | Exclude<MonsterKind, 'yeti'>;
 
 const YETI_KEY_PREFIX = 'yeti:';
 const yetiTemplate = (variant: YetiVariant): TemplateKey => `${YETI_KEY_PREFIX}${variant}`;
 const yetiVariantOf = (key: TemplateKey): YetiVariant => key.slice(YETI_KEY_PREFIX.length) as YetiVariant;
 
-/** Reports each finished idle template build, so the owner can hold a warm specimen. */
+/** Reports each finished warm-up template build, so the owner can hold a warm specimen. */
 export type TemplateWarmed = (kind: MonsterKind, variant: YetiVariant | undefined) => void;
 
 interface TemplateSpec {
@@ -46,30 +52,39 @@ const TEMPLATE_KEYS: readonly TemplateKey[] = [
   'kraken',
 ];
 
-/** A tab that never reports idle still warms every template within this many ms per step. */
-const IDLE_WARM_UP_TIMEOUT_MS = 4000;
+export function buildTemplate(workshop: ModelWorkshop, key: TemplateKey): () => MonsterModel {
+  if (key === 'cthulhu') return createCthulhuFactory(workshop);
+  if (key === 'kraken') return createKrakenFactory(workshop);
+  return buildYetiVariant(workshop, yetiVariantOf(key));
+}
 
-// A template (organic surfaces, merged vertices, baked rig) costs 20-200 ms of main thread
-// for one living monster, so boot builds none: first use builds one, idle callbacks the rest.
+/** One template's organic surfaces, built by the template worker. */
+export interface TemplateSurfaces {
+  readonly key: TemplateKey;
+  readonly surfaces: ReadonlyArray<readonly [string, SurfaceArrays]>;
+}
+
+export function templateSurfaceTransfers(answer: TemplateSurfaces): ArrayBuffer[] {
+  return answer.surfaces.flatMap(([, surface]) => surfaceTransfers(surface));
+}
+
+// A template costs 20-200 ms of main thread for one living monster, so boot builds none:
+// first use builds one; the template worker builds the rest's surfaces.
 export function createMonsterModels(onTemplateWarmed?: TemplateWarmed): MonsterModels {
-  const workshop = createWorkshop();
+  const bank = new Map<string, SurfaceArrays>();
+  const workshop = createWorkshop({ bank });
   const built = new Map<TemplateKey, () => MonsterModel>();
 
   const templateOf = (key: TemplateKey): (() => MonsterModel) => {
     let make = built.get(key);
     if (make === undefined) {
-      make =
-        key === 'cthulhu'
-          ? createCthulhuFactory(workshop)
-          : key === 'kraken'
-            ? createKrakenFactory(workshop)
-            : buildYetiVariant(workshop, yetiVariantOf(key));
+      make = buildTemplate(workshop, key);
       built.set(key, make);
     }
     return make;
   };
 
-  const cancelWarmUp = warmWhenIdle(TEMPLATE_KEYS, (key) => {
+  const cancelWarmUp = warmInWorker(TEMPLATE_KEYS, bank, (key) => {
     // A template a spawn already built is compiled: a specimen and its re-warm buy nothing.
     const spawnBuilt = built.has(key);
     templateOf(key);
@@ -89,35 +104,31 @@ export function createMonsterModels(onTemplateWarmed?: TemplateWarmed): MonsterM
   };
 }
 
-function warmWhenIdle<T>(items: readonly T[], warm: (item: T) => void): () => void {
-  const queue = [...items];
-  let idleHandle: number | null = null;
-  let timerHandle: ReturnType<typeof setTimeout> | null = null;
-  const step = (): void => {
-    idleHandle = null;
-    timerHandle = null;
-    const item = queue.shift();
-    if (item === undefined) return;
-    // finally: a throw in one item must not strand the rest of the queue.
+// Without a worker (tests, old engines) nothing warms ahead: a template builds on first use.
+function warmInWorker(
+  keys: readonly TemplateKey[],
+  bank: Map<string, SurfaceArrays>,
+  warm: (key: TemplateKey) => void,
+): () => void {
+  if (typeof Worker === 'undefined') return () => undefined;
+  const worker = new Worker(new URL('./templateWorker.ts', import.meta.url), { type: 'module' });
+  let remaining = keys.length;
+  worker.onmessage = (event: MessageEvent<TemplateSurfaces>): void => {
+    const { key, surfaces } = event.data;
+    for (const [surfaceKey, surface] of surfaces) bank.set(surfaceKey, surface);
+    // finally: a throw in one template must not strand the rest, nor keep its arrays.
     try {
-      warm(item);
+      warm(key);
     } finally {
-      schedule();
+      for (const [surfaceKey] of surfaces) bank.delete(surfaceKey);
+      remaining--;
+      if (remaining === 0) worker.terminate();
     }
   };
-  const schedule = (): void => {
-    if (typeof requestIdleCallback === 'function') {
-      idleHandle = requestIdleCallback(step, { timeout: IDLE_WARM_UP_TIMEOUT_MS });
-    } else {
-      timerHandle = setTimeout(step, IDLE_WARM_UP_TIMEOUT_MS);
-    }
+  worker.onerror = (event: ErrorEvent): void => {
+    console.error('[terrace] monsters template worker failed; templates build on first use', event.message);
+    worker.terminate();
   };
-  schedule();
-  return () => {
-    queue.length = 0;
-    if (idleHandle !== null) cancelIdleCallback(idleHandle);
-    if (timerHandle !== null) clearTimeout(timerHandle);
-    idleHandle = null;
-    timerHandle = null;
-  };
+  for (const key of keys) worker.postMessage(key);
+  return () => worker.terminate();
 }
