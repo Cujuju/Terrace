@@ -16,14 +16,30 @@ reference aligned behind the mesh. The nose deck, curved nose pod, canopy statio
 roof fairing, engine height, tail-boom roof, fin tip and rotor rest pose were
 adjusted against that overlay. It remains a low-poly approximation of the reference.
 
+Detail revision: the main gear now has splayed oleos, drag braces and inboard
+axles; the tail gear has a trailing knuckle. The ventral fin has the reference's
+vertical stem and rearward foot. The chin gun has a receiver, cradle and separate
+barrel. Rounded engine nacelles use continuous side UVs, circular intake detail
+and dark aft exhausts.
+The tail rotor uses two offset pairs at 55°/125° spacing, documented in
+[AFIT's Apache tail-rotor study](https://scholar.afit.edu/etd/2946/).
+Panel lips, recess shadows, hull curvature, wheel hubs and optical reflections
+are painted into the atlas. A tangent-space normal atlas supplies panel and
+lens-rim relief; roughness varies between paint, rubber, glass and metal.
+
+**Unfinished: front imaging pod.** The owner rejected the current broad,
+flat optical face as an incorrect simplification. Its housing, mounting and
+aperture layout are provisional pending closer front and front-quarter references.
+The rest of this revision is saved independently of that remaining correction.
+
 This is a reusable model asset, not a spawning or combat plugin.
 
 | Budget | Exported asset |
 | --- | --- |
-| Triangles | 996 (832 body, 60 main rotor, 60 tail rotor, 44 gun) |
+| Triangles | 998 (846 body, 52 main rotor, 52 tail rotor, 48 gun) |
 | Meshes / materials | 4 / 1, shared opaque PBR material |
-| Textures | Embedded 1024² base colour and 1024² packed metallic/roughness |
-| Rest bounds, world units | X 0.992 × Y 0.262 × Z 0.776 |
+| Textures | Three embedded 1024² atlases: base colour, packed metallic/roughness, tangent normal |
+| Rest bounds, world units | X 0.997 × Y 0.260 × Z 0.776 |
 | Full rotor sweep | Fits a 1 × 1 world-unit footprint |
 
 The saucer diameter is `SAUCER_DIAMETER_CELLS * CELL_WORLD_SIZE = 1` world unit.
