@@ -11,12 +11,15 @@ Not third-party: built by `tools/blender/build_fish.py` in this repo, so it
 carries no external licence. Listed here only so this file is a complete
 inventory of the directory rather than a grazer-only note.
 
+Licence: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/), author Cuju Ju.
+
 ## Detail maps on the built sea creatures
 
 fish, shark, ray, eel, angelfish, humpback, blue-whale, sperm-whale and
 deepsea are built in this repo (`tools/blender/build_*.py`), so they carry no
 external licence either. Each carries three KTX2 maps baked here, no sourced
-imagery. Rebuild, per model (`<profile>` is the name with `_` for `-`):
+imagery. Licence: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/),
+author Cuju Ju. Rebuild, per model (`<profile>` is the name with `_` for `-`):
 
 ```
 blender --background --factory-startup --python tools/blender/build_<profile>.py -- <uv.glb>
