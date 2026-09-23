@@ -18,7 +18,9 @@ import {
 const WORLD_SIZE = 512;
 const SEED = 20260826;
 const REVEALED_CHUNK_SPAN = 20; // 20 x 20 = 400 chunks, matching the brief's fixture
-const SCULPT_STROKES = 400;
+const SCULPT_ATTEMPTS = 400;
+/** Strokes that land on ground: the fixture's cost, whatever share of the window genesis made land. */
+const SCULPT_STROKES = 198;
 const SCULPT_AMOUNT = 64;
 
 /** Genesis plus 198 strokes over 512² takes about two and a half minutes. */
@@ -32,16 +34,11 @@ it('writes a 512² snapshot with 400 revealed chunks', () => {
       map.cells[y * WORLD_SIZE + x] = freshGenesisHeightAt(terrain, x, y);
     }
   }
-  // SCULPT IT. A fresh genesis world is band-quantised everywhere, so no cell
-  // is a STRICT local maximum and it has no springs at all — a river fixture
-  // with no rivers. Real relief (and therefore real rivers) only exists where
-  // someone has sculpted, so the fixture sculpts: deterministic raise strokes
-  // over the highest ground, through the same applySculpt the server runs.
+  // Genesis heights are whole bands, so no strict local maxima and no springs.
+  // Deterministic strokes over the highest ground add relief, and so rivers.
   const rand = (() => { let s0 = 0x9e3779b9; return () => ((s0 = (s0 * 1664525 + 1013904223) >>> 0) / 4294967296); })();
   const edge = chunksPerEdge(WORLD_SIZE);
-  // Pick the 20x20 chunk window carrying the most high ground: springs need a
-  // strict local maximum at least one band above sea, so an all-ocean window
-  // makes a river fixture with no rivers in it.
+  // The 20x20 chunk window with the most high ground: springs need land.
   const highPerChunk = new Int32Array(edge * edge);
   for (let cy = 0; cy < edge; cy++) {
     for (let cx = 0; cx < edge; cx++) {
@@ -68,7 +65,7 @@ it('writes a 512² snapshot with 400 revealed chunks', () => {
   const cellLoY = bestY * CHUNK_SIZE;
   const cellHiY = (bestY + REVEALED_CHUNK_SPAN) * CHUNK_SIZE;
   let strokes = 0;
-  for (let i = 0; i < SCULPT_STROKES; i++) {
+  for (let i = 0; i < SCULPT_ATTEMPTS && strokes < SCULPT_STROKES; i++) {
     const x = cellLo + Math.floor(rand() * (cellHi - cellLo));
     const y = cellLoY + Math.floor(rand() * (cellHiY - cellLoY));
     if (map.cells[y * WORLD_SIZE + x]! < 0) continue;
