@@ -5,6 +5,8 @@ import {
   type PoseSegment,
 } from '../../../client/src/plugins/kit/interpolator.ts';
 import type { WildlifeEntityState, WildlifeSpecies } from '../protocol.ts';
+import type { ClimbPath } from '@terrace/shared';
+import { interpolateClimbPose } from '../../../client/src/plugins/kit/groundFollow.ts';
 
 export { lerp, lerpAngle };
 
@@ -16,6 +18,8 @@ export interface InterpolatedEntity {
   readonly heading: number;
   readonly size: number;
   readonly climbHeight: number | null;
+  readonly climbPath?: ClimbPath;
+  readonly climbEndProgress?: number;
   readonly falling: boolean;
   readonly stance: number | null;
 }
@@ -26,6 +30,9 @@ export const MAX_INTERPOLATION_SECONDS = 1;
 export const DEFAULT_INTERPOLATION_SECONDS = 0.2;
 
 interface Pose extends PoseSegment {
+  climbEndProgress?: number;
+  climbPath?: ClimbPath;
+  falling?: boolean;
   x: number;
   y: number;
   heading: number;
@@ -33,6 +40,8 @@ interface Pose extends PoseSegment {
 }
 
 interface PoseRecord extends InterpolatedEntity {
+  climbEndProgress?: number;
+  climbPath?: ClimbPath;
   x: number;
   y: number;
   heading: number;
@@ -59,6 +68,9 @@ export class WildlifeInterpolator extends PoseInterpolator<
         target.y = source.y;
         target.heading = source.heading;
         target.climbHeight = source.climbHeight;
+        target.climbPath = source.climbPath;
+        target.falling = source.falling;
+        target.climbEndProgress = 'climbEndProgress' in source ? source.climbEndProgress : undefined;
       },
       createRecord: (entity) => ({ ...entity }),
       updateRecord: (record, entity, segment, t) => {
@@ -71,15 +83,13 @@ export class WildlifeInterpolator extends PoseInterpolator<
           record.y = entity.y;
           record.heading = entity.heading;
           record.climbHeight = entity.climbHeight;
+          record.climbPath = entity.climbPath;
           return;
         }
         record.x = lerp(segment.x, entity.x, t);
         record.y = lerp(segment.y, entity.y, t);
         record.heading = lerpAngle(segment.heading, entity.heading, t);
-        record.climbHeight =
-          segment.climbHeight === null || entity.climbHeight === null
-            ? entity.climbHeight
-            : lerp(segment.climbHeight, entity.climbHeight, t);
+        interpolateClimbPose(record, segment, entity, t);
       },
     });
   }

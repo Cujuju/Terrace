@@ -1,11 +1,12 @@
 import { Group } from 'three';
 import { NO_SAMPLE } from '../../../client/src/plugins/kit/viewReconcile.ts';
-import { BAND_HEIGHT, CELL_WORLD_SIZE, drawnBandOfSample } from '@terrace/shared';
+import { CELL_WORLD_SIZE } from '@terrace/shared';
 import {
   drawnGroundSampler,
-  followGroundY,
+  followClimbGroundY,
+  newClimbGroundState,
+  type ClimbGroundState,
 } from '../../../client/src/plugins/kit/groundFollow.ts';
-import { HEIGHT_WORLD_SCALE } from '../../../client/src/worldScale.ts';
 import {
   advanceClimbRiserShift,
   newClimbRiserShift,
@@ -45,6 +46,7 @@ interface PilgrimView {
   drawnY: number | null;
   drawnZ: number;
   readonly riserShift: ClimbRiserShift;
+  readonly climbGround: ClimbGroundState;
 }
 
 let models: PilgrimModels | null = null;
@@ -71,6 +73,7 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedPilgrim>): void
       drawnY: null,
       drawnZ: 0,
       riserShift: newClimbRiserShift(),
+      climbGround: newClimbGroundState(),
     });
   }
 
@@ -111,12 +114,12 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
       view.riserShift.y = 0;
       continue;
     }
-    // Raw height through the drawn function, agreeing with drawn caps.
-    const targetY =
-      pilgrim.climbHeight === null
-        ? terrainY
-        : drawnBandOfSample(pilgrim.climbHeight) * BAND_HEIGHT * HEIGHT_WORLD_SCALE;
-    const drawnY = followGroundY(view.drawnY, targetY, dt);
+    // Continuous climb progress joins drawn support at both ends.
+    const drawnY = followClimbGroundY(view.climbGround, ctx, pilgrim, view.drawnY, terrainY, dt);
+    if (drawnY === null) {
+      view.drawn = false;
+      continue;
+    }
     view.drawnY = drawnY;
     advanceClimbRiserShift(view.riserShift, ctx, pilgrim, drawnY, dt);
     const drawnX = (pilgrim.x + view.riserShift.x) * CELL_WORLD_SIZE;

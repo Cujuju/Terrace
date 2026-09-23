@@ -56,7 +56,7 @@ export {
   roundBroadcastCell,
   roundBroadcastPosition,
 } from '@terrace/shared';
-import { isFiniteNumber } from '@terrace/shared';
+import { isFiniteNumber, parseClimbPath, type ClimbPath } from '@terrace/shared';
 
 export interface WildlifeEntityState {
   readonly id: number;
@@ -66,6 +66,7 @@ export interface WildlifeEntityState {
   readonly heading: number;
   readonly size: number;
   readonly climbHeight: number | null;
+  readonly climbPath?: ClimbPath;
   readonly falling: boolean;
   readonly stance: number | null;
 }
@@ -95,6 +96,7 @@ export function parseEntitiesPayload(payload: unknown): WildlifeEntityState[] | 
     if (!isWildlifeSpecies(entry.species)) continue;
     if (!isFiniteNumber(entry.x) || !isFiniteNumber(entry.y)) continue;
     if (!isFiniteNumber(entry.heading)) continue;
+    const climbPath = parseClimbPath(entry.climbPath);
     parsed.push({
       id: entry.id,
       species: entry.species,
@@ -105,6 +107,7 @@ export function parseEntitiesPayload(payload: unknown): WildlifeEntityState[] | 
         ? sizeClassIndex(sizeClassAt(entry.size))
         : DEFAULT_SIZE_CLASS_INDEX,
       climbHeight: isFiniteNumber(entry.climbHeight) ? entry.climbHeight : null,
+      ...(climbPath === null ? {} : { climbPath }),
       falling: entry.falling === true,
       stance: isFiniteNumber(entry.stance) ? entry.stance : null,
     });

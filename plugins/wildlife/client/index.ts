@@ -1,5 +1,5 @@
 import { Group } from 'three';
-import { BAND_HEIGHT, CELL_WORLD_SIZE, drawnBandOfSample } from '@terrace/shared';
+import { CELL_WORLD_SIZE } from '@terrace/shared';
 import type {
   ClientPluginCtx,
   TerraceClientPlugin,
@@ -22,9 +22,10 @@ import { SPECIES_ASSETS } from './species/assets.ts';
 import { modelScaleFor } from './modelScale.ts';
 import {
   drawnGroundSampler,
-  followGroundY,
+  followClimbGroundY,
+  newClimbGroundState,
+  type ClimbGroundState,
 } from '../../../client/src/plugins/kit/groundFollow.ts';
-import { HEIGHT_WORLD_SCALE } from '../../../client/src/worldScale.ts';
 import {
   advanceClimbRiserShift,
   newClimbRiserShift,
@@ -61,6 +62,7 @@ interface CreatureView {
   drawnBodyBottomY: number;
   drawnBodyHeight: number;
   readonly riserShift: ClimbRiserShift;
+  readonly climbGround: ClimbGroundState;
   lodReady: boolean;
   lodGait: MoverGait | null;
   /** Wall time and X/Z since the last full update; the full path integrates against
@@ -93,6 +95,7 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedEntity>): void 
       drawnBodyBottomY: 0,
       drawnBodyHeight: 0,
       riserShift: newClimbRiserShift(),
+      climbGround: newClimbGroundState(),
       lodReady: false,
       lodGait: null,
       sinceFullSeconds: 0,
@@ -183,23 +186,20 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
               modelScaleFor(entity.species, sizeClass),
             );
     if (kind !== 'flyer' && terrainY === null) continue;
-    // Progress is recorded only past the last bail, so a frame that draws nothing
-    // neither consumes the hold interval nor claims a gait it never captured.
-    view.lodGait = gait;
     // The full path spends the whole hold interval at once: smoothers get the elapsed
     // time and the stride integral the travel since the last full update.
     const sinceFull = view.sinceFullSeconds;
-    view.sinceFullSeconds = 0;
     const previousDrawnY = view.drawnY;
     const drawnY =
-      entity.climbHeight === null
-        ? creatureWorldY(entity.species, terrainY, sizeClass, previousDrawnY, sinceFull)
-        // Raw height through the drawn function, agreeing with drawn caps.
-        : followGroundY(
-            previousDrawnY,
-            drawnBandOfSample(entity.climbHeight) * BAND_HEIGHT * HEIGHT_WORLD_SCALE,
-            sinceFull,
-          );
+      kind === 'walker' || entity.climbHeight !== null
+        // Continuous climb progress joins drawn support at both ends.
+        ? followClimbGroundY(view.climbGround, ctx, entity, previousDrawnY, terrainY!, sinceFull)
+        : creatureWorldY(entity.species, terrainY, sizeClass, previousDrawnY, sinceFull);
+    if (drawnY === null) continue;
+    // Progress is recorded only past the last bail, so a frame that draws nothing
+    // neither consumes the hold interval nor claims a gait it never captured.
+    view.lodGait = gait;
+    view.sinceFullSeconds = 0;
     advanceClimbRiserShift(view.riserShift, ctx, entity, drawnY, sinceFull);
     const drawnX = (entity.x + view.riserShift.x) * CELL_WORLD_SIZE;
     const drawnZ = (entity.y + view.riserShift.y) * CELL_WORLD_SIZE;

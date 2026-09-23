@@ -26,7 +26,7 @@ export {
   roundBroadcastCell,
   roundBroadcastPosition,
 } from '@terrace/shared';
-import { isFiniteNumber } from '@terrace/shared';
+import { isFiniteNumber, parseClimbPath, type ClimbPath } from '@terrace/shared';
 
 export interface MonsterState {
   readonly id: number;
@@ -36,6 +36,7 @@ export interface MonsterState {
   readonly heading: number;
   readonly variant?: YetiVariant;
   readonly climbHeight?: number | null;
+  readonly climbPath?: ClimbPath;
   readonly falling?: boolean;
   readonly stance?: number | null;
 }
@@ -63,6 +64,7 @@ export function parseMonstersPayload(payload: unknown): MonsterState[] | null {
     if (!isFiniteNumber(entry.heading)) continue;
     const variant = yetiVariantOf(entry.kind, entry.variant);
     const climbHeight = isFiniteNumber(entry.climbHeight) ? entry.climbHeight : null;
+    const climbPath = parseClimbPath(entry.climbPath);
     const falling = entry.falling === true;
     const stance = isFiniteNumber(entry.stance) ? entry.stance : null;
     parsed.push(
@@ -74,6 +76,7 @@ export function parseMonstersPayload(payload: unknown): MonsterState[] | null {
             y: entry.y,
             heading: entry.heading,
             climbHeight,
+            ...(climbPath === null ? {} : { climbPath }),
             falling,
             stance,
           }
@@ -84,6 +87,7 @@ export function parseMonstersPayload(payload: unknown): MonsterState[] | null {
             y: entry.y,
             heading: entry.heading,
             climbHeight,
+            ...(climbPath === null ? {} : { climbPath }),
             falling,
             stance,
             variant,

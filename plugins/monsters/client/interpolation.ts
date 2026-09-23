@@ -5,6 +5,8 @@ import {
   type PoseSegment,
 } from '../../../client/src/plugins/kit/interpolator.ts';
 import type { MonsterKind, MonsterState, YetiVariant } from '../protocol.ts';
+import type { ClimbPath } from '@terrace/shared';
+import { interpolateClimbPose } from '../../../client/src/plugins/kit/groundFollow.ts';
 
 export { lerp, lerpAngle };
 
@@ -16,6 +18,8 @@ export interface InterpolatedMonster {
   readonly y: number;
   readonly heading: number;
   readonly climbHeight: number | null;
+  readonly climbPath?: ClimbPath;
+  readonly climbEndProgress?: number;
   readonly falling: boolean;
   readonly stance: number | null;
 }
@@ -26,6 +30,9 @@ export const MAX_INTERPOLATION_SECONDS = 2;
 export const DEFAULT_INTERPOLATION_SECONDS = 1;
 
 interface Pose extends PoseSegment {
+  climbEndProgress?: number;
+  climbPath?: ClimbPath;
+  falling?: boolean;
   x: number;
   y: number;
   heading: number;
@@ -33,6 +40,8 @@ interface Pose extends PoseSegment {
 }
 
 interface PoseRecord extends InterpolatedMonster {
+  climbEndProgress?: number;
+  climbPath?: ClimbPath;
   x: number;
   y: number;
   heading: number;
@@ -55,6 +64,9 @@ export class MonsterInterpolator extends PoseInterpolator<MonsterState, Pose, Po
         target.y = source.y;
         target.heading = source.heading;
         target.climbHeight = source.climbHeight ?? null;
+        target.climbPath = source.climbPath;
+        target.falling = source.falling;
+        target.climbEndProgress = 'climbEndProgress' in source ? source.climbEndProgress : undefined;
       },
       createRecord: (monster) => ({
         ...monster,
@@ -74,14 +86,12 @@ export class MonsterInterpolator extends PoseInterpolator<MonsterState, Pose, Po
           record.y = monster.y;
           record.heading = monster.heading;
           record.climbHeight = climbHeight;
+          record.climbPath = monster.climbPath;
           return;
         }
         record.x = lerp(segment.x, monster.x, t);
         record.y = lerp(segment.y, monster.y, t);
-        record.climbHeight =
-          segment.climbHeight === null || climbHeight === null
-            ? climbHeight
-            : lerp(segment.climbHeight, climbHeight, t);
+        interpolateClimbPose(record, segment, monster, t);
         record.heading = lerpAngle(segment.heading, monster.heading, t);
       },
     });

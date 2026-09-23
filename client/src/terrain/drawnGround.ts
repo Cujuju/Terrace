@@ -2,10 +2,11 @@ import {
   CHUNK_SIZE,
   DRAWN_GROUND_CELL_CENTRE,
   drawnBandAt,
+  drawnSampleCellIndex,
 } from '@terrace/shared';
 import { drawnSurface } from './drawnSurface.ts';
 import { drawnBandOfSample } from '@terrace/shared';
-import { sampleRenderHeight } from './mirror.ts';
+import { isCellReceived, sampleRenderHeight } from './mirror.ts';
 import { drawnBandCapY } from './capEmission.ts';
 import { type ContourLoop } from './contours.ts';
 import {
@@ -18,6 +19,11 @@ import { type CapPolygon } from './triangulation.ts';
 
 function chunkOf(cell: number): number {
   return Math.floor(cell / CHUNK_SIZE);
+}
+
+/** Public queries use rendered world cells; shared field coordinates are half a cell ahead. */
+export function drawnFieldCoordinate(worldCell: number): number {
+  return worldCell + DRAWN_GROUND_CELL_CENTRE;
 }
 
 export interface DrawnGround {
@@ -35,24 +41,43 @@ export interface DrawnGround {
   isDrawnAt(cellX: number, cellZ: number): boolean;
 }
 
+export function drawnGroundYAt(
+  mirror: TerrainMirror,
+  ground: DrawnGround,
+  cellX: number,
+  cellZ: number,
+): number | null {
+  if (!Number.isFinite(cellX) || !Number.isFinite(cellZ)) return null;
+  const max = mirror.map.size - 1;
+  const clamp = (cell: number): number => Math.max(0, Math.min(max, cell));
+  const sampleX = drawnSampleCellIndex(drawnFieldCoordinate(cellX));
+  const sampleZ = drawnSampleCellIndex(drawnFieldCoordinate(cellZ));
+  const x0 = clamp(sampleX), z0 = clamp(sampleZ);
+  const x1 = clamp(sampleX + 1), z1 = clamp(sampleZ + 1);
+  const eastChunk = chunkOf(x1) !== chunkOf(x0);
+  const southChunk = chunkOf(z1) !== chunkOf(z0);
+  const drawn = (x: number, z: number): boolean =>
+    isCellReceived(mirror, x, z) && ground.isDrawnAt(x, z);
+  if (!drawn(x0, z0)) return null;
+  if (eastChunk && !drawn(x1, z0)) return null;
+  if (southChunk && !drawn(x0, z1)) return null;
+  if (eastChunk && southChunk && !drawn(x1, z1)) return null;
+  return ground.capYAtFractional(cellX, cellZ);
+}
+
 export function createDrawnGround(mirror: TerrainMirror, store: DrawnGroundStore): DrawnGround {
   const chartAt = (cellX: number, cellZ: number): ChunkChart | null =>
     store.chartOf(chunkOf(cellX), chunkOf(cellZ));
 
-  const drawnBandOf = (cellX: number, cellZ: number): number =>
-    chartAt(cellX, cellZ)?.plan.blocky
-      ? drawnBandOfSample(sampleRenderHeight(mirror, cellX, cellZ))
-      : drawnBandAt(
-      mirror.map,
-      cellX + DRAWN_GROUND_CELL_CENTRE,
-      cellZ + DRAWN_GROUND_CELL_CENTRE,
-      drawnSurface(mirror),
-    );
-
-  const drawnBandOfFractional = (x: number, z: number): number =>
-    chartAt(x - DRAWN_GROUND_CELL_CENTRE, z - DRAWN_GROUND_CELL_CENTRE)?.plan.blocky
-      ? drawnBandOfSample(sampleRenderHeight(mirror, Math.floor(x), Math.floor(z)))
-      : drawnBandAt(mirror.map, x, z, drawnSurface(mirror));
+  const drawnBandOf = (x: number, z: number): number => {
+    const max = mirror.map.size - 1;
+    const chart = chartAt(Math.max(0, Math.min(max, x)), Math.max(0, Math.min(max, z)));
+    const fieldX = drawnFieldCoordinate(x);
+    const fieldZ = drawnFieldCoordinate(z);
+    return chart?.plan.blocky
+      ? drawnBandOfSample(sampleRenderHeight(mirror, Math.floor(fieldX), Math.floor(fieldZ)))
+      : drawnBandAt(mirror.map, fieldX, fieldZ, drawnSurface(mirror));
+  };
 
   return {
     capYAt(cellX: number, cellZ: number): number {
@@ -60,7 +85,7 @@ export function createDrawnGround(mirror: TerrainMirror, store: DrawnGroundStore
     },
 
     capYAtFractional(x: number, z: number): number {
-      return drawnBandCapY(drawnBandOfFractional(x, z));
+      return drawnBandCapY(drawnBandOf(x, z));
     },
 
     bandAt(cellX: number, cellZ: number): number {
@@ -68,7 +93,7 @@ export function createDrawnGround(mirror: TerrainMirror, store: DrawnGroundStore
     },
 
     bandAtFractional(x: number, z: number): number {
-      return drawnBandOfFractional(x, z);
+      return drawnBandOf(x, z);
     },
 
     nearestOnContour(threshold, cellX, cellZ) {

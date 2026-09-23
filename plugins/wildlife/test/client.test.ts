@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cellsAcross } from '@terrace/shared';
+import { cellsAcross, beginClimb, climbingWalkerProfile, climbWireOf } from '@terrace/shared';
 import { SEA_SURFACE_WORLD_Y as DRAWN_SEA_SURFACE_WORLD_Y } from '../../../client/src/worldScale.ts';
 import {
   DEFAULT_SIZE_CLASS,
@@ -31,6 +31,9 @@ import {
   WALKER_FOOTPRINT_HALF_EXTENT_BY_SPECIES,
   WALKER_FOOTPRINT_HALF_EXTENT_CELLS_BY_SPECIES,
   walkerGroundY,
+  swimmerSeabedY,
+  swimmerWorldY,
+  BODY_COLUMNS,
 } from '../client/placement.ts';
 
 function entity(
@@ -52,6 +55,17 @@ function entity(
 }
 
 describe('entities payload parsing', () => {
+  it('carries server climb anchors through parsing and interpolation', () => {
+    const world = { worldSize: 32, heightAt: (x: number) => x < 16 ? 33 : 161 };
+    const climb = beginClimb(world, climbingWalkerProfile(0), 15.5, 8.5, 16.5, 8.5, 7)!;
+    const wire = climbWireOf(climb);
+    const parsed = parseEntitiesPayload({ entities: [entity(1, { species: 'ibex', ...wire })] })!;
+    expect(parsed[0].climbPath).toEqual(wire.climbPath);
+    const interpolator = new WildlifeInterpolator();
+    interpolator.receive(parsed);
+    expect(interpolator.sample().get(1)!.climbPath).toEqual(wire.climbPath);
+    expect(climbWireOf(null)).toEqual({ climbHeight: null, falling: false });
+  });
   it('accepts well-formed entries, defaults a missing or unknown size to medium, strips the school, and drops malformed entries individually', () => {
     const parsed = parseEntitiesPayload({
       entities: [
@@ -179,6 +193,22 @@ describe('WildlifeInterpolator', () => {
 });
 
 describe('vertical placement', () => {
+  it('clears an oriented elongated hull over a wet ledge and rejects incomplete or dry support', () => {
+    const profile = SWIM_PROFILES.eel!;
+    const centerX = 10.25, centerY = 10.25;
+    const deep = -4, ledge = -1;
+    const sample = (x: number) => x > centerX + 0.5 ? ledge : deep;
+    for (const heading of [0, Math.PI / 4, Math.PI / 2]) {
+      for (const scale of [0.6, 1.4]) {
+        const support = swimmerSeabedY(sample, centerX, centerY, heading, profile, scale)!;
+        expect(support).toBe(heading === Math.PI / 2 ? deep : ledge);
+        const belly = swimmerWorldY(support, profile, scale) + BODY_COLUMNS.eel.bellyY * scale;
+        expect(belly).toBeGreaterThan(support);
+      }
+    }
+    expect(swimmerSeabedY(x => x > centerX ? null : deep, centerX, centerY, 0, profile, 1)).toBeNull();
+    expect(swimmerSeabedY(x => x > centerX ? SEA_SURFACE_WORLD_Y + 1 : deep, centerX, centerY, 0, profile, 1)).toBeNull();
+  });
   it('stands land species on the rendered ground, and on band 0 before the first snapshot arrives', () => {
     expect(creatureWorldY('grazer', 4, DEFAULT_SIZE_CLASS)).toBe(4);
     expect(creatureWorldY('grazer', -1.5, DEFAULT_SIZE_CLASS)).toBe(-1.5);

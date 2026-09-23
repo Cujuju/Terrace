@@ -1,10 +1,11 @@
 import { Group, type PointLight } from 'three';
-import { BAND_HEIGHT, CELL_WORLD_SIZE, drawnBandOfSample } from '@terrace/shared';
+import { CELL_WORLD_SIZE } from '@terrace/shared';
 import {
   drawnGroundSampler,
-  followGroundY,
+  followClimbGroundY,
+  newClimbGroundState,
+  type ClimbGroundState,
 } from '../../../client/src/plugins/kit/groundFollow.ts';
-import { HEIGHT_WORLD_SCALE } from '../../../client/src/worldScale.ts';
 import {
   advanceClimbRiserShift,
   newClimbRiserShift,
@@ -54,6 +55,7 @@ interface MonsterView {
   readonly variant: YetiVariant | undefined;
   drawnY: number | null;
   readonly riserShift: ClimbRiserShift;
+  readonly climbGround: ClimbGroundState;
 }
 
 interface RetiringDread {
@@ -146,6 +148,7 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedMonster>): void
         variant: monster.variant,
         drawnY: null,
         riserShift: newClimbRiserShift(),
+        climbGround: newClimbGroundState(),
       };
     },
     replace: (_id, monster, existing) => {
@@ -163,6 +166,7 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedMonster>): void
         phase: existing.phase,
         variant: monster.variant,
         riserShift: existing.riserShift,
+        climbGround: existing.climbGround,
       };
     },
     release: (_id, view) => {
@@ -216,12 +220,10 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
 
     const root = view.model.root;
     const placedY = monsterOriginY(monster.kind, groundAt, monster.x, monster.y);
-    // Raw height through the drawn function, agreeing with drawn caps.
-    const targetY =
-      monster.climbHeight === null
-        ? placedY
-        : drawnBandOfSample(monster.climbHeight) * BAND_HEIGHT * HEIGHT_WORLD_SCALE;
-    const drawnY = followGroundY(view.drawnY, targetY, dt);
+    // Continuous climb progress joins drawn support at both ends.
+    const drawnY = followClimbGroundY(view.climbGround, ctx, monster, view.drawnY, placedY, dt);
+    root.visible = drawnY !== null;
+    if (drawnY === null) continue;
     view.drawnY = drawnY;
     advanceClimbRiserShift(view.riserShift, ctx, monster, drawnY, dt);
     root.position.set(

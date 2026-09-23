@@ -22,7 +22,7 @@ import {
   WORLD_UNIT_CELLS,
   cellsAcross,
 } from '@terrace/shared';
-import { isFiniteNumber } from '@terrace/shared';
+import { isFiniteNumber, parseClimbPath, type ClimbPath } from '@terrace/shared';
 
 export const SETTLER_RACES = ['rudy', 'uno'] as const;
 
@@ -61,6 +61,7 @@ export interface PilgrimEntityState {
   readonly y: number;
   readonly heading: number;
   readonly climbHeight: number | null;
+  readonly climbPath?: ClimbPath;
   readonly falling: boolean;
   readonly stance: number | null;
 }
@@ -87,6 +88,7 @@ export function parseEntitiesPayload(payload: unknown): PilgrimEntityState[] | n
     if (entry.kind === undefined) kind = 'pilgrim';
     else if (isWalkerKind(entry.kind)) kind = entry.kind;
     else continue;
+    const climbPath = parseClimbPath(entry.climbPath);
     parsed.push({
       id: entry.id,
       kind,
@@ -95,6 +97,7 @@ export function parseEntitiesPayload(payload: unknown): PilgrimEntityState[] | n
       y: entry.y,
       heading: entry.heading,
       climbHeight: isFiniteNumber(entry.climbHeight) ? entry.climbHeight : null,
+      ...(climbPath === null ? {} : { climbPath }),
       falling: entry.falling === true,
       stance: isFiniteNumber(entry.stance) ? entry.stance : null,
     });

@@ -195,18 +195,30 @@ export function swimmerFrameY(
   return Math.min(Math.max(eased, bounds.lowest), bounds.highest);
 }
 
+const HULL_SAMPLE_ALONG: readonly number[] = [0, 1, -1, 0, 0];
+const HULL_SAMPLE_ACROSS: readonly number[] = [0, 0, 0, 1, -1];
+
 export function swimmerSeabedY(
   sampleRenderedY: (cellX: number, cellY: number) => number | null,
   x: number,
   y: number,
-  _heading: number,
-  _profile: SwimProfile,
-  _modelScale: number,
+  heading: number,
+  profile: SwimProfile,
+  modelScale: number,
 ): number | null {
-  const seabed = sampleRenderedY(x, y);
-  if (seabed === null) return null;
-  // Hull-centre exact spot; a centre over land is invalid: skip the frame.
-  if (seabed > SEA_SURFACE_WORLD_Y) return null;
+  const along = cellsAcross(profile.halfLength * modelScale);
+  const across = cellsAcross(profile.halfWidth * modelScale);
+  const forwardX = Math.cos(heading), forwardY = Math.sin(heading);
+  let seabed = -Infinity;
+  for (let probe = 0; probe < HULL_SAMPLE_ALONG.length; probe++) {
+    const length = HULL_SAMPLE_ALONG[probe] * along;
+    const width = HULL_SAMPLE_ACROSS[probe] * across;
+    const support = sampleRenderedY(x + forwardX * length - forwardY * width,
+      y + forwardY * length + forwardX * width);
+    // Every hull probe must be known and wet; partial support cannot establish clearance.
+    if (support === null || support > SEA_SURFACE_WORLD_Y) return null;
+    seabed = Math.max(seabed, support);
+  }
   return seabed;
 }
 

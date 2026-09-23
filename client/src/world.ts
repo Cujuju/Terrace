@@ -1,6 +1,5 @@
 import {
   CHUNK_SIZE,
-  drawnSampleCellIndex,
   DEFAULT_WORLD_SIZE,
   cellIndex,
   chunkIndex,
@@ -84,7 +83,7 @@ import { createFrontierFog, type FrontierFog } from './render/frontierFog.ts';
 import { createFrontierLine, type FrontierLine } from './render/frontierLine.ts';
 import { frontierMistMode } from './state/frontierMistPrefs.ts';
 import { createRiverRig, RIVER_RIG_DRAW_OBJECTS, type RiverRig } from './render/riverRig.ts';
-import { createDrawnGround, type DrawnGround } from './terrain/drawnGround.ts';
+import { createDrawnGround, drawnGroundYAt, type DrawnGround } from './terrain/drawnGround.ts';
 import { createWorkerRiverNetworkSource } from './render/water/riverNetworkSource.ts';
 import type { TerrainSink } from './net/connection.ts';
 import type { Viewport } from './render/scene.ts';
@@ -233,14 +232,6 @@ export interface WorldOptions {
   readonly chunkBuildSource?: ChunkBuildSource;
   /** The session's GPU mesher, built once in main.tsx; `null` demotes every world. */
   readonly gpuMesher?: GpuChunkBuildSource | null;
-}
-
-function clampCell(v: number, max: number): number {
-  return v < 0 ? 0 : v > max ? max : v;
-}
-
-function cellDrawn(mirror: TerrainMirror, ground: DrawnGround, x: number, z: number): boolean {
-  return isCellReceived(mirror, x, z) && ground.isDrawnAt(x, z);
 }
 
 export function createWorld(viewport: Viewport, options?: WorldOptions): World {
@@ -651,20 +642,7 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
 
     drawnGroundYAt(cellX: number, cellZ: number): number | null {
       if (drawnGround === null || mirror === null) return null;
-      const max = mirror.map.size - 1;
-      const sampleX = drawnSampleCellIndex(cellX);
-      const sampleZ = drawnSampleCellIndex(cellZ);
-      const x0 = clampCell(sampleX, max);
-      const z0 = clampCell(sampleZ, max);
-      const x1 = clampCell(sampleX + 1, max);
-      const z1 = clampCell(sampleZ + 1, max);
-      const eastChunk = Math.floor(x1 / CHUNK_SIZE) !== Math.floor(x0 / CHUNK_SIZE);
-      const southChunk = Math.floor(z1 / CHUNK_SIZE) !== Math.floor(z0 / CHUNK_SIZE);
-      if (!cellDrawn(mirror, drawnGround, x0, z0)) return null;
-      if (eastChunk && !cellDrawn(mirror, drawnGround, x1, z0)) return null;
-      if (southChunk && !cellDrawn(mirror, drawnGround, x0, z1)) return null;
-      if (eastChunk && southChunk && !cellDrawn(mirror, drawnGround, x1, z1)) return null;
-      return drawnGround.capYAtFractional(cellX, cellZ);
+      return drawnGroundYAt(mirror, drawnGround, cellX, cellZ);
     },
 
     onTerrainChanged(handler: (dirty: ReadonlySet<number>) => void): () => void {

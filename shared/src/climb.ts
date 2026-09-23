@@ -1,5 +1,6 @@
 import { BAND_HEIGHT, MAX_HEIGHT, MAX_RELIEF_WORLD_UNITS, cellsAcross } from './constants.ts';
 import { hashToIndex } from './rng.ts';
+import { isFiniteNumber } from './parse.ts';
 import {
   admitsHeight,
   exceedsWalkableGradient,
@@ -62,6 +63,7 @@ const DESCENT_LEGS = ['turn', 'lip', 'face', 'ground'] as const;
 export type ClimbLeg = (typeof ASCENT_LEGS)[number] | (typeof DESCENT_LEGS)[number] | 'done';
 
 export interface ClimbState {
+  readonly visualId: number;
   readonly toX: number;
   readonly toY: number;
   readonly footX: number;
@@ -91,13 +93,57 @@ export interface ClimbState {
 export interface ClimbWire {
   readonly climbHeight: number | null;
   readonly falling: boolean;
+  readonly climbPath?: ClimbPath;
+}
+
+export interface ClimbPath {
+  readonly id: number;
+  readonly leg: ClimbLeg;
+  readonly fromX: number;
+  readonly fromY: number;
+  readonly toX: number;
+  readonly toY: number;
+  readonly footX: number;
+  readonly footY: number;
+  readonly fromHeight: number;
+  readonly toHeight: number;
+  readonly heading: number;
+}
+
+export function parseClimbPath(value: unknown): ClimbPath | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const path = value as Partial<ClimbPath>;
+  if (path.leg !== 'turn' && path.leg !== 'lip' && path.leg !== 'face' &&
+      path.leg !== 'ground' && path.leg !== 'done') return null;
+  if (!isFiniteNumber(path.id) || !isFiniteNumber(path.fromX) || !isFiniteNumber(path.fromY) ||
+      !isFiniteNumber(path.toX) || !isFiniteNumber(path.toY) ||
+      !isFiniteNumber(path.footX) || !isFiniteNumber(path.footY) ||
+      !isFiniteNumber(path.fromHeight) || !isFiniteNumber(path.toHeight) ||
+      !isFiniteNumber(path.heading) || path.fromHeight === path.toHeight) return null;
+  return {
+    id: path.id, leg: path.leg, fromX: path.fromX, fromY: path.fromY, toX: path.toX, toY: path.toY,
+    footX: path.footX, footY: path.footY, fromHeight: path.fromHeight,
+    toHeight: path.toHeight, heading: path.heading,
+  };
 }
 
 const NOT_CLIMBING: ClimbWire = Object.freeze({ climbHeight: null, falling: false });
 
 export function climbWireOf(climb: ClimbState | null): ClimbWire {
   if (climb === null) return NOT_CLIMBING;
-  return { climbHeight: climb.height, falling: climb.falling };
+  return {
+    climbHeight: climb.height,
+    falling: climb.falling,
+    climbPath: {
+      id: climb.visualId,
+      leg: climbLegOf(climb),
+      fromX: climb.entryX, fromY: climb.entryY,
+      toX: climb.exitX, toY: climb.exitY,
+      footX: climb.footX, footY: climb.footY,
+      fromHeight: climb.fromHeight, toHeight: climb.toHeight,
+      heading: climb.heading,
+    },
+  };
 }
 
 export type ClimbOutcome = 'climbing' | 'arrived' | 'fallen';
@@ -197,6 +243,7 @@ export function beginClimb(
   const groundCells = CELL_CENTRE_OFFSET - halfWidth;
 
   return {
+    visualId: seed,
     toX: Math.floor(toX),
     toY: Math.floor(toY),
     footX: geometry.footX,
