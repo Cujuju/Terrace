@@ -53,6 +53,18 @@ history, including the rejected protected behavior and its measured overhead.
 - Done: `client/test/terrainMeshes.test.ts` now asserts the chart survives a
   rebuild and each newer build is spliced.
 
+## September 22 — edge-aware brushes (direction under exploration)
+
+Prototype: `scratch-band-investigation/build-brush-data.mjs` (`fb0a056e`).
+Brushes write each cell's in-band height as distance to the intended edge;
+cell bands are unchanged. A vertical-wall contour rule stacks multi-band
+steps at that edge.
+
+- Owner: round outlines first. Noise-varied ("natural") stamps are rejected
+  for now; a lower-variation natural stamp may be wanted after round works.
+- Owner: generated terrain would need its heights written edge-aware for the
+  wall rule; accepted as required work, not a deal-breaker.
+
 ## Original implementation and plan (superseded where amended above)
 Prototype: `d4664f4e`; follow-up shape requirement: `ed67fc78`.
 Tracker: https://github.com/Cujuju/Terrace/issues/503.
