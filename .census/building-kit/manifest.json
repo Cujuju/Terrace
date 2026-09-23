@@ -2,8 +2,8 @@
   "building_packages": 22,
   "variants": 44,
   "hash_scope": "Raw bytes in the delivered Windows workspace. Git may normalize text line endings on checkout; binary asset hashes remain unchanged.",
-  "file_count": 866,
-  "total_bytes": 757197282,
+  "file_count": 876,
+  "total_bytes": 764948754,
   "files": {
     "E:/Development/Projects/Terrace/.census/building-kit/asset_helpers.py": {
       "bytes": 3594,
@@ -22,40 +22,68 @@
       "sha256": "f53ffb7dfcb3e56030a69deb9cfc2497f948dc0d64365eec166c2d015d48016d"
     },
     "E:/Development/Projects/Terrace/.census/building-kit/build_asset.py": {
-      "bytes": 17986,
-      "sha256": "9f7ab1296c6ca153443cd493b212f53b4b314c9495683f0be85ac0d109675fc3"
+      "bytes": 18071,
+      "sha256": "d7ac3da62e49a21ddeb8c54d2551dcc831d2d68a071128b5f583080b3b3f3640"
     },
     "E:/Development/Projects/Terrace/.census/building-kit/cabaret-paint/awning.png": {
-      "bytes": 1898,
-      "sha256": "797416c3348b5566b0906a013345cdd15ced97b08fc85a2568f9042a5f39dc95"
+      "bytes": 14897,
+      "sha256": "0e40d4497977641d3f92236534c9125c9609e9b705bb282cd613e510e5020396"
+    },
+    "E:/Development/Projects/Terrace/.census/building-kit/cabaret-paint/door-left.png": {
+      "bytes": 38410,
+      "sha256": "79dcf544aa70900a8ed937d6f6dc566f8727102670eccd8fee1c9d29b4218efa"
+    },
+    "E:/Development/Projects/Terrace/.census/building-kit/cabaret-paint/door-right.png": {
+      "bytes": 42005,
+      "sha256": "1723b5a2382643cfeef1e8b32fa9d10719f9b18270ae85cf41bfa012485484ac"
+    },
+    "E:/Development/Projects/Terrace/.census/building-kit/cabaret-paint/flag.png": {
+      "bytes": 22118,
+      "sha256": "aa6d552743c567d29248d61215964e48a2adf4bf037e25e7ef3f1633e6c84eba"
+    },
+    "E:/Development/Projects/Terrace/.census/building-kit/cabaret-paint/front-reference-prompt.txt": {
+      "bytes": 1772,
+      "sha256": "a7974d0a1a8155a940fb82f7ea5b01e1c213e04ff0253435cafc5510ee643dc1"
+    },
+    "E:/Development/Projects/Terrace/.census/building-kit/cabaret-paint/front-reference.png": {
+      "bytes": 1678996,
+      "sha256": "d5b0cecb551277b25a66857e3157d43764157c24d9204a015a24b266d01ceadb"
     },
     "E:/Development/Projects/Terrace/.census/building-kit/cabaret-paint/front.png": {
-      "bytes": 51297,
-      "sha256": "6153b36edb79d8903adb73b0943cc55e9afcced8a2e7331916a96b3d9192e7ac"
+      "bytes": 1678996,
+      "sha256": "d5b0cecb551277b25a66857e3157d43764157c24d9204a015a24b266d01ceadb"
     },
     "E:/Development/Projects/Terrace/.census/building-kit/cabaret-paint/side.png": {
-      "bytes": 18296,
-      "sha256": "abf4bf1851371d1d70a4d0d659b5a21d8ded98f4719a08502bfcf3a5e75c461e"
+      "bytes": 54360,
+      "sha256": "e42524fc746a70d10faa2acd14045a40ce333fd732a6dc1064b6d5e4d5c2e127"
+    },
+    "E:/Development/Projects/Terrace/.census/building-kit/cabaret-paint/wing-left.png": {
+      "bytes": 40537,
+      "sha256": "38745afc41199d9039bfd5230fed6caf74a628571fe29b5dfc65bac33b1fb099"
+    },
+    "E:/Development/Projects/Terrace/.census/building-kit/cabaret-paint/wing-right.png": {
+      "bytes": 48774,
+      "sha256": "9d6bfc4b6b6710e397f12a94553b7be5bc67c05ade6844ca20b49fdddf724bf6"
     },
     "E:/Development/Projects/Terrace/.census/building-kit/coastal-overview.png": {
       "bytes": 4322160,
       "sha256": "a40bd9f41309cf9cbb1bb376b41106417959514773060d4ca987b4f482ce9bf5"
     },
     "E:/Development/Projects/Terrace/.census/building-kit/contact_sheets.ps1": {
-      "bytes": 1772,
-      "sha256": "f9142ea583fa94b9f29de88e9353163f6fdbccc52717b3ad7124998a4c1846d6"
+      "bytes": 1923,
+      "sha256": "0015c7b0000e7b680e45b5874f4de8bdc89ac297f9adf2c13e222cf8914e22a9"
     },
     "E:/Development/Projects/Terrace/.census/building-kit/core-buildings.png": {
-      "bytes": 3181838,
-      "sha256": "ce6afdf768b0f221dc2c412a179a4d2a752f0766c15590a4239bae607690d480"
+      "bytes": 3171162,
+      "sha256": "3f974df8c5b9c061aae9f5f452b2da089863d71b4a671c32f7200904574fa787"
     },
     "E:/Development/Projects/Terrace/.census/building-kit/crimson_cabaret.py": {
-      "bytes": 13131,
-      "sha256": "4b642df4861ce510dbbec598f09f9c3d34a5dd50ce88ccb6de37f2e0136cd304"
+      "bytes": 16239,
+      "sha256": "83b919cbdf5ca717a9504e332d2328bd0a3a95820bf58847f33867c064e83f88"
     },
     "E:/Development/Projects/Terrace/.census/building-kit/delivery-summary.json": {
       "bytes": 78641,
-      "sha256": "69ededb21484c5c3d4a306a6cb7c8af6535d1a02c07f5862b24140b4feb44c04"
+      "sha256": "8896b5c6ecf59a5a713162527eec7f8df34a3110f54b079c4577147decad5a22"
     },
     "E:/Development/Projects/Terrace/.census/building-kit/designs.py": {
       "bytes": 24595,
@@ -82,8 +110,8 @@
       "sha256": "a453b1b1a26271ac50915398a02e2a2dff6cfe63f38c1a0889f707214b84ac54"
     },
     "E:/Development/Projects/Terrace/.census/building-kit/prepare_cabaret_paint.ps1": {
-      "bytes": 4023,
-      "sha256": "893ab59bfa6c014091a5cf6284721fc9fe6d910f90a2dbf3dba3df86597a3faf"
+      "bytes": 3820,
+      "sha256": "5d1c4dc27f40f2c551840b7e6dba6d99eae0a870c19758ac6ee576ebcd678e36"
     },
     "E:/Development/Projects/Terrace/.census/building-kit/prepare_pipeline.py": {
       "bytes": 7327,
@@ -94,12 +122,12 @@
       "sha256": "e86fa224fe5d095f69cd1a127ab39fb8eb9e3fd6320703362aab62b8cb544944"
     },
     "E:/Development/Projects/Terrace/.census/building-kit/README.md": {
-      "bytes": 19611,
-      "sha256": "f9f89de156ba5147db8e608eb5dbe212ade42529b6111225745a319f15c83a39"
+      "bytes": 19756,
+      "sha256": "4cfe5248f04034a8986625b26c26cc0909167b7c4daeae6d8a98394f72281550"
     },
     "E:/Development/Projects/Terrace/.census/building-kit/render_asset.py": {
-      "bytes": 2638,
-      "sha256": "b1b59cf63dcd1e296833e722e041535d8cb08abbf5aae3f8c5f4edc46a11884a"
+      "bytes": 2860,
+      "sha256": "ace016352eb506ed3a9d7629b32f0c2297d9171ba6107f46b5af0922889582c2"
     },
     "E:/Development/Projects/Terrace/.census/building-kit/run_delivery.py": {
       "bytes": 2023,
@@ -114,16 +142,16 @@
       "sha256": "c1403a508aed589dca9cdec5c28e07b8199a633a4d6b19d8583822a33a90eed0"
     },
     "E:/Development/Projects/Terrace/.census/building-kit/write_catalog.py": {
-      "bytes": 11334,
-      "sha256": "c4fe3fe597d356fce62dddef9905aef1e5322917f9db0bcccf40e0372eaa333d"
+      "bytes": 11479,
+      "sha256": "4e7c15b1482a0b99d31513c905a389261c3d082f0d970c2b002d1b4a3b6f3b00"
     },
     "E:/Development/Projects/Terrace/.census/building-kit/write_manifest.py": {
-      "bytes": 2731,
-      "sha256": "a4ccf075e8449c96028b99950e88293573f55c57204efedf5bd00c74be0956a1"
+      "bytes": 3043,
+      "sha256": "adb0600a40d4b3851c9f80cc572d2a75b2cf9bd6f65f1309bf7f6c7c01842c39"
     },
     "E:/Development/Projects/Terrace/.census/building-kit/write_reports.py": {
-      "bytes": 7057,
-      "sha256": "403f1a038314555cb5d9a4b835688202715efdde8a1a7c9e98202089152a45ae"
+      "bytes": 7123,
+      "sha256": "7daf9097a907e3a24eb90db8aafb666de84babb550ed2148e77415b9c791385e"
     },
     "E:/Development/Projects/Terrace/.census/camp/alignment-verification.json": {
       "bytes": 62,
@@ -434,16 +462,16 @@
       "sha256": "33d840d6f83755b45c50f293d5b6e32e4ea0ccaf0bc47ed7ca2de5be4f66596c"
     },
     "E:/Development/Projects/Terrace/.census/durands/build-report.json": {
-      "bytes": 2700,
-      "sha256": "c0671c505aaba42b92ccc5645301e4cd9cca9609c83c4b339809a6d29fbe5674"
+      "bytes": 3085,
+      "sha256": "ff42f71e62f95e389663ce7a14db50d0979ca9912bec4a5a19ded0287e90e910"
     },
     "E:/Development/Projects/Terrace/.census/durands/comparison.png": {
-      "bytes": 3422577,
-      "sha256": "13302057705cd86685b94e05c5f9af4cbdb1f29ed23fec03b49203426c39feac"
+      "bytes": 4820195,
+      "sha256": "c7bb65c8a0b732d8432974788f0f91abd30784a5d275663e85a311d205518fcc"
     },
     "E:/Development/Projects/Terrace/.census/durands/compression-verification.json": {
-      "bytes": 1138,
-      "sha256": "0f885a5e9272e1d4b19a24fb92ac6ab97cdf92fec79b9f041ab1e30403be5d9e"
+      "bytes": 1137,
+      "sha256": "b5748fea59078c77742e9d364b2671db89fce65aa324e7ffbd1850fe9c55b26a"
     },
     "E:/Development/Projects/Terrace/.census/durands/concept-prompt.txt": {
       "bytes": 1262,
@@ -451,135 +479,147 @@
     },
     "E:/Development/Projects/Terrace/.census/durands/delivery-verification.json": {
       "bytes": 3266,
-      "sha256": "a74ba3b1d9204c3705a9d873f9dae433e5cdff12abd2e0934cdbc71ebef71959"
+      "sha256": "5c3886f434a10ebd524d4eeed918351bde9b6d51cef3328115ff1d32db567cfb"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/design-notes.md": {
+      "bytes": 3210,
+      "sha256": "674476def8bf2a7af7f8eb8d7cef84d3d1b4f4ce0534d0946546ef1b29d3e762"
     },
     "E:/Development/Projects/Terrace/.census/durands/durands-45deg.png": {
-      "bytes": 1237312,
-      "sha256": "3ffc542be053612d257641ae7b8a56b869ebbc483fe750d1a5bf4436108835b7"
+      "bytes": 1238681,
+      "sha256": "342fca8e30e1ae5ffb95325805a7c3c7c8f9c837c10f67ed66f9502725aa5def"
     },
     "E:/Development/Projects/Terrace/.census/durands/durands-basecolor.ktx2": {
-      "bytes": 2634459,
-      "sha256": "f7201f39d9d3897374ed5daded54c0c8b1c66bc9156b43c45cdc6fface471f51"
+      "bytes": 2669050,
+      "sha256": "113a5d5b2e4ac3ef92788dd1a463c3eb017a16559a4c3f1119795c359ff584d3"
     },
     "E:/Development/Projects/Terrace/.census/durands/durands-basecolor.png": {
-      "bytes": 1864350,
-      "sha256": "92f4101be4ecbba6f9caf52ac9e5583168671bc6b0a65c35f0db803e498f33c9"
+      "bytes": 1878885,
+      "sha256": "fef7891b41a427f9d6526ea91179fe4bb31006470c307d473757459ea494f500"
     },
     "E:/Development/Projects/Terrace/.census/durands/durands-closeup.png": {
-      "bytes": 1296996,
-      "sha256": "2b9898289a633b8ed6d66eb4076befabe6e54ca4808a77d47e62b5c5594cc2ca"
+      "bytes": 1301818,
+      "sha256": "6705bb398e055eaf01f836f0f9dc216916419d950ecc831cf1f742eb14935660"
     },
     "E:/Development/Projects/Terrace/.census/durands/durands-concept.png": {
       "bytes": 2119632,
       "sha256": "28c63427efd2cb2be05e4b82c7c0e91026737d83d173cfc35b2fcc6dd7742b81"
     },
+    "E:/Development/Projects/Terrace/.census/durands/durands-front.png": {
+      "bytes": 1118194,
+      "sha256": "881ede15dc3c61cc5e171158e3db8f3aa3a31ee5894b5553290db7d3c56972b5"
+    },
     "E:/Development/Projects/Terrace/.census/durands/durands-ktx2.glb": {
-      "bytes": 6899248,
-      "sha256": "983dcbf2cfa0e901ebe799a50b59e118d05c45cd803006cc7141e3c823773ee6"
+      "bytes": 7079940,
+      "sha256": "df38ed6d85d831b4eaa4c2fca8ea27a491fdac83a19aee5f3e6e3742eb18bc3b"
     },
     "E:/Development/Projects/Terrace/.census/durands/durands-metallicRoughness.ktx2": {
-      "bytes": 1482108,
-      "sha256": "6fe2ba74c4f106505fa1b977fd9cd0c361f534eaf5206194431a6791be8fce8e"
+      "bytes": 1514415,
+      "sha256": "36621905c940ab0cd3b2769d6834aeb5541ad9e28892f320fb60d425e2fd8c1e"
     },
     "E:/Development/Projects/Terrace/.census/durands/durands-metallicRoughness.png": {
-      "bytes": 773587,
-      "sha256": "9307d81fef9b7adbffb3be6b83aa199aafee75ce865ef4fc308a18da4a3ede66"
+      "bytes": 776123,
+      "sha256": "6e934c0035c3b8afc459abccc83d9571803bd21f565bc6f2adc4a6c72ab08b75"
     },
     "E:/Development/Projects/Terrace/.census/durands/durands-normal.ktx2": {
-      "bytes": 2163301,
-      "sha256": "44f75fb2259abbc1bff8c03b85b1b0eba95dad13fe3a56ec53c937890b1e4da3"
+      "bytes": 2187065,
+      "sha256": "3642019074473d88009e26839b0740540404b5acf2d6f50898f6bc4e8f80fe3c"
     },
     "E:/Development/Projects/Terrace/.census/durands/durands-normal.png": {
-      "bytes": 2286166,
-      "sha256": "fee44ee9945dd6176e39cc3de065e4b7aa109a6af6765fedc7d44436a216b6f1"
+      "bytes": 2287365,
+      "sha256": "8e2baaf967734b1e445c4765d43ba30f991e071ac639364250c7348ef73e6a75"
     },
     "E:/Development/Projects/Terrace/.census/durands/durands.blend": {
-      "bytes": 5171382,
-      "sha256": "4c744fe9b847a1e2d5edd6f8804b9918d43c2ef3b684225c88031a494fff9c34"
+      "bytes": 5216967,
+      "sha256": "ba5bab82a3b43abb607e382e262f9fe28a2b5d4813e3cfa858916326f6d00064"
     },
     "E:/Development/Projects/Terrace/.census/durands/durands.glb": {
-      "bytes": 5543276,
-      "sha256": "f8b434026072b983812504175fab935241c9a8207aef4b1e088aa193466794ef"
+      "bytes": 5651572,
+      "sha256": "393c488da28f56b7352fb60098273ec9ea2981385fdbafb3c87cd541a231fe0c"
     },
     "E:/Development/Projects/Terrace/.census/durands/low/build-report.json": {
-      "bytes": 2694,
-      "sha256": "cd97c4b1b7644ecd4dbc1ead6ca8c6ae221299747617ff024af444a902c420c3"
+      "bytes": 3080,
+      "sha256": "34f33bf4d33c3e742da2391802e3777fa50413daba8ae436f7b348b7c39f0770"
     },
     "E:/Development/Projects/Terrace/.census/durands/low/durands-45deg.png": {
-      "bytes": 1193808,
-      "sha256": "d80cadab70aad8240a91e8a4694c5888cc3164a8283274c3d3fa4b63349c7cb7"
+      "bytes": 1194406,
+      "sha256": "faf8a04a77f6bc229b497a44a5fb978683cfdc14b321e4b2826f479339019392"
     },
     "E:/Development/Projects/Terrace/.census/durands/low/durands-basecolor.ktx2": {
-      "bytes": 795071,
-      "sha256": "aac0cbb8043489d45942d112a390969c3f407fe2474bcef8b2f41c9f4aef4b53"
+      "bytes": 800703,
+      "sha256": "83c0f10bc398fa1d3bbfbc14fb234e2a5156b0f824fed053df4e706c2317c765"
     },
     "E:/Development/Projects/Terrace/.census/durands/low/durands-basecolor.png": {
-      "bytes": 487997,
-      "sha256": "9dc495593c9132378452abf3a349108a0af28e016c695d2215e4491e563cf120"
+      "bytes": 489784,
+      "sha256": "7575012c2a208db1ee2da3d11ccee69b5fa3b09d342562f41e89a4f3bf43f4ff"
     },
     "E:/Development/Projects/Terrace/.census/durands/low/durands-closeup.png": {
-      "bytes": 1234260,
-      "sha256": "357b926f980724397ab645910ce63b8a9f585a4189d185032ffb53da9e74e8cc"
+      "bytes": 1236437,
+      "sha256": "f3aba3e410f566d08a4dfb655ae5d3872e1b8d74dcb42a44d9ec9004baa6a7ae"
+    },
+    "E:/Development/Projects/Terrace/.census/durands/low/durands-front.png": {
+      "bytes": 1079690,
+      "sha256": "cf7145eebc510f7d29fddbbc49f6152a4adae7fa98771e4eea15afddc40cb2c6"
     },
     "E:/Development/Projects/Terrace/.census/durands/low/durands-ktx2.glb": {
-      "bytes": 2255568,
-      "sha256": "e465da170ffec9bd4ba779a6c76fde0d255a828e20331ff9bf8faf4742c1c922"
+      "bytes": 2331696,
+      "sha256": "69f9a1767353592e2e7e5f37ee749f08c6ef9351cebe24a5f762d3b88c85a625"
     },
     "E:/Development/Projects/Terrace/.census/durands/low/durands-metallicRoughness.ktx2": {
-      "bytes": 436884,
-      "sha256": "17d0bb6bbfdb18be6db4095c4ea1dc28348cefedaa8d8dc5cb7debd6bd5a16ce"
+      "bytes": 440135,
+      "sha256": "ed337ee0b0a6c06403788d6110fc5a7c0cfb10e9c8d09e663b516a99bb09cae3"
     },
     "E:/Development/Projects/Terrace/.census/durands/low/durands-metallicRoughness.png": {
-      "bytes": 188912,
-      "sha256": "42d6b21924286a08762ffadc0f00248415151ef861721c64fcc0abb321f96621"
+      "bytes": 190680,
+      "sha256": "4ab20ecdacc079918fcaaa2d569d8d93169e8a6f69733db1fec0871b761649dd"
     },
     "E:/Development/Projects/Terrace/.census/durands/low/durands-normal.ktx2": {
-      "bytes": 577693,
-      "sha256": "33323bdc84139a0a9acbe3efc9df6fd0aa07e50f67f4d976c890f9a322eadac0"
+      "bytes": 557594,
+      "sha256": "3feba615cfd14a74022e0c6405702315040dd7b73f752020fcc5291e63075bcb"
     },
     "E:/Development/Projects/Terrace/.census/durands/low/durands-normal.png": {
-      "bytes": 454856,
-      "sha256": "15f3355c669a917e0085f4c45136d73a559bf814eb25f56158bb5809455cd07b"
+      "bytes": 441951,
+      "sha256": "e7490df7c03c1ccc61a85b4caa5c0d745b085b034147b89d479d5a2e472fa99d"
     },
     "E:/Development/Projects/Terrace/.census/durands/low/durands.blend": {
-      "bytes": 1338896,
-      "sha256": "1be4c380bc67e699503f2a008c2ae88a47680053be0c93f8dcb4d09f6ff3d58f"
+      "bytes": 1353118,
+      "sha256": "323148e9fc5f67468662c2248a08d8609b07c44be417e341d2c493cddde34ba7"
     },
     "E:/Development/Projects/Terrace/.census/durands/low/durands.glb": {
-      "bytes": 1577480,
-      "sha256": "0ade32ecc59aff9626ccbfb21f5f069c8f0af468afc3fb4a7996233d11315a61"
+      "bytes": 1655468,
+      "sha256": "43c2480f5b5d2788d873bc05efeaff1cb31faabc905649fea64acac800e2977b"
     },
     "E:/Development/Projects/Terrace/.census/durands/low/parts.json": {
-      "bytes": 28766,
-      "sha256": "cc4df547d7d4c6082f0b88990bce3d82f5a2ba7ba5afebb53d44054842511304"
+      "bytes": 33057,
+      "sha256": "649fcaf38e46896c207c3464d4e11a320a0465f76ede1b98150c001d09c1d95f"
     },
     "E:/Development/Projects/Terrace/.census/durands/low/verification.json": {
-      "bytes": 2143,
-      "sha256": "25f8dfde45c3c161797a493c9c7f5ab95cccd83d83b04d6395d4c7475d4f373a"
+      "bytes": 2146,
+      "sha256": "c33addc13e022174858c10b8b85a3d7f61090e4bf4ec365bd0ff4ca4d6562e87"
     },
     "E:/Development/Projects/Terrace/.census/durands/memory-report.json": {
-      "bytes": 3221,
-      "sha256": "63ca760eea0dbfbf068dc7ccf54f5f4f0ab2eef5d8cc3718062d2c1ebcac6526"
+      "bytes": 3222,
+      "sha256": "1328ffcf461891817457f6c9d6bedfdc61c84baa474193644c0cb2fb43ecd041"
     },
     "E:/Development/Projects/Terrace/.census/durands/mip-channel-verification.json": {
       "bytes": 3660,
       "sha256": "47446d1511326e49669aa01d1616956017eff40f75709acd52d2723a1ad8042f"
     },
     "E:/Development/Projects/Terrace/.census/durands/parts.json": {
-      "bytes": 33531,
-      "sha256": "1525edb1da60b4fdfc17d4d63f7940d694382f8c44e183b29ef3e7e6f12921da"
+      "bytes": 37822,
+      "sha256": "180f9b9e64dacdbf7dc3ee97de20a0a11c923b3b65bcaac4c5e78f42324956dc"
     },
     "E:/Development/Projects/Terrace/.census/durands/README.txt": {
-      "bytes": 6340,
-      "sha256": "43eb5db78b827ec60999d646633121bb057f1b0d7a7de196f7ed96beb3e5e64b"
+      "bytes": 6771,
+      "sha256": "37ce7a48acec49241eea075a7763d7d1f3016db2eeed4f1f9503495a2414967e"
     },
     "E:/Development/Projects/Terrace/.census/durands/rebuild.py": {
       "bytes": 171,
       "sha256": "5cd574446a4fa2da6478a628c44b94a4aa5c6e5f8dd9536c87a407cc08a10897"
     },
     "E:/Development/Projects/Terrace/.census/durands/verification.json": {
-      "bytes": 2143,
-      "sha256": "24eac479085d84f06c5999c03035d2e594255dbf71402215c45f70b71a4fdaed"
+      "bytes": 2144,
+      "sha256": "36f35d55844f49ade97797a398f3a21f2308cb166ae2d2b88cbab01922c618d0"
     },
     "E:/Development/Projects/Terrace/.census/hut/alignment-verification.json": {
       "bytes": 62,

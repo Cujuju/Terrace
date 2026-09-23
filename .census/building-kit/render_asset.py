@@ -44,8 +44,14 @@ close=target.copy();close.z=height*.55
 if front=='+Z':close.y=-(hi[2]*.65)
 else:close.x=hi[0]*.55
 shots.append(('closeup',az,25,scale*.58,close))
+if NAME=='durands':
+    straight=centre.copy();straight.z=height*.49
+    shots.append(('front',-90,8,scale*.87,straight))
 if '--quick' in sys.argv:shots=shots[:1];scene.render.resolution_x=800;scene.render.resolution_y=720;scene.cycles.samples=16
 for label,az,el,sc,target in shots:
     cam.data.ortho_scale=sc;studio.aim(cam,target,az,el,radius*5)
-    scene.render.filepath=str(ROOT/(NAME+'-'+label+('-clay' if '--clay' in sys.argv else '')+'.png'));bpy.ops.render.render(write_still=True)
+    output=ROOT/(NAME+'-'+label+('-clay' if '--clay' in sys.argv else '')+'.png')
+    pending=output.with_name('.render-'+output.name)
+    scene.render.filepath=str(pending);bpy.ops.render.render(write_still=True)
+    pending.replace(output)
     print('RENDERED',NAME,label,flush=True)

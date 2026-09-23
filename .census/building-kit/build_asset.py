@@ -319,6 +319,7 @@ bpy.ops.export_scene.gltf(filepath=str(export_path),export_format='GLB',use_sele
 export_path.replace(ROOT/(BUILDING+'.glb'))
 report=dict(profile='low' if LOW_DETAIL else 'original',meshes=1,materials=1,vertices=len(mesh.vertices),triangles=len(mesh.loop_triangles),polygons=editable_polygon_count,parts=len(parts),islands=len(charts),texture_size=[ATLAS_SIZE,ATLAS_SIZE],gap_pixels=ISLAND_GAP,density_pixels_per_game_unit=density/MODEL_SCALE,dimensions=list(obj.dimensions),origin=list(obj.location),palette=PALETTE,geometry_source=provenance,texture_source='Original procedural texture paint',image_generator='Built-in image generator; exact backend model unverified')
 report['placement']=placement
+report['texture_source']=globals().get('TEXTURE_PROVENANCE',report['texture_source'])
 (ROOT/'build-report.json').write_text(json.dumps(report,indent=2))
 (ROOT/'parts.json').write_text(json.dumps(parts,indent=2))
 print(json.dumps(report,indent=2),flush=True)

@@ -27,7 +27,7 @@ No Draco or meshopt. Runtime KTX2 variants are integrated via the Buildings qual
 
 Provenance
 {build['geometry_source']}
-Textures are original procedural paint, not generated concept pixels or old maps.
+{build['texture_source']}
 Concept: {name}-concept.png, built-in image generator. Exact prompt: concept-prompt.txt.
 Exact backend image-model version cannot be selected or verified; no version claim.
 Shared authoring and validation code derives from the completed in-repo longhouse.
@@ -84,6 +84,7 @@ KTX2 {(sum(v['ktx2_bc7_astc_gpu_total_bytes'] for v in memory['variants'].values
 
 Screenshots
 {name}-45deg.png and {name}-closeup.png render the exported PNG GLB in Blender.
+{'durands-front.png also provides a near-frontal view of the restored text, flags and porch.' if name=='durands' else ''}
 The low subfolder uses identical cameras and lighting; comparison.png pairs them.
 These show finished meshes, not concepts, and are studio renders, not game screenshots.
 Artifacts was unavailable; local image delivery is the requested fallback.

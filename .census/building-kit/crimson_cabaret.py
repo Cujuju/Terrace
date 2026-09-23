@@ -11,7 +11,7 @@ def build(low, g):
                    velvet=(.39,.035,.065), gold=(.72,.55,.29), glass=(.78,.43,.20), lanternglass=(.84,.18,.09),
                    sign=(92/255,24/255,32/255))
     paint = {}
-    for key in ('front','side','awning'):
+    for key in ('front','side','awning','flag','wing-left','wing-right','door-left','door-right'):
         image = bpy.data.images.load(str(Path(__file__).parent/'cabaret-paint'/(key+'.png')))
         image.colorspace_settings.name = 'Non-Color'
         paint[key] = np.array(image.pixels[:],float).reshape(image.size[1],image.size[0],4)[::-1,:,:3].copy()
@@ -29,9 +29,20 @@ def build(low, g):
         uv=np.column_stack(((pos[:,axis]-bounds[0])/(bounds[1]-bounds[0]),
                             1-(pos[:,2]-bounds[2])/(bounds[3]-bounds[2])))
         im=paint[key]; h,w=im.shape[:2]
-        xx=np.clip((uv[:,0]*(w-1)).astype(int),0,w-1); yy=np.clip((uv[:,1]*(h-1)).astype(int),0,h-1)
+        # Integrate the source painting over each atlas texel, preventing broken
+        # thin lettering when a 1200px painting is baked into a small UV chart.
+        spanx=(w-1)/((bounds[1]-bounds[0])*(fity if key=='side' else fitx)*g['density'])
+        spany=(h-1)/((bounds[3]-bounds[2])*g['density'])
+        sampled=np.zeros((len(pos),3))
+        for ox in (-.375,-.125,.125,.375):
+            for oy in (-.375,-.125,.125,.375):
+                xx=np.clip(uv[:,0]*(w-1)+ox*spanx,0,w-1); yy=np.clip(uv[:,1]*(h-1)+oy*spany,0,h-1)
+                ix=xx.astype(int); iy=yy.astype(int); jx=np.minimum(ix+1,w-1); jy=np.minimum(iy+1,h-1)
+                fx=(xx-ix)[:,None]; fy=(yy-iy)[:,None]
+                sampled+=((im[iy,ix]*(1-fx)+im[iy,jx]*fx)*(1-fy)+(im[jy,ix]*(1-fx)+im[jy,jx]*fx)*fy)/16
         correct = ch['n'][0]>.8 if key=='side' else ch['n'][1]<-.8
-        color=im[yy,xx] if correct else np.tile(palette['sign'],(len(pos),1))
+        if key=='flag': correct=abs(ch['n'][1])>.8
+        color=sampled if correct else np.tile(palette['sign'],(len(pos),1))
         return color,np.zeros(len(pos)),np.full(len(pos),.9)
     g['custom_surface']=painted_surface
 
@@ -78,10 +89,13 @@ def build(low, g):
         beam((x,y+.19,z+.55),(x,y,z+.55),.065,kind='iron',bevel=False,label='Lantern bracket')
 
     # Construction units: 10 = one game world unit. Front is Blender -Y.
-    box((0,.45,.18),(8.10,7.60,.36),'stone',label='Continuous grounded foundation')
+    box((0,.53,.18),(7.55,6.60,.36),'stone',label='Foundation beneath enclosed building')
     box((0,.53,2.18),(7.25,6.25,3.70),'wall',label='Crimson ground-floor cladding')
     box((0,.53,6.13),(7.25,6.25,3.80),'wall',label='Crimson upper-floor cladding')
-    box((0,-3.18,.43),(8.10,2.03,.24),'door',grain=(1,0,0),label='Porch deck')
+    box((0,-4.16,.43),(8.10,3.28,.24),'door',grain=(1,0,0),label='External projecting ground-floor porch deck')
+    for xx in (-3.85,-1.48,1.48,3.85):
+        for yy in (-5.55,-3.25):box((xx,yy,.18),(.22,.24,.36),'door',label='Grounded porch bearer')
+    box((0,-5.74,.32),(8.10,.13,.39),'door',grain=(1,0,0),label='Exposed timber porch apron')
     box((0,-3.18,4.19),(8.10,2.03,.25),'door',grain=(1,0,0),label='Upper gallery floor')
     for z in (.62,4.12,7.98):
         box((0,-2.64,z),(7.60,.18,.20),'timber',label='Facade storey rail')
@@ -105,13 +119,20 @@ def build(low, g):
         for yy in np.linspace(-3.74,-2.70,3 if low else 5):box((sx*3.75,yy,4.95),(.08,.08,.98),'timber',label='Return spindle')
     # Front porch rails leave the entrance clear.
     for sx in (-1,1):
-        for z in (.78,1.72):box((sx*2.73,-3.91,z),(1.80,.14,.13),'timber',label='Ground porch rail')
-        for xx in np.linspace(1.96,3.49,3 if low else 5):box((sx*xx,-3.91,1.24),(.09,.09,.84),'timber',label='Porch spindle')
+        for z in (.78,1.72):box((sx*2.73,-5.48,z),(1.80,.14,.13),'timber',label='Outer ground porch rail')
+        for xx in np.linspace(1.96,3.49,3 if low else 5):box((sx*xx,-5.48,1.24),(.09,.09,.84),'timber',label='Porch spindle')
+        for xx in (1.78,3.74):
+            box((sx*xx,-5.48,1.14),(.19,.19,1.25),'timber',label='Outer porch newel')
+            cylinder(sx*xx,-5.48,1.90,.17,.19,'gold',top=.05)
+        for z in (.78,1.72):box((sx*3.74,-4.57,z),(.14,1.85,.13),'timber',label='Outer porch return rail')
     for i in range(3):
-        box((0,-4.10+i*.22,.075*(i+1)),(2.40,.50,.15*(i+1)),'door',label='Grounded entrance step')
-        box((0,-4.10+i*.22,.15*(i+1)+.013),(1.27,.50,.024),'canvas',label='Red carpet tread')
+        box((0,-6.10+i*.22,.075*(i+1)),(2.70,.50,.15*(i+1)),'door',label='Grounded entrance step')
+        box((0,-6.10+i*.22,.15*(i+1)+.013),(1.85,.50,.024),'canvas',label='Red carpet tread')
     for xx in (-2.45,0,2.45):front_window(xx,6.21,w=1.60,h=2.45)
-    for xx in (-2.45,2.45):front_window(xx,2.37,w=1.65,h=2.30,upper=False)
+    for xx in (-3.10,3.10):front_window(xx,2.20,w=.66,h=2.45,upper=False)
+    for sx,key in ((-1,'door-left'),(1,'door-right')):
+        xx=sx*1.98
+        box((xx,-2.87,1.87),(1.39,.10,2.35),'sign',label='Lettered ground-floor facade panel',paint=key,paint_bounds=(xx-.695,xx+.695,.695,3.045))
     box((0,-2.68,1.89),(1.96,.14,2.72),'dark',label='Recessed saloon entry')
     for sx in (-1,1):
         outline=[(sx*.06,.81),(sx*.90,.81),(sx*.90,2.43),(sx*.58,2.29),(sx*.06,2.16)]
@@ -123,7 +144,7 @@ def build(low, g):
     box((0,-2.84,3.24),(2.31,.22,.19),'timber',label='Saloon entry lintel')
     # Shallow window assemblies on each side wall.
     for sx in (-1,1):
-        for yy in (-.6,2.1):
+        for yy in (-1.85,2.96):
             for zz in (2.32,6.18):
                 box((sx*3.69,yy,zz),(.10,1.23,1.97),'dark',label='Side window recess')
                 box((sx*3.75,yy,zz),(.06,.98,1.72),'glass',label='Side amber glass')
@@ -143,45 +164,58 @@ def build(low, g):
         solid([(-4.08,ya,za),(4.08,ya,za),(4.08,yb,zb),(-4.08,yb,zb),(-4.08,ya,za-.07),(4.08,ya,za-.07),(4.08,yb,zb-.07),(-4.08,yb,zb-.07)],
               [(0,1,2,3),(7,6,5,4),(0,4,5,1),(1,5,6,2),(2,6,7,3),(3,7,4,0)],'roof',grain=(0,1,0),label='Gallery roof course')
     box((0,-4.20,7.93),(8.23,.17,.17),'timber',label='Gallery fascia')
-    # Strong red awning with scalloped valance; balcony floor remains visible.
-    solid([(-3.77,-2.88,4.10),(3.77,-2.88,4.10),(3.77,-4.20,3.59),(-3.77,-4.20,3.59),(-3.77,-2.88,4.03),(3.77,-2.88,4.03),(3.77,-4.20,3.52),(-3.77,-4.20,3.52)],
+    # Awning projects from the gallery fascia over the external ground-floor porch.
+    solid([(-3.90,-4.02,4.10),(3.90,-4.02,4.10),(3.90,-5.64,3.59),(-3.90,-5.64,3.59),(-3.90,-4.02,4.03),(3.90,-4.02,4.03),(3.90,-5.64,3.52),(-3.90,-5.64,3.52)],
           [(0,1,2,3),(7,6,5,4),(0,4,5,1),(1,5,6,2),(2,6,7,3),(3,7,4,0)],'canvas',label='Crimson entrance canopy')
-    scallop=[(-3.77,3.60),(3.77,3.60)]
-    for x in np.linspace(3.77,-3.77,25):scallop.append((x,3.27+.09*math.cos((x+3.77)*math.tau/.94)))
-    prism(scallop,-4.21,.065,'sign','Painted canopy valance',paint='awning',paint_bounds=(-3.77,3.77,3.20,3.61))
-    beam((-3.78,-4.25,3.61),(3.78,-4.25,3.61),.055,kind='gold',bevel=False,label='Canopy gold piping')
+    scallop=[(-3.90,3.60),(3.90,3.60)]
+    for x in np.linspace(3.90,-3.90,33):scallop.append((x,3.20+.085*math.cos((x+3.90)*math.tau/.975)))
+    prism(scallop,-5.65,.065,'sign','Lettered canopy valance',paint='awning',paint_bounds=(-3.90,3.90,3.14,3.61))
+    g['sweep']([(x,-5.70,z) for x,z in scallop[2:]],.045,kind='gold',bevel=False,label='Scalloped gold awning hem')
+    for sx in (-1,1):
+        beam((sx*3.73,-3.89,3.32),(sx*3.73,-5.55,3.56),.065,kind='iron',bevel=False,label='Projecting canopy support')
+        xx=sx*4.0
+        beam((sx*3.73,-3.89,4.42),(xx,-5.83,4.42),.065,kind='gold',bevel=False,label='Flag bracket')
+        beam((xx-.49,-5.83,4.42),(xx+.49,-5.83,4.42),.07,kind='gold',bevel=False,label='Banner crossbar')
+        banner=[(xx-.43,4.32),(xx+.43,4.32),(xx+.43,2.73),(xx,2.47),(xx-.43,2.73)]
+        prism(banner,-5.83,.04,'sign','Front hanging heart flag',paint='flag',paint_bounds=(xx-.43,xx+.43,2.47,4.32))
+        heart(xx,-5.89,3.43,.62)
+        for a,b in zip(banner,banner[1:]+banner[:1]):
+            beam((a[0],-5.86,a[1]),(b[0],-5.86,b[1]),.035,kind='gold',bevel=False,label='Flag gold piping')
     # Shoulder wings and central arched false front.
     box((0,-2.95,9.74),(7.50,.22,2.65),'wall',label='Cabaret false-front wings')
     for sx in (-1,1):
         box((sx*3.66,-3.08,9.77),(.22,.22,2.95),'timber',label='False-front outer pilaster')
         box((sx*2.78,-3.09,11.11),(1.78,.19,.17),'timber',label='Shoulder cornice')
-        heart(sx*2.87,-3.10,10.07,.83)
-    profile=[(-2.05,8.66),(2.05,8.66),(2.05,11.61)]
-    profile += [(2.05*math.cos(t),11.61+1.03*math.sin(t)) for t in np.linspace(0,math.pi,13 if not low else 9)[1:]]
+    box((-2.86,-3.105,9.73),(1.35,.06,2.45),'sign',label='Left false-front text',paint='wing-left',paint_bounds=(-3.535,-2.185,8.505,10.955))
+    box((2.86,-3.105,9.21),(1.35,.06,1.42),'sign',label='Right false-front text',paint='wing-right',paint_bounds=(2.185,3.535,8.50,9.92))
+    heart(2.87,-3.15,10.40,.83)
+    profile=[(-2.05,8.66),(2.05,8.66),(2.05,11.81)]
+    profile += [(2.05*math.cos(t),11.81+.83*math.sin(t)) for t in np.linspace(0,math.pi,13 if not low else 9)[1:]]
     prism(profile,-3.10,.25,'sign','Arched cabaret sign',paint='front',paint_bounds=(-2.05,2.05,8.66,12.64))
     g['sweep']([(a[0],-3.27,a[1]) for a in profile[2:]],.12,kind='gold',bevel=False,label='Continuous arched sign frame')
     for sx in (-1,1):
-        box((sx*2.07,-3.25,10.13),(.14,.15,2.94),'gold',label='Sign frame upright')
+        box((sx*2.07,-3.25,10.24),(.14,.15,3.16),'gold',label='Sign frame upright')
         cylinder(sx*2.07,-3.13,11.91,.16,.25,'gold',top=.055,n=6)
     box((0,-3.26,8.65),(4.24,.15,.13),'gold',label='Sign frame sill')
     # Side-wall sign centered between storeys, avoiding window surfaces.
-    box((3.84,.60,4.38),(.10,4.58,1.32),'sign',label='Side painted saloon sign',paint='side',paint_bounds=(-1.69,2.89,3.72,5.04))
-    for zz in (3.70,5.07):box((3.92,.60,zz),(.09,4.72,.075),'gold',label='Side sign rail')
+    box((3.86,.50,4.80),(.10,3.12,4.68),'sign',label='Tall side-wall saloon girls rooms sign',paint='side',paint_bounds=(-1.06,2.06,2.46,7.14))
+    for zz in (2.43,7.17):box((3.94,.50,zz),(.09,3.24,.075),'gold',label='Side sign rail')
     for x in (-3.37,3.37):
         for z in (2.86,6.87):lantern(x,-2.99,z)
-    for x in (-1.34,1.34):lantern(x,-3.96,2.65)
+    for x in (-1.34,1.34):lantern(x,-5.22,2.84)
     # Modest barrels and crates tucked inside the inherited footprint.
     for sx in (-1,1):
-        cylinder(sx*3.36,-3.15,.91,.29,.75,'door',top=.26)
-        for zz in (.62,1.16):cylinder(sx*3.36,-3.15,zz,.30,.055,'iron')
+        cylinder(sx*3.36,-4.84,.91,.29,.75,'door',top=.26)
+        for zz in (.62,1.16):cylinder(sx*3.36,-4.84,zz,.30,.055,'iron')
         if not low:
-            box((sx*2.93,-3.15,.77),(.43,.46,.46),'door',label='Porch crate')
-            beam((sx*2.74,-3.40,.57),(sx*3.11,-3.40,.97),.055,kind='timber',bevel=False,label='Crate brace')
+            box((sx*2.93,-4.84,.77),(.43,.46,.46),'door',label='Porch crate')
+            beam((sx*2.74,-5.09,.57),(sx*3.11,-5.09,.97),.055,kind='timber',bevel=False,label='Crate brace')
     # Preserve previous Durand's X/Z envelope and ground origin; reduce obsolete sign height.
     verts=np.array(g['vertices']); lo=verts.min(axis=0); hi=verts.max(axis=0)
     fitx=8.240382075309754/(hi[0]-lo[0]); fity=8.500947952270508/(hi[1]-lo[1])
     center=np.array([(lo[0]+hi[0])/2,(lo[1]+hi[1])/2,lo[2]])
     g['vertices'][:]=((verts-center)*np.array([fitx,fity,1.])).tolist()
     placement={'front_gltf':'+Z','origin':'Inherited Durand\'s footprint center at ground',
-               'deliberate_difference':'Original Crimson Cabaret replaces the giant freestanding dancer sign with an arched false-front cabaret emblem. X/Z footprint retained at 0.824038 x 0.850095; new roof/sign height about 1.27 rather than 2.060096 world units. No extra scene lights; amber glass and lantern colours are painted.'}
-    return 'New original Blender geometry and procedural paint after owner-selected concept D (Crimson Cabaret). No old mesh, old textures or concept pixels reused.',placement
+               'deliberate_difference':'Crimson Cabaret revision restores the selected seated figure, text panels and flags. Ground porch projects 3.2 construction units beyond the enclosed facade and 1.6 beyond the upper gallery; awning covers the projecting porch. Overall X/Z envelope retained at 0.824038 x 0.850095 by fitting the complete structure; enclosed body is shallower to reserve porch space. Height about 1.27 rather than the legacy 2.060096. No extra scene lights.'}
+    g['TEXTURE_PROVENANCE']='Original procedural materials and typeset panels, plus an original generated central sign painting closely referenced to selected concept D; source image and exact prompt retained in building-kit/cabaret-paint.'
+    return 'Original Blender geometry, revised against owner-selected concept D (Crimson Cabaret). No prior mesh or texture maps reused. Central sign is newly generated reference-matched artwork; all other paint is procedural.',placement

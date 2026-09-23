@@ -2,17 +2,17 @@
   "profile": "original",
   "meshes": 1,
   "materials": 1,
-  "vertices": 3848,
-  "triangles": 6224,
-  "polygons": 2814,
-  "parts": 368,
-  "islands": 2814,
+  "vertices": 4408,
+  "triangles": 7164,
+  "polygons": 3246,
+  "parts": 413,
+  "islands": 3246,
   "texture_size": [
     2048,
     2048
   ],
   "gap_pixels": 12,
-  "density_pixels_per_game_unit": 326.28947742112956,
+  "density_pixels_per_game_unit": 338.2401437814663,
   "dimensions": [
     0.8240382075309753,
     0.8500947952270508,
@@ -140,12 +140,12 @@
       0.12549019607843137
     ]
   },
-  "geometry_source": "New original Blender geometry and procedural paint after owner-selected concept D (Crimson Cabaret). No old mesh, old textures or concept pixels reused.",
-  "texture_source": "Original procedural texture paint",
+  "geometry_source": "Original Blender geometry, revised against owner-selected concept D (Crimson Cabaret). No prior mesh or texture maps reused. Central sign is newly generated reference-matched artwork; all other paint is procedural.",
+  "texture_source": "Original procedural materials and typeset panels, plus an original generated central sign painting closely referenced to selected concept D; source image and exact prompt retained in building-kit/cabaret-paint.",
   "image_generator": "Built-in image generator; exact backend model unverified",
   "placement": {
     "front_gltf": "+Z",
     "origin": "Inherited Durand's footprint center at ground",
-    "deliberate_difference": "Original Crimson Cabaret replaces the giant freestanding dancer sign with an arched false-front cabaret emblem. X/Z footprint retained at 0.824038 x 0.850095; new roof/sign height about 1.27 rather than 2.060096 world units. No extra scene lights; amber glass and lantern colours are painted."
+    "deliberate_difference": "Crimson Cabaret revision restores the selected seated figure, text panels and flags. Ground porch projects 3.2 construction units beyond the enclosed facade and 1.6 beyond the upper gallery; awning covers the projecting porch. Overall X/Z envelope retained at 0.824038 x 0.850095 by fitting the complete structure; enclosed body is shallower to reserve porch space. Height about 1.27 rather than the legacy 2.060096. No extra scene lights."
   }
 }

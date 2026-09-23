@@ -10,7 +10,7 @@ export const AUTHORED_RADII: Readonly<Record<string, number>> = {
   "medieval-dovecote": 0.6041885603951894,
   "renaissance-workshop": 0.5334820734643311,
   "industrial-pump-house": 0.5698200874689118,
-  "durands": 0.5874558555220755,
+  "durands": 0.5641639431304942,
   "reed-cone": 0.4074725309920827,
   "lashed-a-frame": 0.41627066875956326,
   "stilted-hut": 0.4263424873294954,

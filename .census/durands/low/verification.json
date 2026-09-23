@@ -1,10 +1,10 @@
 {
-  "glb_sha256": "0ade32ecc59aff9626ccbfb21f5f069c8f0af468afc3fb4a7996233d11315a61",
+  "glb_sha256": "43c2480f5b5d2788d873bc05efeaff1cb31faabc905649fea64acac800e2977b",
   "mesh_count": 1,
   "primitive_count": 1,
   "material_count": 1,
-  "triangles": 4388,
-  "exported_vertices": 8698,
+  "triangles": 5296,
+  "exported_vertices": 10404,
   "nodes": [
     {
       "mesh": 0,
@@ -22,21 +22,21 @@
     1.2699999809265137,
     0.8500947952270508
   ],
-  "uv_islands": 2112,
+  "uv_islands": 2536,
   "uv_min_max": [
     0.00439453125,
-    0.9955511689186096
+    0.9955809712409973
   ],
   "uv_overlap_pairs": [],
-  "uv_candidate_pairs_checked": 2432,
-  "minimum_island_bounds_gap_pixels": 9.000350952148438,
+  "uv_candidate_pairs_checked": 2891,
+  "minimum_island_bounds_gap_pixels": 9.000946044921875,
   "texel_density_min_max": [
-    140.50150748908004,
-    140.5089322784607
+    141.64466205936307,
+    141.65842017583512
   ],
   "zero_area_triangles": 0,
-  "normal_length_error_max": 9.490546970525315e-08,
-  "tangent_normal_dot_max": 9.248324253663398e-05,
+  "normal_length_error_max": 1.0515080361983564e-07,
+  "tangent_normal_dot_max": 7.483347251202588e-05,
   "compression_extensions": [],
   "textures": {
     "durands-normal": {
@@ -76,8 +76,8 @@
   "blend": {
     "mesh_count": 1,
     "material_count": 1,
-    "vertices": 2828,
-    "triangles": 4388,
+    "vertices": 3372,
+    "triangles": 5296,
     "uv_layers": [
       "UVMap"
     ],

@@ -16,6 +16,8 @@ for name in names:
 kit_names=['README.md','asset_helpers.py','audit_asset.py','audit_compression.py','audit_mips.py','build_asset.py','designs.py','contact_sheets.ps1','overview.ps1','inventory.mjs','source-inventory.json','imported-cottage-bounds.json','package_runtime.py','prepare_pipeline.py','ratings.json','render_asset.py','run_delivery.py','verify_delivery.py','write_catalog.py','write_reports.py','write_manifest.py','delivery-summary.json','core-buildings.png','coastal-overview.png','historical-additions.png']
 paths.extend(KIT/name for name in kit_names)
 paths.extend(KIT/name for name in ['crimson_cabaret.py','prepare_cabaret_paint.ps1','cabaret-paint/front.png','cabaret-paint/side.png','cabaret-paint/awning.png'])
+paths.extend(KIT/'cabaret-paint'/name for name in ['front-reference.png','front-reference-prompt.txt','flag.png','wing-left.png','wing-right.png','door-left.png','door-right.png'])
+paths.extend([CENSUS/'durands'/'durands-front.png',CENSUS/'durands'/'low'/'durands-front.png',CENSUS/'durands'/'design-notes.md'])
 assert len(set(paths))==len(paths)
 entries={}
 for path in sorted(paths):

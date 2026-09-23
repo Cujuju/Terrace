@@ -7,9 +7,9 @@
   },
   "variants": {
     "original": {
-      "triangles": 6224,
-      "exported_vertices": 12082,
-      "geometry_gpu_bytes": 617280,
+      "triangles": 7164,
+      "exported_vertices": 13840,
+      "geometry_gpu_bytes": 707304,
       "textures": [
         {
           "name": "durands-normal",
@@ -18,7 +18,7 @@
           "mip_levels": 12,
           "png_rgba8_gpu_bytes": 22369620,
           "bc7_astc_gpu_bytes": 5592432,
-          "ktx_file_bytes": 2163301
+          "ktx_file_bytes": 2187065
         },
         {
           "name": "durands-basecolor",
@@ -27,7 +27,7 @@
           "mip_levels": 12,
           "png_rgba8_gpu_bytes": 22369620,
           "bc7_astc_gpu_bytes": 5592432,
-          "ktx_file_bytes": 2634459
+          "ktx_file_bytes": 2669050
         },
         {
           "name": "durands-metallicRoughness",
@@ -36,22 +36,22 @@
           "mip_levels": 12,
           "png_rgba8_gpu_bytes": 22369620,
           "bc7_astc_gpu_bytes": 5592432,
-          "ktx_file_bytes": 1482108
+          "ktx_file_bytes": 1514415
         }
       ],
-      "png_gpu_total_bytes": 67726140,
-      "ktx2_bc7_astc_gpu_total_bytes": 17394576,
-      "png_glb_file_bytes": 5543276,
-      "ktx2_glb_file_bytes": 6899248,
-      "png_glb_sha256": "f8b434026072b983812504175fab935241c9a8207aef4b1e088aa193466794ef",
-      "ktx2_glb_sha256": "983dcbf2cfa0e901ebe799a50b59e118d05c45cd803006cc7141e3c823773ee6",
+      "png_gpu_total_bytes": 67816164,
+      "ktx2_bc7_astc_gpu_total_bytes": 17484600,
+      "png_glb_file_bytes": 5651572,
+      "ktx2_glb_file_bytes": 7079940,
+      "png_glb_sha256": "393c488da28f56b7352fb60098273ec9ea2981385fdbafb3c87cd541a231fe0c",
+      "ktx2_glb_sha256": "df38ed6d85d831b4eaa4c2fca8ea27a491fdac83a19aee5f3e6e3742eb18bc3b",
       "geometry_unchanged": true,
       "ktx_validation_passed": true
     },
     "low": {
-      "triangles": 4388,
-      "exported_vertices": 8698,
-      "geometry_gpu_bytes": 443832,
+      "triangles": 5296,
+      "exported_vertices": 10404,
+      "geometry_gpu_bytes": 531168,
       "textures": [
         {
           "name": "durands-normal",
@@ -60,7 +60,7 @@
           "mip_levels": 11,
           "png_rgba8_gpu_bytes": 5592404,
           "bc7_astc_gpu_bytes": 1398128,
-          "ktx_file_bytes": 577693
+          "ktx_file_bytes": 557594
         },
         {
           "name": "durands-basecolor",
@@ -69,7 +69,7 @@
           "mip_levels": 11,
           "png_rgba8_gpu_bytes": 5592404,
           "bc7_astc_gpu_bytes": 1398128,
-          "ktx_file_bytes": 795071
+          "ktx_file_bytes": 800703
         },
         {
           "name": "durands-metallicRoughness",
@@ -78,15 +78,15 @@
           "mip_levels": 11,
           "png_rgba8_gpu_bytes": 5592404,
           "bc7_astc_gpu_bytes": 1398128,
-          "ktx_file_bytes": 436884
+          "ktx_file_bytes": 440135
         }
       ],
-      "png_gpu_total_bytes": 17221044,
-      "ktx2_bc7_astc_gpu_total_bytes": 4638216,
-      "png_glb_file_bytes": 1577480,
-      "ktx2_glb_file_bytes": 2255568,
-      "png_glb_sha256": "0ade32ecc59aff9626ccbfb21f5f069c8f0af468afc3fb4a7996233d11315a61",
-      "ktx2_glb_sha256": "e465da170ffec9bd4ba779a6c76fde0d255a828e20331ff9bf8faf4742c1c922",
+      "png_gpu_total_bytes": 17308380,
+      "ktx2_bc7_astc_gpu_total_bytes": 4725552,
+      "png_glb_file_bytes": 1655468,
+      "ktx2_glb_file_bytes": 2331696,
+      "png_glb_sha256": "43c2480f5b5d2788d873bc05efeaff1cb31faabc905649fea64acac800e2977b",
+      "ktx2_glb_sha256": "69f9a1767353592e2e7e5f37ee749f08c6ef9351cebe24a5f762d3b88c85a625",
       "geometry_unchanged": true,
       "ktx_validation_passed": true
     }

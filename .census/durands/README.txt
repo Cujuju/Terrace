@@ -8,8 +8,8 @@ Hierarchy: RootNode > durands. Identity object transforms; geometry in world uni
 No Draco or meshopt. Runtime KTX2 variants are integrated via the Buildings quality HUD.
 
 Provenance
-New original Blender geometry and procedural paint after owner-selected concept D (Crimson Cabaret). No old mesh, old textures or concept pixels reused.
-Textures are original procedural paint, not generated concept pixels or old maps.
+Original Blender geometry, revised against owner-selected concept D (Crimson Cabaret). No prior mesh or texture maps reused. Central sign is newly generated reference-matched artwork; all other paint is procedural.
+Original procedural materials and typeset panels, plus an original generated central sign painting closely referenced to selected concept D; source image and exact prompt retained in building-kit/cabaret-paint.
 Concept: durands-concept.png, built-in image generator. Exact prompt: concept-prompt.txt.
 Exact backend image-model version cannot be selected or verified; no version claim.
 Shared authoring and validation code derives from the completed in-repo longhouse.
@@ -28,16 +28,16 @@ glTF Y up; entrance +Z.
 Origin: Inherited Durand's footprint center at ground.
 Original glTF dimensions X/Y/Z: [0.8240382075309753, 1.2699999809265137, 0.8500947952270508]
 Bounds: {'min': [-0.41201910376548767, 0.0, -0.4250473976135254], 'max': [0.41201910376548767, 1.2699999809265137, 0.4250473976135254]}
-Deliberate differences: Original Crimson Cabaret replaces the giant freestanding dancer sign with an arched false-front cabaret emblem. X/Z footprint retained at 0.824038 x 0.850095; new roof/sign height about 1.27 rather than 2.060096 world units. No extra scene lights; amber glass and lantern colours are painted.
+Deliberate differences: Crimson Cabaret revision restores the selected seated figure, text panels and flags. Ground porch projects 3.2 construction units beyond the enclosed facade and 1.6 beyond the upper gallery; awning covers the projecting porch. Overall X/Z envelope retained at 0.824038 x 0.850095 by fitting the complete structure; enclosed body is shallower to reserve porch space. Height about 1.27 rather than the legacy 2.060096. No extra scene lights.
 Maximum original/low bounds difference: 0.000000000 world units.
 Low preserves the important silhouette; excludes broad-edge chamfers and reduces
 roof segments, curved profiles or small sign detail where applicable.
 
 Measured geometry, UVs and memory
-original: 6,224 triangles, 12,082 exported vertices; 2,814 UV islands; minimum island bounds gap 12.007 px; density 326.265-326.306 px/world unit.
-  GPU mesh 0.589 MiB; PNG total 64.589 MiB; KTX2 BC7/ASTC total 16.589 MiB.
-low: 4,388 triangles, 8,698 exported vertices; 2,112 UV islands; minimum island bounds gap 9.000 px; density 140.502-140.509 px/world unit.
-  GPU mesh 0.423 MiB; PNG total 16.423 MiB; KTX2 BC7/ASTC total 4.423 MiB.
+original: 7,164 triangles, 13,840 exported vertices; 3,246 UV islands; minimum island bounds gap 12.005 px; density 338.220-338.265 px/world unit.
+  GPU mesh 0.675 MiB; PNG total 64.675 MiB; KTX2 BC7/ASTC total 16.675 MiB.
+low: 5,296 triangles, 10,404 exported vertices; 2,536 UV islands; minimum island bounds gap 9.001 px; density 141.645-141.658 px/world unit.
+  GPU mesh 0.507 MiB; PNG total 16.507 MiB; KTX2 BC7/ASTC total 4.507 MiB.
 UVs wholly inside 0-1; exported triangles tested for positive-area intersections.
 No overlapping islands, collapsed UV triangles or zero-area mesh triangles.
 Atlases independently packed at each delivered resolution. Target gap: original
@@ -64,11 +64,12 @@ Actual GPU format depends on device support; uncompressed fallback may cost PNG-
 Calculated totals include exported vertex/index bytes, not live GPU measurements.
 Exclude driver allocation, CPU loader/image copies, shaders, scene objects and framebuffers.
 Repeated instances share mesh and textures. Loading both variants adds both totals:
-PNG 81.012 MiB;
-KTX2 21.012 MiB.
+PNG 81.181 MiB;
+KTX2 21.181 MiB.
 
 Screenshots
 durands-45deg.png and durands-closeup.png render the exported PNG GLB in Blender.
+durands-front.png also provides a near-frontal view of the restored text, flags and porch.
 The low subfolder uses identical cameras and lighting; comparison.png pairs them.
 These show finished meshes, not concepts, and are studio renders, not game screenshots.
 Artifacts was unavailable; local image delivery is the requested fallback.
