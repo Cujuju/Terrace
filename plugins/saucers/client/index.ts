@@ -7,6 +7,7 @@ import { watchReducedMotion } from '../../../client/src/plugins/kit/reducedMotio
 import {
   MAX_LASER_BOLTS,
   MAX_SAUCERS_PER_ENCOUNTER,
+  SAUCER_VARIANT_COUNT,
   SAUCERS_PLUGIN_NAME,
   SAUCERS_STATE_MESSAGE,
   parseSaucersPayload,
@@ -56,6 +57,8 @@ interface SaucerView {
 
 let models: SaucerModels | null = null;
 let container: Group | null = null;
+let specimenGroup: Group | null = null;
+const specimens: SaucerModel[] = [];
 let lasers: LaserPool | null = null;
 let bursts: CrashBursts | null = null;
 let splashes: CrashSplashes | null = null;
@@ -97,6 +100,29 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedSaucer>): void 
       view.model.dispose();
     },
   });
+}
+
+// One never-drawn hull per variant: hulls are built on first sight, and the settle warmup only compiles what the scene holds.
+function keepSpecimens(ctx: ClientPluginCtx, bank: SaucerModels): void {
+  const group = new Group();
+  group.name = 'saucers:warm-specimens';
+  group.visible = false;
+  for (let variant = 0; variant < SAUCER_VARIANT_COUNT; variant++) {
+    const model = bank.create(variant);
+    specimens.push(model);
+    group.add(model.root);
+  }
+  ctx.layer.add(group);
+  specimenGroup = group;
+  ctx.requestShaderWarmup();
+}
+
+function disposeSpecimens(): void {
+  for (const model of specimens) model.dispose();
+  specimens.length = 0;
+  specimenGroup?.removeFromParent();
+  specimenGroup?.clear();
+  specimenGroup = null;
 }
 
 function forgetViews(): void {
@@ -229,6 +255,7 @@ export const clientPlugin: TerraceClientPlugin = {
 
   attach(ctx: ClientPluginCtx): void {
     models = createSaucerModels();
+    keepSpecimens(ctx, models);
     reducedMotion = watchReducedMotion();
     animationSeconds = 0;
     bolts = [];
@@ -265,6 +292,7 @@ export const clientPlugin: TerraceClientPlugin = {
     unsubscribes = [];
 
     forgetViews();
+    disposeSpecimens();
 
     lasers?.dispose();
     lasers = null;

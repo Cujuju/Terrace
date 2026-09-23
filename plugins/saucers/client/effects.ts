@@ -190,12 +190,6 @@ const SHARD_BEARINGS: readonly { readonly x: number; readonly z: number; readonl
     };
   });
 
-interface BurstShards {
-  readonly points: Points;
-  readonly geometry: BufferGeometry;
-  readonly material: PointsMaterial;
-}
-
 export interface CrashBursts {
   readonly root: Group;
   begin(): void;
@@ -235,28 +229,26 @@ export function createCrashBursts(): CrashBursts {
   core.frustumCulled = false;
   root.add(core);
 
-  const shards: BurstShards[] = [];
-  for (let index = 0; index < BURST_POOL_SIZE; index++) {
-    const shardGeometry = new BufferGeometry();
-    shardGeometry.setAttribute(
-      'position',
-      new BufferAttribute(new Float32Array(BURST_SHARD_COUNT * 3), 3),
-    );
-    const shardMaterial = new PointsMaterial({
-      color: BURST_COLOUR,
-      size: SHARD_SIZE_PIXELS,
-      sizeAttenuation: false,
-      transparent: true,
-      opacity: 1,
-      blending: AdditiveBlending,
-      depthWrite: false,
-    });
-    const points = new Points(shardGeometry, shardMaterial);
-    points.name = `saucers:burst:shards:${index}`;
-    points.visible = false;
-    root.add(points);
-    shards.push({ points, geometry: shardGeometry, material: shardMaterial });
-  }
+  const shardGeometry = new BufferGeometry();
+  const shardPositions = new BufferAttribute(new Float32Array(BURST_POOL_SIZE * BURST_SHARD_COUNT * 3), 3);
+  const shardColours = new BufferAttribute(new Float32Array(BURST_POOL_SIZE * BURST_SHARD_COUNT * 3), 3);
+  shardGeometry.setAttribute('position', shardPositions);
+  shardGeometry.setAttribute('color', shardColours);
+  shardGeometry.setDrawRange(0, 0);
+  const shardMaterial = new PointsMaterial({
+    size: SHARD_SIZE_PIXELS,
+    sizeAttenuation: false,
+    vertexColors: true,
+    transparent: true,
+    opacity: 1,
+    blending: AdditiveBlending,
+    depthWrite: false,
+  });
+  const shards = new Points(shardGeometry, shardMaterial);
+  shards.name = 'saucers:bursts:shards';
+  shards.visible = false;
+  shards.frustumCulled = false;
+  root.add(shards);
 
   let next = 0;
 
@@ -265,7 +257,8 @@ export function createCrashBursts(): CrashBursts {
     begin(): void {
       ball.count = 0;
       core.count = 0;
-      for (const shard of shards) shard.points.visible = false;
+      shards.visible = false;
+      shardGeometry.setDrawRange(0, 0);
       next = 0;
     },
     show(x: number, groundY: number, z: number, age: number): void {
@@ -274,7 +267,6 @@ export function createCrashBursts(): CrashBursts {
       if (next >= BURST_POOL_SIZE) return;
       const index = next;
       next++;
-      const shard = shards[index]!;
 
       const grow = Math.sqrt(t);
       scratchScale.setScalar(worldUnitsAcross(BURST_MAX_RADIUS_CELLS) * grow);
@@ -294,17 +286,19 @@ export function createCrashBursts(): CrashBursts {
       core.setColorAt(index, scratchColor);
       core.count = next;
 
-      shard.points.visible = true;
-      shard.points.position.set(x, groundY, z);
-      const positions = shard.geometry.getAttribute('position') as BufferAttribute;
+      scratchColor.set(BURST_COLOUR).multiplyScalar(1 - t);
+      const first = index * BURST_SHARD_COUNT;
       for (let i = 0; i < SHARD_BEARINGS.length; i++) {
         const bearing = SHARD_BEARINGS[i]!;
         const reach = worldUnitsAcross(SHARD_REACH_CELLS) * t;
         const rise = worldUnitsAcross(SHARD_RISE_CELLS) * bearing.lift * (t * (2 - 2 * t));
-        positions.setXYZ(i, bearing.x * reach, rise, bearing.z * reach);
+        shardPositions.setXYZ(first + i, x + bearing.x * reach, groundY + rise, z + bearing.z * reach);
+        shardColours.setXYZ(first + i, scratchColor.r, scratchColor.g, scratchColor.b);
       }
-      positions.needsUpdate = true;
-      shard.material.opacity = 1 - t;
+      shardPositions.needsUpdate = true;
+      shardColours.needsUpdate = true;
+      shardGeometry.setDrawRange(0, next * BURST_SHARD_COUNT);
+      shards.visible = true;
 
       ball.instanceMatrix.needsUpdate = true;
       ball.instanceColor!.needsUpdate = true;
@@ -316,10 +310,8 @@ export function createCrashBursts(): CrashBursts {
       coreMaterial.dispose();
       ball.dispose();
       core.dispose();
-      for (const shard of shards) {
-        shard.material.dispose();
-        shard.geometry.dispose();
-      }
+      shardMaterial.dispose();
+      shardGeometry.dispose();
       sphere.dispose();
       root.clear();
     },
@@ -443,5 +435,6 @@ export function createCrashSplashes(): CrashSplashes {
 
 export const LASER_POOL_DRAW_OBJECTS = 1;
 const BURST_INSTANCED_DRAW_OBJECTS = 2;
-export const BURST_DRAW_OBJECTS = BURST_INSTANCED_DRAW_OBJECTS + BURST_POOL_SIZE;
+const BURST_SHARD_DRAW_OBJECTS = 1;
+export const BURST_DRAW_OBJECTS = BURST_INSTANCED_DRAW_OBJECTS + BURST_SHARD_DRAW_OBJECTS;
 export const SPLASH_DRAW_OBJECTS = 2;
