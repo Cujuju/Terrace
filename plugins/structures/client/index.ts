@@ -11,10 +11,11 @@ import {
   structureKey,
   type StructureCell,
 } from '../protocol.ts';
-import timberHouseUrl from './assets/timber-house.glb?url';
+import { buildingQuality, registerBuildingQualityConsumer } from '../../../client/src/state/buildingQualityPrefs.ts';
+import type { BuildingAssetKit } from '../../../client/src/render/buildingAssetKit.ts';
+import { preloadAuthoredStructures } from './authoredAssets.ts';
 import {
   createStructureModels,
-  preloadStructureModels,
   type StructureModels,
 } from './models.ts';
 import { placementsFor, type PlacementResult } from './placement.ts';
@@ -32,6 +33,8 @@ import {
 } from './skiffModels.ts';
 
 let models: StructureModels | null = null;
+let assetKit: BuildingAssetKit | null = null;
+let unsubscribeQuality: (() => void) | null = null;
 let skiffModels: SkiffModels | null = null;
 let siteSurveys: SiteSurveyCache | null = null;
 let unsubscribeMessages: Array<() => void> = [];
@@ -91,7 +94,10 @@ export const clientPlugin: TerraceClientPlugin = {
   preload(): Promise<void> {
     return Promise.all([
       preloadSkiffModels(skiffUrl),
-      preloadStructureModels(timberHouseUrl),
+      preloadAuthoredStructures(buildingQuality()).then((kit) => {
+        assetKit?.dispose();
+        assetKit = kit;
+      }),
     ]).then(() => undefined);
   },
 
@@ -101,8 +107,29 @@ export const clientPlugin: TerraceClientPlugin = {
     pendingRevision = 0;
 
     siteSurveys = createSiteSurveyCache((x, y) => ctx.terrainRevisionAt(x, y));
-    models = createStructureModels();
+    models = createStructureModels(assetKit ?? undefined);
     ctx.layer.add(models.root);
+    unsubscribeQuality = registerBuildingQualityConsumer(async (quality) => {
+      const nextKit = await preloadAuthoredStructures(quality);
+      let nextModels: StructureModels;
+      try { nextModels = createStructureModels(nextKit); }
+      catch (error) { nextKit.dispose(); throw error; }
+      return {
+        apply() {
+          const previousModels = models;
+          const previousKit = assetKit;
+          models = nextModels;
+          assetKit = nextKit;
+          ctx.layer.add(models.root);
+          if (previousModels !== null) ctx.layer.remove(previousModels.root);
+          rebuild(ctx);
+          previousModels?.dispose();
+          previousKit?.dispose();
+          ctx.requestShaderWarmup();
+        },
+        discard() { nextModels.dispose(); nextKit.dispose(); },
+      };
+    });
     skiffModels = createSkiffModels();
     ctx.layer.add(skiffModels.root);
 
@@ -135,6 +162,8 @@ export const clientPlugin: TerraceClientPlugin = {
   },
 
   dispose(): void {
+    unsubscribeQuality?.();
+    unsubscribeQuality = null;
     for (const unsubscribe of unsubscribeMessages) unsubscribe();
     unsubscribeMessages = [];
     unsubscribeTerrain?.();
@@ -150,6 +179,8 @@ export const clientPlugin: TerraceClientPlugin = {
     siteSurveys = null;
     models?.dispose();
     models = null;
+    assetKit?.dispose();
+    assetKit = null;
     skiffModels?.dispose();
     skiffModels = null;
     disposeSkiffKit();

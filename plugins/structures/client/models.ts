@@ -22,6 +22,7 @@ import {
   type RigAsset,
 } from '../../../client/src/render/rigAsset.ts';
 import { flattenAssetParts } from '../../../client/src/render/staticAsset.ts';
+import type { BuildingAssetKit } from '../../../client/src/render/buildingAssetKit.ts';
 import {
   MAX_STRUCTURE_TIER,
   STRUCTURES_CAP,
@@ -29,11 +30,12 @@ import {
   STRUCTURE_SURVEYED_GROUND_RADIUS,
   STRUCTURE_SCALE_MAX,
   STRUCTURE_TIER_COUNT,
+  STRUCTURE_TIERS,
   type SettlerRace,
   type StructureTier,
 } from '../protocol.ts';
 import { isDurandsCell } from './durands.ts';
-import { FISHING_HUT_BUILDERS, fishingHutVariantIndex } from './fishingHuts.ts';
+import { FISHING_HUT_BUILDERS, FISHING_HUT_NAMES, fishingHutVariantIndex } from './fishingHuts.ts';
 import {
   fitToRadius,
   mergeParts,
@@ -1884,12 +1886,24 @@ function assertHeightBudgetStillHolds(tierParts: readonly StructurePart[][]): vo
   }
 }
 
-export function createStructureModels(): StructureModels {
-  const tierParts = buildTierParts().map((parts) => mergeParts(parts));
+export function createStructureModels(kit?: BuildingAssetKit): StructureModels {
+  const legacyParts = kit === undefined ? buildTierParts().map((parts) => mergeParts(parts)) : null;
+  const fallbackTiers = [0, 1, 1, 2, 3, 2, 4, 5, 5, 4, 5];
+  const tierParts = kit === undefined
+    ? fallbackTiers.map((tier) => legacyParts![tier].map((part) => ({
+      geometry: part.geometry.clone(), material: part.material.clone(),
+      localMatrices: part.localMatrices.map((matrix) => matrix.clone()),
+    })))
+    : STRUCTURE_TIERS.map((id) => kit.parts(id));
+  if (legacyParts !== null) {
+    assertHeightBudgetStillHolds(legacyParts);
+    for (const parts of legacyParts) for (const part of parts) {
+      part.geometry.dispose(); part.material.dispose();
+    }
+  }
   if (tierParts.length !== STRUCTURE_TIER_COUNT) {
     throw new Error(`structures: built ${tierParts.length} tier models, expected ${STRUCTURE_TIER_COUNT}`);
   }
-  assertHeightBudgetStillHolds(tierParts);
 
   const geometries: BufferGeometry[] = [];
   const materials: Material[] = [];
@@ -1908,9 +1922,9 @@ export function createStructureModels(): StructureModels {
     }),
   );
 
-  const durands = buildDurandsParts();
-  const durandsParts = mergeSharedSurface(
-    fitToRadius(durands.parts, STRUCTURE_SURVEYED_GROUND_RADIUS / STRUCTURE_SCALE_MAX),
+  const durands = kit === undefined ? buildDurandsParts() : null;
+  const durandsParts = kit?.parts('durands') ?? mergeSharedSurface(
+    fitToRadius(durands!.parts, STRUCTURE_SURVEYED_GROUND_RADIUS / STRUCTURE_SCALE_MAX),
   );
   const durandsMeshes: InstancedMesh[] = durandsParts.map((part, partIndex) => {
     geometries.push(part.geometry);
@@ -1925,7 +1939,9 @@ export function createStructureModels(): StructureModels {
   const siteVariantParts: Partial<Record<SiteKind, StructurePart[][]>> = {};
   const siteVariantMeshes: Partial<Record<SiteKind, InstancedMesh[][]>> = {};
   for (const siteKind of Object.keys(SITE_TOP_TIER_VARIANTS) as SiteKind[]) {
-    const built = SITE_TOP_TIER_VARIANTS[siteKind]!.builders.map((build) => build());
+    const built = kit === undefined
+      ? SITE_TOP_TIER_VARIANTS[siteKind]!.builders.map((build) => build())
+      : FISHING_HUT_NAMES.map((id) => kit.parts(id));
     siteVariantParts[siteKind] = built;
     siteVariantMeshes[siteKind] = built.map((parts, variant) =>
       parts.map((part, partIndex) => {
@@ -2034,6 +2050,7 @@ export function createStructureModels(): StructureModels {
     },
 
     animate(dt: number): void {
+      if (durands === null) return;
       durandsFlashElapsedSeconds += dt;
       const angle = durandsFlashElapsedSeconds * (DURANDS_TWO_PI / DURANDS_SIGN_FLASH_PERIOD_SECONDS);
       const t = (Math.sin(angle) + 1) / 2;

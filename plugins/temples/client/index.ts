@@ -18,6 +18,9 @@ import {
 } from '../protocol.ts';
 import { TempleIcon } from './TempleIcon.tsx';
 import { createTempleModels, type TempleModels } from './temple.ts';
+import { buildingQuality, registerBuildingQualityConsumer } from '../../../client/src/state/buildingQualityPrefs.ts';
+import type { BuildingAssetKit } from '../../../client/src/render/buildingAssetKit.ts';
+import { preloadAuthoredTemple } from './authoredAssets.ts';
 
 const TEMPLE_TOOL_ID = 'place';
 
@@ -29,6 +32,8 @@ const TEMPLE_TOOL_TITLE =
 const PLACEMENT_BUTTON = 0;
 
 let models: TempleModels | null = null;
+let assetKit: BuildingAssetKit | null = null;
+let unsubscribeQuality: (() => void) | null = null;
 let temple: TempleCell | null = null;
 let toolHeld = false;
 let hoverCell: TempleCell | null = null;
@@ -158,6 +163,10 @@ const TEMPLE_BEACON_DRAW_OBJECTS = 2;
 const TEMPLES_PER_WORLD = 1;
 
 export const clientPlugin: TerraceClientPlugin = {
+  async preload(): Promise<void> {
+    assetKit?.dispose();
+    assetKit = await preloadAuthoredTemple(buildingQuality());
+  },
   name: TEMPLES_PLUGIN_NAME,
 
   drawBudget:
@@ -165,8 +174,29 @@ export const clientPlugin: TerraceClientPlugin = {
     (TEMPLE_STANDING_DRAW_OBJECTS + TEMPLE_GHOST_DRAW_OBJECTS + TEMPLE_BEACON_DRAW_OBJECTS),
 
   attach(ctx: ClientPluginCtx): void {
-    models = createTempleModels();
+    models = createTempleModels(assetKit ?? undefined);
     ctx.layer.add(models.standing, models.ghost);
+    unsubscribeQuality = registerBuildingQualityConsumer(async (quality) => {
+      const nextKit = await preloadAuthoredTemple(quality);
+      let nextModels: TempleModels;
+      try { nextModels = createTempleModels(nextKit); }
+      catch (error) { nextKit.dispose(); throw error; }
+      return {
+        apply() {
+          const previousModels = models;
+          const previousKit = assetKit;
+          models = nextModels;
+          assetKit = nextKit;
+          ctx.layer.add(models.standing, models.ghost);
+          if (previousModels !== null) ctx.layer.remove(previousModels.standing, previousModels.ghost);
+          renderFrame(ctx, 0);
+          previousModels?.dispose();
+          previousKit?.dispose();
+          ctx.requestShaderWarmup();
+        },
+        discard() { nextModels.dispose(); nextKit.dispose(); },
+      };
+    });
 
     unsubscribeMessages = ctx.onMessage(TEMPLE_STATE_MESSAGE, (payload) => {
       temple = parseTempleStatePayload(payload);
@@ -222,6 +252,8 @@ export const clientPlugin: TerraceClientPlugin = {
   },
 
   dispose(): void {
+    unsubscribeQuality?.();
+    unsubscribeQuality = null;
     unsubscribeMessages?.();
     unsubscribeRefusals?.();
     unsubscribeFrames?.();
@@ -237,6 +269,8 @@ export const clientPlugin: TerraceClientPlugin = {
 
     models?.dispose();
     models = null;
+    assetKit?.dispose();
+    assetKit = null;
     temple = null;
     toolHeld = false;
     hoverCell = null;
