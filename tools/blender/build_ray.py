@@ -77,6 +77,7 @@ import bpy
 # than copied so the ray cannot drift from the boats, the fish and the shark.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from export_glb import bake_object_transforms, export_scene_glb  # noqa: E402
+from uv_atlas import unwrap_shared_atlas  # noqa: E402
 
 # ----------------------------------------------------------------- dimensions
 # Game space (x forward, y up, z lateral), cells. The five envelope figures
@@ -1086,6 +1087,7 @@ def main():
     make_empty('flank', (tip_world[0], 0.0, FLANK_Z))
 
     bake_object_transforms()
+    unwrap_shared_atlas(bpy.data.objects)
     export_scene_glb(out_path)
 
     total_tris = 0
