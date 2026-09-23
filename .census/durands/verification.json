@@ -1,0 +1,128 @@
+{
+  "glb_sha256": "11d03cf158219c28f54028e12aad9bdd3f40eb9d129b2ce8b1cc93577ee1b722",
+  "mesh_count": 1,
+  "primitive_count": 1,
+  "material_count": 1,
+  "triangles": 7164,
+  "exported_vertices": 13840,
+  "nodes": [
+    {
+      "mesh": 0,
+      "name": "durands"
+    },
+    {
+      "children": [
+        0
+      ],
+      "name": "RootNode"
+    }
+  ],
+  "dimensions_gltf_y_up": [
+    0.8240382075309753,
+    1.2699999809265137,
+    0.8500947952270508
+  ],
+  "uv_islands": 3246,
+  "uv_min_max": [
+    0.0029296875,
+    0.9970547556877136
+  ],
+  "uv_overlap_pairs": [],
+  "uv_candidate_pairs_checked": 3989,
+  "minimum_island_bounds_gap_pixels": 12.0050048828125,
+  "texel_density_min_max": [
+    338.22031785572597,
+    338.26517225072473
+  ],
+  "zero_area_triangles": 0,
+  "normal_length_error_max": 1.0515080361983564e-07,
+  "tangent_normal_dot_max": 7.812793687478337e-05,
+  "compression_extensions": [
+    "KHR_materials_emissive_strength"
+  ],
+  "textures": {
+    "durands-emissive": {
+      "format": "image/png",
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "matches_external_bytes": true
+    },
+    "durands-normal": {
+      "format": "image/png",
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "matches_external_bytes": true
+    },
+    "durands-basecolor": {
+      "format": "image/png",
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "matches_external_bytes": true
+    },
+    "durands-metallicRoughness": {
+      "format": "image/png",
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "matches_external_bytes": true
+    }
+  },
+  "roughness_range": [
+    0.7490196228027344,
+    0.9803922176361084
+  ],
+  "metalness_range": [
+    0.0,
+    0.0
+  ],
+  "normal_map_length_error_max": 0.005350649356842041,
+  "blend": {
+    "mesh_count": 1,
+    "material_count": 1,
+    "vertices": 4408,
+    "triangles": 7164,
+    "uv_layers": [
+      "UVMap"
+    ],
+    "images_packed": true,
+    "objects": [
+      "durands",
+      "RootNode"
+    ]
+  },
+  "bounds_gltf_y_up": {
+    "min": [
+      -0.41201910376548767,
+      0.0,
+      -0.4250473976135254
+    ],
+    "max": [
+      0.41201910376548767,
+      1.2699999809265137,
+      0.4250473976135254
+    ]
+  },
+  "emissive_material": {
+    "emissiveFactor": [
+      1,
+      1,
+      1
+    ],
+    "emissiveTexture": {
+      "index": 0
+    },
+    "extensions": {
+      "KHR_materials_emissive_strength": {
+        "emissiveStrength": 2.5
+      }
+    }
+  },
+  "passed": true
+}

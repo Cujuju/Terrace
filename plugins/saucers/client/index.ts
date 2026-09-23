@@ -6,7 +6,7 @@ import { NO_SAMPLE, reconcileById } from '../../../client/src/plugins/kit/viewRe
 import { watchReducedMotion } from '../../../client/src/plugins/kit/reducedMotion.ts';
 import {
   MAX_LASER_BOLTS,
-  MAX_SAUCERS_PER_ENCOUNTER,
+  SAUCER_VARIANT_COUNT,
   SAUCERS_PLUGIN_NAME,
   SAUCERS_STATE_MESSAGE,
   parseSaucersPayload,
@@ -27,11 +27,12 @@ import {
 import { factionColour } from './factions.ts';
 import { SaucerInterpolator, type InterpolatedSaucer } from './interpolation.ts';
 import {
+  createSaucerFleet,
   createSaucerModels,
   disposeSaucerAssets,
   preloadSaucerModels,
   SAUCER_MODEL_DRAW_OBJECTS,
-  type SaucerModel,
+  type SaucerFleet,
   type SaucerModels,
 } from './models.ts';
 
@@ -49,13 +50,13 @@ const BANK_FULL_TURN_RATE = 2;
 const MAX_ANIMATION_STEP_SECONDS = 0.1;
 
 interface SaucerView {
-  readonly model: SaucerModel;
   readonly variant: number;
   lastHeading: number;
 }
 
 let models: SaucerModels | null = null;
 let container: Group | null = null;
+let fleet: SaucerFleet | null = null;
 let lasers: LaserPool | null = null;
 let bursts: CrashBursts | null = null;
 let splashes: CrashSplashes | null = null;
@@ -72,30 +73,13 @@ const boltFrom = new Vector3();
 const boltAim = new Vector3();
 
 function reconcileViews(sampled: ReadonlyMap<number, InterpolatedSaucer>): void {
-  if (models === null || container === null) return;
-  const bank = models;
-  const scene = container;
-
   reconcileById(sampled, views, {
-    acquire: (_id, saucer) => {
-      const model = bank.create(saucer.variant);
-      model.root.rotation.order = 'YXZ';
-      scene.add(model.root);
-      return { model, variant: saucer.variant, lastHeading: saucer.heading };
-    },
-    replace: (_id, saucer, existing) => {
-      if (existing.variant === saucer.variant) return null;
-      scene.remove(existing.model.root);
-      existing.model.dispose();
-      const rebuilt = bank.create(saucer.variant);
-      rebuilt.root.rotation.order = 'YXZ';
-      scene.add(rebuilt.root);
-      return { model: rebuilt, variant: saucer.variant, lastHeading: existing.lastHeading };
-    },
-    release: (_id, view) => {
-      scene.remove(view.model.root);
-      view.model.dispose();
-    },
+    acquire: (_id, saucer) => ({ variant: saucer.variant, lastHeading: saucer.heading }),
+    replace: (_id, saucer, existing) =>
+      existing.variant === saucer.variant
+        ? null
+        : { variant: saucer.variant, lastHeading: existing.lastHeading },
+    release: () => {},
   });
 }
 
@@ -114,33 +98,27 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
   const sampled = interpolator.sample();
   reconcileViews(sampled);
 
+  const ringSpin = animationSeconds * RING_RADIANS_PER_SECOND;
+  fleet?.begin();
   for (const [id, saucer] of sampled) {
     const view = views.get(id);
     if (view === undefined) continue;
-    const root = view.model.root;
-
-    root.position.set(saucer.x * CELL_WORLD_SIZE, saucer.alt, saucer.y * CELL_WORLD_SIZE);
-
-    root.rotation.y = -saucer.heading;
-
     const turn = dt > 0 ? shortestAngle(saucer.heading - view.lastHeading) / dt : 0;
     view.lastHeading = saucer.heading;
-    root.rotation.x = clampSigned(turn / BANK_FULL_TURN_RATE) * MAX_BANK_RADIANS;
-
-    if (view.model.ring !== null) {
-      view.model.ring.rotation.y = animationSeconds * RING_RADIANS_PER_SECOND;
-    }
-    if (view.model.ringGlow !== null) {
-      view.model.ringGlow.emissiveIntensity = view.model.ringBaseEmissive * muzzleGlow(id);
-    }
-    if (view.model.lights !== null) {
-      view.model.lights.emissiveIntensity =
-        view.model.lightsBaseEmissive *
-        (1 +
-          LIGHTS_FLASH_FRACTION *
-            Math.sin(animationSeconds * LIGHTS_FLASHES_PER_SECOND * Math.PI * 2));
-    }
+    fleet?.place(
+      view.variant,
+      saucer.x * CELL_WORLD_SIZE,
+      saucer.alt,
+      saucer.y * CELL_WORLD_SIZE,
+      -saucer.heading,
+      clampSigned(turn / BANK_FULL_TURN_RATE) * MAX_BANK_RADIANS,
+      ringSpin,
+      muzzleGlow(id),
+    );
   }
+  fleet?.finish(
+    1 + LIGHTS_FLASH_FRACTION * Math.sin(animationSeconds * LIGHTS_FLASHES_PER_SECOND * Math.PI * 2),
+  );
 
   drawBolts();
   drawCrashes(ctx);
@@ -216,7 +194,7 @@ export const clientPlugin: TerraceClientPlugin = {
 
   get drawBudget(): number {
     return (
-      MAX_SAUCERS_PER_ENCOUNTER * SAUCER_MODEL_DRAW_OBJECTS +
+      SAUCER_VARIANT_COUNT * SAUCER_MODEL_DRAW_OBJECTS +
       LASER_POOL_DRAW_OBJECTS +
       BURST_DRAW_OBJECTS +
       SPLASH_DRAW_OBJECTS
@@ -237,6 +215,7 @@ export const clientPlugin: TerraceClientPlugin = {
     container = new Group();
     container.name = 'saucers:flying';
     ctx.layer.add(container);
+    fleet = createSaucerFleet(models, container);
 
     lasers = createLaserPool();
     ctx.layer.add(lasers.root);
@@ -265,6 +244,8 @@ export const clientPlugin: TerraceClientPlugin = {
     unsubscribes = [];
 
     forgetViews();
+    fleet?.dispose();
+    fleet = null;
 
     lasers?.dispose();
     lasers = null;

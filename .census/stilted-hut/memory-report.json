@@ -1,0 +1,94 @@
+{
+  "assumptions": {
+    "png_gpu_format": "RGBA8 with complete mip chain",
+    "compressed_gpu_format": "BC7 or ASTC 4x4, 16 bytes per 4x4 block, complete mip chain",
+    "excluded": "CPU decoded images, loader buffers, driver allocation overhead, shaders, framebuffer and instance buffers",
+    "sharing": "Terrace draws repeated structures with InstancedMesh; mesh and textures are shared, not duplicated per house."
+  },
+  "variants": {
+    "original": {
+      "triangles": 1088,
+      "exported_vertices": 2232,
+      "geometry_gpu_bytes": 113664,
+      "textures": [
+        {
+          "name": "stilted-hut-normal",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 1380954
+        },
+        {
+          "name": "stilted-hut-basecolor",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 1947811
+        },
+        {
+          "name": "stilted-hut-metallicRoughness",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 822336
+        }
+      ],
+      "png_gpu_total_bytes": 67222524,
+      "ktx2_bc7_astc_gpu_total_bytes": 16890960,
+      "png_glb_file_bytes": 3165232,
+      "ktx2_glb_file_bytes": 4266876,
+      "png_glb_sha256": "c69c60927d051224dcaea639319e3e41c48366225435bd73a2c1033bd1a9e72e",
+      "ktx2_glb_sha256": "c84fb7c047952c32a24ebb9d8138c7f6d4ecb683d39bad34ea4527a6e242e1c8",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    },
+    "low": {
+      "triangles": 642,
+      "exported_vertices": 1402,
+      "geometry_gpu_bytes": 71148,
+      "textures": [
+        {
+          "name": "stilted-hut-normal",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 348483
+        },
+        {
+          "name": "stilted-hut-basecolor",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 614973
+        },
+        {
+          "name": "stilted-hut-metallicRoughness",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 225490
+        }
+      ],
+      "png_gpu_total_bytes": 16848360,
+      "ktx2_bc7_astc_gpu_total_bytes": 4265532,
+      "png_glb_file_bytes": 907876,
+      "ktx2_glb_file_bytes": 1262204,
+      "png_glb_sha256": "3c08691bac9cb148049d1706d0369850b9e2432b96ce0bfb165c0e69abdfe51b",
+      "ktx2_glb_sha256": "e7e2bca83caf0d88375b7d11703de212ea748d1223c1ac0162d427cb754f9bdf",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    }
+  }
+}

@@ -3,11 +3,12 @@ import {
   isStructureTier,
   structureKey,
   STRUCTURES_CAP,
+  LEGACY_STRUCTURE_TIER_MAP,
 } from '../protocol.ts';
 import { STRUCTURES_RNG_DEFAULT_SEED, type StructuresRng } from './rng.ts';
 import type { BoardCellRecord } from './growth-model.ts';
 
-export const STRUCTURES_SLICE_VERSION = 2;
+export const STRUCTURES_SLICE_VERSION = 3;
 
 interface StoredLiveCell {
   readonly x: number;
@@ -70,7 +71,7 @@ export function loadStructures(data: unknown): RestoredStructures {
 
   if (typeof data !== 'object' || data === null) return empty;
   const slice = data as Partial<StructuresSlice>;
-  const legacy = slice.version === 1;
+  const legacy = slice.version === 1 || slice.version === 2;
   if (slice.version !== STRUCTURES_SLICE_VERSION && !legacy) return empty;
 
   const live = new Map<number, BoardCellRecord>();
@@ -78,8 +79,10 @@ export function loadStructures(data: unknown): RestoredStructures {
     for (const entry of slice.live) {
       if (live.size >= STRUCTURES_CAP) break;
       if (typeof entry !== 'object' || entry === null) continue;
-      const { x, y, age, tier, population } = entry as Partial<StoredLiveCell>;
+      const { x, y, age, tier: storedTier, population } = entry as Partial<StoredLiveCell>;
       if (!isNonNegativeInteger(x) || !isNonNegativeInteger(y) || !isNonNegativeInteger(age)) continue;
+      const tier = legacy && isNonNegativeInteger(storedTier)
+        ? LEGACY_STRUCTURE_TIER_MAP[storedTier] : storedTier;
       if (!isStructureTier(tier)) continue;
       const key = structureKey(x, y);
       if (live.has(key)) continue;

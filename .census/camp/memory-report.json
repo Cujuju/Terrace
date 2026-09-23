@@ -1,0 +1,94 @@
+{
+  "assumptions": {
+    "png_gpu_format": "RGBA8 with complete mip chain",
+    "compressed_gpu_format": "BC7 or ASTC 4x4, 16 bytes per 4x4 block, complete mip chain",
+    "excluded": "CPU decoded images, loader buffers, driver allocation overhead, shaders, framebuffer and instance buffers",
+    "sharing": "Terrace draws repeated structures with InstancedMesh; mesh and textures are shared, not duplicated per house."
+  },
+  "variants": {
+    "original": {
+      "triangles": 803,
+      "exported_vertices": 1533,
+      "geometry_gpu_bytes": 78402,
+      "textures": [
+        {
+          "name": "camp-normal",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 1559513
+        },
+        {
+          "name": "camp-basecolor",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 2011095
+        },
+        {
+          "name": "camp-metallicRoughness",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 759435
+        }
+      ],
+      "png_gpu_total_bytes": 67187262,
+      "ktx2_bc7_astc_gpu_total_bytes": 16855698,
+      "png_glb_file_bytes": 3353736,
+      "ktx2_glb_file_bytes": 4410524,
+      "png_glb_sha256": "21804982c9d0befb5001337f7047ee4de51f890d81afee1c0c5eea4d29c5e0bd",
+      "ktx2_glb_sha256": "eb43d3da1b9a282551c223772f07011d08cc3341687d27dbf51f2254f9b6001b",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    },
+    "low": {
+      "triangles": 379,
+      "exported_vertices": 746,
+      "geometry_gpu_bytes": 38082,
+      "textures": [
+        {
+          "name": "camp-normal",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 473175
+        },
+        {
+          "name": "camp-basecolor",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 647108
+        },
+        {
+          "name": "camp-metallicRoughness",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 239682
+        }
+      ],
+      "png_gpu_total_bytes": 16815294,
+      "ktx2_bc7_astc_gpu_total_bytes": 4232466,
+      "png_glb_file_bytes": 1102812,
+      "ktx2_glb_file_bytes": 1400108,
+      "png_glb_sha256": "6c427662cd085147f2c25cf8c2102d91a40e8b24ad1a47b89410f8a91be2b98a",
+      "ktx2_glb_sha256": "075091a42f578af634c1a28b81d9edac4e052af3bb31c5c115209c8706aa82dd",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    }
+  }
+}

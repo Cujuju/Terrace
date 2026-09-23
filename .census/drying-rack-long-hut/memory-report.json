@@ -1,0 +1,94 @@
+{
+  "assumptions": {
+    "png_gpu_format": "RGBA8 with complete mip chain",
+    "compressed_gpu_format": "BC7 or ASTC 4x4, 16 bytes per 4x4 block, complete mip chain",
+    "excluded": "CPU decoded images, loader buffers, driver allocation overhead, shaders, framebuffer and instance buffers",
+    "sharing": "Terrace draws repeated structures with InstancedMesh; mesh and textures are shared, not duplicated per house."
+  },
+  "variants": {
+    "original": {
+      "triangles": 952,
+      "exported_vertices": 2010,
+      "geometry_gpu_bytes": 102192,
+      "textures": [
+        {
+          "name": "drying-rack-long-hut-normal",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 1060282
+        },
+        {
+          "name": "drying-rack-long-hut-basecolor",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 1855560
+        },
+        {
+          "name": "drying-rack-long-hut-metallicRoughness",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 638044
+        }
+      ],
+      "png_gpu_total_bytes": 67211052,
+      "ktx2_bc7_astc_gpu_total_bytes": 16879488,
+      "png_glb_file_bytes": 2796152,
+      "ktx2_glb_file_bytes": 3658236,
+      "png_glb_sha256": "f0908a63e28e991781cbe7e8a7f7389013fa8fce352f32d07814f5751edbcd3f",
+      "ktx2_glb_sha256": "0cfced70fbe8dbc23a8f48d9bb4cc05da9f35ce3bb75e9a979fe3a4e3087ae81",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    },
+    "low": {
+      "triangles": 688,
+      "exported_vertices": 1524,
+      "geometry_gpu_bytes": 77280,
+      "textures": [
+        {
+          "name": "drying-rack-long-hut-normal",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 291345
+        },
+        {
+          "name": "drying-rack-long-hut-basecolor",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 625591
+        },
+        {
+          "name": "drying-rack-long-hut-metallicRoughness",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 160572
+        }
+      ],
+      "png_gpu_total_bytes": 16854492,
+      "ktx2_bc7_astc_gpu_total_bytes": 4271664,
+      "png_glb_file_bytes": 784592,
+      "ktx2_glb_file_bytes": 1156944,
+      "png_glb_sha256": "0a7bfd29e8efa10b8541838fc4e25f9e13d834c6589636c1c33e98e7f170e722",
+      "ktx2_glb_sha256": "9b0b912d48031b12203d8813956d394245255dc401b0db84c727e5c80b5c6bed",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    }
+  }
+}

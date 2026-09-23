@@ -48,9 +48,13 @@
 #     same test as plugins/wildlife/.verify-closed.mts, in Python).
 
 import math
+import os
 import sys
 
 import bpy
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from uv_atlas import unwrap_shared_atlas  # noqa: E402
 
 # ----------------------------------------------------------------- dimensions
 # Game space (x forward, y up, z lateral), cells. These ARE plugins/wildlife/
@@ -833,6 +837,7 @@ def main():
         obj.select_set(True)
         bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
     bpy.ops.object.select_all(action='DESELECT')
+    unwrap_shared_atlas(bpy.data.objects)
 
     bpy.ops.export_scene.gltf(
         filepath=out_path,

@@ -1,0 +1,103 @@
+{
+  "glb_sha256": "21804982c9d0befb5001337f7047ee4de51f890d81afee1c0c5eea4d29c5e0bd",
+  "mesh_count": 1,
+  "primitive_count": 1,
+  "material_count": 1,
+  "triangles": 803,
+  "exported_vertices": 1533,
+  "nodes": [
+    {
+      "mesh": 0,
+      "name": "camp"
+    },
+    {
+      "children": [
+        0
+      ],
+      "name": "RootNode"
+    }
+  ],
+  "dimensions_gltf_y_up": [
+    0.8642388582229614,
+    0.6451324820518494,
+    0.5371830761432648
+  ],
+  "uv_islands": 339,
+  "uv_min_max": [
+    0.0029296875,
+    0.996971845626831
+  ],
+  "uv_overlap_pairs": [],
+  "uv_candidate_pairs_checked": 544,
+  "minimum_island_bounds_gap_pixels": 12.003662109375,
+  "texel_density_min_max": [
+    1342.5483910997116,
+    1342.6194663824178
+  ],
+  "zero_area_triangles": 0,
+  "normal_length_error_max": 1.1329570637208519e-07,
+  "tangent_normal_dot_max": 9.94851372813077e-05,
+  "compression_extensions": [],
+  "textures": {
+    "camp-normal": {
+      "format": "image/png",
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "matches_external_bytes": true
+    },
+    "camp-basecolor": {
+      "format": "image/png",
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "matches_external_bytes": true
+    },
+    "camp-metallicRoughness": {
+      "format": "image/png",
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "matches_external_bytes": true
+    }
+  },
+  "roughness_range": [
+    0.7803922295570374,
+    0.9803922176361084
+  ],
+  "metalness_range": [
+    0.0,
+    0.0
+  ],
+  "normal_map_length_error_max": 0.006093025207519531,
+  "blend": {
+    "mesh_count": 1,
+    "material_count": 1,
+    "vertices": 456,
+    "triangles": 803,
+    "uv_layers": [
+      "UVMap"
+    ],
+    "images_packed": true,
+    "objects": [
+      "camp",
+      "RootNode"
+    ]
+  },
+  "bounds_gltf_y_up": {
+    "min": [
+      -0.42923885583877563,
+      0.0,
+      -0.2759999930858612
+    ],
+    "max": [
+      0.4350000023841858,
+      0.6451324820518494,
+      0.26118308305740356
+    ]
+  },
+  "passed": true
+}

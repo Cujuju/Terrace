@@ -1,11 +1,8 @@
 import {
   BufferAttribute,
   BufferGeometry,
-  DoubleSide,
   LineBasicMaterial,
   LineSegments,
-  Mesh,
-  MeshBasicMaterial,
   Sphere,
   Vector3,
 } from 'three';
@@ -18,6 +15,7 @@ import { hasChunk, sampleRenderHeight, type TerrainMirror } from '../terrain/mir
 import { smoothLipSegments } from '../terrain/contourSmoothing.ts';
 import { SUPER_MESH_SPAN_CHUNKS } from './terrainMeshes.ts';
 import { DENIED_COLOR } from './denialCue.ts';
+import { hideRiserDecal, setRiserDecalTint, showRiserDecal } from './riserDecal.ts';
 
 export type LayerEdgeStyle = 'normal' | 'crease' | 'debug';
 
@@ -95,9 +93,6 @@ const GRABBED_COLOR = 0xfff2c4;
 const GRABBED_OPACITY = 1;
 
 const GRAB_RADIUS_WORLD_UNITS = 1.5 * CELL_WORLD_SIZE;
-
-/** Two triangles per lit segment: the wall from the band below up to its cap. */
-const FLOATS_PER_RISER_QUAD = 6 * POSITION_FLOATS_PER_VERTEX;
 
 const RISER_OPACITY = 0.35;
 
@@ -563,23 +558,7 @@ export function createLayerEdgeOverlay(
   group.add(grabbed);
   let grabbedRefused = false;
 
-  const riserMaterial = new MeshBasicMaterial({
-    color: GRABBED_COLOR,
-    transparent: true,
-    opacity: RISER_OPACITY,
-    depthTest: true,
-    depthWrite: false,
-    side: DoubleSide,
-  });
-  let riserPositions = new Float32Array(FLOATS_PER_RISER_QUAD);
-  let riserAttribute = new BufferAttribute(riserPositions, POSITION_FLOATS_PER_VERTEX);
-  const riser = new Mesh(new BufferGeometry(), riserMaterial);
-  riser.geometry.setAttribute('position', riserAttribute);
-  riser.geometry.boundingSphere = grabbedBounds;
-  riser.renderOrder = GRABBED_RENDER_ORDER;
-  riser.visible = false;
-  riser.frustumCulled = false;
-  group.add(riser);
+  setRiserDecalTint(GRABBED_COLOR, RISER_OPACITY);
   let lipHighlight = true;
 
   // The aim the lit lip was last painted for: lightBand repaints only when the
@@ -594,7 +573,7 @@ export function createLayerEdgeOverlay(
 
   const clearGrabbed = (): void => {
     grabbed.visible = false;
-    riser.visible = false;
+    hideRiserDecal();
     litValid = false;
   };
 
@@ -613,20 +592,8 @@ export function createLayerEdgeOverlay(
     grabbed.geometry = geometry;
   };
 
-  const ensureRiserCapacity = (floats: number): void => {
-    if (floats <= riserPositions.length) return;
-    let grown = Math.max(riserPositions.length, FLOATS_PER_RISER_QUAD);
-    while (grown < floats) grown *= TILE_CAPACITY_GROWTH_FACTOR;
-    const positions = new Float32Array(grown);
-    positions.set(riserPositions);
-    riserPositions = positions;
-    riserAttribute = new BufferAttribute(positions, POSITION_FLOATS_PER_VERTEX);
-    const geometry = new BufferGeometry();
-    geometry.setAttribute('position', riserAttribute);
-    geometry.boundingSphere = grabbedBounds;
-    riser.geometry.dispose();
-    riser.geometry = geometry;
-  };
+  /** The segment point nearest the last distanceSqToSegment query. */
+  const nearest = { x: 0, z: 0 };
 
   const distanceSqToSegment = (
     px: number, pz: number,
@@ -637,8 +604,10 @@ export function createLayerEdgeOverlay(
     const lengthSq = vx * vx + vz * vz;
     let t = lengthSq === 0 ? 0 : ((px - ax) * vx + (pz - az) * vz) / lengthSq;
     t = t < 0 ? 0 : t > 1 ? 1 : t;
-    const dx = px - (ax + t * vx);
-    const dz = pz - (az + t * vz);
+    nearest.x = ax + t * vx;
+    nearest.z = az + t * vz;
+    const dx = px - nearest.x;
+    const dz = pz - nearest.z;
     return dx * dx + dz * dz;
   };
 
@@ -740,7 +709,9 @@ export function createLayerEdgeOverlay(
       // The riser is the wall under that cap: one band down, the face the aim names.
       const footY = (band - 1) * BAND_HEIGHT * HEIGHT_WORLD_SCALE;
       let written = 0;
-      let riserWritten = 0;
+      let anchorX = atX;
+      let anchorZ = atZ;
+      let anchorDistanceSq = Infinity;
       let minX = Infinity;
       let minZ = Infinity;
       let maxX = -Infinity;
@@ -753,7 +724,13 @@ export function createLayerEdgeOverlay(
           const az = flat[i + 1]!;
           const bx = flat[i + 2]!;
           const bz = flat[i + 3]!;
-          if (distanceSqToSegment(atX, atZ, ax, az, bx, bz) > spanSq) continue;
+          const distanceSq = distanceSqToSegment(atX, atZ, ax, az, bx, bz);
+          if (distanceSq > spanSq) continue;
+          if (distanceSq < anchorDistanceSq) {
+            anchorDistanceSq = distanceSq;
+            anchorX = nearest.x;
+            anchorZ = nearest.z;
+          }
           ensureGrabbedCapacity(written + FLOATS_PER_SEGMENT);
           const ay = y;
           const by = y;
@@ -763,15 +740,6 @@ export function createLayerEdgeOverlay(
           grabbedPositions[written++] = bx;
           grabbedPositions[written++] = by;
           grabbedPositions[written++] = bz;
-          ensureRiserCapacity(riserWritten + FLOATS_PER_RISER_QUAD);
-          for (const [vx, vy, vz] of [
-            [ax, capY, az], [bx, capY, bz], [bx, footY, bz],
-            [bx, footY, bz], [ax, footY, az], [ax, capY, az],
-          ] as const) {
-            riserPositions[riserWritten++] = vx;
-            riserPositions[riserWritten++] = vy;
-            riserPositions[riserWritten++] = vz;
-          }
           minX = Math.min(minX, ax, bx);
           minZ = Math.min(minZ, az, bz);
           maxX = Math.max(maxX, ax, bx);
@@ -783,11 +751,15 @@ export function createLayerEdgeOverlay(
         return true;
       }
 
-      riserAttribute.clearUpdateRanges();
-      riserAttribute.addUpdateRange(0, riserWritten);
-      riserAttribute.needsUpdate = true;
-      riser.geometry.setDrawRange(0, riserWritten / POSITION_FLOATS_PER_VERTEX);
-      riser.visible = true;
+      // The wall under the lit lip: centred where the lip passes nearest the aim,
+      // reaching every lit segment end, so wall and lip line light the same run.
+      let reachSq = 0;
+      for (let i = 0; i < written; i += POSITION_FLOATS_PER_VERTEX) {
+        const dx = grabbedPositions[i]! - anchorX;
+        const dz = grabbedPositions[i + 2]! - anchorZ;
+        reachSq = Math.max(reachSq, dx * dx + dz * dz);
+      }
+      showRiserDecal({ aimX: anchorX, aimZ: anchorZ, reach: Math.sqrt(reachSq), footY, capY });
 
       grabbedAttribute.clearUpdateRanges();
       grabbedAttribute.addUpdateRange(0, written);
@@ -805,7 +777,7 @@ export function createLayerEdgeOverlay(
       if (refused === grabbedRefused) return;
       grabbedRefused = refused;
       grabbedMaterial.color.setHex(refused ? DENIED_COLOR : GRABBED_COLOR);
-      riserMaterial.color.setHex(refused ? DENIED_COLOR : GRABBED_COLOR);
+      setRiserDecalTint(refused ? DENIED_COLOR : GRABBED_COLOR, RISER_OPACITY);
     },
     setLipHighlight(visible) {
       lipHighlight = visible;
@@ -868,15 +840,12 @@ export function createLayerEdgeOverlay(
       for (const [tileIdx, tile] of [...tiles]) disposeTile(tileIdx, tile);
     },
     drawCallCount(): number {
-      return (restingVisible() ? tiles.size : 0) + (grabbed.visible ? 1 : 0) + (riser.visible ? 1 : 0) + cellMeshes.size + bandMeshes.size;
+      return (restingVisible() ? tiles.size : 0) + (grabbed.visible ? 1 : 0) + cellMeshes.size + bandMeshes.size;
     },
     dispose() {
       this.clear();
       for (const idx of [...cellMeshes.keys()]) dropCellGrid(idx);
       group.remove(grabbed);
-      group.remove(riser);
-      riser.geometry.dispose();
-      riserMaterial.dispose();
       grabbed.geometry.dispose();
       material.dispose();
       cellMaterial.dispose();

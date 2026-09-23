@@ -1,0 +1,94 @@
+{
+  "assumptions": {
+    "png_gpu_format": "RGBA8 with complete mip chain",
+    "compressed_gpu_format": "BC7 or ASTC 4x4, 16 bytes per 4x4 block, complete mip chain",
+    "excluded": "CPU decoded images, loader buffers, driver allocation overhead, shaders, framebuffer and instance buffers",
+    "sharing": "Terrace draws repeated structures with InstancedMesh; mesh and textures are shared, not duplicated per house."
+  },
+  "variants": {
+    "original": {
+      "triangles": 902,
+      "exported_vertices": 1823,
+      "geometry_gpu_bytes": 92916,
+      "textures": [
+        {
+          "name": "upturned-hull-normal",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 1510231
+        },
+        {
+          "name": "upturned-hull-basecolor",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 1842076
+        },
+        {
+          "name": "upturned-hull-metallicRoughness",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 635650
+        }
+      ],
+      "png_gpu_total_bytes": 67201776,
+      "ktx2_bc7_astc_gpu_total_bytes": 16870212,
+      "png_glb_file_bytes": 3152912,
+      "ktx2_glb_file_bytes": 4083004,
+      "png_glb_sha256": "336ad5c32a42649e9469f63f4298a108b57addb396d35ac6bd14e3d0180adc7f",
+      "ktx2_glb_sha256": "2db668267e95dac355f2a9ba82b34ac90f15842d70402ecbb8c8c8f76878a375",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    },
+    "low": {
+      "triangles": 582,
+      "exported_vertices": 1200,
+      "geometry_gpu_bytes": 61092,
+      "textures": [
+        {
+          "name": "upturned-hull-normal",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 432511
+        },
+        {
+          "name": "upturned-hull-basecolor",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 595511
+        },
+        {
+          "name": "upturned-hull-metallicRoughness",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 181835
+        }
+      ],
+      "png_gpu_total_bytes": 16838304,
+      "ktx2_bc7_astc_gpu_total_bytes": 4255476,
+      "png_glb_file_bytes": 909184,
+      "ktx2_glb_file_bytes": 1273064,
+      "png_glb_sha256": "d484e030dccdf7a5a1093e413c53823efa35cf0acb8f8fd6447a5f1cd7287614",
+      "ktx2_glb_sha256": "7784dc26aab810ce2ba9ebe1681abeebe391694933efa179f5643e3b893d3577",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    }
+  }
+}

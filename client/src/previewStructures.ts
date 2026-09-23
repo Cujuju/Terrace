@@ -22,10 +22,8 @@ import {
   settlementRace,
   type SettlerRace,
 } from '../../plugins/structures/protocol.ts';
-import timberHouseUrl from '../../plugins/structures/client/assets/timber-house.glb?url';
 import {
   createStructureModels,
-  preloadStructureModels,
   DURANDS_MARQUEE_BULB_PERIOD_SECONDS,
   DURANDS_SIGN_FLASH_PERIOD_SECONDS,
   type StructurePlacement,
@@ -149,7 +147,6 @@ async function main(): Promise<void> {
   await renderer.init();
   installRigTextureTranscoder(renderer);
 
-  await preloadStructureModels(timberHouseUrl);
   const models = createStructureModels();
   scene.add(models.root);
 

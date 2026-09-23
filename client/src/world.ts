@@ -12,6 +12,7 @@ import {
 } from '@terrace/shared';
 import type {
   ChunkUnlockMessage,
+  Heightmap,
   JoinSnapshotMessage,
   SculptAppliedMessage,
   SculptDeniedMessage,
@@ -180,14 +181,15 @@ export interface World extends TerrainSink {
   bandAtCell(x: number, y: number, spanBand: number | null): number | null;
   /** Floor of the run down from `band` in this column — the slab a drag grabbed here writes. */
   runFloorBandAt(x: number, y: number, band: number): number | null;
-  /** Cells a carve at this aim would cut, as offsets from it. */
+  /** Cells a carve at this aim would cut, as offsets from it. The same array
+   *  returns until an argument or the terrain changes. */
   carveCellsAt(
     x: number,
     y: number,
     band: number,
     radius: number,
     depthBands: number,
-  ): (readonly [number, number])[] | null;
+  ): readonly (readonly [number, number])[] | null;
   graspSpanBand(pick: TerrainRayPick | null, atX: number, atY: number): number | null;
   carveBand(pick: TerrainRayPick | null): number | null;
   /** Drawn band of the surface under the aim, for every face: what a stroke would edit there. */
@@ -275,11 +277,24 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
 
   let chunkRevisions: Int32Array | null = null;
   let terrainEpoch = 0;
+  /** Bumps on every terrain revision anywhere; never resets. */
+  let terrainChanges = 0;
+  let carveMemo: {
+    readonly map: Heightmap;
+    readonly terrainChanges: number;
+    readonly x: number;
+    readonly y: number;
+    readonly band: number;
+    readonly radius: number;
+    readonly depthBands: number;
+    readonly cells: readonly (readonly [number, number])[];
+  } | null = null;
 
   const terrainChangedHandlers = new Set<(dirty: ReadonlySet<number>) => void>();
 
   const noteTerrainRevisions = (dirty: ReadonlySet<number>): void => {
     if (chunkRevisions === null || dirty.size === 0) return;
+    terrainChanges++;
     for (const idx of dirty) {
       if (idx >= 0 && idx < chunkRevisions.length) chunkRevisions[idx]++;
     }
@@ -464,6 +479,7 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
   } => {
     terrainEpoch++;
     chunkRevisions = new Int32Array(chunksPerEdge(worldSize) ** 2);
+    carveMemo = null;
     const nextMirror = createTerrainMirror(worldSize);
     mirror = nextMirror;
     const built = buildTerrain(nextMirror);
@@ -715,12 +731,28 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
       band: number,
       radius: number,
       depthBands: number,
-    ): (readonly [number, number])[] | null {
+    ): readonly (readonly [number, number])[] | null {
       if (mirror === null) return null;
       const map = mirror.map;
-      return carveAdmittedCells(map, x, y, radius, band, depthBands).map(
-        (i) => [cellXIn(map.size, i) - x, cellYIn(map.size, i) - y] as const,
-      );
+      const memo = carveMemo;
+      if (
+        memo !== null &&
+        memo.map === map &&
+        memo.terrainChanges === terrainChanges &&
+        memo.x === x &&
+        memo.y === y &&
+        memo.band === band &&
+        memo.radius === radius &&
+        memo.depthBands === depthBands
+      ) {
+        return memo.cells;
+      }
+      // Frozen: callers share this array until the answer changes.
+      const cells = Object.freeze(carveAdmittedCells(map, x, y, radius, band, depthBands).map(
+        (i) => Object.freeze([cellXIn(map.size, i) - x, cellYIn(map.size, i) - y] as const),
+      ));
+      carveMemo = { map, terrainChanges, x, y, band, radius, depthBands, cells };
+      return cells;
     },
     graspSpanBand(pick: TerrainRayPick | null, atX: number, atY: number): number | null {
       if (pick === null || mirror === null) return null;
@@ -821,10 +853,13 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
       stopMesherDump?.();
       stopDeviceLostWatch?.();
       meshes?.dispose();
+      layerEdges?.dispose();
       rig?.dispose();
       rig = null;
       meshes = null;
+      layerEdges = null;
       mirror = null;
+      carveMemo = null;
       drawnGround = null;
       predictions = null;
       water.dispose();

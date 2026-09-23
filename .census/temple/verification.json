@@ -1,0 +1,103 @@
+{
+  "glb_sha256": "ec098d333a3e3f712f7f6d37c7e2c03ea040cceef0e6908a50a96ee0151873f7",
+  "mesh_count": 1,
+  "primitive_count": 1,
+  "material_count": 1,
+  "triangles": 1232,
+  "exported_vertices": 2405,
+  "nodes": [
+    {
+      "mesh": 0,
+      "name": "temple"
+    },
+    {
+      "children": [
+        0
+      ],
+      "name": "RootNode"
+    }
+  ],
+  "dimensions_gltf_y_up": [
+    2.180000066757202,
+    1.8000000715255737,
+    2.0
+  ],
+  "uv_islands": 572,
+  "uv_min_max": [
+    0.0029296875,
+    0.9966357350349426
+  ],
+  "uv_overlap_pairs": [],
+  "uv_candidate_pairs_checked": 696,
+  "minimum_island_bounds_gap_pixels": 12.0,
+  "texel_density_min_max": [
+    230.9960152774349,
+    231.01075715213037
+  ],
+  "zero_area_triangles": 0,
+  "normal_length_error_max": 6.717942602207927e-08,
+  "tangent_normal_dot_max": 3.581794765494806e-05,
+  "compression_extensions": [],
+  "textures": {
+    "temple-normal": {
+      "format": "image/png",
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "matches_external_bytes": true
+    },
+    "temple-basecolor": {
+      "format": "image/png",
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "matches_external_bytes": true
+    },
+    "temple-metallicRoughness": {
+      "format": "image/png",
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "matches_external_bytes": true
+    }
+  },
+  "roughness_range": [
+    0.7803922295570374,
+    0.9803922176361084
+  ],
+  "metalness_range": [
+    0.0,
+    0.0
+  ],
+  "normal_map_length_error_max": 0.004979610443115234,
+  "blend": {
+    "mesh_count": 1,
+    "material_count": 1,
+    "vertices": 792,
+    "triangles": 1232,
+    "uv_layers": [
+      "UVMap"
+    ],
+    "images_packed": true,
+    "objects": [
+      "RootNode",
+      "temple"
+    ]
+  },
+  "bounds_gltf_y_up": {
+    "min": [
+      -1.0,
+      0.0,
+      -1.0
+    ],
+    "max": [
+      1.1800000667572021,
+      1.8000000715255737,
+      1.0
+    ]
+  },
+  "passed": true
+}

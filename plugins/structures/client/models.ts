@@ -16,12 +16,7 @@ import {
   type InstancedBufferAttribute,
   type Material,
 } from 'three';
-import {
-  assertAssetFits,
-  loadRigAsset,
-  type RigAsset,
-} from '../../../client/src/render/rigAsset.ts';
-import { flattenAssetParts } from '../../../client/src/render/staticAsset.ts';
+import type { BuildingAssetKit } from '../../../client/src/render/buildingAssetKit.ts';
 import {
   MAX_STRUCTURE_TIER,
   STRUCTURES_CAP,
@@ -29,16 +24,16 @@ import {
   STRUCTURE_SURVEYED_GROUND_RADIUS,
   STRUCTURE_SCALE_MAX,
   STRUCTURE_TIER_COUNT,
+  STRUCTURE_TIERS,
   type SettlerRace,
   type StructureTier,
 } from '../protocol.ts';
 import { isDurandsCell } from './durands.ts';
-import { FISHING_HUT_BUILDERS, fishingHutVariantIndex } from './fishingHuts.ts';
+import { FISHING_HUT_BUILDERS, FISHING_HUT_NAMES, fishingHutVariantIndex } from './fishingHuts.ts';
 import {
   fitToRadius,
   mergeParts,
   mergeSharedSurface,
-  partsStandingHeight,
   type StructurePart,
 } from './parts.ts';
 import type { SiteKind } from './site.ts';
@@ -53,46 +48,6 @@ export const STRUCTURE_FOOTPRINT_RADIUS =
 
 function lambert(color: number, options: { emissive?: number } = {}): MeshLambertMaterial {
   return new MeshLambertMaterial({ color, flatShading: true, emissive: options.emissive ?? 0x000000 });
-}
-
-const IMPORTED_STRUCTURE_TIER = 2;
-
-const TALLEST_PROCEDURAL_TIER_HEIGHT_WORLD_UNITS = 1.84;
-
-const IMPORTED_STRUCTURE_FOOTPRINT_WORLD_UNITS = {
-  x: STRUCTURE_FOOTPRINT_RADIUS * 2,
-  z: STRUCTURE_FOOTPRINT_RADIUS * 2,
-  y: TALLEST_PROCEDURAL_TIER_HEIGHT_WORLD_UNITS,
-};
-
-let importedBuildingAsset: RigAsset | null = null;
-
-export async function preloadStructureModels(url: string): Promise<void> {
-  installStructureAsset(await loadRigAsset(url, null));
-}
-
-export function installStructureAsset(asset: RigAsset): void {
-  try {
-    assertAssetFits(asset, IMPORTED_STRUCTURE_FOOTPRINT_WORLD_UNITS);
-  } catch (cause) {
-    throw new Error(
-      `structure asset: the model breaks the footprint contract — a building must stand ` +
-        `strictly over the ground the server surveys for it (see STRUCTURE_FOOTPRINT_RADIUS)`,
-      { cause },
-    );
-  }
-  importedBuildingAsset?.dispose();
-  importedBuildingAsset = asset;
-}
-
-function importedStructureParts(): StructurePart[] | null {
-  if (importedBuildingAsset === null) return null;
-  const owned = flattenAssetParts(importedBuildingAsset).map((part) => ({
-    geometry: part.geometry.clone(),
-    material: part.material.clone(),
-    localMatrices: part.localMatrices.map((local) => local.clone()),
-  }));
-  return fitToRadius(owned, STRUCTURE_SURVEYED_GROUND_RADIUS / STRUCTURE_SCALE_MAX);
 }
 
 const FULL_TURN_RADIANS = Math.PI * 2;
@@ -698,7 +653,7 @@ function buildTierParts(): StructurePart[][] {
     return [logCourses, roof, gableEnds, ridgeCap, door, windows, roofCourses, doorFrame, shutters, loftWindow];
   };
 
-  tiers.push(importedStructureParts() ?? buildTimberHouseTier());
+  tiers.push(buildTimberHouseTier());
 
   {
     const wallHeight = 0.4;
@@ -1868,28 +1823,23 @@ function uploadInstancePrefix(
   attribute.needsUpdate = true;
 }
 
-function assertHeightBudgetStillHolds(tierParts: readonly StructurePart[][]): void {
-  let tallestProcedural = 0;
-  for (let tier = 0; tier < tierParts.length; tier++) {
-    if (tier === IMPORTED_STRUCTURE_TIER) continue;
-    tallestProcedural = Math.max(tallestProcedural, partsStandingHeight(tierParts[tier]));
+export function createStructureModels(kit?: BuildingAssetKit): StructureModels {
+  const legacyParts = kit === undefined ? buildTierParts().map((parts) => mergeParts(parts)) : null;
+  const fallbackTiers = [0, 1, 1, 2, 3, 2, 4, 5, 5, 4, 5];
+  const tierParts = kit === undefined
+    ? fallbackTiers.map((tier) => legacyParts![tier].map((part) => ({
+      geometry: part.geometry.clone(), material: part.material.clone(),
+      localMatrices: part.localMatrices.map((matrix) => matrix.clone()),
+    })))
+    : STRUCTURE_TIERS.map((id) => kit.parts(id));
+  if (legacyParts !== null) {
+    for (const parts of legacyParts) for (const part of parts) {
+      part.geometry.dispose(); part.material.dispose();
+    }
   }
-  if (TALLEST_PROCEDURAL_TIER_HEIGHT_WORLD_UNITS > tallestProcedural) {
-    throw new Error(
-      `structures: TALLEST_PROCEDURAL_TIER_HEIGHT_WORLD_UNITS is ` +
-        `${TALLEST_PROCEDURAL_TIER_HEIGHT_WORLD_UNITS}, but the tallest procedural tier now ` +
-        `stands ${tallestProcedural.toFixed(3)} — lower the constant to match, or an imported ` +
-        `asset may tower over every building in the game`,
-    );
-  }
-}
-
-export function createStructureModels(): StructureModels {
-  const tierParts = buildTierParts().map((parts) => mergeParts(parts));
   if (tierParts.length !== STRUCTURE_TIER_COUNT) {
     throw new Error(`structures: built ${tierParts.length} tier models, expected ${STRUCTURE_TIER_COUNT}`);
   }
-  assertHeightBudgetStillHolds(tierParts);
 
   const geometries: BufferGeometry[] = [];
   const materials: Material[] = [];
@@ -1908,9 +1858,9 @@ export function createStructureModels(): StructureModels {
     }),
   );
 
-  const durands = buildDurandsParts();
-  const durandsParts = mergeSharedSurface(
-    fitToRadius(durands.parts, STRUCTURE_SURVEYED_GROUND_RADIUS / STRUCTURE_SCALE_MAX),
+  const durands = kit === undefined ? buildDurandsParts() : null;
+  const durandsParts = kit?.parts('durands') ?? mergeSharedSurface(
+    fitToRadius(durands!.parts, STRUCTURE_SURVEYED_GROUND_RADIUS / STRUCTURE_SCALE_MAX),
   );
   const durandsMeshes: InstancedMesh[] = durandsParts.map((part, partIndex) => {
     geometries.push(part.geometry);
@@ -1925,7 +1875,9 @@ export function createStructureModels(): StructureModels {
   const siteVariantParts: Partial<Record<SiteKind, StructurePart[][]>> = {};
   const siteVariantMeshes: Partial<Record<SiteKind, InstancedMesh[][]>> = {};
   for (const siteKind of Object.keys(SITE_TOP_TIER_VARIANTS) as SiteKind[]) {
-    const built = SITE_TOP_TIER_VARIANTS[siteKind]!.builders.map((build) => build());
+    const built = kit === undefined
+      ? SITE_TOP_TIER_VARIANTS[siteKind]!.builders.map((build) => build())
+      : FISHING_HUT_NAMES.map((id) => kit.parts(id));
     siteVariantParts[siteKind] = built;
     siteVariantMeshes[siteKind] = built.map((parts, variant) =>
       parts.map((part, partIndex) => {
@@ -2034,6 +1986,7 @@ export function createStructureModels(): StructureModels {
     },
 
     animate(dt: number): void {
+      if (durands === null) return;
       durandsFlashElapsedSeconds += dt;
       const angle = durandsFlashElapsedSeconds * (DURANDS_TWO_PI / DURANDS_SIGN_FLASH_PERIOD_SECONDS);
       const t = (Math.sin(angle) + 1) / 2;

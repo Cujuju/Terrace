@@ -1,0 +1,103 @@
+{
+  "glb_sha256": "0f60b7aa1436766168c31317b2cc1c85e5f9c93ed3ca9707045ab3a0f610545b",
+  "mesh_count": 1,
+  "primitive_count": 1,
+  "material_count": 1,
+  "triangles": 1116,
+  "exported_vertices": 2398,
+  "nodes": [
+    {
+      "mesh": 0,
+      "name": "smoke-pit-hut"
+    },
+    {
+      "children": [
+        0
+      ],
+      "name": "RootNode"
+    }
+  ],
+  "dimensions_gltf_y_up": [
+    0.7056654691696167,
+    0.6550000309944153,
+    0.6585074663162231
+  ],
+  "uv_islands": 628,
+  "uv_min_max": [
+    0.005859375,
+    0.9932378530502319
+  ],
+  "uv_overlap_pairs": [],
+  "uv_candidate_pairs_checked": 492,
+  "minimum_island_bounds_gap_pixels": 12.0096435546875,
+  "texel_density_min_max": [
+    471.1081423374355,
+    471.1153699329377
+  ],
+  "zero_area_triangles": 0,
+  "normal_length_error_max": 1.1478574424295118e-07,
+  "tangent_normal_dot_max": 9.998378517495077e-05,
+  "compression_extensions": [],
+  "textures": {
+    "smoke-pit-hut-normal": {
+      "format": "image/png",
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "matches_external_bytes": true
+    },
+    "smoke-pit-hut-basecolor": {
+      "format": "image/png",
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "matches_external_bytes": true
+    },
+    "smoke-pit-hut-metallicRoughness": {
+      "format": "image/png",
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "matches_external_bytes": true
+    }
+  },
+  "roughness_range": [
+    0.7803922295570374,
+    0.9803922176361084
+  ],
+  "metalness_range": [
+    0.0,
+    0.0
+  ],
+  "normal_map_length_error_max": 0.00535053014755249,
+  "blend": {
+    "mesh_count": 1,
+    "material_count": 1,
+    "vertices": 683,
+    "triangles": 1116,
+    "uv_layers": [
+      "UVMap"
+    ],
+    "images_packed": true,
+    "objects": [
+      "RootNode",
+      "smoke-pit-hut"
+    ]
+  },
+  "bounds_gltf_y_up": {
+    "min": [
+      -0.34154877066612244,
+      0.0,
+      -0.261548787355423
+    ],
+    "max": [
+      0.36411669850349426,
+      0.6550000309944153,
+      0.39695867896080017
+    ]
+  },
+  "passed": true
+}

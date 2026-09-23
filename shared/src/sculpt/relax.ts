@@ -73,6 +73,38 @@ function relaxPair(
   return moved;
 }
 
+function heapPush(heap: number[], value: number): void {
+  let at = heap.length;
+  heap.push(value);
+  while (at > 0) {
+    const up = (at - 1) >> 1;
+    if (heap[up] <= value) break;
+    heap[at] = heap[up];
+    at = up;
+  }
+  heap[at] = value;
+}
+
+function heapPop(heap: number[]): number {
+  const top = heap[0];
+  const last = heap.pop() as number;
+  const count = heap.length;
+  if (count > 0) {
+    let at = 0;
+    for (;;) {
+      const left = 2 * at + 1;
+      if (left >= count) break;
+      const right = left + 1;
+      const child = right < count && heap[right] < heap[left] ? right : left;
+      if (heap[child] >= last) break;
+      heap[at] = heap[child];
+      at = child;
+    }
+    heap[at] = last;
+  }
+  return top;
+}
+
 /** Radial rim shaping for the player melt: full across the footprint. */
 export interface SmoothFalloff {
   readonly cx: number;
@@ -306,8 +338,10 @@ export function smooth(
   let layer: LayerView | null = null;
   let cells: Int16Array = map.cells;
   let viewBase = 0;
+  let viewChanged = false;
 
   const rebuildLayerView = (previous: LayerView | null): void => {
+    viewChanged = true;
     const slack = previous === null
       ? LAYER_VIEW_SLACK_ROWS
       : Math.max(LAYER_VIEW_SLACK_ROWS, previous.lastRow - previous.firstRow + 1);
@@ -387,6 +421,46 @@ export function smooth(
 
   let adjustingPasses = 0;
   const passLimit = laplacePct === null ? SMOOTH_PASS_LIMIT : SMOOTH_LAPLACIAN_PASSES;
+
+  // Owners are visited in full-scan order; a pair whose cells are unchanged since its last visit cannot move, so skipping it keeps results identical.
+  const due: number[] = [];
+  let carried: number[] = [];
+  let scanning = true;
+  const schedule = (owner: number, current: number): void => {
+    if (owner < 0) return;
+    if (owner > current) {
+      if (!scanning) heapPush(due, owner);
+    } else {
+      carried.push(owner);
+    }
+  };
+  const scheduleAround = (a: number, b: number, current: number): void => {
+    schedule(a - 1, current);
+    schedule(a, current);
+    schedule(a - size, current);
+    schedule(b - 1, current);
+    schedule(b, current);
+    schedule(b - size, current);
+  };
+  const visitOwner = (i: number, x: number, y: number): boolean => {
+    let moved = false;
+    if (x < maxX && relaxPair(cells, viewBase, i, i + 1, changed, boundsOf, layer)) {
+      moved = true;
+      scheduleAround(i, i + 1, i);
+    }
+    if (y < maxY && relaxPair(cells, viewBase, i, i + size, changed, boundsOf, layer)) {
+      moved = true;
+      scheduleAround(i, i + size, i);
+    }
+    return moved;
+  };
+  const dueRow = (y: number, fromX: number, toX: number): void => {
+    for (let x = fromX; x <= toX; x++) heapPush(due, y * size + x);
+  };
+  const dueColumn = (x: number, fromY: number, toY: number): void => {
+    for (let y = fromY; y <= toY; y++) heapPush(due, y * size + x);
+  };
+
   for (let pass = 0; pass < passLimit; pass++) {
     const heldMinX = minX, heldMinY = minY, heldMaxX = maxX, heldMaxY = maxY;
     if (minX > reachMinX) minX--;
@@ -404,12 +478,39 @@ export function smooth(
     let changedThisPass = false;
 
     if (laplacePct === null) {
-      for (let y = minY; y <= maxY; y++) {
-        const row = y * size;
-        for (let x = minX; x <= maxX; x++) {
-          const i = row + x;
-          if (x < maxX && relaxPair(cells, viewBase, i, i + 1, changed, boundsOf, layer)) changedThisPass = true;
-          if (y < maxY && relaxPair(cells, viewBase, i, i + size, changed, boundsOf, layer)) changedThisPass = true;
+      const previous = carried;
+      carried = [];
+      scanning = pass === 0 || viewChanged;
+      viewChanged = false;
+      if (scanning) {
+        for (let y = minY; y <= maxY; y++) {
+          const row = y * size;
+          for (let x = minX; x <= maxX; x++) {
+            if (visitOwner(row + x, x, y)) changedThisPass = true;
+          }
+        }
+      } else {
+        due.length = 0;
+        for (const owner of previous) heapPush(due, owner);
+        if (minY < heldMinY) dueRow(minY, minX, maxX);
+        if (maxY > heldMaxY) {
+          dueRow(maxY, minX, maxX);
+          dueRow(heldMaxY, minX, maxX);
+        }
+        if (minX < heldMinX) dueColumn(minX, minY, maxY);
+        if (maxX > heldMaxX) {
+          dueColumn(maxX, minY, maxY);
+          dueColumn(heldMaxX, minY, maxY);
+        }
+        let last = -1;
+        while (due.length > 0) {
+          const i = heapPop(due);
+          if (i === last) continue;
+          last = i;
+          const x = cellX(size, i);
+          const y = cellY(size, i);
+          if (x < minX || x > maxX || y < minY || y > maxY) continue;
+          if (visitOwner(i, x, y)) changedThisPass = true;
         }
       }
     } else {

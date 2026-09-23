@@ -1,0 +1,103 @@
+{
+  "glb_sha256": "42bed4f8889122484a7cae429a3cd3f252f95c6bfebb6244b4b96c40dd84fbac",
+  "mesh_count": 1,
+  "primitive_count": 1,
+  "material_count": 1,
+  "triangles": 910,
+  "exported_vertices": 1812,
+  "nodes": [
+    {
+      "mesh": 0,
+      "name": "industrial-pump-house"
+    },
+    {
+      "children": [
+        0
+      ],
+      "name": "RootNode"
+    }
+  ],
+  "dimensions_gltf_y_up": [
+    0.7652454972267151,
+    0.934670627117157,
+    0.8600000739097595
+  ],
+  "uv_islands": 451,
+  "uv_min_max": [
+    0.005859375,
+    0.9938770532608032
+  ],
+  "uv_overlap_pairs": [],
+  "uv_candidate_pairs_checked": 463,
+  "minimum_island_bounds_gap_pixels": 12.00079345703125,
+  "texel_density_min_max": [
+    282.54012051626836,
+    282.5450266004097
+  ],
+  "zero_area_triangles": 0,
+  "normal_length_error_max": 5.508141920351761e-08,
+  "tangent_normal_dot_max": 2.2436614104393016e-05,
+  "compression_extensions": [],
+  "textures": {
+    "industrial-pump-house-normal": {
+      "format": "image/png",
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "matches_external_bytes": true
+    },
+    "industrial-pump-house-basecolor": {
+      "format": "image/png",
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "matches_external_bytes": true
+    },
+    "industrial-pump-house-metallicRoughness": {
+      "format": "image/png",
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "matches_external_bytes": true
+    }
+  },
+  "roughness_range": [
+    0.7803922295570374,
+    0.9803922176361084
+  ],
+  "metalness_range": [
+    0.0,
+    0.0
+  ],
+  "normal_map_length_error_max": 0.005474269390106201,
+  "blend": {
+    "mesh_count": 1,
+    "material_count": 1,
+    "vertices": 548,
+    "triangles": 910,
+    "uv_layers": [
+      "UVMap"
+    ],
+    "images_packed": true,
+    "objects": [
+      "industrial-pump-house",
+      "RootNode"
+    ]
+  },
+  "bounds_gltf_y_up": {
+    "min": [
+      -0.38262274861335754,
+      0.0,
+      -0.43000003695487976
+    ],
+    "max": [
+      0.38262274861335754,
+      0.934670627117157,
+      0.43000003695487976
+    ]
+  },
+  "passed": true
+}

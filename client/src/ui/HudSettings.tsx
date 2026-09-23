@@ -22,6 +22,7 @@ import {
 import { chartOpen, setChartOpen } from './Cartographer.tsx';
 import type { WorldActions } from './WorldManager.tsx';
 import { AudioSettingsPanel } from './AudioSettingsPanel.tsx';
+import { BuildingQualityPanel } from './BuildingQualityPanel.tsx';
 import { ControlsPanel } from './ControlsPanel.tsx';
 import type { ConnectionStatus } from '../net/connection.ts';
 
@@ -93,6 +94,7 @@ export function HudSettings(props: {
           {
 }
           <AudioSettingsPanel />
+          <BuildingQualityPanel />
           {
 }
           <For each={pluginHudPanels().filter((p) => p.placement === 'settings')}>

@@ -7,8 +7,14 @@ import json
 import sys
 from mathutils import Vector
 
-ROOT = pathlib.Path(__file__).parent
-sys.path.insert(0, str(ROOT))
+SOURCE_ROOT = pathlib.Path(__file__).parent
+LOW_DETAIL = '--low' in sys.argv
+ROOT = SOURCE_ROOT / 'low' if LOW_DETAIL else SOURCE_ROOT
+ROOT.mkdir(parents=True, exist_ok=True)
+sys.path.insert(0, str(SOURCE_ROOT))
+import asset_helpers
+if LOW_DETAIL:
+    asset_helpers.ATLAS_SIZE = 1024
 from asset_helpers import ATLAS_SIZE, ISLAND_GAP, pack_rectangles, project_polygon, write_png
 
 MODEL_SCALE = 0.1
@@ -21,7 +27,7 @@ ROOF_HALF_LENGTH = 6.48
 ROOF_RIDGE = 5.20
 ROOF_EAVE = 2.65
 ROOF_ROWS = 6
-ROOF_SEGMENTS = 8
+ROOF_SEGMENTS = 4 if LOW_DETAIL else 8
 ROOF_SWEEP = 0.27
 TIMBER_WIDTH = 0.30
 BEVEL_FRACTION = 0.13
@@ -60,7 +66,7 @@ def sweep(points, width, depth=None, kind='timber', bevel=True, label='', **meta
     depth = width if depth is None else depth
     a, b = width / 2, depth / 2
     bevelsize = min(a, b) * BEVEL_FRACTION * 2
-    if bevel:
+    if bevel and not LOW_DETAIL:
         section = [(-a+bevelsize,-b),(a-bevelsize,-b),(a,-b+bevelsize),(a,b-bevelsize),(a-bevelsize,b),(-a+bevelsize,b),(-a,b-bevelsize),(-a,-b+bevelsize)]
     else:
         section = [(-a,-b),(a,-b),(a,b),(-a,b)]
@@ -179,7 +185,7 @@ for x in (-.83,.83): beam((x,-6.23,.51),(x,-6.23,2.68),.22,label='Door jamb')
 beam((-.94,-6.23,2.62),(.94,-6.23,2.62),.24,label='Door lintel')
 for z in (.98,2.10): box((0,-6.265,z),(1.18,.045,.095),'iron',grain=(1,0,0),label='Door strap')
 # Polygonal pull ring, generated directly as a small torus.
-ringcoords=[]; ringfaces=[]; ringsteps=10; tubesides=4
+ringcoords=[]; ringfaces=[]; ringsteps=6 if LOW_DETAIL else 10; tubesides=3 if LOW_DETAIL else 4
 for i in range(ringsteps):
     a=i*2*math.pi/ringsteps
     for k in range(tubesides):
@@ -370,7 +376,7 @@ bpy.ops.wm.save_as_mainfile(filepath=str(ROOT/'longhouse.blend'))
 editable_polygon_count=len(mesh.polygons)
 bm=bmesh.new(); bm.from_mesh(mesh); bmesh.ops.triangulate(bm,faces=list(bm.faces)); bm.to_mesh(mesh); bm.free(); mesh.update()
 bpy.ops.export_scene.gltf(filepath=str(ROOT/'longhouse.glb'),export_format='GLB',use_selection=False,export_apply=False,export_texcoords=True,export_normals=True,export_tangents=True,export_materials='EXPORT',export_image_format='AUTO',export_draco_mesh_compression_enable=False,export_cameras=False,export_lights=False)
-report=dict(meshes=1,materials=1,vertices=len(mesh.vertices),triangles=len(mesh.loop_triangles),polygons=editable_polygon_count,parts=len(parts),islands=len(charts),texture_size=[ATLAS_SIZE,ATLAS_SIZE],gap_pixels=ISLAND_GAP,density_pixels_per_game_unit=density/MODEL_SCALE,dimensions=list(obj.dimensions),origin=list(obj.location),palette=PALETTE,geometry_source='Original procedural mesh, no imported assets',texture_source='Original procedural texture paint',image_generator='Built-in image generator; exact backend model unverified')
+report=dict(profile='low' if LOW_DETAIL else 'original',meshes=1,materials=1,vertices=len(mesh.vertices),triangles=len(mesh.loop_triangles),polygons=editable_polygon_count,parts=len(parts),islands=len(charts),texture_size=[ATLAS_SIZE,ATLAS_SIZE],gap_pixels=ISLAND_GAP,density_pixels_per_game_unit=density/MODEL_SCALE,dimensions=list(obj.dimensions),origin=list(obj.location),palette=PALETTE,geometry_source='Original procedural mesh, no imported assets',texture_source='Original procedural texture paint',image_generator='Built-in image generator; exact backend model unverified')
 (ROOT/'build-report.json').write_text(json.dumps(report,indent=2))
 (ROOT/'parts.json').write_text(json.dumps(parts,indent=2))
 print(json.dumps(report,indent=2),flush=True)

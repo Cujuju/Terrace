@@ -3,6 +3,7 @@ from mathutils import Vector
 ROOT=pathlib.Path(__file__).parent
 sys.path.insert(0,str(ROOT.parents[1]/'tools/blender'))
 import render_glb as studio
+if '--low' in sys.argv: ROOT=ROOT/'low'
 studio.setup_world()
 bpy.ops.import_scene.gltf(filepath=str(ROOT/'longhouse.glb'))
 stage=studio.add_stage('ground')

@@ -1,0 +1,153 @@
+{
+  "profile": "original",
+  "meshes": 1,
+  "materials": 1,
+  "vertices": 4408,
+  "triangles": 7164,
+  "polygons": 3246,
+  "parts": 413,
+  "islands": 3246,
+  "texture_size": [
+    2048,
+    2048
+  ],
+  "gap_pixels": 12,
+  "density_pixels_per_game_unit": 338.2401437814663,
+  "dimensions": [
+    0.8240382075309753,
+    0.8500947952270508,
+    1.2699999809265137
+  ],
+  "origin": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "palette": {
+    "timber": [
+      0.73,
+      0.64,
+      0.48
+    ],
+    "wall": [
+      0.39,
+      0.13,
+      0.14
+    ],
+    "gable": [
+      0.39,
+      0.13,
+      0.14
+    ],
+    "roof": [
+      0.235,
+      0.245,
+      0.25
+    ],
+    "door": [
+      0.34,
+      0.255,
+      0.175
+    ],
+    "stone": [
+      0.39,
+      0.375,
+      0.34
+    ],
+    "cutstone": [
+      0.51,
+      0.515,
+      0.48
+    ],
+    "iron": [
+      0.16,
+      0.14,
+      0.13
+    ],
+    "dark": [
+      0.1,
+      0.065,
+      0.055
+    ],
+    "carving": [
+      0.32,
+      0.265,
+      0.2
+    ],
+    "thatch": [
+      0.6,
+      0.51,
+      0.33
+    ],
+    "plaster": [
+      0.66,
+      0.6,
+      0.47
+    ],
+    "turf": [
+      0.34,
+      0.42,
+      0.26
+    ],
+    "brick": [
+      0.53,
+      0.32,
+      0.24
+    ],
+    "canvas": [
+      0.48,
+      0.075,
+      0.105
+    ],
+    "fish": [
+      0.5,
+      0.55,
+      0.54
+    ],
+    "paint": [
+      0.4,
+      0.24,
+      0.19
+    ],
+    "slate": [
+      0.32,
+      0.37,
+      0.37
+    ],
+    "velvet": [
+      0.39,
+      0.035,
+      0.065
+    ],
+    "gold": [
+      0.72,
+      0.55,
+      0.29
+    ],
+    "glass": [
+      0.78,
+      0.43,
+      0.2
+    ],
+    "lanternglass": [
+      0.84,
+      0.18,
+      0.09
+    ],
+    "sign": [
+      0.3607843137254902,
+      0.09411764705882353,
+      0.12549019607843137
+    ]
+  },
+  "geometry_source": "Original Blender geometry, revised against owner-selected concept D (Crimson Cabaret). No prior mesh or texture maps reused. Central sign is newly generated reference-matched artwork; all other paint is procedural.",
+  "texture_source": "Original procedural materials and typeset panels, plus an original generated central sign painting closely referenced to selected concept D; source image and exact prompt retained in building-kit/cabaret-paint.",
+  "image_generator": "Built-in image generator; exact backend model unverified",
+  "placement": {
+    "front_gltf": "+Z",
+    "origin": "Inherited Durand's footprint center at ground",
+    "deliberate_difference": "Crimson Cabaret revision restores the selected seated figure, text panels and flags. Ground porch projects 3.2 construction units beyond the enclosed facade and 1.6 beyond the upper gallery; awning covers the projecting porch. Overall X/Z envelope retained at 0.824038 x 0.850095 by fitting the complete structure; enclosed body is shallower to reserve porch space. Height about 1.27 rather than the legacy 2.060096. No extra scene lights."
+  },
+  "emissive": true,
+  "emission_strength": 2.5
+}

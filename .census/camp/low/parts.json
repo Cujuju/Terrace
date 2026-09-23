@@ -1,0 +1,32 @@
+[
+  {
+    "name": "Preserved original Terrace procedural base, coplanar merge and bevel improvements",
+    "first_face": 0,
+    "face_count": 154
+  },
+  {
+    "name": "Visible triangular camp opening",
+    "first_face": 154,
+    "face_count": 1
+  },
+  {
+    "name": "Hide opening edge",
+    "first_face": 155,
+    "face_count": 6
+  },
+  {
+    "name": "Hide opening edge",
+    "first_face": 161,
+    "face_count": 6
+  },
+  {
+    "name": "Cold hearth logs",
+    "first_face": 167,
+    "face_count": 6
+  },
+  {
+    "name": "Cold hearth logs",
+    "first_face": 173,
+    "face_count": 6
+  }
+]

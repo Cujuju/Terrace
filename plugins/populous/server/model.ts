@@ -64,11 +64,13 @@ export function rampedTier(current: number, earned: number): number {
 export function populousTierFor(flatNeighbors: number, maxTier: number): number {
   const index = Math.max(0, Math.min(POPULOUS_TIER_BY_FLAT_NEIGHBORS.length - 1, flatNeighbors));
   const tier = POPULOUS_TIER_BY_FLAT_NEIGHBORS[index];
-  return Math.max(0, Math.min(maxTier, tier));
+  const historicalTopTier = POPULOUS_TIER_BY_FLAT_NEIGHBORS[POPULOUS_TIER_BY_FLAT_NEIGHBORS.length - 1];
+  return Math.max(0, Math.min(maxTier, Math.floor(tier * maxTier / historicalTopTier)));
 }
 
-function capacityForTier(tier: number): number {
-  const index = Math.max(0, Math.min(POPULOUS_CAPACITY_BY_TIER.length - 1, tier));
+function capacityForTier(tier: number, maxTier: number): number {
+  const normalized = maxTier === 0 ? 0 : Math.floor(tier * (POPULOUS_CAPACITY_BY_TIER.length - 1) / maxTier);
+  const index = Math.max(0, Math.min(POPULOUS_CAPACITY_BY_TIER.length - 1, normalized));
   return POPULOUS_CAPACITY_BY_TIER[index];
 }
 
@@ -129,7 +131,7 @@ export function stepPopulous(
     const tier = rampedTier(record.tier, earned);
     if (tier !== record.tier) upgraded.push({ x, y, tier });
 
-    const capacity = capacityForTier(tier);
+    const capacity = capacityForTier(tier, ctx.maxTier);
     let population = (record.population ?? 0) + POPULOUS_GROWTH_PER_STEP;
     if (population >= capacity) {
       population = POPULOUS_POPULATION_AFTER_EMIT;

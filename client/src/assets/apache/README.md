@@ -47,24 +47,30 @@ aft lower corner sits above the rear pane's forward lower corner. Glazing is
 plain, without painted occupants or reflected scenery.
 The canopy shoulder bevel is reduced to keep the roof border close to the panes.
 
-This is a reusable model asset, not a spawning or combat plugin.
+The `apache` visitor plugin uses the low-resolution asset for settlement fly-bys.
+Both files also remain reusable model assets.
 
-Both resolutions are preserved as standalone GLBs with their textures embedded:
+Both resolutions are preserved as standalone GLBs with embedded KTX2 textures:
 
 | File | Texture resolution | Purpose |
 | --- | --- | --- |
-| `E:\Development\Projects\Terrace\client\src\assets\apache\apache.glb` | Three 256² atlases | Default game asset |
-| `E:\Development\Projects\Terrace\client\src\assets\apache\apache-high.glb` | Three 2048² atlases | High-resolution textures for close inspection |
+| `E:\Development\Projects\Terrace\client\src\assets\apache\apache.glb` | Three 256² KTX2 atlases, 9 mip levels | Default game asset |
+| `E:\Development\Projects\Terrace\client\src\assets\apache\apache-high.glb` | Three 2048² KTX2 atlases, 12 mip levels | High-resolution textures for close inspection |
 
 The variants share the final geometry, UVs, rig and plain corrected windows.
 High/low refers to texture resolution; both contain 1,050 triangles. Running the
 builder regenerates both from the same source, including every final correction.
+Compression uses UASTC quality 4 with Zstandard level 18 and complete mip chains.
+Base colour is sRGB; normal and metallic/roughness maps are linear. Both GLBs
+require [KHR_texture_basisu](https://github.com/KhronosGroup/glTF/blob/main/extensions/2.0/Khronos/KHR_texture_basisu/README.md),
+supported by the game's existing KTX2 loader. Lossless procedural texture sources
+remain in the builder, and the Blender review file keeps its packed authoring maps.
 
 | Budget | Default game asset |
 | --- | --- |
 | Triangles | 1,050 (872 body, 40 main rotor, 40 tail rotor, 98 gun) |
 | Meshes / materials | 4 / 1, shared opaque PBR material |
-| Textures | Three embedded 256² atlases: base colour, packed metallic/roughness, tangent normal |
+| Textures | Three embedded 256² KTX2/UASTC atlases: base colour, packed metallic/roughness, tangent normal |
 | Rest bounds, world units | X 0.997 × Y 0.260 × Z 0.776 |
 | Full rotor sweep | Fits a 1 × 1 world-unit footprint |
 
@@ -91,14 +97,24 @@ There are no animation tracks, lights, cameras or external resources in the GLB.
 
 Mesh names: `fuselage`, `main_rotor`, `tail_rotor`, `chin_gun`.
 
-Rebuild and independently inspect in PowerShell:
+Rebuilding requires Node, the repository's installed `@gltf-transform/cli`, and
+KTX-Software (`toktx` and `ktx`) on PATH. The builder compresses both exports
+automatically. To recompress existing PNG-textured exports without rebuilding:
+
+```powershell
+python 'E:\Development\Projects\Terrace\tools\blender\compress_apache.py' 'E:\Development\Projects\Terrace\client\src\assets\apache\apache.glb' 'E:\Development\Projects\Terrace\client\src\assets\apache\apache-high.glb'
+```
+
+Rebuild and independently inspect in PowerShell. Blender inspection uses temporary
+PNG-decoded copies because its importer does not support embedded KTX2:
 
 ```powershell
 & 'E:\Program Files\Blender Foundation\Blender 5.2\blender.exe' --background --python-exit-code 1 --python 'E:\Development\Projects\Terrace\tools\blender\build_apache.py' -- 'E:\Development\Projects\Terrace\client\src\assets\apache'
-& 'E:\Program Files\Blender Foundation\Blender 5.2\blender.exe' --background --python-exit-code 1 --python 'E:\Development\Projects\Terrace\tools\blender\stat_glb.py' -- 'E:\Development\Projects\Terrace\client\src\assets\apache\apache.glb' --footprint 1 1 --height 0.4
-& 'E:\Program Files\Blender Foundation\Blender 5.2\blender.exe' --background --python-exit-code 1 --python 'E:\Development\Projects\Terrace\tools\blender\stat_glb.py' -- 'E:\Development\Projects\Terrace\client\src\assets\apache\apache-high.glb' --footprint 1 1 --height 0.4
-& 'E:\Program Files\Blender Foundation\Blender 5.2\blender.exe' --background --python-exit-code 1 --python 'E:\Development\Projects\Terrace\tools\blender\render_glb.py' -- 'E:\Development\Projects\Terrace\client\src\assets\apache\apache.glb' 'E:\Development\Projects\Terrace\tools\blender\out\apache' --views bow34,side,top,game
-& 'E:\Program Files\Blender Foundation\Blender 5.2\blender.exe' --background --python-exit-code 1 --python 'E:\Development\Projects\Terrace\tools\blender\render_apache.py' -- 'E:\Development\Projects\Terrace\client\src\assets\apache\apache.glb' 'E:\Development\Projects\Terrace\tools\blender\out\apache'
+pnpm --dir 'E:\Development\Projects\Terrace' exec gltf-transform ktxdecompress 'E:\Development\Projects\Terrace\client\src\assets\apache\apache.glb' 'C:\Users\<user>\AppData\Local\Temp\apache-decoded.glb'
+pnpm --dir 'E:\Development\Projects\Terrace' exec gltf-transform ktxdecompress 'E:\Development\Projects\Terrace\client\src\assets\apache\apache-high.glb' 'C:\Users\<user>\AppData\Local\Temp\apache-high-decoded.glb'
+& 'E:\Program Files\Blender Foundation\Blender 5.2\blender.exe' --background --python-exit-code 1 --python 'E:\Development\Projects\Terrace\tools\blender\stat_glb.py' -- 'C:\Users\<user>\AppData\Local\Temp\apache-decoded.glb' --footprint 1 1 --height 0.4
+& 'E:\Program Files\Blender Foundation\Blender 5.2\blender.exe' --background --python-exit-code 1 --python 'E:\Development\Projects\Terrace\tools\blender\stat_glb.py' -- 'C:\Users\<user>\AppData\Local\Temp\apache-high-decoded.glb' --footprint 1 1 --height 0.4
+& 'E:\Program Files\Blender Foundation\Blender 5.2\blender.exe' --background --python-exit-code 1 --python 'E:\Development\Projects\Terrace\tools\blender\render_apache.py' -- 'C:\Users\<user>\AppData\Local\Temp\apache-decoded.glb' 'E:\Development\Projects\Terrace\tools\blender\out\apache'
 ```
 
 The builder refuses exports over 1,050 triangles and sizes from the complete
@@ -107,9 +123,10 @@ shared GLB export recipe. Reviewed with fresh-import bounds/material/UV checks
 and studio views; no running game was started or changed for verification.
 The shared material allows the existing `bakeRig` path to merge the four parts
 into one surface; `rigHerd` can instance that surface. These are integration
-capabilities, not a measured frame-time result. Assumption: three uncompressed
-RGBA8 256² maps with full mip chains occupy about 1 MiB of shared GPU texture
-memory. The PNG-compressed GLB file size does not describe resident GPU memory.
+capabilities, not a measured frame-time result. Assumption: with BC7 or ASTC 4×4
+GPU support, three mipmapped UASTC maps occupy about 256 KiB at 256² or 16 MiB at
+2048², shared by instances. Actual GPU residency depends on the device's transcode
+format; GLB file size includes Zstandard compression and is not resident GPU memory.
 Compared at approximately 300 pixels of aircraft width, 256² retained the window
 outlines and nearly matched 512² and 1024². This is an asset preview comparison;
 larger maps only improve close inspection detail at that display scale.

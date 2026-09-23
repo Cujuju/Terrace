@@ -1,0 +1,103 @@
+{
+  "glb_sha256": "ae00a193ab700c943018b7918dd5ee0e2a40e98cfb5bce9c1f9139bee01636c1",
+  "mesh_count": 1,
+  "primitive_count": 1,
+  "material_count": 1,
+  "triangles": 1368,
+  "exported_vertices": 2789,
+  "nodes": [
+    {
+      "mesh": 0,
+      "name": "reed-cone"
+    },
+    {
+      "children": [
+        0
+      ],
+      "name": "RootNode"
+    }
+  ],
+  "dimensions_gltf_y_up": [
+    0.6245052218437195,
+    0.75,
+    0.7067241668701172
+  ],
+  "uv_islands": 624,
+  "uv_min_max": [
+    0.0029296875,
+    0.9967988729476929
+  ],
+  "uv_overlap_pairs": [],
+  "uv_candidate_pairs_checked": 873,
+  "minimum_island_bounds_gap_pixels": 12.0,
+  "texel_density_min_max": [
+    1005.1131516714491,
+    1005.1609839011707
+  ],
+  "zero_area_triangles": 0,
+  "normal_length_error_max": 1.0897178714941447e-07,
+  "tangent_normal_dot_max": 0.00010082238722119996,
+  "compression_extensions": [],
+  "textures": {
+    "reed-cone-normal": {
+      "format": "image/png",
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "matches_external_bytes": true
+    },
+    "reed-cone-basecolor": {
+      "format": "image/png",
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "matches_external_bytes": true
+    },
+    "reed-cone-metallicRoughness": {
+      "format": "image/png",
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "matches_external_bytes": true
+    }
+  },
+  "roughness_range": [
+    0.7803922295570374,
+    0.9803922176361084
+  ],
+  "metalness_range": [
+    0.0,
+    0.0
+  ],
+  "normal_map_length_error_max": 0.005536079406738281,
+  "blend": {
+    "mesh_count": 1,
+    "material_count": 1,
+    "vertices": 827,
+    "triangles": 1368,
+    "uv_layers": [
+      "UVMap"
+    ],
+    "images_packed": true,
+    "objects": [
+      "reed-cone",
+      "RootNode"
+    ]
+  },
+  "bounds_gltf_y_up": {
+    "min": [
+      -0.31225261092185974,
+      0.0,
+      -0.31172415614128113
+    ],
+    "max": [
+      0.31225261092185974,
+      0.75,
+      0.39500001072883606
+    ]
+  },
+  "passed": true
+}

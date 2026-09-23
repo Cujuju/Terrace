@@ -1,0 +1,94 @@
+{
+  "assumptions": {
+    "png_gpu_format": "RGBA8 with complete mip chain",
+    "compressed_gpu_format": "BC7 or ASTC 4x4, 16 bytes per 4x4 block, complete mip chain",
+    "excluded": "CPU decoded images, loader buffers, driver allocation overhead, shaders, framebuffer and instance buffers",
+    "sharing": "Terrace draws repeated structures with InstancedMesh; mesh and textures are shared, not duplicated per house."
+  },
+  "variants": {
+    "original": {
+      "triangles": 1194,
+      "exported_vertices": 2486,
+      "geometry_gpu_bytes": 126492,
+      "textures": [
+        {
+          "name": "windbreak-dome-normal",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 1584784
+        },
+        {
+          "name": "windbreak-dome-basecolor",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 2360114
+        },
+        {
+          "name": "windbreak-dome-metallicRoughness",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 798276
+        }
+      ],
+      "png_gpu_total_bytes": 67235352,
+      "ktx2_bc7_astc_gpu_total_bytes": 16903788,
+      "png_glb_file_bytes": 3348100,
+      "ktx2_glb_file_bytes": 4871796,
+      "png_glb_sha256": "f3cd3090a2208b0534cd0459812e9f5b31c2d9c6cd36a7bb8f83f1f9f44c6d57",
+      "ktx2_glb_sha256": "854ff589f21ae5f4e88a9aae083703a3177e153bb6fce96fed3ac250cd2d49a4",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    },
+    "low": {
+      "triangles": 728,
+      "exported_vertices": 1516,
+      "geometry_gpu_bytes": 77136,
+      "textures": [
+        {
+          "name": "windbreak-dome-normal",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 413716
+        },
+        {
+          "name": "windbreak-dome-basecolor",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 723116
+        },
+        {
+          "name": "windbreak-dome-metallicRoughness",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 240931
+        }
+      ],
+      "png_gpu_total_bytes": 16854348,
+      "ktx2_bc7_astc_gpu_total_bytes": 4271520,
+      "png_glb_file_bytes": 965980,
+      "ktx2_glb_file_bytes": 1457020,
+      "png_glb_sha256": "bd8d6bd6c07617070e1a740d5241e9052f9e9e4f8c50d235e9cc6182f466e3ae",
+      "ktx2_glb_sha256": "50396e918bfcc8b29f791144af6a536368fb9b5e79f96adee778fd3b25bfef63",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    }
+  }
+}

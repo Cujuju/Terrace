@@ -1,0 +1,94 @@
+{
+  "assumptions": {
+    "png_gpu_format": "RGBA8 with complete mip chain",
+    "compressed_gpu_format": "BC7 or ASTC 4x4, 16 bytes per 4x4 block, complete mip chain",
+    "excluded": "CPU decoded images, loader buffers, driver allocation overhead, shaders, framebuffer and instance buffers",
+    "sharing": "Terrace draws repeated structures with InstancedMesh; mesh and textures are shared, not duplicated per house."
+  },
+  "variants": {
+    "original": {
+      "triangles": 2038,
+      "exported_vertices": 4684,
+      "geometry_gpu_bytes": 237060,
+      "textures": [
+        {
+          "name": "turf-roof-on-stone-normal",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 1072790
+        },
+        {
+          "name": "turf-roof-on-stone-basecolor",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 1889068
+        },
+        {
+          "name": "turf-roof-on-stone-metallicRoughness",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 603689
+        }
+      ],
+      "png_gpu_total_bytes": 67345920,
+      "ktx2_bc7_astc_gpu_total_bytes": 17014356,
+      "png_glb_file_bytes": 2594468,
+      "ktx2_glb_file_bytes": 3804768,
+      "png_glb_sha256": "a39dfea346af6521fea5d987d793d2207b377ede55794e1e79200f6262eb0112",
+      "ktx2_glb_sha256": "656ce98334235a7d483175dd3b9f7c668f81d4bc5a4a16645c1e85935d19b0a5",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    },
+    "low": {
+      "triangles": 744,
+      "exported_vertices": 1584,
+      "geometry_gpu_bytes": 80496,
+      "textures": [
+        {
+          "name": "turf-roof-on-stone-normal",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 186986
+        },
+        {
+          "name": "turf-roof-on-stone-basecolor",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 606080
+        },
+        {
+          "name": "turf-roof-on-stone-metallicRoughness",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 77337
+        }
+      ],
+      "png_gpu_total_bytes": 16857708,
+      "ktx2_bc7_astc_gpu_total_bytes": 4274880,
+      "png_glb_file_bytes": 536556,
+      "ktx2_glb_file_bytes": 953044,
+      "png_glb_sha256": "5127f97ddc70a17749a657e6749f8622e3c75dc4b6ac13f0f8b22593f1fcdea0",
+      "ktx2_glb_sha256": "1dd887f0afb5f1fcb813839ff03cf3af50c1f547bfe6deb0777e02b74b499d70",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    }
+  }
+}

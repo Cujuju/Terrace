@@ -1,6 +1,7 @@
 """Measure the delivered model, texture channels, and UV atlas."""
-import bpy, json, pathlib, struct, numpy as np, hashlib
+import bpy, json, pathlib, struct, numpy as np, hashlib, sys
 ROOT=pathlib.Path(__file__).parent
+if '--low' in sys.argv: ROOT=ROOT/'low'
 asset=ROOT/'longhouse.glb'; raw=asset.read_bytes(); length=struct.unpack_from('<I',raw,12)[0]; doc=json.loads(raw[20:20+length]); blob=raw[28+length:]
 def accessor(index):
     a=doc['accessors'][index]; view=doc['bufferViews'][a['bufferView']]
@@ -11,7 +12,7 @@ def accessor(index):
     return np.ndarray((a['count'],size),dtype=dtype,buffer=blob,offset=offset,strides=(stride,dtype.itemsize)).copy()
 primitive=doc['meshes'][0]['primitives'][0]; attributes=primitive['attributes']
 pos=accessor(attributes['POSITION']).astype(float); uv=accessor(attributes['TEXCOORD_0']).astype(float); normal=accessor(attributes['NORMAL']).astype(float); tangent=accessor(attributes['TANGENT']).astype(float); triangles=accessor(primitive['indices']).reshape(-1,3)
-size=2048
+size=json.loads((ROOT/'build-report.json').read_text())['texture_size'][0]
 points=uv[triangles]*size
 lo=points.min(axis=1); hi=points.max(axis=1)
 def cross(a,b): return a[...,0]*b[...,1]-a[...,1]*b[...,0]

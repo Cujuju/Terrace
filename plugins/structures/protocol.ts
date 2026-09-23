@@ -9,11 +9,18 @@ export const STRUCTURES_CAP = 512;
 export const STRUCTURE_TIERS = [
   'camp',
   'hut',
-  'timber-house',
+  'prehistoric-granary',
+  'roman-granary',
   'longhouse',
+  'timber-house',
   'stone-cottage',
   'watchtower',
+  'medieval-dovecote',
+  'renaissance-workshop',
+  'industrial-pump-house',
 ] as const;
+
+export const LEGACY_STRUCTURE_TIER_MAP = [0, 1, 5, 4, 6, 7] as const;
 
 export type StructureTier = number;
 

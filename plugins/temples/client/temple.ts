@@ -206,10 +206,12 @@ export interface TempleModels {
 const GHOST_LEGAL_COLOR = 0x6fbf73;
 const GHOST_ILLEGAL_COLOR = 0xd9634a;
 
-export function createTempleModels(): TempleModels {
-  const geometry = buildTempleGeometry();
+export function createTempleModels(kit?: import('../../../client/src/render/buildingAssetKit.ts').BuildingAssetKit): TempleModels {
+  const authored = kit?.parts('temple')[0];
+  const geometry = authored === undefined ? buildTempleGeometry()
+    : authored.geometry.applyMatrix4(authored.localMatrices[0]);
 
-  const stone = new MeshLambertMaterial({ vertexColors: true, flatShading: true });
+  const stone = authored?.material ?? new MeshLambertMaterial({ vertexColors: true, flatShading: true });
   const ghostMaterial = new MeshLambertMaterial({
     color: GHOST_LEGAL_COLOR,
     flatShading: true,
