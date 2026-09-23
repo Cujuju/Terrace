@@ -51,10 +51,14 @@
 # Blender frame: X = length (bow +X), Y = beam (port +Y), Z = up. The glTF
 # exporter with export_yup maps this to +X forward, +Y up.
 
+import os
 import sys
 
 import bmesh
 import bpy
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from uv_atlas import unwrap_shared_atlas  # noqa: E402
 
 # ------------------------------------------------------------------ envelope
 # The placement cell cannot grow: plugins/structures/client/skiffModels.ts's
@@ -768,6 +772,7 @@ def main():
     skiff.select_set(True)
     bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
     skiff.select_set(False)
+    unwrap_shared_atlas([skiff])
 
     lo, hi = measure([skiff])
     size = [hi[axis] - lo[axis] for axis in range(3)]
@@ -808,7 +813,7 @@ def main():
         export_yup=True,
         export_apply=True,
         export_normals=True,
-        export_texcoords=False,
+        export_texcoords=True,
         export_materials='EXPORT',
         # ACTIVE, not the MATERIAL default: the paint must ship whether or not
         # the exporter decides the Principled tree "uses" the attribute.

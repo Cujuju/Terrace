@@ -72,6 +72,7 @@ import bpy
 # export_glb.py holds this project's ONE export recipe.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from export_glb import bake_object_transforms, export_scene_glb  # noqa: E402
+from uv_atlas import unwrap_shared_atlas  # noqa: E402
 
 # ----------------------------------------------------------------- dimensions
 # Game space (x forward, y up, z lateral), cells. The five envelope figures
@@ -1184,6 +1185,7 @@ def main():
     make_empty('flank', (station_x(ANCHOR_T), 0.0, MAX_HALF_WIDTH))
 
     bake_object_transforms()
+    unwrap_shared_atlas(bpy.data.objects)
     export_scene_glb(out_path)
 
     total_tris = 0
