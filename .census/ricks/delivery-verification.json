@@ -9,8 +9,8 @@
       "quality": "original",
       "source": ".census\\ricks\\ricks-ktx2.glb",
       "runtime": "plugins\\structures\\client\\assets\\authored\\original\\ricks.glb",
-      "bytes": 4311948,
-      "sha256": "ce97788a2f04dc2bd3b4741311266ca54f89a92e3de649f8cf3996a3e696ac0b",
+      "bytes": 4962868,
+      "sha256": "eae7af96db178ef48f3d17d6cb8eeab95570b4894732ac21021dd539c287b2ef",
       "texture_resolution": 2048,
       "mip_levels": 12,
       "uastc_rgb": true,
@@ -21,8 +21,8 @@
       "quality": "low",
       "source": ".census\\ricks\\low\\ricks-ktx2.glb",
       "runtime": "plugins\\structures\\client\\assets\\authored\\low\\ricks.glb",
-      "bytes": 1623964,
-      "sha256": "dc7dd4965043e10715b30ac885a2cb1f7d526a4daff8cb4810c7bf9742021dbd",
+      "bytes": 1749312,
+      "sha256": "6007e7a19a3135cf5390f01ca4d3dccce3593e614be96474d7af941ca4e5e6ee",
       "texture_resolution": 1024,
       "mip_levels": 11,
       "uastc_rgb": true,
@@ -43,5 +43,21 @@
   "assumptions": [
     "Rear elevation extrapolated from the selected front-right concept.",
     "Cosmetic top-tier inland variant using 24 of 256 hash buckets after the unchanged Durands buckets."
-  ]
+  ],
+  "appearance_revision": {
+    "brick_width_factor": 0.7,
+    "brick_height_factor": 0.7,
+    "weathering": [
+      "mottling",
+      "chipped mortar",
+      "block variation",
+      "runoff stains",
+      "ground grime"
+    ],
+    "stairs": "Dark risers, brighter tread noses and shaded tread backs",
+    "emissive_atlas_unchanged": {
+      "original": true,
+      "low": true
+    }
+  }
 }

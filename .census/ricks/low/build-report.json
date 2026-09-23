@@ -173,10 +173,15 @@
       0.886,
       0.667,
       0.125
+    ],
+    "steps": [
+      0.52,
+      0.51,
+      0.47
     ]
   },
   "geometry_source": "Original Black Vault geometry authored after owner-selected Ricks concept B; no third-party mesh.",
-  "texture_source": "Original procedural concrete, graphite, green glass and emissive paint; newly typeset Ricks lettering and biohazard glyph. No generated concept pixels used.",
+  "texture_source": "Original weathered masonry with block width and height reduced 30 percent; mottling, chipped joints and ground grime. Shaded step risers and worn tread edges. Original graphite, green glass and emissive paint; raised Ricks lettering and biohazard glyph. No concept pixels used.",
   "image_generator": "Built-in image generator; exact backend model unverified",
   "placement": {
     "front_gltf": "+Z",

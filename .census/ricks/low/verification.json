@@ -1,5 +1,5 @@
 {
-  "glb_sha256": "1a2481b4171b306ce2676caca3b05f5015aac5cb7a7463e91c53403b5c30112b",
+  "glb_sha256": "4bd24d9133a068f48e161839a71f0793d23438605721850f011addbe01d59f15",
   "mesh_count": 1,
   "primitive_count": 1,
   "material_count": 1,
@@ -76,13 +76,13 @@
   },
   "roughness_range": [
     0.2980392277240753,
-    0.9411765336990356
+    0.988235354423523
   ],
   "metalness_range": [
     0.0,
     0.0
   ],
-  "normal_map_length_error_max": 0.001551985740661621,
+  "normal_map_length_error_max": 0.003944516181945801,
   "blend": {
     "mesh_count": 1,
     "material_count": 1,

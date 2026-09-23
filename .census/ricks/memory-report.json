@@ -27,7 +27,7 @@
           "mip_levels": 12,
           "png_rgba8_gpu_bytes": 22369620,
           "bc7_astc_gpu_bytes": 5592432,
-          "ktx_file_bytes": 635268
+          "ktx_file_bytes": 673267
         },
         {
           "name": "ricks-basecolor",
@@ -36,7 +36,7 @@
           "mip_levels": 12,
           "png_rgba8_gpu_bytes": 22369620,
           "bc7_astc_gpu_bytes": 5592432,
-          "ktx_file_bytes": 2440130
+          "ktx_file_bytes": 2543755
         },
         {
           "name": "ricks-metallicRoughness",
@@ -45,15 +45,15 @@
           "mip_levels": 12,
           "png_rgba8_gpu_bytes": 22369620,
           "bc7_astc_gpu_bytes": 5592432,
-          "ktx_file_bytes": 218252
+          "ktx_file_bytes": 727547
         }
       ],
       "png_gpu_total_bytes": 90322416,
       "ktx2_bc7_astc_gpu_total_bytes": 23213664,
-      "png_glb_file_bytes": 3102456,
-      "ktx2_glb_file_bytes": 4311948,
-      "png_glb_sha256": "e4779b57306be53ab572229ded65eb5ab57e2ffe875cec76938acf6af5836de2",
-      "ktx2_glb_sha256": "ce97788a2f04dc2bd3b4741311266ca54f89a92e3de649f8cf3996a3e696ac0b",
+      "png_glb_file_bytes": 3790732,
+      "ktx2_glb_file_bytes": 4962868,
+      "png_glb_sha256": "45835c0b34a039e620d9603f06809921ed6f284e0e3f2954926f80a433829517",
+      "ktx2_glb_sha256": "eae7af96db178ef48f3d17d6cb8eeab95570b4894732ac21021dd539c287b2ef",
       "geometry_unchanged": true,
       "ktx_validation_passed": true
     },
@@ -78,7 +78,7 @@
           "mip_levels": 11,
           "png_rgba8_gpu_bytes": 5592404,
           "bc7_astc_gpu_bytes": 1398128,
-          "ktx_file_bytes": 159442
+          "ktx_file_bytes": 156924
         },
         {
           "name": "ricks-basecolor",
@@ -87,7 +87,7 @@
           "mip_levels": 11,
           "png_rgba8_gpu_bytes": 5592404,
           "bc7_astc_gpu_bytes": 1398128,
-          "ktx_file_bytes": 742567
+          "ktx_file_bytes": 755766
         },
         {
           "name": "ricks-metallicRoughness",
@@ -96,15 +96,15 @@
           "mip_levels": 11,
           "png_rgba8_gpu_bytes": 5592404,
           "bc7_astc_gpu_bytes": 1398128,
-          "ktx_file_bytes": 110857
+          "ktx_file_bytes": 225526
         }
       ],
       "png_gpu_total_bytes": 22920272,
       "ktx2_bc7_astc_gpu_total_bytes": 6143168,
-      "png_glb_file_bytes": 1297836,
-      "ktx2_glb_file_bytes": 1623964,
-      "png_glb_sha256": "1a2481b4171b306ce2676caca3b05f5015aac5cb7a7463e91c53403b5c30112b",
-      "ktx2_glb_sha256": "dc7dd4965043e10715b30ac885a2cb1f7d526a4daff8cb4810c7bf9742021dbd",
+      "png_glb_file_bytes": 1427292,
+      "ktx2_glb_file_bytes": 1749312,
+      "png_glb_sha256": "4bd24d9133a068f48e161839a71f0793d23438605721850f011addbe01d59f15",
+      "ktx2_glb_sha256": "6007e7a19a3135cf5390f01ca4d3dccce3593e614be96474d7af941ca4e5e6ee",
       "geometry_unchanged": true,
       "ktx_validation_passed": true
     }

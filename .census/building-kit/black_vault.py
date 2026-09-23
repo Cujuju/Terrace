@@ -3,6 +3,20 @@ import math
 import bpy
 import numpy as np
 
+BRICK_SIZE_FACTOR = .70
+BRICK_WIDTH = 1.02 * BRICK_SIZE_FACTOR
+BRICK_HEIGHT = .53 * BRICK_SIZE_FACTOR
+
+
+def weather_noise(a,b,frequency,seed=0):
+    a=a*frequency; b=b*frequency
+    ax=np.floor(a); by=np.floor(b); u=a-ax; v=b-by
+    u=u*u*(3-2*u); v=v*v*(3-2*v)
+    def sample(x,y):
+        value=np.sin(x*127.1+y*311.7+seed*74.7)*43758.5453
+        return value-np.floor(value)
+    return (sample(ax,by)*(1-u)+sample(ax+1,by)*u)*(1-v)+(sample(ax,by+1)*(1-u)+sample(ax+1,by+1)*u)*v
+
 
 def build(low, g):
     box, beam, solid = g['box'], g['beam'], g['solid']
@@ -12,7 +26,7 @@ def build(low, g):
                    recess=(.075, .083, .073), green=(.40, .62, .105),
                    amber=(1., .65, .10), red=(.96, .035, .018),
                    stripe=(.78, .55, .08), plaque=(.185, .188, .173),
-                   lettering=(.87,.835,.733), gold=(.886,.667,.125))
+                   lettering=(.87,.835,.733), gold=(.886,.667,.125), steps=(.52,.51,.47))
 
     def octagon(w, d, corner, z):
         return [(-w+corner, -d, z), (w-corner, -d, z), (w, -d+corner, z),
@@ -133,7 +147,8 @@ def build(low, g):
         box((side*1.24,-3.47,1.13),(.070,.035,.29),'amber',label='Emissive amber entry light')
     for i in range(5):
         h=.11*(i+1)
-        box((0,-4.38+i*.19,h/2),(2.56,.38,h),'coping',label='Five entrance stair treads')
+        front=-4.57+i*.19
+        box((0,-4.38+i*.19,h/2),(2.56,.38,h),'steps',label='Five entrance stair treads',step_front=front,step_top=h)
     box((0,-3.47,.565),(2.14,.33,.045),'stripe',label='Hazard-striped threshold')
 
     def wall_panel(x,z,w,h,kind,label,**meta):
@@ -223,14 +238,40 @@ def build(low, g):
         if kind=='stripe':
             stripe=((x+y)*2.5)%1>.47
             return np.where(stripe[:,None],color,np.array(palette['graphite'])),height,np.full(count,.85)
+        if kind=='steps':
+            worn=weather_noise(x,y+z,5.1,7)
+            if ch['n'][2]>.8:
+                distance=y-ch['step_front']
+                nosing=np.exp(-(distance/.029)**2)
+                rear_dirt=np.exp(-((distance-.19)/.035)**2)
+                traffic=np.exp(-(x/.66)**2)
+                shade=1.01+.17*nosing-.12*rear_dirt+.055*traffic+.05*(worn-.5)
+            elif ch['n'][1]<-.8:
+                under_lip=np.exp(-((ch['step_top']-z)/.026)**2)
+                shade=.66-.13*under_lip+.06*(worn-.5)
+            else:
+                shade=.78+.04*(worn-.5)
+            return np.clip(color*np.broadcast_to(shade,(count,))[:,None],0,1),.0005*(worn-.5),np.full(count,.92)
         mult=1+.022*wave+.035*broad
         rough=np.full(count,.82 if kind in ('trim','graphite','recess') else .94)
         if kind in ('concrete','coping'):
             a=y if abs(ch['n'][0])>.6 else x
-            row=np.floor(z/.53); u=(a/1.02+(row%2)*.49)%1; v=(z/.53)%1
-            joint=np.maximum(np.exp(-(np.minimum(u,1-u)/.018)**2),np.exp(-(np.minimum(v,1-v)/.018)**2))
-            mult+=.017*np.sin(np.floor(a/1.02)*19+row*17)-.11*joint
-            height=.0007*wave-.0018*joint
+            b=y if ch['n'][2]>.8 else z
+            row=np.floor(b/BRICK_HEIGHT)
+            column=a/BRICK_WIDTH+(row%2)*.5
+            u=column%1; v=(b/BRICK_HEIGHT)%1
+            edge=np.minimum.reduce((u,1-u,v,1-v))
+            pores=weather_noise(a,b,11.0,3)
+            mottling=weather_noise(a,b,3.6,9)
+            joint=np.exp(-(edge/(.018+.022*pores))**2)
+            chipped=np.exp(-(edge/.073)**2)*np.maximum(0,pores-.43)
+            variation=.08*np.sin(np.floor(column)*19.17+row*17.31)
+            streaks=np.maximum(0,.58-weather_noise(a,b*.085,4.0,4))
+            damp=.17*np.exp(-np.maximum(z,0)/.48)*(.55+.45*mottling)
+            chalk=np.maximum(0,mottling-.57)*.22
+            mult=1+variation+.17*(mottling-.5)+.045*(pores-.5)-.23*joint+.10*chipped-.17*streaks-damp+chalk
+            height=.0006*(pores-.5)-.0035*joint-.0012*chipped
+            rough=np.clip(.91+.05*joint+.03*pores,.88,1)
         if kind=='graphite' and ch['n'][2]>.9:
             u=(x/1.1)%1; v=(y/1.1)%1
             joint=np.maximum(np.exp(-(np.minimum(u,1-u)/.014)**2),np.exp(-(np.minimum(v,1-v)/.014)**2))
@@ -243,7 +284,7 @@ def build(low, g):
     g['custom_surface']=surface
     g['emissive_surface']=emission
     g['EMISSION_STRENGTH']=1.6
-    g['TEXTURE_PROVENANCE']='Original procedural concrete, graphite, green glass and emissive paint; newly typeset Ricks lettering and biohazard glyph. No generated concept pixels used.'
+    g['TEXTURE_PROVENANCE']='Original weathered masonry with block width and height reduced 30 percent; mottling, chipped joints and ground grime. Shaded step risers and worn tread edges. Original graphite, green glass and emissive paint; raised Ricks lettering and biohazard glyph. No concept pixels used.'
     placement={'front_gltf':'+Z','origin':'Footprint centered in X; construction origin at ground Y=0',
                'deliberate_difference':'Rear elevation extrapolated from front-right concept. Three octagonal drums, window belt, recessed doors, five stairs, concrete slope and plaque retained. Low omits collar fasteners and simplifies vent louvers; envelope identical.'}
     return 'Original Black Vault geometry authored after owner-selected Ricks concept B; no third-party mesh.',placement

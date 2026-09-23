@@ -14,6 +14,8 @@ Both variants have the same envelope and placement: entrance glTF +Z, ground at 
 
 ## Fidelity and lighting
 
+Owner-requested appearance revision: masonry width and height are 70% of the initial block dimensions. Chipped mortar, block variation, mottling, runoff stains and ground grime weather the masonry. Stair risers are darker, tread noses lighter, and tread backs shaded to make all five steps readable. Geometry and emissive regions are retained.
+
 Preserved features: sloped chamfered bunker, three octagonal roof drums, green clerestory belt, framed roof vents, recessed double door, five steps, raised Ricks lettering, raised gold biohazard emblem, amber markers and red beacon. Lettering uses installed Windows Segoe fonts, converted to geometry; font binaries are not redistributed. All geometry and procedural maps are original. No concept pixels are sampled for textures.
 
 Assumption: the unseen rear extends the selected front-right design. Low simplifies curves, louvers and fasteners while preserving the silhouette and all emissive regions.
