@@ -86,15 +86,62 @@ const touchInto = (footprint: BrushFootprint, x: number, z: number, out: Int32Ar
   return n;
 };
 
+/** Ground under the mark, read once per rewrite: neighbouring vertices share cells. */
+interface GroundWindow {
+  open(extent: number, aimX: number, aimZ: number, ground: BrushGround): void;
+  /** Drawn Y at an offset from the aim; NaN where the terrain is not drawn yet. */
+  heightAt(dx: number, dz: number): number;
+}
+
+const NO_GROUND: BrushGround = { yAt: () => null, revisionAt: () => 0 };
+
+const MAX_WINDOW_GENERATION = 0xffffffff;
+
+function createGroundWindow(): GroundWindow {
+  let heights = new Float64Array(0);
+  let stamps = new Uint32Array(0);
+  let generation = 0;
+  let extent = 0;
+  let width = 0;
+  let aimX = 0;
+  let aimZ = 0;
+  let source = NO_GROUND;
+  return {
+    open(nextExtent, nextAimX, nextAimZ, ground) {
+      extent = nextExtent;
+      width = 2 * extent + 1;
+      if (width * width > heights.length) {
+        heights = new Float64Array(width * width);
+        stamps = new Uint32Array(width * width);
+        generation = 0;
+      }
+      if (generation === MAX_WINDOW_GENERATION) {
+        stamps.fill(0);
+        generation = 0;
+      }
+      generation++;
+      aimX = nextAimX;
+      aimZ = nextAimZ;
+      source = ground;
+    },
+    heightAt(dx, dz) {
+      const k = (dz + extent) * width + dx + extent;
+      if (stamps[k] !== generation) {
+        heights[k] = source.yAt(aimX + dx, aimZ + dz) ?? NaN;
+        stamps[k] = generation;
+      }
+      return heights[k]!;
+    },
+  };
+}
+
 const sampleHeight = (
   footprint: BrushFootprint,
   x: number,
   z: number,
-  aimX: number,
-  aimZ: number,
   fallbackY: number,
   capY: number | null,
-  ground: BrushGround,
+  ground: GroundWindow,
   scratch: Int32Array,
 ): number => {
   // capY pins the footprint to the selected band's cap: the ring never
@@ -102,8 +149,8 @@ const sampleHeight = (
   const touched = touchInto(footprint, x, z, scratch);
   let y = -Infinity;
   for (let k = 0; k < touched; k++) {
-    const sample = ground.yAt(aimX + scratch[k * 2]!, aimZ + scratch[k * 2 + 1]!);
-    if (sample === null) continue;
+    const sample = ground.heightAt(scratch[k * 2]!, scratch[k * 2 + 1]!);
+    if (Number.isNaN(sample)) continue;
     const capped = capY === null ? sample : Math.min(sample, capY);
     if (capped > y) y = capped;
   }
@@ -123,6 +170,7 @@ export function createConformedGeometry(
   const extra = makeLive(2 * maxExtraSegments);
   // At most four mark cells touch one point; reused, never reallocated.
   const touchScratch = new Int32Array(8);
+  const groundWindow = createGroundWindow();
 
   let lastFootprintId = -1;
   let lastAimX = Infinity;
@@ -164,6 +212,7 @@ export function createConformedGeometry(
         return;
       }
 
+      groundWindow.open(footprint.markExtent, aimX, aimZ, ground);
       // Y is absolute world Y, not local: objects carry XZ only. Runs
       // arrive pre-draped. Live footprints clamp counts to construction
       // capacity.
@@ -176,7 +225,7 @@ export function createConformedGeometry(
         const z = footprint.ringPoints[i * 2 + 1]!;
         ring.array[i * 3] = x * CELL_WORLD_SIZE;
         ring.array[i * 3 + 1] = sampleHeight(
-          footprint, x, z, aimX, aimZ, fallbackY, capY, ground, touchScratch,
+          footprint, x, z, fallbackY, capY, groundWindow, touchScratch,
         );
         ring.array[i * 3 + 2] = z * CELL_WORLD_SIZE;
       }
@@ -189,10 +238,10 @@ export function createConformedGeometry(
         const bx = footprint.gridPoints[s * 4 + 2]!;
         const bz = footprint.gridPoints[s * 4 + 3]!;
         const ya = sampleHeight(
-          footprint, ax, az, aimX, aimZ, fallbackY, capY, ground, touchScratch,
+          footprint, ax, az, fallbackY, capY, groundWindow, touchScratch,
         );
         const yb = sampleHeight(
-          footprint, bx, bz, aimX, aimZ, fallbackY, capY, ground, touchScratch,
+          footprint, bx, bz, fallbackY, capY, groundWindow, touchScratch,
         );
         grid.array[s * 6] = ax * CELL_WORLD_SIZE;
         grid.array[s * 6 + 1] = ya;
@@ -212,8 +261,8 @@ export function createConformedGeometry(
         const az = footprint.extraPoints[s2 * 4 + 1]!;
         const bx = footprint.extraPoints[s2 * 4 + 2]!;
         const bz = footprint.extraPoints[s2 * 4 + 3]!;
-        const ya = sampleHeight(footprint, ax, az, aimX, aimZ, fallbackY, capY, ground, touchScratch);
-        const yb = sampleHeight(footprint, bx, bz, aimX, aimZ, fallbackY, capY, ground, touchScratch);
+        const ya = sampleHeight(footprint, ax, az, fallbackY, capY, groundWindow, touchScratch);
+        const yb = sampleHeight(footprint, bx, bz, fallbackY, capY, groundWindow, touchScratch);
         extra.array[s2 * 6] = ax * CELL_WORLD_SIZE;
         extra.array[s2 * 6 + 1] = ya;
         extra.array[s2 * 6 + 2] = az * CELL_WORLD_SIZE;
