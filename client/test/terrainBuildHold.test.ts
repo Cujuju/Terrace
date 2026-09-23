@@ -32,6 +32,9 @@ vi.mock('../src/render/settleWarmup.ts', () => ({
 
 const FRAME_DT_S = 1 / 60;
 
+// A release takes a frame per held subscriber, one to request the warmup, one to release.
+const MAX_RELEASE_FRAMES = 10;
+
 // Lets every promise continuation queued so far run.
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -101,12 +104,15 @@ function rig(...plugins: TerraceClientPlugin[]) {
       for (const chunk of chunks) scratch.add(chunk);
       for (const handler of terrainHandlers) handler(scratch);
     },
-    // Terrain drawn, its warmup finishes, the next frame releases.
+    // Terrain drawn: frames run, warmups finish, until plugins draw again.
     release: async (): Promise<void> => {
       armed = false;
-      frame();
-      await settle();
-      frame();
+      let frames = 0;
+      do {
+        if (++frames > MAX_RELEASE_FRAMES) throw new Error('the hold never released');
+        frame();
+        await settle();
+      } while (renderObjectFunction !== null);
     },
   };
 }
@@ -189,7 +195,7 @@ describe('the terrain build hold', () => {
     expect(r.draw(early, late, core)).toEqual([early, late, core]);
   });
 
-  it('releases only after a warmup begun once the terrain was drawn, warming the undrawn layers', async () => {
+  it('delivers held changes undrawn, then releases after a warmup begun once they were delivered', async () => {
     warmup.auto = false;
     const log: string[] = [];
     const mesh = new Mesh();
@@ -209,16 +215,18 @@ describe('the terrain build hold', () => {
     expect(warmup.calls).toHaveLength(1);
     r.disarm();
     r.frame();
+    expect(log).toEqual(['changed:0']);
+    r.frame();
     // The release pass queues behind the one the hold began with.
     warmup.calls[0]!.finish();
     await settle();
     expect(warmup.calls).toHaveLength(2);
     r.frame();
-    expect(log).toEqual([]);
+    expect(log).toEqual(['changed:0']);
     warmup.calls[1]!.finish();
     await settle();
     r.frame();
-    expect(log).toEqual(['changed:1', 'frame:1']);
+    expect(log).toEqual(['changed:0', 'frame:1']);
     expect(warmup.calls.map((c) => c.layerUndrawn)).toEqual([true, true]);
   });
 

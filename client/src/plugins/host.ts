@@ -837,6 +837,15 @@ export function createClientPluginHost(
       if (heldTerrainChanges.size > 0) flushHeldTerrainChanges();
       return;
     }
+    // One subscriber's batch per frame, still undrawn, so the release warmup below
+    // compiles whatever the batch builds and no frame carries every plugin's rebuild.
+    const next = heldTerrainChanges.entries().next();
+    if (next.done !== true) {
+      const [deliver, dirty] = next.value;
+      heldTerrainChanges.delete(deliver);
+      deliver(dirty);
+      return;
+    }
     if (releaseReady) {
       releaseBuildHold();
       return;
