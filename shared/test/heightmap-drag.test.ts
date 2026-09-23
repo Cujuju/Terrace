@@ -277,8 +277,11 @@ describe('a drag sweeps its footprint along the cursor path — no gaps on a fli
       sweepFrom: { x: LIP_X, y: CY },
     });
     for (let x = LIP_X; x <= toX; x++) {
-      expect(bandOf(heightAt(map, x, CY))).toBe(LIP_BAND);
+      expect(drawnBandOfSample(heightAt(map, x, CY))).toBe(LIP_BAND);
     }
-    expect(bandOf(heightAt(map, toX + RADIUS, CY))).toBe(PLAIN_BAND);
+    // Past the sweep the plain keeps its drawn band; only its edge encoding moves.
+    expect(drawnBandOfSample(heightAt(map, toX + RADIUS, CY))).toBe(
+      drawnBandOfSample(PLAIN_BAND * BAND_HEIGHT),
+    );
   });
 });

@@ -1,6 +1,7 @@
 import { BAND_HEIGHT, DEFAULT_SCULPT_AMOUNT } from '../constants.ts';
 import { spanAt, spanCapHeight, spanCount, spanUndersideLevel } from '../columns.ts';
 import { cellIndex, type Heightmap } from '../grid.ts';
+import { EDGE_AWARE_TOOLS } from './edges.ts';
 import { assertBrushRadius, brushDelta, forEachFootprintOffset } from './footprint.ts';
 import type { CellDiff } from './diff.ts';
 import type { SculptOperation, SculptProfile, SculptTool } from './options.ts';
@@ -35,9 +36,9 @@ export function columnBandUnits(map: Heightmap, x: number, y: number): number {
 
 export type SolidMeasure = (map: Heightmap, x: number, y: number) => number;
 
-/** A stamp is charged for the bands it moved; its edge encoding is free. */
+/** An edge-aware brush is charged for the bands it moved; its edge encoding is free. */
 export function strokeSolidMeasure(tool: SculptOperation): SolidMeasure {
-  return tool === 'stamp' ? columnBandUnits : columnSolidUnits;
+  return EDGE_AWARE_TOOLS.includes(tool) ? columnBandUnits : columnSolidUnits;
 }
 
 /** What every column in a rectangle held, for the before half of a displacement. */

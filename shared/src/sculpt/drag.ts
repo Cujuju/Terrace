@@ -8,6 +8,7 @@ import {
   isSpanDrawn,
   moveSpanCeiling,
   spanAt,
+  spanIndexBelowBand,
   spanIndexCoveringBand,
 } from '../columns.ts';
 import {
@@ -21,6 +22,7 @@ import {
 import { clampHeight } from './grasp.ts';
 import { forEachFootprintOffset } from './footprint.ts';
 import { admitRimEnclaves, cellNoise, SOFT_DRAG_MIN_REACH } from './dragDisc.ts';
+import { footprintRingQuarters, type EdgeShape } from './edges.ts';
 import type { SculptProfile, SweepOrigin } from './options.ts';
 
 /**
@@ -61,6 +63,35 @@ function retreatHeightAt(
     }
   }
   return best;
+}
+
+/** The span a drag writes in a column: the one holding its band, else the highest beneath. */
+function sampledSpanIndex(map: Heightmap, i: number, band: number): number | null {
+  const x = cellX(map.size, i);
+  const y = cellY(map.size, i);
+  return spanIndexCoveringBand(map, x, y, band) ?? spanIndexBelowBand(map, x, y, band);
+}
+
+/** A drag leg's outline: its disc swept along the line, measured from the nearest line cell. */
+export function dragEdgeShape(
+  cx: number,
+  cy: number,
+  radius: number,
+  raising: boolean,
+  targetBand: number,
+  sweepFrom: SweepOrigin | null,
+): EdgeShape {
+  const centres: (readonly [number, number])[] = [];
+  if (sweepFrom === null) centres.push([cx, cy]);
+  else forEachLineCell(sweepFrom.x, sweepFrom.y, cx, cy, (x, y) => centres.push([x, y]));
+  return {
+    centres,
+    rings: [footprintRingQuarters(radius)],
+    raising,
+    // A drag lands cells on levels and neighbours' grounds, several bands at once.
+    keepsPriorEdges: false,
+    spanOf: (map, i) => sampledSpanIndex(map, i, targetBand),
+  };
 }
 
 export function applyDragRegion(

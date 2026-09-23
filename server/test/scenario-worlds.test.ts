@@ -24,11 +24,11 @@ const LOWERING = -1;
 
 /** Cells each world's wire-legal script writes; an ack without terrain fails here. */
 const CELLS_WRITTEN: Record<GoldenWorldName, number> = {
-  'genesis-noise': 1365,
-  arch: 965,
-  terrace: 962,
-  shoreline: 832,
-  played: 769,
+  'genesis-noise': 1388,
+  arch: 982,
+  terrace: 981,
+  shoreline: 849,
+  played: 799,
 };
 
 /** `anchor: 'free'` and `spill: 'free'` are library paths; no intent can ask for them. */

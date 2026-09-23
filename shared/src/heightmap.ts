@@ -26,7 +26,7 @@ import {
   stampSkirtReachCells,
 } from './sculpt/stamp.ts';
 import { writeWithEdges } from './sculpt/edges.ts';
-import { applyDragRegion } from './sculpt/drag.ts';
+import { applyDragRegion, dragEdgeShape } from './sculpt/drag.ts';
 import { applyCarve } from './sculpt/carve.ts';
 export { carveAdmittedCells } from './sculpt/carve.ts';
 import { smooth } from './sculpt/relax.ts';
@@ -174,19 +174,22 @@ export function applySculpt(
       const runFloorBand =
         options?.runFloorBand ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.runFloorBand ?? targetBand;
       const dragAlt = options?.dragAlt ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.dragAlt;
-      applyDragRegion(
-        map,
-        cx,
-        cy,
-        radius,
-        amount > 0,
-        targetBand,
-        runFloorBand > targetBand ? targetBand : runFloorBand,
-        profile,
-        sweepFrom,
-        dragChanged,
-        dragAlt,
-      );
+      const shape = dragEdgeShape(cx, cy, radius, amount > 0, targetBand, sweepFrom);
+      writeWithEdges(map, shape, dragChanged, () => {
+        applyDragRegion(
+          map,
+          cx,
+          cy,
+          radius,
+          amount > 0,
+          targetBand,
+          runFloorBand > targetBand ? targetBand : runFloorBand,
+          profile,
+          sweepFrom,
+          dragChanged,
+          dragAlt,
+        );
+      });
     }
     return diffOf(map, dragChanged);
   }

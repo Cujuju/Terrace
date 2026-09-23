@@ -196,6 +196,8 @@ export function stampEdgeShape(
     centres: [[cx, cy]],
     rings,
     raising,
+    // A level fill moves cells one band at a time, their edges with them.
+    keepsPriorEdges: true,
     spanOf: (map, i) => graspedSpanIndex(map, i, spanBand),
   };
 }

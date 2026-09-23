@@ -9,9 +9,13 @@ import { columnCoversBand } from '../columns.ts';
 import { cellIndex, cellX, cellY, inBounds, type Heightmap } from '../grid.ts';
 import { footprintRadiusSquared } from './footprint.ts';
 import { clampHeight, graspedCeiling, writeGraspedCeiling } from './grasp.ts';
+import type { SculptOperation } from './options.ts';
 
 // Edge-aware writes (docs/plans/edge-aware-brushes.md): a cell keeps its band;
 // its in-band height encodes its distance to the nearest band edge.
+
+/** Tools whose writes re-encode the cells around their rings. */
+export const EDGE_AWARE_TOOLS: readonly SculptOperation[] = ['stamp', 'drag'];
 
 /** Height units per cell of edge distance: a band's midpoint is one cell from its edges. */
 export const EDGE_UNITS_PER_CELL = DRAWN_GROUND_BAND_BIAS;
@@ -52,6 +56,11 @@ export interface EdgeShape {
   readonly rings: readonly number[];
   /** A raise steps bands down outward across a ring; a lower steps them up. */
   readonly raising: boolean;
+  /**
+   * True: `write` shifts cells whole bands with their neighbours, so a moved
+   * cell keeps its prior edge distance. False: heights `write` set stand off-ring.
+   */
+  readonly keepsPriorEdges: boolean;
   /** The span of column `i` the brush wrote, or null for none. */
   readonly spanOf: (map: Heightmap, i: number) => number | null;
 }
@@ -253,11 +262,12 @@ export function writeWithEdges(
         if (lower) ringLower = units < ringLower ? units : ringLower;
         else ringUpper = units < ringUpper ? units : ringUpper;
       }
-      if (!onRing && !selfMoved) continue;
+      if (!onRing && !(selfMoved && shape.keepsPriorEdges)) continue;
 
-      const oldBand = drawnBandOfSample(was);
-      const keptLower = otherLower ? decodedLower(was, oldBand) : EDGE_UNITS_PER_CELL;
-      const keptUpper = otherUpper ? decodedUpper(was, oldBand) : EDGE_UNITS_PER_CELL;
+      const prior = shape.keepsPriorEdges ? was : h;
+      const priorBand = drawnBandOfSample(prior);
+      const keptLower = otherLower ? decodedLower(prior, priorBand) : EDGE_UNITS_PER_CELL;
+      const keptUpper = otherUpper ? decodedUpper(prior, priorBand) : EDGE_UNITS_PER_CELL;
       const next = clampHeight(
         encodeEdgeHeight(
           band,

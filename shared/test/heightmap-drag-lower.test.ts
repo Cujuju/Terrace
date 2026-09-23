@@ -19,6 +19,7 @@ import {
   readSpans,
   setColumn,
   type Heightmap,
+  drawnBandOfSample,
 } from '../src/index.ts';
 
 describe('a drag-lower on a tall face is cut back at the grabbed band (2026-09-02)', () => {
@@ -162,7 +163,9 @@ describe('a drag finishes, at every band it can name and in both directions', ()
       targetBand: MIN_BAND,
     });
 
-    expect(diff).toHaveLength(1);
+    // One cell crosses bands; its neighbours re-encode the new edge in-band.
+    const crossed = diff.filter((c) => drawnBandOfSample(c.h) !== drawnBandOfSample(0));
+    expect(crossed.map(({ x, y }) => [x, y])).toEqual([[CX, CY]]);
     expect(heightAt(map, CX, CY)).toBe(BEDROCK_FLOOR);
     expect(
       applySculpt(map, CX, CY, MIN_BRUSH_RADIUS, -DEFAULT_SCULPT_AMOUNT, {
