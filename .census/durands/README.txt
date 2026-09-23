@@ -4,6 +4,7 @@ Original: 2048 x 2048 textures. Low: 1024 x 1024 textures, in low subfolder.
 Each variant: editable packed durands.blend; durands.glb with embedded PNGs;
 durands-ktx2.glb with embedded UASTC KTX2s; separate basecolor, normal and
 metallicRoughness PNG and KTX2 maps. Exactly one mesh, primitive and material.
+Also includes standalone and embedded emissive PNG/KTX2 maps.
 Hierarchy: RootNode > durands. Identity object transforms; geometry in world units.
 No Draco or meshopt. Runtime KTX2 variants are integrated via the Buildings quality HUD.
 
@@ -35,9 +36,9 @@ roof segments, curved profiles or small sign detail where applicable.
 
 Measured geometry, UVs and memory
 original: 7,164 triangles, 13,840 exported vertices; 3,246 UV islands; minimum island bounds gap 12.005 px; density 338.220-338.265 px/world unit.
-  GPU mesh 0.675 MiB; PNG total 64.675 MiB; KTX2 BC7/ASTC total 16.675 MiB.
+  GPU mesh 0.675 MiB; PNG total 86.008 MiB; KTX2 BC7/ASTC total 22.008 MiB.
 low: 5,296 triangles, 10,404 exported vertices; 2,536 UV islands; minimum island bounds gap 9.001 px; density 141.645-141.658 px/world unit.
-  GPU mesh 0.507 MiB; PNG total 16.507 MiB; KTX2 BC7/ASTC total 4.507 MiB.
+  GPU mesh 0.507 MiB; PNG total 21.840 MiB; KTX2 BC7/ASTC total 5.840 MiB.
 UVs wholly inside 0-1; exported triangles tested for positive-area intersections.
 No overlapping islands, collapsed UV triangles or zero-area mesh triangles.
 Atlases independently packed at each delivered resolution. Target gap: original
@@ -48,8 +49,9 @@ Texture and runtime verification
 Base colour sRGB. Tangent-space normal uses OpenGL/glTF +Y green, XYZ retained.
 Normal height derivatives account for UV vertical direction; unit normals encoded RGB.
 MetallicRoughness is linear RGB: R=1 unused, G=roughness, B=0 metalness.
-All six KTX2 textures: UASTC, complete mip chains (12 levels original, 11 low),
-base sRGB, normal/MR linear, no channel swizzle. KTX-Software glTF-basisu validation passed.
+All 8 KTX2 textures: UASTC, complete mip chains (12 levels original, 11 low),
+base/emissive sRGB, normal/MR linear, no channel swizzle. KTX-Software glTF-basisu validation passed.
+Fourth map: glass-only emissive RGB, material strength 2.5. No added scene lights.
 KHR_texture_basisu is required and each texture references an embedded KTX2 image.
 Every geometry accessor bufferView matches the PNG GLB byte-for-byte after packing.
 Embedded texture bytes match delivered standalone files. Decoded UASTC metalness
@@ -58,18 +60,19 @@ records channel error and normal angular error at the base level.
 Validation uses UASTC-to-RGBA8 decoding, not all possible hardware transcodes.
 
 Memory assumptions
-PNG: RGBA8 GPU storage plus complete mip chains (64 MiB textures original, 16 low).
-KTX2: BC7 or ASTC 4x4 at 16 bytes/block with all mips (16 MiB original, 4 low).
+PNG: RGBA8 GPU storage plus complete mip chains (85.333 MiB textures original, 21.333 low).
+KTX2: BC7 or ASTC 4x4 at 16 bytes/block with all mips (21.333 MiB original, 5.333 low).
 Actual GPU format depends on device support; uncompressed fallback may cost PNG-level memory.
 Calculated totals include exported vertex/index bytes, not live GPU measurements.
 Exclude driver allocation, CPU loader/image copies, shaders, scene objects and framebuffers.
 Repeated instances share mesh and textures. Loading both variants adds both totals:
-PNG 81.181 MiB;
-KTX2 21.181 MiB.
+PNG 107.848 MiB;
+KTX2 27.848 MiB.
 
 Screenshots
 durands-45deg.png and durands-closeup.png render the exported PNG GLB in Blender.
 durands-front.png also provides a near-frontal view of the restored text, flags and porch.
+durands-night.png shows glass-only emission in a dark studio; rebuild with Blender --python E:\Development\Projects\Terrace\.census\building-kit\render_cabaret_night.py [-- --low].
 The low subfolder uses identical cameras and lighting; comparison.png pairs them.
 These show finished meshes, not concepts, and are studio renders, not game screenshots.
 Artifacts was unavailable; local image delivery is the requested fallback.

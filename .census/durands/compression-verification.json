@@ -16,6 +16,10 @@
         0.0,
         0.0
       ]
+    },
+    "emissive": {
+      "mean_absolute_error_8bit": 0.005199115257710218,
+      "root_mean_square_error_8bit": 0.0838574767112732
     }
   },
   "low": {
@@ -35,6 +39,10 @@
         0.0,
         0.0
       ]
+    },
+    "emissive": {
+      "mean_absolute_error_8bit": 0.008498191833496094,
+      "root_mean_square_error_8bit": 0.1188320517539978
     }
   }
 }

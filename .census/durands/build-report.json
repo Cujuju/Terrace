@@ -147,5 +147,7 @@
     "front_gltf": "+Z",
     "origin": "Inherited Durand's footprint center at ground",
     "deliberate_difference": "Crimson Cabaret revision restores the selected seated figure, text panels and flags. Ground porch projects 3.2 construction units beyond the enclosed facade and 1.6 beyond the upper gallery; awning covers the projecting porch. Overall X/Z envelope retained at 0.824038 x 0.850095 by fitting the complete structure; enclosed body is shallower to reserve porch space. Height about 1.27 rather than the legacy 2.060096. No extra scene lights."
-  }
+  },
+  "emissive": true,
+  "emission_strength": 2.5
 }

@@ -1,6 +1,6 @@
 """Verify and copy the authored KTX2 GLBs into Vite's production asset tree."""
 from pathlib import Path
-import hashlib, json, math, shutil, struct, subprocess
+import hashlib, json, math, shutil, struct, subprocess, sys
 
 ROOT = Path(__file__).resolve().parents[2]
 NAMES = ['camp', 'hut', 'prehistoric-granary', 'roman-granary', 'longhouse',
@@ -21,10 +21,15 @@ def view(doc, blob, index):
     return blob[start:start+v['byteLength']]
 
 reports = []
+selected = sys.argv[1:]
+if selected:
+    assert all(name in NAMES for name in selected), selected
+    reports = [r for r in json.loads((ROOT/'.census'/'building-kit'/'integration-verification.json').read_text()) if r['building'] not in selected]
 radii = {}
 imports = []
 url_rows = {'low': [], 'original': []}
 for name in NAMES:
+    if selected and name not in selected: continue
     for quality, size in [('original', 2048), ('low', 1024)]:
         folder = ROOT/'.census'/name
         if quality == 'low': folder /= 'low'
@@ -52,7 +57,8 @@ for name in NAMES:
         for accessor in doc['accessors']:
             i = accessor['bufferView']
             assert view(doc, blob, i) == view(png, png_blob, i)
-        assert len(doc['images']) == 3
+        assert len(doc['images']) == (4 if 'emissiveTexture' in doc['materials'][0] else 3)
+        assert doc['materials'] == png['materials']
         for image in doc['images']:
             path = folder/(image['name']+'.ktx2')
             assert image['mimeType'] == 'image/ktx2'
@@ -61,7 +67,7 @@ for name in NAMES:
             info = json.loads(subprocess.check_output([r'e:\Scoop\shims\ktx.exe', 'info', '--format', 'json', str(path)]))
             dfd = info['dataFormatDescriptor']['blocks'][0]
             assert dfd['colorModel'] == 'KHR_DF_MODEL_UASTC'
-            assert dfd['transferFunction'] == ('KHR_DF_TRANSFER_SRGB' if 'basecolor' in image['name'] else 'KHR_DF_TRANSFER_LINEAR')
+            assert dfd['transferFunction'] == ('KHR_DF_TRANSFER_SRGB' if any(k in image['name'] for k in ('basecolor','emissive')) else 'KHR_DF_TRANSFER_LINEAR')
             assert dfd['samples'][0]['channelType'] == 'KHR_DF_CHANNEL_UASTC_RGB'
             assert 'KTXswizzle' not in info['keyValueData']
             assert info['header']['pixelWidth'] == info['header']['pixelHeight'] == size
@@ -83,6 +89,7 @@ for name in NAMES:
                         'uastc_rgb': True, 'geometry_preserved': True})
     print('Verified and copied', name, flush=True)
 (ROOT/'.census'/'building-kit'/'integration-verification.json').write_text(json.dumps(reports, indent=2)+'\n')
+if selected: sys.exit(0)  # Targeted asset refresh must not overwrite another task's registry edits.
 client = ROOT/'plugins'/'structures'/'client'
 (client/'authoredRadii.ts').write_text('export const AUTHORED_RADII: Readonly<Record<string, number>> = '+json.dumps(radii, indent=2)+';\n')
 (client/'authoredUrls.ts').write_text('\n'.join(imports)+"\n\nexport const AUTHORED_URLS = {\n"+

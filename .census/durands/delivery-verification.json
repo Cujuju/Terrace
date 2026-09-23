@@ -28,9 +28,26 @@
         "channels": "RGB",
         "bits": 8,
         "srgb_tag": false
+      },
+      "emissive": {
+        "dimensions": [
+          2048,
+          2048
+        ],
+        "channels": "RGB",
+        "bits": 8,
+        "srgb_tag": true
       }
     },
     "ktx_metadata": {
+      "durands-emissive": {
+        "transfer": "KHR_DF_TRANSFER_SRGB",
+        "model": "KHR_DF_MODEL_UASTC",
+        "channels": "KHR_DF_CHANNEL_UASTC_RGB",
+        "mip_levels": 12,
+        "orientation": "rd",
+        "swizzle": null
+      },
       "durands-normal": {
         "transfer": "KHR_DF_TRANSFER_LINEAR",
         "model": "KHR_DF_MODEL_UASTC",
@@ -58,7 +75,7 @@
     },
     "geometry_and_hierarchy_unchanged": true,
     "texel_density_relative_spread": 0.00013261886596027672,
-    "glb_sha256": "393c488da28f56b7352fb60098273ec9ea2981385fdbafb3c87cd541a231fe0c"
+    "glb_sha256": "11d03cf158219c28f54028e12aad9bdd3f40eb9d129b2ce8b1cc93577ee1b722"
   },
   "low": {
     "passed": true,
@@ -89,9 +106,26 @@
         "channels": "RGB",
         "bits": 8,
         "srgb_tag": false
+      },
+      "emissive": {
+        "dimensions": [
+          1024,
+          1024
+        ],
+        "channels": "RGB",
+        "bits": 8,
+        "srgb_tag": true
       }
     },
     "ktx_metadata": {
+      "durands-emissive": {
+        "transfer": "KHR_DF_TRANSFER_SRGB",
+        "model": "KHR_DF_MODEL_UASTC",
+        "channels": "KHR_DF_CHANNEL_UASTC_RGB",
+        "mip_levels": 11,
+        "orientation": "rd",
+        "swizzle": null
+      },
       "durands-normal": {
         "transfer": "KHR_DF_TRANSFER_LINEAR",
         "model": "KHR_DF_MODEL_UASTC",
@@ -119,7 +153,7 @@
     },
     "geometry_and_hierarchy_unchanged": true,
     "texel_density_relative_spread": 9.713120333665337e-05,
-    "glb_sha256": "43c2480f5b5d2788d873bc05efeaff1cb31faabc905649fea64acac800e2977b"
+    "glb_sha256": "7386ae81d5ba029c61e7c736c54be7e1927a1de99e2ea3669757e1f346c5e5bb"
   },
   "lod_bounds_delta": 0.0,
   "passed": true

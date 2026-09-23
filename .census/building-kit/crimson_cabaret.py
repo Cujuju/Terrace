@@ -45,6 +45,14 @@ def build(low, g):
         color=sampled if correct else np.tile(palette['sign'],(len(pos),1))
         return color,np.zeros(len(pos)),np.full(len(pos),.9)
     g['custom_surface']=painted_surface
+    def emissive_surface(pos,ch,color):
+        if ch['kind']=='glass':
+            return np.clip(color*np.array([1.15,1.30,1.50]),0,1)
+        if ch['kind']=='lanternglass':
+            return np.tile((1.0,.43,.13),(len(pos),1))
+        return np.zeros((len(pos),3))
+    g['emissive_surface']=emissive_surface
+    g['EMISSION_STRENGTH']=2.5
 
     def prism(profile,y,depth,kind,label,**meta):
         n=len(profile); coords=[(x,yy,z) for yy in (y-depth/2,y+depth/2) for x,z in profile]

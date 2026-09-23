@@ -12,12 +12,15 @@ for name in names:
     for folder in (root,root/'low'):
         files=[name+'.blend',name+'.glb',name+'-ktx2.glb',name+'-45deg.png',name+'-closeup.png','build-report.json','parts.json','verification.json']
         files += [name+'-'+kind+'.'+extension for kind in ('basecolor','normal','metallicRoughness') for extension in ('png','ktx2')]
+        if json.loads((folder/'build-report.json').read_text()).get('emissive'):
+            files += [name+'-emissive.png',name+'-emissive.ktx2']
         paths.extend(folder/f for f in files)
 kit_names=['README.md','asset_helpers.py','audit_asset.py','audit_compression.py','audit_mips.py','build_asset.py','designs.py','contact_sheets.ps1','overview.ps1','inventory.mjs','source-inventory.json','imported-cottage-bounds.json','package_runtime.py','prepare_pipeline.py','ratings.json','render_asset.py','run_delivery.py','verify_delivery.py','write_catalog.py','write_reports.py','write_manifest.py','delivery-summary.json','core-buildings.png','coastal-overview.png','historical-additions.png']
 paths.extend(KIT/name for name in kit_names)
 paths.extend(KIT/name for name in ['crimson_cabaret.py','prepare_cabaret_paint.ps1','cabaret-paint/front.png','cabaret-paint/side.png','cabaret-paint/awning.png'])
 paths.extend(KIT/'cabaret-paint'/name for name in ['front-reference.png','front-reference-prompt.txt','flag.png','wing-left.png','wing-right.png','door-left.png','door-right.png'])
 paths.extend([CENSUS/'durands'/'durands-front.png',CENSUS/'durands'/'low'/'durands-front.png',CENSUS/'durands'/'design-notes.md'])
+paths.extend([KIT/'render_cabaret_night.py',CENSUS/'durands'/'durands-night.png',CENSUS/'durands'/'low'/'durands-night.png'])
 assert len(set(paths))==len(paths)
 entries={}
 for path in sorted(paths):

@@ -12,6 +12,7 @@ for name in sys.argv[1:]:
     delta=max(abs(a-b) for bound in ('min','max') for a,b in zip(original['bounds_gltf_y_up'][bound],low['bounds_gltf_y_up'][bound]))
     assert delta<.0002,(name,delta)
     era,score,comment=ratings[name]
+    texture_count=len(memory['variants']['original']['textures'])
     table=[]
     for label,check in [('original',original),('low',low)]:
         m=memory['variants'][label]
@@ -22,6 +23,7 @@ Original: 2048 x 2048 textures. Low: 1024 x 1024 textures, in low subfolder.
 Each variant: editable packed {name}.blend; {name}.glb with embedded PNGs;
 {name}-ktx2.glb with embedded UASTC KTX2s; separate basecolor, normal and
 metallicRoughness PNG and KTX2 maps. Exactly one mesh, primitive and material.
+{'Also includes standalone and embedded emissive PNG/KTX2 maps.' if build.get('emissive') else ''}
 Hierarchy: RootNode > {name}. Identity object transforms; geometry in world units.
 No Draco or meshopt. Runtime KTX2 variants are integrated via the Buildings quality HUD.
 
@@ -63,8 +65,9 @@ Texture and runtime verification
 Base colour sRGB. Tangent-space normal uses OpenGL/glTF +Y green, XYZ retained.
 Normal height derivatives account for UV vertical direction; unit normals encoded RGB.
 MetallicRoughness is linear RGB: R=1 unused, G=roughness, B=0 metalness.
-All six KTX2 textures: UASTC, complete mip chains (12 levels original, 11 low),
-base sRGB, normal/MR linear, no channel swizzle. KTX-Software glTF-basisu validation passed.
+All {texture_count*2} KTX2 textures: UASTC, complete mip chains (12 levels original, 11 low),
+base/emissive sRGB, normal/MR linear, no channel swizzle. KTX-Software glTF-basisu validation passed.
+{'Fourth map: glass-only emissive RGB, material strength '+str(build.get('emission_strength'))+'. No added scene lights.' if build.get('emissive') else ''}
 KHR_texture_basisu is required and each texture references an embedded KTX2 image.
 Every geometry accessor bufferView matches the PNG GLB byte-for-byte after packing.
 Embedded texture bytes match delivered standalone files. Decoded UASTC metalness
@@ -73,8 +76,8 @@ records channel error and normal angular error at the base level.
 Validation uses UASTC-to-RGBA8 decoding, not all possible hardware transcodes.
 
 Memory assumptions
-PNG: RGBA8 GPU storage plus complete mip chains (64 MiB textures original, 16 low).
-KTX2: BC7 or ASTC 4x4 at 16 bytes/block with all mips (16 MiB original, 4 low).
+PNG: RGBA8 GPU storage plus complete mip chains ({sum(t['png_rgba8_gpu_bytes'] for t in memory['variants']['original']['textures'])/MIB:.3f} MiB textures original, {sum(t['png_rgba8_gpu_bytes'] for t in memory['variants']['low']['textures'])/MIB:.3f} low).
+KTX2: BC7 or ASTC 4x4 at 16 bytes/block with all mips ({sum(t['bc7_astc_gpu_bytes'] for t in memory['variants']['original']['textures'])/MIB:.3f} MiB original, {sum(t['bc7_astc_gpu_bytes'] for t in memory['variants']['low']['textures'])/MIB:.3f} low).
 Actual GPU format depends on device support; uncompressed fallback may cost PNG-level memory.
 Calculated totals include exported vertex/index bytes, not live GPU measurements.
 Exclude driver allocation, CPU loader/image copies, shaders, scene objects and framebuffers.
@@ -85,6 +88,7 @@ KTX2 {(sum(v['ktx2_bc7_astc_gpu_total_bytes'] for v in memory['variants'].values
 Screenshots
 {name}-45deg.png and {name}-closeup.png render the exported PNG GLB in Blender.
 {'durands-front.png also provides a near-frontal view of the restored text, flags and porch.' if name=='durands' else ''}
+{'durands-night.png shows glass-only emission in a dark studio; rebuild with Blender --python '+str(KIT/'render_cabaret_night.py')+' [-- --low].' if name=='durands' and build.get('emissive') else ''}
 The low subfolder uses identical cameras and lighting; comparison.png pairs them.
 These show finished meshes, not concepts, and are studio renders, not game screenshots.
 Artifacts was unavailable; local image delivery is the requested fallback.

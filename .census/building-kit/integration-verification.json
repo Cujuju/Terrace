@@ -264,30 +264,6 @@
     "geometry_preserved": true
   },
   {
-    "building": "durands",
-    "quality": "original",
-    "source": ".census\\durands\\durands-ktx2.glb",
-    "runtime": "plugins\\structures\\client\\assets\\authored\\original\\durands.glb",
-    "bytes": 7079940,
-    "sha256": "df38ed6d85d831b4eaa4c2fca8ea27a491fdac83a19aee5f3e6e3742eb18bc3b",
-    "texture_resolution": 2048,
-    "mip_levels": 12,
-    "uastc_rgb": true,
-    "geometry_preserved": true
-  },
-  {
-    "building": "durands",
-    "quality": "low",
-    "source": ".census\\durands\\low\\durands-ktx2.glb",
-    "runtime": "plugins\\structures\\client\\assets\\authored\\low\\durands.glb",
-    "bytes": 2331696,
-    "sha256": "69f9a1767353592e2e7e5f37ee749f08c6ef9351cebe24a5f762d3b88c85a625",
-    "texture_resolution": 1024,
-    "mip_levels": 11,
-    "uastc_rgb": true,
-    "geometry_preserved": true
-  },
-  {
     "building": "reed-cone",
     "quality": "original",
     "source": ".census\\reed-cone\\reed-cone-ktx2.glb",
@@ -546,6 +522,30 @@
     "runtime": "plugins\\temples\\client\\assets\\authored\\low\\temple.glb",
     "bytes": 1621044,
     "sha256": "9b421d5f2240c81b37da724062e36e11c2b9d2e1808c865778d9c52dfffce706",
+    "texture_resolution": 1024,
+    "mip_levels": 11,
+    "uastc_rgb": true,
+    "geometry_preserved": true
+  },
+  {
+    "building": "durands",
+    "quality": "original",
+    "source": ".census\\durands\\durands-ktx2.glb",
+    "runtime": "plugins\\structures\\client\\assets\\authored\\original\\durands.glb",
+    "bytes": 7144004,
+    "sha256": "ead6c106310fb66fa83fa531147e0ced593ec47040d41d6617393f423c6fd000",
+    "texture_resolution": 2048,
+    "mip_levels": 12,
+    "uastc_rgb": true,
+    "geometry_preserved": true
+  },
+  {
+    "building": "durands",
+    "quality": "low",
+    "source": ".census\\durands\\low\\durands-ktx2.glb",
+    "runtime": "plugins\\structures\\client\\assets\\authored\\low\\durands.glb",
+    "bytes": 2365704,
+    "sha256": "f38c38c01806b5d1ca1603b3ff387abc692e25385a9a3bbb2355f0bad6f62b24",
     "texture_resolution": 1024,
     "mip_levels": 11,
     "uastc_rgb": true,

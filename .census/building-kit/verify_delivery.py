@@ -19,7 +19,9 @@ for name in names:
         assert v['blend']['mesh_count']==1 and v['blend']['material_count']==1 and v['blend']['images_packed']
         doc,blob=glb(folder/(name+'.glb'));rd,rb=glb(folder/(name+'-ktx2.glb'))
         png_metadata={}
-        for kind in ('basecolor','normal','metallicRoughness'):
+        has_emission='emissiveTexture' in doc['materials'][0]
+        kinds=['basecolor','normal','metallicRoughness']+(['emissive'] if has_emission else [])
+        for kind in kinds:
             data=(folder/(name+'-'+kind+'.png')).read_bytes()
             assert data[:8]==b'\x89PNG\r\n\x1a\n'
             width,height,depth,channels=struct.unpack_from('>IIBB',data,16)
@@ -27,9 +29,10 @@ for name in names:
             cursor=8;chunks=[]
             while cursor<len(data):
                 length=struct.unpack_from('>I',data,cursor)[0];chunks.append(data[cursor+4:cursor+8]);cursor+=length+12
-            assert (b'sRGB' in chunks)==(kind=='basecolor')
+            assert (b'sRGB' in chunks)==(kind in ('basecolor','emissive'))
             png_metadata[kind]={'dimensions':[size,size],'channels':'RGB','bits':8,'srgb_tag':b'sRGB' in chunks}
-        assert len(doc['images'])==len(rd['images'])==3
+        assert len(doc['images'])==len(rd['images'])==len(kinds)
+        assert doc['materials']==rd['materials']
         assert doc['meshes']==rd['meshes'] and doc['accessors']==rd['accessors'] and doc['nodes']==rd['nodes']
         assert 'KHR_texture_basisu' in rd['extensionsRequired']
         assert not any(e in str(rd) for e in ['KHR_draco_mesh_compression','EXT_meshopt_compression'])
@@ -41,7 +44,7 @@ for name in names:
             path=folder/(im['name']+'.ktx2')
             info=json.loads(subprocess.check_output([TOKTX,'info','--format','json',str(path)]))
             descriptor=info['dataFormatDescriptor']['blocks'][0]
-            srgb='basecolor' in im['name']
+            srgb='basecolor' in im['name'] or 'emissive' in im['name']
             assert descriptor['colorModel']=='KHR_DF_MODEL_UASTC'
             assert descriptor['transferFunction']==('KHR_DF_TRANSFER_SRGB' if srgb else 'KHR_DF_TRANSFER_LINEAR')
             assert descriptor['samples'][0]['channelType']=='KHR_DF_CHANNEL_UASTC_RGB'

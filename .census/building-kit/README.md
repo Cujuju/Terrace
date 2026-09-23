@@ -18,7 +18,7 @@ Concept images were generated with the built-in image generator and saved with e
 
 ## Measured assets
 
-Dimensions are glTF X/Y/Z world units, including ancillary props. Original and low have a common placement origin and aligned bounds. Each README records entrance orientation, ground corrections and deliberate differences. Smoke-pit-hut removes the old static smoke bubbles and preserves the building envelope instead. Durand's is now the owner-selected Crimson Cabaret: newly authored geometry and paint, replacing the old giant dancer with an arched cabaret sign, crimson facade and covered galleries. The six alternative concepts and earlier reference remain archived. Amber windows and red lanterns are painted; the building adds no scene lights.
+Dimensions are glTF X/Y/Z world units, including ancillary props. Original and low have a common placement origin and aligned bounds. Each README records entrance orientation, ground corrections and deliberate differences. Smoke-pit-hut removes the old static smoke bubbles and preserves the building envelope instead. Durand's is now the owner-selected Crimson Cabaret: newly authored geometry and paint, replacing the old giant dancer with an arched cabaret sign, crimson facade and covered galleries. The six alternative concepts and earlier reference remain archived. Amber windows and red-orange lantern glass now use a fourth emissive texture; the building adds no scene lights.
 
 | Building | Triangles original / low | Dimensions X × Y × Z | Screenshots |
 |---|---:|---|---|
@@ -49,9 +49,9 @@ Reference longhouse: 4,260 / 3,016 triangles, unchanged. These counts are compar
 
 ## Contents and verification
 
-Each building folder contains an editable packed .blend; a GLB with three embedded PNGs; the three standalone PNGs; a separate runtime GLB with embedded UASTC KTX2s; the three standalone KTX2s; concept and prompt; build, UV, placement, compression, mip and memory reports; screenshots; and a rebuild wrapper. The low subfolder contains its independent 1024 atlas, geometry and exports.
+Each building folder contains an editable packed .blend; a GLB with three embedded PNGs; the three standalone PNGs; a separate runtime GLB with embedded UASTC KTX2s; the three standalone KTX2s (plus a fourth emissive PNG/KTX2 for Crimson Cabaret); concept and prompt; build, UV, placement, compression, mip and memory reports; screenshots; and a rebuild wrapper. The low subfolder contains its independent 1024 atlas, geometry and exports.
 
-All 44 variants passed the delivered audits: exactly one mesh, one primitive and one material; all images packed in the blend; three embedded images matching the standalone files; UVs within 0–1 with no positive-area island overlap; at least the required 8 pixels between island bounds at the delivered resolution (12-pixel target, except the repacked Crimson Cabaret low atlas at 9); uniform measured texel density within each atlas; valid tangents; no zero-area exported triangles. Original/low bounds differ by less than 0.0002 world units.
+All 44 variants passed the delivered audits: exactly one mesh, one primitive and one material; all images packed in the blend; three embedded images (four for Crimson Cabaret) matching the standalone files; UVs within 0–1 with no positive-area island overlap; at least the required 8 pixels between island bounds at the delivered resolution (12-pixel target, except the repacked Crimson Cabaret low atlas at 9); uniform measured texel density within each atlas; valid tangents; no zero-area exported triangles. Original/low bounds differ by less than 0.0002 world units.
 
 Base colour is sRGB. Normal is linear tangent-space OpenGL/glTF, green +Y, with XYZ retained. MetallicRoughness is linear, G roughness and B metalness, with B exactly zero in PNGs and decoded UASTC at every mip level. Every KTX2 uses UASTC and has a complete chain: 12 levels at 2048, 11 at 1024. No incompatible channel swizzle. KTX-Software glTF-basisu validation passed. Runtime GLBs require KHR_texture_basisu, and preserve geometry accessor bytes, mesh definitions and hierarchy exactly. No Draco or meshopt is present.
 
@@ -59,9 +59,9 @@ Base colour is sRGB. Normal is linear tangent-space OpenGL/glTF, green +Y, with 
 
 ## Calculated GPU memory
 
-Assumption: PNG textures occupy RGBA8 GPU storage with complete mip chains: approximately 64 MiB for the three original maps and 16 MiB for low. Assumption: KTX2 transcodes to BC7 or ASTC 4×4, 16 bytes per block: approximately 16 MiB original and 4 MiB low. Add the vertex/index allocation recorded per variant in its memory-report.json. File sizes are not GPU allocation sizes; UASTC downloads can exceed PNG size.
+Assumption: PNG textures occupy RGBA8 GPU storage with complete mip chains: approximately 64 MiB for the three original maps and 16 MiB for low. Assumption: KTX2 transcodes to BC7 or ASTC 4×4, 16 bytes per block: approximately 16 MiB original and 4 MiB low. Crimson Cabaret has a fourth emissive map, adding approximately 5.333 MiB original / 1.333 MiB low under BC7/ASTC, or 21.333 / 5.333 MiB under RGBA8. Add the vertex/index allocation recorded per variant in its memory-report.json. File sizes are not GPU allocation sizes; UASTC downloads can exceed PNG size.
 
-Repeated structures share mesh and texture allocations. Loading both variants adds their allocations. All 22 packages with both variants resident total 1766.14 MiB under the PNG assumption or 446.14 MiB under the BC7/ASTC assumption, including exported geometry. These are calculations, not live GPU measurements, and exclude CPU copies, loader buffers, driver overhead, instance data, shaders and framebuffers. An uncompressed runtime fallback can cost PNG-level texture memory.
+Repeated structures share mesh and texture allocations. Loading both variants adds their allocations. All 22 packages with both variants resident total 1792.80 MiB under the PNG assumption or 452.81 MiB under the BC7/ASTC assumption, including exported geometry. These are calculations, not live GPU measurements, and exclude CPU copies, loader buffers, driver overhead, instance data, shaders and framebuffers. An uncompressed runtime fallback can cost PNG-level texture memory.
 
 ## Historical plausibility ratings
 

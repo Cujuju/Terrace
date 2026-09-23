@@ -12,6 +12,15 @@
       "geometry_gpu_bytes": 707304,
       "textures": [
         {
+          "name": "durands-emissive",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 63716
+        },
+        {
           "name": "durands-normal",
           "width": 2048,
           "height": 2048,
@@ -39,12 +48,12 @@
           "ktx_file_bytes": 1514415
         }
       ],
-      "png_gpu_total_bytes": 67816164,
-      "ktx2_bc7_astc_gpu_total_bytes": 17484600,
-      "png_glb_file_bytes": 5651572,
-      "ktx2_glb_file_bytes": 7079940,
-      "png_glb_sha256": "393c488da28f56b7352fb60098273ec9ea2981385fdbafb3c87cd541a231fe0c",
-      "ktx2_glb_sha256": "df38ed6d85d831b4eaa4c2fca8ea27a491fdac83a19aee5f3e6e3742eb18bc3b",
+      "png_gpu_total_bytes": 90185784,
+      "ktx2_bc7_astc_gpu_total_bytes": 23077032,
+      "png_glb_file_bytes": 5670072,
+      "ktx2_glb_file_bytes": 7144004,
+      "png_glb_sha256": "11d03cf158219c28f54028e12aad9bdd3f40eb9d129b2ce8b1cc93577ee1b722",
+      "ktx2_glb_sha256": "ead6c106310fb66fa83fa531147e0ced593ec47040d41d6617393f423c6fd000",
       "geometry_unchanged": true,
       "ktx_validation_passed": true
     },
@@ -53,6 +62,15 @@
       "exported_vertices": 10404,
       "geometry_gpu_bytes": 531168,
       "textures": [
+        {
+          "name": "durands-emissive",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 33658
+        },
         {
           "name": "durands-normal",
           "width": 1024,
@@ -81,12 +99,12 @@
           "ktx_file_bytes": 440135
         }
       ],
-      "png_gpu_total_bytes": 17308380,
-      "ktx2_bc7_astc_gpu_total_bytes": 4725552,
-      "png_glb_file_bytes": 1655468,
-      "ktx2_glb_file_bytes": 2331696,
-      "png_glb_sha256": "43c2480f5b5d2788d873bc05efeaff1cb31faabc905649fea64acac800e2977b",
-      "ktx2_glb_sha256": "69f9a1767353592e2e7e5f37ee749f08c6ef9351cebe24a5f762d3b88c85a625",
+      "png_gpu_total_bytes": 22900784,
+      "ktx2_bc7_astc_gpu_total_bytes": 6123680,
+      "png_glb_file_bytes": 1661008,
+      "ktx2_glb_file_bytes": 2365704,
+      "png_glb_sha256": "7386ae81d5ba029c61e7c736c54be7e1927a1de99e2ea3669757e1f346c5e5bb",
+      "ktx2_glb_sha256": "f38c38c01806b5d1ca1603b3ff387abc692e25385a9a3bbb2355f0bad6f62b24",
       "geometry_unchanged": true,
       "ktx_validation_passed": true
     }
