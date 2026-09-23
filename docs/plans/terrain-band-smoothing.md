@@ -47,8 +47,8 @@ history, including the rejected protected behavior and its measured overhead.
   layered path (`capEmission.ts`, GPU `ENTRY_LAYERED`).
 - Open: CPU filter cost — nine closure reads per sample, per-sample receipt
   checks, a global cache cleared on every edit.
-- Open: `client/test/terrainMeshes.test.ts` "publishes only the current input
-  revision" asserts the removed chart invalidation.
+- Done: `client/test/terrainMeshes.test.ts` now asserts the chart survives a
+  rebuild and each newer build is spliced.
 
 ## Original implementation and plan (superseded where amended above)
 Prototype: `d4664f4e`; follow-up shape requirement: `ed67fc78`.
