@@ -1,12 +1,1587 @@
 [
   {
-    "name": "Preserved original Terrace procedural base, coplanar merge and bevel improvements",
+    "name": "Continuous grounded foundation",
     "first_face": 0,
-    "face_count": 3300
+    "face_count": 6
   },
   {
-    "name": "Original DURANDS lettering",
-    "first_face": 3300,
-    "face_count": 341
+    "name": "Crimson ground-floor cladding",
+    "first_face": 6,
+    "face_count": 6
+  },
+  {
+    "name": "Crimson upper-floor cladding",
+    "first_face": 12,
+    "face_count": 6
+  },
+  {
+    "name": "Porch deck",
+    "first_face": 18,
+    "face_count": 6
+  },
+  {
+    "name": "Upper gallery floor",
+    "first_face": 24,
+    "face_count": 6
+  },
+  {
+    "name": "Facade storey rail",
+    "first_face": 30,
+    "face_count": 6
+  },
+  {
+    "name": "Side storey rail",
+    "first_face": 36,
+    "face_count": 6
+  },
+  {
+    "name": "Side storey rail",
+    "first_face": 42,
+    "face_count": 6
+  },
+  {
+    "name": "Facade storey rail",
+    "first_face": 48,
+    "face_count": 6
+  },
+  {
+    "name": "Side storey rail",
+    "first_face": 54,
+    "face_count": 6
+  },
+  {
+    "name": "Side storey rail",
+    "first_face": 60,
+    "face_count": 6
+  },
+  {
+    "name": "Facade storey rail",
+    "first_face": 66,
+    "face_count": 6
+  },
+  {
+    "name": "Side storey rail",
+    "first_face": 72,
+    "face_count": 6
+  },
+  {
+    "name": "Side storey rail",
+    "first_face": 78,
+    "face_count": 6
+  },
+  {
+    "name": "Cream corner pilaster",
+    "first_face": 84,
+    "face_count": 6
+  },
+  {
+    "name": "Cream corner pilaster",
+    "first_face": 90,
+    "face_count": 6
+  },
+  {
+    "name": "Cream corner pilaster",
+    "first_face": 96,
+    "face_count": 6
+  },
+  {
+    "name": "Cream corner pilaster",
+    "first_face": 102,
+    "face_count": 6
+  },
+  {
+    "name": "Gallery pillar",
+    "first_face": 108,
+    "face_count": 6
+  },
+  {
+    "name": "Column plinth or capital",
+    "first_face": 114,
+    "face_count": 6
+  },
+  {
+    "name": "Column plinth or capital",
+    "first_face": 120,
+    "face_count": 6
+  },
+  {
+    "name": "Gallery pillar",
+    "first_face": 126,
+    "face_count": 6
+  },
+  {
+    "name": "Column plinth or capital",
+    "first_face": 132,
+    "face_count": 6
+  },
+  {
+    "name": "Column plinth or capital",
+    "first_face": 138,
+    "face_count": 6
+  },
+  {
+    "name": "Gallery pillar",
+    "first_face": 144,
+    "face_count": 6
+  },
+  {
+    "name": "Column plinth or capital",
+    "first_face": 150,
+    "face_count": 6
+  },
+  {
+    "name": "Column plinth or capital",
+    "first_face": 156,
+    "face_count": 6
+  },
+  {
+    "name": "Gallery pillar",
+    "first_face": 162,
+    "face_count": 6
+  },
+  {
+    "name": "Column plinth or capital",
+    "first_face": 168,
+    "face_count": 6
+  },
+  {
+    "name": "Column plinth or capital",
+    "first_face": 174,
+    "face_count": 6
+  },
+  {
+    "name": "Gallery pillar",
+    "first_face": 180,
+    "face_count": 6
+  },
+  {
+    "name": "Column plinth or capital",
+    "first_face": 186,
+    "face_count": 6
+  },
+  {
+    "name": "Column plinth or capital",
+    "first_face": 192,
+    "face_count": 6
+  },
+  {
+    "name": "Gallery pillar",
+    "first_face": 198,
+    "face_count": 6
+  },
+  {
+    "name": "Column plinth or capital",
+    "first_face": 204,
+    "face_count": 6
+  },
+  {
+    "name": "Column plinth or capital",
+    "first_face": 210,
+    "face_count": 6
+  },
+  {
+    "name": "Gallery pillar",
+    "first_face": 216,
+    "face_count": 6
+  },
+  {
+    "name": "Column plinth or capital",
+    "first_face": 222,
+    "face_count": 6
+  },
+  {
+    "name": "Column plinth or capital",
+    "first_face": 228,
+    "face_count": 6
+  },
+  {
+    "name": "Gallery pillar",
+    "first_face": 234,
+    "face_count": 6
+  },
+  {
+    "name": "Column plinth or capital",
+    "first_face": 240,
+    "face_count": 6
+  },
+  {
+    "name": "Column plinth or capital",
+    "first_face": 246,
+    "face_count": 6
+  },
+  {
+    "name": "Balcony rail",
+    "first_face": 252,
+    "face_count": 6
+  },
+  {
+    "name": "Balcony rail",
+    "first_face": 258,
+    "face_count": 6
+  },
+  {
+    "name": "Balcony spindle",
+    "first_face": 264,
+    "face_count": 6
+  },
+  {
+    "name": "Balcony spindle",
+    "first_face": 270,
+    "face_count": 6
+  },
+  {
+    "name": "Balcony spindle",
+    "first_face": 276,
+    "face_count": 6
+  },
+  {
+    "name": "Balcony spindle",
+    "first_face": 282,
+    "face_count": 6
+  },
+  {
+    "name": "Balcony spindle",
+    "first_face": 288,
+    "face_count": 6
+  },
+  {
+    "name": "Balcony spindle",
+    "first_face": 294,
+    "face_count": 6
+  },
+  {
+    "name": "Gallery return rail",
+    "first_face": 300,
+    "face_count": 6
+  },
+  {
+    "name": "Gallery return rail",
+    "first_face": 306,
+    "face_count": 6
+  },
+  {
+    "name": "Return spindle",
+    "first_face": 312,
+    "face_count": 6
+  },
+  {
+    "name": "Return spindle",
+    "first_face": 318,
+    "face_count": 6
+  },
+  {
+    "name": "Return spindle",
+    "first_face": 324,
+    "face_count": 6
+  },
+  {
+    "name": "Gallery return rail",
+    "first_face": 330,
+    "face_count": 6
+  },
+  {
+    "name": "Gallery return rail",
+    "first_face": 336,
+    "face_count": 6
+  },
+  {
+    "name": "Return spindle",
+    "first_face": 342,
+    "face_count": 6
+  },
+  {
+    "name": "Return spindle",
+    "first_face": 348,
+    "face_count": 6
+  },
+  {
+    "name": "Return spindle",
+    "first_face": 354,
+    "face_count": 6
+  },
+  {
+    "name": "Ground porch rail",
+    "first_face": 360,
+    "face_count": 6
+  },
+  {
+    "name": "Ground porch rail",
+    "first_face": 366,
+    "face_count": 6
+  },
+  {
+    "name": "Porch spindle",
+    "first_face": 372,
+    "face_count": 6
+  },
+  {
+    "name": "Porch spindle",
+    "first_face": 378,
+    "face_count": 6
+  },
+  {
+    "name": "Porch spindle",
+    "first_face": 384,
+    "face_count": 6
+  },
+  {
+    "name": "Ground porch rail",
+    "first_face": 390,
+    "face_count": 6
+  },
+  {
+    "name": "Ground porch rail",
+    "first_face": 396,
+    "face_count": 6
+  },
+  {
+    "name": "Porch spindle",
+    "first_face": 402,
+    "face_count": 6
+  },
+  {
+    "name": "Porch spindle",
+    "first_face": 408,
+    "face_count": 6
+  },
+  {
+    "name": "Porch spindle",
+    "first_face": 414,
+    "face_count": 6
+  },
+  {
+    "name": "Grounded entrance step",
+    "first_face": 420,
+    "face_count": 6
+  },
+  {
+    "name": "Red carpet tread",
+    "first_face": 426,
+    "face_count": 6
+  },
+  {
+    "name": "Grounded entrance step",
+    "first_face": 432,
+    "face_count": 6
+  },
+  {
+    "name": "Red carpet tread",
+    "first_face": 438,
+    "face_count": 6
+  },
+  {
+    "name": "Grounded entrance step",
+    "first_face": 444,
+    "face_count": 6
+  },
+  {
+    "name": "Red carpet tread",
+    "first_face": 450,
+    "face_count": 6
+  },
+  {
+    "name": "Deep window recess",
+    "first_face": 456,
+    "face_count": 6
+  },
+  {
+    "name": "Warm amber glass",
+    "first_face": 462,
+    "face_count": 6
+  },
+  {
+    "name": "Cream window jamb",
+    "first_face": 468,
+    "face_count": 6
+  },
+  {
+    "name": "Gathered velvet curtain",
+    "first_face": 474,
+    "face_count": 7
+  },
+  {
+    "name": "Curtain tie",
+    "first_face": 481,
+    "face_count": 6
+  },
+  {
+    "name": "Cream window jamb",
+    "first_face": 487,
+    "face_count": 6
+  },
+  {
+    "name": "Gathered velvet curtain",
+    "first_face": 493,
+    "face_count": 7
+  },
+  {
+    "name": "Curtain tie",
+    "first_face": 500,
+    "face_count": 6
+  },
+  {
+    "name": "Window rail",
+    "first_face": 506,
+    "face_count": 6
+  },
+  {
+    "name": "Window rail",
+    "first_face": 512,
+    "face_count": 6
+  },
+  {
+    "name": "Window mullion",
+    "first_face": 518,
+    "face_count": 6
+  },
+  {
+    "name": "Deep window recess",
+    "first_face": 524,
+    "face_count": 6
+  },
+  {
+    "name": "Warm amber glass",
+    "first_face": 530,
+    "face_count": 6
+  },
+  {
+    "name": "Cream window jamb",
+    "first_face": 536,
+    "face_count": 6
+  },
+  {
+    "name": "Gathered velvet curtain",
+    "first_face": 542,
+    "face_count": 7
+  },
+  {
+    "name": "Curtain tie",
+    "first_face": 549,
+    "face_count": 6
+  },
+  {
+    "name": "Cream window jamb",
+    "first_face": 555,
+    "face_count": 6
+  },
+  {
+    "name": "Gathered velvet curtain",
+    "first_face": 561,
+    "face_count": 7
+  },
+  {
+    "name": "Curtain tie",
+    "first_face": 568,
+    "face_count": 6
+  },
+  {
+    "name": "Window rail",
+    "first_face": 574,
+    "face_count": 6
+  },
+  {
+    "name": "Window rail",
+    "first_face": 580,
+    "face_count": 6
+  },
+  {
+    "name": "Window mullion",
+    "first_face": 586,
+    "face_count": 6
+  },
+  {
+    "name": "Deep window recess",
+    "first_face": 592,
+    "face_count": 6
+  },
+  {
+    "name": "Warm amber glass",
+    "first_face": 598,
+    "face_count": 6
+  },
+  {
+    "name": "Cream window jamb",
+    "first_face": 604,
+    "face_count": 6
+  },
+  {
+    "name": "Gathered velvet curtain",
+    "first_face": 610,
+    "face_count": 7
+  },
+  {
+    "name": "Curtain tie",
+    "first_face": 617,
+    "face_count": 6
+  },
+  {
+    "name": "Cream window jamb",
+    "first_face": 623,
+    "face_count": 6
+  },
+  {
+    "name": "Gathered velvet curtain",
+    "first_face": 629,
+    "face_count": 7
+  },
+  {
+    "name": "Curtain tie",
+    "first_face": 636,
+    "face_count": 6
+  },
+  {
+    "name": "Window rail",
+    "first_face": 642,
+    "face_count": 6
+  },
+  {
+    "name": "Window rail",
+    "first_face": 648,
+    "face_count": 6
+  },
+  {
+    "name": "Window mullion",
+    "first_face": 654,
+    "face_count": 6
+  },
+  {
+    "name": "Deep window recess",
+    "first_face": 660,
+    "face_count": 6
+  },
+  {
+    "name": "Warm amber glass",
+    "first_face": 666,
+    "face_count": 6
+  },
+  {
+    "name": "Cream window jamb",
+    "first_face": 672,
+    "face_count": 6
+  },
+  {
+    "name": "Gathered velvet curtain",
+    "first_face": 678,
+    "face_count": 7
+  },
+  {
+    "name": "Curtain tie",
+    "first_face": 685,
+    "face_count": 6
+  },
+  {
+    "name": "Cream window jamb",
+    "first_face": 691,
+    "face_count": 6
+  },
+  {
+    "name": "Gathered velvet curtain",
+    "first_face": 697,
+    "face_count": 7
+  },
+  {
+    "name": "Curtain tie",
+    "first_face": 704,
+    "face_count": 6
+  },
+  {
+    "name": "Window rail",
+    "first_face": 710,
+    "face_count": 6
+  },
+  {
+    "name": "Window rail",
+    "first_face": 716,
+    "face_count": 6
+  },
+  {
+    "name": "Window mullion",
+    "first_face": 722,
+    "face_count": 6
+  },
+  {
+    "name": "Deep window recess",
+    "first_face": 728,
+    "face_count": 6
+  },
+  {
+    "name": "Warm amber glass",
+    "first_face": 734,
+    "face_count": 6
+  },
+  {
+    "name": "Cream window jamb",
+    "first_face": 740,
+    "face_count": 6
+  },
+  {
+    "name": "Gathered velvet curtain",
+    "first_face": 746,
+    "face_count": 7
+  },
+  {
+    "name": "Curtain tie",
+    "first_face": 753,
+    "face_count": 6
+  },
+  {
+    "name": "Cream window jamb",
+    "first_face": 759,
+    "face_count": 6
+  },
+  {
+    "name": "Gathered velvet curtain",
+    "first_face": 765,
+    "face_count": 7
+  },
+  {
+    "name": "Curtain tie",
+    "first_face": 772,
+    "face_count": 6
+  },
+  {
+    "name": "Window rail",
+    "first_face": 778,
+    "face_count": 6
+  },
+  {
+    "name": "Window rail",
+    "first_face": 784,
+    "face_count": 6
+  },
+  {
+    "name": "Window mullion",
+    "first_face": 790,
+    "face_count": 6
+  },
+  {
+    "name": "Recessed saloon entry",
+    "first_face": 796,
+    "face_count": 6
+  },
+  {
+    "name": "Swinging saloon door",
+    "first_face": 802,
+    "face_count": 7
+  },
+  {
+    "name": "Door panel rail",
+    "first_face": 809,
+    "face_count": 6
+  },
+  {
+    "name": "Door panel rail",
+    "first_face": 815,
+    "face_count": 6
+  },
+  {
+    "name": "Door louvre",
+    "first_face": 821,
+    "face_count": 6
+  },
+  {
+    "name": "Door louvre",
+    "first_face": 827,
+    "face_count": 6
+  },
+  {
+    "name": "Door louvre",
+    "first_face": 833,
+    "face_count": 6
+  },
+  {
+    "name": "Entrance jamb",
+    "first_face": 839,
+    "face_count": 6
+  },
+  {
+    "name": "Gathered velvet curtain",
+    "first_face": 845,
+    "face_count": 7
+  },
+  {
+    "name": "Curtain tie",
+    "first_face": 852,
+    "face_count": 6
+  },
+  {
+    "name": "Swinging saloon door",
+    "first_face": 858,
+    "face_count": 7
+  },
+  {
+    "name": "Door panel rail",
+    "first_face": 865,
+    "face_count": 6
+  },
+  {
+    "name": "Door panel rail",
+    "first_face": 871,
+    "face_count": 6
+  },
+  {
+    "name": "Door louvre",
+    "first_face": 877,
+    "face_count": 6
+  },
+  {
+    "name": "Door louvre",
+    "first_face": 883,
+    "face_count": 6
+  },
+  {
+    "name": "Door louvre",
+    "first_face": 889,
+    "face_count": 6
+  },
+  {
+    "name": "Entrance jamb",
+    "first_face": 895,
+    "face_count": 6
+  },
+  {
+    "name": "Gathered velvet curtain",
+    "first_face": 901,
+    "face_count": 7
+  },
+  {
+    "name": "Curtain tie",
+    "first_face": 908,
+    "face_count": 6
+  },
+  {
+    "name": "Saloon entry lintel",
+    "first_face": 914,
+    "face_count": 6
+  },
+  {
+    "name": "Side window recess",
+    "first_face": 920,
+    "face_count": 6
+  },
+  {
+    "name": "Side amber glass",
+    "first_face": 926,
+    "face_count": 6
+  },
+  {
+    "name": "Side window jamb",
+    "first_face": 932,
+    "face_count": 6
+  },
+  {
+    "name": "Side window jamb",
+    "first_face": 938,
+    "face_count": 6
+  },
+  {
+    "name": "Side window rail",
+    "first_face": 944,
+    "face_count": 6
+  },
+  {
+    "name": "Side window rail",
+    "first_face": 950,
+    "face_count": 6
+  },
+  {
+    "name": "Side velvet curtain",
+    "first_face": 956,
+    "face_count": 6
+  },
+  {
+    "name": "Side velvet curtain",
+    "first_face": 962,
+    "face_count": 6
+  },
+  {
+    "name": "Side window recess",
+    "first_face": 968,
+    "face_count": 6
+  },
+  {
+    "name": "Side amber glass",
+    "first_face": 974,
+    "face_count": 6
+  },
+  {
+    "name": "Side window jamb",
+    "first_face": 980,
+    "face_count": 6
+  },
+  {
+    "name": "Side window jamb",
+    "first_face": 986,
+    "face_count": 6
+  },
+  {
+    "name": "Side window rail",
+    "first_face": 992,
+    "face_count": 6
+  },
+  {
+    "name": "Side window rail",
+    "first_face": 998,
+    "face_count": 6
+  },
+  {
+    "name": "Side velvet curtain",
+    "first_face": 1004,
+    "face_count": 6
+  },
+  {
+    "name": "Side velvet curtain",
+    "first_face": 1010,
+    "face_count": 6
+  },
+  {
+    "name": "Side window recess",
+    "first_face": 1016,
+    "face_count": 6
+  },
+  {
+    "name": "Side amber glass",
+    "first_face": 1022,
+    "face_count": 6
+  },
+  {
+    "name": "Side window jamb",
+    "first_face": 1028,
+    "face_count": 6
+  },
+  {
+    "name": "Side window jamb",
+    "first_face": 1034,
+    "face_count": 6
+  },
+  {
+    "name": "Side window rail",
+    "first_face": 1040,
+    "face_count": 6
+  },
+  {
+    "name": "Side window rail",
+    "first_face": 1046,
+    "face_count": 6
+  },
+  {
+    "name": "Side velvet curtain",
+    "first_face": 1052,
+    "face_count": 6
+  },
+  {
+    "name": "Side velvet curtain",
+    "first_face": 1058,
+    "face_count": 6
+  },
+  {
+    "name": "Side window recess",
+    "first_face": 1064,
+    "face_count": 6
+  },
+  {
+    "name": "Side amber glass",
+    "first_face": 1070,
+    "face_count": 6
+  },
+  {
+    "name": "Side window jamb",
+    "first_face": 1076,
+    "face_count": 6
+  },
+  {
+    "name": "Side window jamb",
+    "first_face": 1082,
+    "face_count": 6
+  },
+  {
+    "name": "Side window rail",
+    "first_face": 1088,
+    "face_count": 6
+  },
+  {
+    "name": "Side window rail",
+    "first_face": 1094,
+    "face_count": 6
+  },
+  {
+    "name": "Side velvet curtain",
+    "first_face": 1100,
+    "face_count": 6
+  },
+  {
+    "name": "Side velvet curtain",
+    "first_face": 1106,
+    "face_count": 6
+  },
+  {
+    "name": "Side window recess",
+    "first_face": 1112,
+    "face_count": 6
+  },
+  {
+    "name": "Side amber glass",
+    "first_face": 1118,
+    "face_count": 6
+  },
+  {
+    "name": "Side window jamb",
+    "first_face": 1124,
+    "face_count": 6
+  },
+  {
+    "name": "Side window jamb",
+    "first_face": 1130,
+    "face_count": 6
+  },
+  {
+    "name": "Side window rail",
+    "first_face": 1136,
+    "face_count": 6
+  },
+  {
+    "name": "Side window rail",
+    "first_face": 1142,
+    "face_count": 6
+  },
+  {
+    "name": "Side velvet curtain",
+    "first_face": 1148,
+    "face_count": 6
+  },
+  {
+    "name": "Side velvet curtain",
+    "first_face": 1154,
+    "face_count": 6
+  },
+  {
+    "name": "Side window recess",
+    "first_face": 1160,
+    "face_count": 6
+  },
+  {
+    "name": "Side amber glass",
+    "first_face": 1166,
+    "face_count": 6
+  },
+  {
+    "name": "Side window jamb",
+    "first_face": 1172,
+    "face_count": 6
+  },
+  {
+    "name": "Side window jamb",
+    "first_face": 1178,
+    "face_count": 6
+  },
+  {
+    "name": "Side window rail",
+    "first_face": 1184,
+    "face_count": 6
+  },
+  {
+    "name": "Side window rail",
+    "first_face": 1190,
+    "face_count": 6
+  },
+  {
+    "name": "Side velvet curtain",
+    "first_face": 1196,
+    "face_count": 6
+  },
+  {
+    "name": "Side velvet curtain",
+    "first_face": 1202,
+    "face_count": 6
+  },
+  {
+    "name": "Side window recess",
+    "first_face": 1208,
+    "face_count": 6
+  },
+  {
+    "name": "Side amber glass",
+    "first_face": 1214,
+    "face_count": 6
+  },
+  {
+    "name": "Side window jamb",
+    "first_face": 1220,
+    "face_count": 6
+  },
+  {
+    "name": "Side window jamb",
+    "first_face": 1226,
+    "face_count": 6
+  },
+  {
+    "name": "Side window rail",
+    "first_face": 1232,
+    "face_count": 6
+  },
+  {
+    "name": "Side window rail",
+    "first_face": 1238,
+    "face_count": 6
+  },
+  {
+    "name": "Side velvet curtain",
+    "first_face": 1244,
+    "face_count": 6
+  },
+  {
+    "name": "Side velvet curtain",
+    "first_face": 1250,
+    "face_count": 6
+  },
+  {
+    "name": "Side window recess",
+    "first_face": 1256,
+    "face_count": 6
+  },
+  {
+    "name": "Side amber glass",
+    "first_face": 1262,
+    "face_count": 6
+  },
+  {
+    "name": "Side window jamb",
+    "first_face": 1268,
+    "face_count": 6
+  },
+  {
+    "name": "Side window jamb",
+    "first_face": 1274,
+    "face_count": 6
+  },
+  {
+    "name": "Side window rail",
+    "first_face": 1280,
+    "face_count": 6
+  },
+  {
+    "name": "Side window rail",
+    "first_face": 1286,
+    "face_count": 6
+  },
+  {
+    "name": "Side velvet curtain",
+    "first_face": 1292,
+    "face_count": 6
+  },
+  {
+    "name": "Side velvet curtain",
+    "first_face": 1298,
+    "face_count": 6
+  },
+  {
+    "name": "Slate shingle roof course 1",
+    "first_face": 1304,
+    "face_count": 10
+  },
+  {
+    "name": "Slate shingle roof course 2",
+    "first_face": 1314,
+    "face_count": 10
+  },
+  {
+    "name": "Slate shingle roof course 3",
+    "first_face": 1324,
+    "face_count": 10
+  },
+  {
+    "name": "Slate shingle roof course 4",
+    "first_face": 1334,
+    "face_count": 10
+  },
+  {
+    "name": "Slate shingle roof course 5",
+    "first_face": 1344,
+    "face_count": 10
+  },
+  {
+    "name": "Slate shingle roof course 1",
+    "first_face": 1354,
+    "face_count": 10
+  },
+  {
+    "name": "Slate shingle roof course 2",
+    "first_face": 1364,
+    "face_count": 10
+  },
+  {
+    "name": "Slate shingle roof course 3",
+    "first_face": 1374,
+    "face_count": 10
+  },
+  {
+    "name": "Slate shingle roof course 4",
+    "first_face": 1384,
+    "face_count": 10
+  },
+  {
+    "name": "Slate shingle roof course 5",
+    "first_face": 1394,
+    "face_count": 10
+  },
+  {
+    "name": "Slate shingle roof gable fascia",
+    "first_face": 1404,
+    "face_count": 18
+  },
+  {
+    "name": "Slate shingle roof gable fascia",
+    "first_face": 1422,
+    "face_count": 18
+  },
+  {
+    "name": "Slate shingle roof gable fascia",
+    "first_face": 1440,
+    "face_count": 18
+  },
+  {
+    "name": "Slate shingle roof gable fascia",
+    "first_face": 1458,
+    "face_count": 18
+  },
+  {
+    "name": "Slate shingle roof eave",
+    "first_face": 1476,
+    "face_count": 10
+  },
+  {
+    "name": "Slate shingle roof eave",
+    "first_face": 1486,
+    "face_count": 10
+  },
+  {
+    "name": "Slate shingle roof ridge",
+    "first_face": 1496,
+    "face_count": 10
+  },
+  {
+    "name": "Closed roof gable",
+    "first_face": 1506,
+    "face_count": 5
+  },
+  {
+    "name": "Closed roof gable",
+    "first_face": 1511,
+    "face_count": 5
+  },
+  {
+    "name": "Brick chimney",
+    "first_face": 1516,
+    "face_count": 6
+  },
+  {
+    "name": "Chimney crown",
+    "first_face": 1522,
+    "face_count": 6
+  },
+  {
+    "name": "Chimney flue",
+    "first_face": 1528,
+    "face_count": 6
+  },
+  {
+    "name": "Gallery roof course",
+    "first_face": 1534,
+    "face_count": 6
+  },
+  {
+    "name": "Gallery roof course",
+    "first_face": 1540,
+    "face_count": 6
+  },
+  {
+    "name": "Gallery roof course",
+    "first_face": 1546,
+    "face_count": 6
+  },
+  {
+    "name": "Gallery fascia",
+    "first_face": 1552,
+    "face_count": 6
+  },
+  {
+    "name": "Crimson entrance canopy",
+    "first_face": 1558,
+    "face_count": 6
+  },
+  {
+    "name": "Painted canopy valance",
+    "first_face": 1564,
+    "face_count": 29
+  },
+  {
+    "name": "Canopy gold piping",
+    "first_face": 1593,
+    "face_count": 6
+  },
+  {
+    "name": "Cabaret false-front wings",
+    "first_face": 1599,
+    "face_count": 6
+  },
+  {
+    "name": "False-front outer pilaster",
+    "first_face": 1605,
+    "face_count": 6
+  },
+  {
+    "name": "Shoulder cornice",
+    "first_face": 1611,
+    "face_count": 6
+  },
+  {
+    "name": "Heart frame",
+    "first_face": 1617,
+    "face_count": 12
+  },
+  {
+    "name": "Heart inset",
+    "first_face": 1629,
+    "face_count": 12
+  },
+  {
+    "name": "False-front outer pilaster",
+    "first_face": 1641,
+    "face_count": 6
+  },
+  {
+    "name": "Shoulder cornice",
+    "first_face": 1647,
+    "face_count": 6
+  },
+  {
+    "name": "Heart frame",
+    "first_face": 1653,
+    "face_count": 12
+  },
+  {
+    "name": "Heart inset",
+    "first_face": 1665,
+    "face_count": 12
+  },
+  {
+    "name": "Arched cabaret sign",
+    "first_face": 1677,
+    "face_count": 13
+  },
+  {
+    "name": "Continuous arched sign frame",
+    "first_face": 1690,
+    "face_count": 34
+  },
+  {
+    "name": "Sign frame upright",
+    "first_face": 1724,
+    "face_count": 6
+  },
+  {
+    "name": "gold turned detail",
+    "first_face": 1730,
+    "face_count": 8
+  },
+  {
+    "name": "Sign frame upright",
+    "first_face": 1738,
+    "face_count": 6
+  },
+  {
+    "name": "gold turned detail",
+    "first_face": 1744,
+    "face_count": 8
+  },
+  {
+    "name": "Sign frame sill",
+    "first_face": 1752,
+    "face_count": 6
+  },
+  {
+    "name": "Side painted saloon sign",
+    "first_face": 1758,
+    "face_count": 6
+  },
+  {
+    "name": "Side sign rail",
+    "first_face": 1764,
+    "face_count": 6
+  },
+  {
+    "name": "Side sign rail",
+    "first_face": 1770,
+    "face_count": 6
+  },
+  {
+    "name": "Red lantern glass",
+    "first_face": 1776,
+    "face_count": 6
+  },
+  {
+    "name": "Lantern frame",
+    "first_face": 1782,
+    "face_count": 6
+  },
+  {
+    "name": "Lantern frame",
+    "first_face": 1788,
+    "face_count": 6
+  },
+  {
+    "name": "Lantern frame",
+    "first_face": 1794,
+    "face_count": 6
+  },
+  {
+    "name": "Lantern frame",
+    "first_face": 1800,
+    "face_count": 6
+  },
+  {
+    "name": "iron turned detail",
+    "first_face": 1806,
+    "face_count": 6
+  },
+  {
+    "name": "iron turned detail",
+    "first_face": 1812,
+    "face_count": 6
+  },
+  {
+    "name": "Lantern bracket",
+    "first_face": 1818,
+    "face_count": 6
+  },
+  {
+    "name": "Red lantern glass",
+    "first_face": 1824,
+    "face_count": 6
+  },
+  {
+    "name": "Lantern frame",
+    "first_face": 1830,
+    "face_count": 6
+  },
+  {
+    "name": "Lantern frame",
+    "first_face": 1836,
+    "face_count": 6
+  },
+  {
+    "name": "Lantern frame",
+    "first_face": 1842,
+    "face_count": 6
+  },
+  {
+    "name": "Lantern frame",
+    "first_face": 1848,
+    "face_count": 6
+  },
+  {
+    "name": "iron turned detail",
+    "first_face": 1854,
+    "face_count": 6
+  },
+  {
+    "name": "iron turned detail",
+    "first_face": 1860,
+    "face_count": 6
+  },
+  {
+    "name": "Lantern bracket",
+    "first_face": 1866,
+    "face_count": 6
+  },
+  {
+    "name": "Red lantern glass",
+    "first_face": 1872,
+    "face_count": 6
+  },
+  {
+    "name": "Lantern frame",
+    "first_face": 1878,
+    "face_count": 6
+  },
+  {
+    "name": "Lantern frame",
+    "first_face": 1884,
+    "face_count": 6
+  },
+  {
+    "name": "Lantern frame",
+    "first_face": 1890,
+    "face_count": 6
+  },
+  {
+    "name": "Lantern frame",
+    "first_face": 1896,
+    "face_count": 6
+  },
+  {
+    "name": "iron turned detail",
+    "first_face": 1902,
+    "face_count": 6
+  },
+  {
+    "name": "iron turned detail",
+    "first_face": 1908,
+    "face_count": 6
+  },
+  {
+    "name": "Lantern bracket",
+    "first_face": 1914,
+    "face_count": 6
+  },
+  {
+    "name": "Red lantern glass",
+    "first_face": 1920,
+    "face_count": 6
+  },
+  {
+    "name": "Lantern frame",
+    "first_face": 1926,
+    "face_count": 6
+  },
+  {
+    "name": "Lantern frame",
+    "first_face": 1932,
+    "face_count": 6
+  },
+  {
+    "name": "Lantern frame",
+    "first_face": 1938,
+    "face_count": 6
+  },
+  {
+    "name": "Lantern frame",
+    "first_face": 1944,
+    "face_count": 6
+  },
+  {
+    "name": "iron turned detail",
+    "first_face": 1950,
+    "face_count": 6
+  },
+  {
+    "name": "iron turned detail",
+    "first_face": 1956,
+    "face_count": 6
+  },
+  {
+    "name": "Lantern bracket",
+    "first_face": 1962,
+    "face_count": 6
+  },
+  {
+    "name": "Red lantern glass",
+    "first_face": 1968,
+    "face_count": 6
+  },
+  {
+    "name": "Lantern frame",
+    "first_face": 1974,
+    "face_count": 6
+  },
+  {
+    "name": "Lantern frame",
+    "first_face": 1980,
+    "face_count": 6
+  },
+  {
+    "name": "Lantern frame",
+    "first_face": 1986,
+    "face_count": 6
+  },
+  {
+    "name": "Lantern frame",
+    "first_face": 1992,
+    "face_count": 6
+  },
+  {
+    "name": "iron turned detail",
+    "first_face": 1998,
+    "face_count": 6
+  },
+  {
+    "name": "iron turned detail",
+    "first_face": 2004,
+    "face_count": 6
+  },
+  {
+    "name": "Lantern bracket",
+    "first_face": 2010,
+    "face_count": 6
+  },
+  {
+    "name": "Red lantern glass",
+    "first_face": 2016,
+    "face_count": 6
+  },
+  {
+    "name": "Lantern frame",
+    "first_face": 2022,
+    "face_count": 6
+  },
+  {
+    "name": "Lantern frame",
+    "first_face": 2028,
+    "face_count": 6
+  },
+  {
+    "name": "Lantern frame",
+    "first_face": 2034,
+    "face_count": 6
+  },
+  {
+    "name": "Lantern frame",
+    "first_face": 2040,
+    "face_count": 6
+  },
+  {
+    "name": "iron turned detail",
+    "first_face": 2046,
+    "face_count": 6
+  },
+  {
+    "name": "iron turned detail",
+    "first_face": 2052,
+    "face_count": 6
+  },
+  {
+    "name": "Lantern bracket",
+    "first_face": 2058,
+    "face_count": 6
+  },
+  {
+    "name": "door turned detail",
+    "first_face": 2064,
+    "face_count": 8
+  },
+  {
+    "name": "iron turned detail",
+    "first_face": 2072,
+    "face_count": 8
+  },
+  {
+    "name": "iron turned detail",
+    "first_face": 2080,
+    "face_count": 8
+  },
+  {
+    "name": "door turned detail",
+    "first_face": 2088,
+    "face_count": 8
+  },
+  {
+    "name": "iron turned detail",
+    "first_face": 2096,
+    "face_count": 8
+  },
+  {
+    "name": "iron turned detail",
+    "first_face": 2104,
+    "face_count": 8
   }
 ]

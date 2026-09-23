@@ -15,6 +15,7 @@ for name in names:
         paths.extend(folder/f for f in files)
 kit_names=['README.md','asset_helpers.py','audit_asset.py','audit_compression.py','audit_mips.py','build_asset.py','designs.py','contact_sheets.ps1','overview.ps1','inventory.mjs','source-inventory.json','imported-cottage-bounds.json','package_runtime.py','prepare_pipeline.py','ratings.json','render_asset.py','run_delivery.py','verify_delivery.py','write_catalog.py','write_reports.py','write_manifest.py','delivery-summary.json','core-buildings.png','coastal-overview.png','historical-additions.png']
 paths.extend(KIT/name for name in kit_names)
+paths.extend(KIT/name for name in ['crimson_cabaret.py','prepare_cabaret_paint.ps1','cabaret-paint/front.png','cabaret-paint/side.png','cabaret-paint/awning.png'])
 assert len(set(paths))==len(paths)
 entries={}
 for path in sorted(paths):

@@ -1,4 +1,4 @@
-"""Build an original Viking-inspired longhouse; no imported mesh or stock textures."""
+"""Build Terrace assets using the original longhouse authoring and atlas pipeline."""
 import bpy
 import numpy as np
 import pathlib
@@ -17,6 +17,7 @@ sys.path.insert(0, str(KIT))
 import asset_helpers
 if LOW_DETAIL:
     asset_helpers.ATLAS_SIZE = 1024
+    if BUILDING=='durands': asset_helpers.ISLAND_GAP = 9
 from asset_helpers import ATLAS_SIZE, ISLAND_GAP, pack_rectangles, project_polygon, write_png
 
 MODEL_SCALE = 0.1
@@ -141,7 +142,7 @@ def roof(halfwidth, ya, yb, ridge, eave, rows, segments, sweepheight, label):
 bpy.ops.wm.read_factory_settings(use_empty=True)
 from designs import build, NEW
 provenance, placement = build(BUILDING, LOW_DETAIL, globals())
-if LOW_DETAIL and (SOURCE_ROOT/'verification.json').exists():
+if LOW_DETAIL and BUILDING!='durands' and (SOURCE_ROOT/'verification.json').exists():
     bounds=json.loads((SOURCE_ROOT/'verification.json').read_text())['bounds_gltf_y_up']
     lo,hi=bounds['min'],bounds['max']
     targetlo=np.array([lo[0],-hi[2],lo[1]])/MODEL_SCALE
@@ -155,7 +156,7 @@ obj=bpy.data.objects.new(BUILDING,mesh); bpy.context.collection.objects.link(obj
 bpy.context.view_layer.objects.active=obj; obj.select_set(True)
 # Recalculate solid-piece winding before UV projection.
 import bmesh
-bm=bmesh.new(); bm.from_mesh(mesh); bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces)) if BUILDING in NEW+['temple','timber-house'] else bm.normal_update(); bm.to_mesh(mesh); bm.free(); mesh.update()
+bm=bmesh.new(); bm.from_mesh(mesh); bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces)) if BUILDING in NEW+['temple','timber-house','durands'] else bm.normal_update(); bm.to_mesh(mesh); bm.free(); mesh.update()
 # Tags remain aligned because no face topology operation changes face order.
 charts=[]
 for face,tag in zip(mesh.polygons,tags):
@@ -178,6 +179,9 @@ for i,ch in enumerate(charts):
 
 # All textures are newly authored procedural paint, in the concept's restrained palette.
 def surface(pos,ch):
+    if 'custom_surface' in globals():
+        result=custom_surface(pos,ch)
+        if result is not None: return result
     kind=ch['kind']; color=np.array(PALETTE[kind]); x,y,z=pos.T
     seed=(ch['face']%17)*.39
     local=np.column_stack((pos@ch['t'],pos@ch['v']))-ch['lo']
@@ -310,7 +314,9 @@ editable_polygon_count=len(mesh.polygons)
 bm=bmesh.new(); bm.from_mesh(mesh); bmesh.ops.triangulate(bm,faces=list(bm.faces)); bmesh.ops.delete(bm,geom=[f for f in bm.faces if f.calc_area()<1e-9],context='FACES')
 bm.to_mesh(mesh); bm.free(); mesh.update()
 if BUILDING=='durands': bpy.ops.wm.save_as_mainfile(filepath=str(ROOT/(BUILDING+'.blend')))
-bpy.ops.export_scene.gltf(filepath=str(ROOT/(BUILDING+'.glb')),export_format='GLB',use_selection=False,export_apply=False,export_texcoords=True,export_normals=True,export_tangents=True,export_materials='EXPORT',export_image_format='AUTO',export_draco_mesh_compression_enable=False,export_cameras=False,export_lights=False)
+export_path=ROOT/('.export-'+BUILDING+'.glb')
+bpy.ops.export_scene.gltf(filepath=str(export_path),export_format='GLB',use_selection=False,export_apply=False,export_texcoords=True,export_normals=True,export_tangents=True,export_materials='EXPORT',export_image_format='AUTO',export_draco_mesh_compression_enable=False,export_cameras=False,export_lights=False)
+export_path.replace(ROOT/(BUILDING+'.glb'))
 report=dict(profile='low' if LOW_DETAIL else 'original',meshes=1,materials=1,vertices=len(mesh.vertices),triangles=len(mesh.loop_triangles),polygons=editable_polygon_count,parts=len(parts),islands=len(charts),texture_size=[ATLAS_SIZE,ATLAS_SIZE],gap_pixels=ISLAND_GAP,density_pixels_per_game_unit=density/MODEL_SCALE,dimensions=list(obj.dimensions),origin=list(obj.location),palette=PALETTE,geometry_source=provenance,texture_source='Original procedural texture paint',image_generator='Built-in image generator; exact backend model unverified')
 report['placement']=placement
 (ROOT/'build-report.json').write_text(json.dumps(report,indent=2))

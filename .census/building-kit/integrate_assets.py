@@ -72,7 +72,9 @@ for name in NAMES:
         plugin = 'temples' if name == 'temple' else 'structures'
         dest = ROOT/'plugins'/plugin/'client'/'assets'/'authored'/quality/(name+'.glb')
         dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, dest)
+        pending = dest.with_name('.copy-'+dest.name)
+        shutil.copyfile(source, pending)
+        pending.replace(dest)
         assert source.read_bytes() == dest.read_bytes()
         reports.append({'building': name, 'quality': quality, 'source': str(source.relative_to(ROOT)),
                         'runtime': str(dest.relative_to(ROOT)), 'bytes': dest.stat().st_size,

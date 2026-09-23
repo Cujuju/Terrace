@@ -1,10 +1,10 @@
 {
-  "glb_sha256": "174acb7e3b2809d80b9cbe32a6e82a694f6f7fb458b2a9f759cf5fb057f975f7",
+  "glb_sha256": "f8b434026072b983812504175fab935241c9a8207aef4b1e088aa193466794ef",
   "mesh_count": 1,
   "primitive_count": 1,
   "material_count": 1,
-  "triangles": 7016,
-  "exported_vertices": 15358,
+  "triangles": 6224,
+  "exported_vertices": 12082,
   "nodes": [
     {
       "mesh": 0,
@@ -19,24 +19,24 @@
   ],
   "dimensions_gltf_y_up": [
     0.8240382075309753,
-    2.0600955486297607,
+    1.2699999809265137,
     0.8500947952270508
   ],
-  "uv_islands": 4039,
+  "uv_islands": 2814,
   "uv_min_max": [
     0.0029296875,
-    0.997024655342102
+    0.9970248937606812
   ],
   "uv_overlap_pairs": [],
-  "uv_candidate_pairs_checked": 3089,
-  "minimum_island_bounds_gap_pixels": 12.000244140625,
+  "uv_candidate_pairs_checked": 3490,
+  "minimum_island_bounds_gap_pixels": 12.0072021484375,
   "texel_density_min_max": [
-    457.48355229871277,
-    457.54819152673343
+    326.26489224008265,
+    326.30632833792646
   ],
   "zero_area_triangles": 0,
-  "normal_length_error_max": 1.149772477226918e-07,
-  "tangent_normal_dot_max": 0.00010770561802209144,
+  "normal_length_error_max": 1.0526154503587293e-07,
+  "tangent_normal_dot_max": 7.07995848819587e-05,
   "compression_extensions": [],
   "textures": {
     "durands-normal": {
@@ -65,19 +65,19 @@
     }
   },
   "roughness_range": [
-    0.7803922295570374,
+    0.7490196228027344,
     0.9803922176361084
   ],
   "metalness_range": [
     0.0,
     0.0
   ],
-  "normal_map_length_error_max": 0.005169391632080078,
+  "normal_map_length_error_max": 0.005597710609436035,
   "blend": {
     "mesh_count": 1,
     "material_count": 1,
-    "vertices": 3956,
-    "triangles": 7016,
+    "vertices": 3848,
+    "triangles": 6224,
     "uv_layers": [
       "UVMap"
     ],
@@ -95,7 +95,7 @@
     ],
     "max": [
       0.41201910376548767,
-      2.0600955486297607,
+      1.2699999809265137,
       0.4250473976135254
     ]
   },

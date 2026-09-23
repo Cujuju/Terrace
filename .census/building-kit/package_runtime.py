@@ -14,7 +14,9 @@ def write_glb(path,doc,blob):
     doc['buffers']=[{'byteLength':len(blob)}]
     js=json.dumps(doc,separators=(',',':')).encode(); js+=b' '*((-len(js))%4)
     blob+=b'\0'*((-len(blob))%4)
-    path.write_bytes(struct.pack('<III',0x46546c67,2,28+len(js)+len(blob))+struct.pack('<II',len(js),0x4e4f534a)+js+struct.pack('<II',len(blob),0x004e4942)+blob)
+    pending=path.with_name('.package-'+path.name)
+    pending.write_bytes(struct.pack('<III',0x46546c67,2,28+len(js)+len(blob))+struct.pack('<II',len(js),0x4e4f534a)+js+struct.pack('<II',len(blob),0x004e4942)+blob)
+    pending.replace(path)
 
 report={'assumptions':{'png_gpu_format':'RGBA8 with complete mip chain','compressed_gpu_format':'BC7 or ASTC 4x4, 16 bytes per 4x4 block, complete mip chain','excluded':'CPU decoded images, loader buffers, driver allocation overhead, shaders, framebuffer and instance buffers','sharing':'Terrace draws repeated structures with InstancedMesh; mesh and textures are shared, not duplicated per house.'},'variants':{}}
 for label,folder in [('original',ROOT),('low',ROOT/'low')]:
@@ -26,8 +28,10 @@ for label,folder in [('original',ROOT),('low',ROOT/'low')]:
         cmd=[TOKTX,'--t2','--encode','uastc','--uastc_quality','2','--zcmp','9','--genmipmap','--assign_oetf','srgb' if srgb else 'linear','--assign_primaries','bt709' if srgb else 'none','--upper_left_maps_to_s0t0','--threads','4']
         if 'normal' in name: cmd+=['--normalize']
         print('ENCODE',label,name,flush=True)
-        subprocess.run(cmd+[str(ktx),str(png)],check=True)
-        subprocess.run([KTX,'validate','--gltf-basisu','--warnings-as-errors',str(ktx)],check=True)
+        pending_ktx=ktx.with_name('.encode-'+ktx.name)
+        subprocess.run(cmd+[str(pending_ktx),str(png)],check=True)
+        subprocess.run([KTX,'validate','--gltf-basisu','--warnings-as-errors',str(pending_ktx)],check=True)
+        pending_ktx.replace(ktx)
         raw=ktx.read_bytes(); width,height=struct.unpack_from('<II',raw,20); levels=struct.unpack_from('<I',raw,40)[0]
         if levels!=int(math.log2(max(width,height)))+1: raise RuntimeError('Incomplete mip chain')
         replacements[im['bufferView']]=raw

@@ -814,8 +814,8 @@
         }
       },
       "geometry_and_hierarchy_unchanged": true,
-      "texel_density_relative_spread": 0.0001412930097615117,
-      "glb_sha256": "174acb7e3b2809d80b9cbe32a6e82a694f6f7fb458b2a9f759cf5fb057f975f7"
+      "texel_density_relative_spread": 0.00012700139925980736,
+      "glb_sha256": "f8b434026072b983812504175fab935241c9a8207aef4b1e088aa193466794ef"
     },
     "low": {
       "passed": true,
@@ -875,8 +875,8 @@
         }
       },
       "geometry_and_hierarchy_unchanged": true,
-      "texel_density_relative_spread": 0.00011246347536886248,
-      "glb_sha256": "802683900c418e8f8dba2efa1afa94d3357ba440b3950803adbfe6cdd22fe12d"
+      "texel_density_relative_spread": 5.284490902157657e-05,
+      "glb_sha256": "0ade32ecc59aff9626ccbfb21f5f069c8f0af468afc3fb4a7996233d11315a61"
     },
     "lod_bounds_delta": 0.0,
     "passed": true

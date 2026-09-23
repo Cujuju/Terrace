@@ -7,7 +7,8 @@ names=sys.argv[1:] or [n for n in json.loads((KIT/'ratings.json').read_text()) i
 def glb(path):
     raw=path.read_bytes();n=struct.unpack_from('<I',raw,12)[0]
     return json.loads(raw[20:20+n]),raw[28+n:]
-allreports={}
+summary=KIT/'delivery-summary.json'
+allreports=json.loads(summary.read_text()) if sys.argv[1:] and summary.exists() else {}
 for name in names:
     root=KIT.parent/name;reports={}
     for label,folder,size in [('original',root,2048),('low',root/'low',1024)]:

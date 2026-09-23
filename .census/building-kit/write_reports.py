@@ -23,7 +23,7 @@ Each variant: editable packed {name}.blend; {name}.glb with embedded PNGs;
 {name}-ktx2.glb with embedded UASTC KTX2s; separate basecolor, normal and
 metallicRoughness PNG and KTX2 maps. Exactly one mesh, primitive and material.
 Hierarchy: RootNode > {name}. Identity object transforms; geometry in world units.
-No Draco or meshopt. No production integration or LOD switching implemented.
+No Draco or meshopt. Runtime KTX2 variants are integrated via the Buildings quality HUD.
 
 Provenance
 {build['geometry_source']}
@@ -55,7 +55,8 @@ Measured geometry, UVs and memory
 {chr(10).join(table)}
 UVs wholly inside 0-1; exported triangles tested for positive-area intersections.
 No overlapping islands, collapsed UV triangles or zero-area mesh triangles.
-Atlases independently packed at each delivered resolution with a 12 px target gap.
+Atlases independently packed at each delivered resolution. Target gap: original
+{build['gap_pixels']} px; low {json.loads((root/'low'/'build-report.json').read_text())['gap_pixels']} px.
 Per-face planar projection at uniform density; no stacked/mirrored UV islands.
 
 Texture and runtime verification
@@ -96,7 +97,8 @@ Individual build/audit/render scripts: Blender --background --factory-startup
 Blender: E:\\Program Files\\Blender Foundation\\Blender 5.2\\blender.exe
 KTX tools: e:\\Scoop\\shims\\toktx.exe and e:\\Scoop\\shims\\ktx.exe.
 Source scripts live together in {KIT}; retain that sibling folder.
-No game process is required. Nothing under plugins is overwritten.
+No game process is required. Build scripts write the census package only; run
+integrate_assets.py separately to verify and refresh production KTX2 copies.
 """
     (root/'README.txt').write_text(summary,encoding='utf8')
     (root/'alignment-verification.json').write_text(json.dumps({'max_bounds_delta_world_units':delta,'passed':True},indent=2))

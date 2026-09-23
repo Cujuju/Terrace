@@ -7,6 +7,8 @@ original_only='--original-only' in sys.argv
 low_only='--low-only' in sys.argv
 ids=[arg for arg in sys.argv[1:] if arg not in ('--original-only','--low-only')]
 for name in ids:
+    if name=='durands':
+        subprocess.run(['powershell','-NoProfile','-File',str(KIT/'prepare_cabaret_paint.ps1')],check=True)
     root=KIT.parent/name;root.mkdir(exist_ok=True)
     started=time.time()
     for low in ((False,) if original_only else (True,) if low_only else (False,True)):

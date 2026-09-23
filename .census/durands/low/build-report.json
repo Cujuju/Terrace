@@ -2,21 +2,21 @@
   "profile": "low",
   "meshes": 1,
   "materials": 1,
-  "vertices": 2581,
-  "triangles": 4266,
-  "polygons": 3641,
-  "parts": 2,
-  "islands": 3641,
+  "vertices": 2828,
+  "triangles": 4388,
+  "polygons": 2112,
+  "parts": 317,
+  "islands": 2112,
   "texture_size": [
     1024,
     1024
   ],
-  "gap_pixels": 12,
-  "density_pixels_per_game_unit": 122.38342064535576,
+  "gap_pixels": 9,
+  "density_pixels_per_game_unit": 140.50470872213913,
   "dimensions": [
     0.8240382075309753,
     0.8500947952270508,
-    2.0600955486297607
+    1.2699999809265137
   ],
   "origin": [
     0.0,
@@ -25,34 +25,34 @@
   ],
   "palette": {
     "timber": [
-      0.3,
-      0.245,
-      0.19
+      0.73,
+      0.64,
+      0.48
     ],
     "wall": [
-      0.52,
-      0.455,
-      0.35
+      0.39,
+      0.13,
+      0.14
     ],
     "gable": [
-      0.46,
-      0.385,
-      0.285
+      0.39,
+      0.13,
+      0.14
     ],
     "roof": [
-      0.55,
-      0.335,
-      0.22
+      0.235,
+      0.245,
+      0.25
     ],
     "door": [
-      0.385,
-      0.28,
-      0.185
+      0.34,
+      0.255,
+      0.175
     ],
     "stone": [
-      0.43,
-      0.445,
-      0.42
+      0.39,
+      0.375,
+      0.34
     ],
     "cutstone": [
       0.51,
@@ -61,13 +61,13 @@
     ],
     "iron": [
       0.16,
-      0.175,
-      0.17
+      0.14,
+      0.13
     ],
     "dark": [
-      0.085,
-      0.07,
-      0.05
+      0.1,
+      0.065,
+      0.055
     ],
     "carving": [
       0.32,
@@ -95,9 +95,9 @@
       0.24
     ],
     "canvas": [
-      0.65,
-      0.58,
-      0.44
+      0.48,
+      0.075,
+      0.105
     ],
     "fish": [
       0.5,
@@ -113,32 +113,39 @@
       0.32,
       0.37,
       0.37
+    ],
+    "velvet": [
+      0.39,
+      0.035,
+      0.065
+    ],
+    "gold": [
+      0.72,
+      0.55,
+      0.29
+    ],
+    "glass": [
+      0.78,
+      0.43,
+      0.2
+    ],
+    "lanternglass": [
+      0.84,
+      0.18,
+      0.09
+    ],
+    "sign": [
+      0.3607843137254902,
+      0.09411764705882353,
+      0.12549019607843137
     ]
   },
-  "geometry_source": "Improved original first-party Terrace procedural model from plugins/structures/client/models.ts (original procedural base); not third-party geometry. New UVs and all texture maps authored in Blender pipeline.",
+  "geometry_source": "New original Blender geometry and procedural paint after owner-selected concept D (Crimson Cabaret). No old mesh, old textures or concept pixels reused.",
   "texture_source": "Original procedural texture paint",
   "image_generator": "Built-in image generator; exact backend model unverified",
   "placement": {
     "front_gltf": "+Z",
-    "origin": "Original placement origin retained; ground contact corrected to zero",
-    "original_bounds": {
-      "min": [
-        -0.4120191326595521,
-        -5.3387508858193655e-09,
-        -0.42504740563535454
-      ],
-      "max": [
-        0.4120191326595521,
-        2.0600956536212744,
-        0.42504740088507964
-      ],
-      "dimensions": [
-        0.8240382653191042,
-        2.0600956589600252,
-        0.8500948065204341
-      ]
-    },
-    "deliberate_difference": "Original silhouette and horizontal extents preserved. Broad edges chamfered in original; low uses coplanar simplification. Sub-ground source slivers corrected to Y=0.",
-    "low_alignment": "Low vertices fitted to original bounds before UV packing; shared origin and envelope."
+    "origin": "Inherited Durand's footprint center at ground",
+    "deliberate_difference": "Original Crimson Cabaret replaces the giant freestanding dancer sign with an arched false-front cabaret emblem. X/Z footprint retained at 0.824038 x 0.850095; new roof/sign height about 1.27 rather than 2.060096 world units. No extra scene lights; amber glass and lantern colours are painted."
   }
 }

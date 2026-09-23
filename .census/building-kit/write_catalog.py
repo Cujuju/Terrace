@@ -28,7 +28,7 @@ Screenshots are Blender studio renders of the actual exported PNG GLBs, not gene
 
 The unfinished inventory was the temple; camp, hut, timber house, stone cottage, watchtower and Durand's; and all ten fishing-hut variants. The timber-house production GLB was the third-party CreativeTrio cottage; the earlier timber experiment changed its textures only. It has been replaced with newly authored timber-frame geometry. Existing first-party procedural models were used as bases and improved under the owner's exception. The temple retains its original stepped design and placement, with rebuilt geometry.
 
-The five additions are prehistoric-granary (Iron Age-inspired), roman-granary, medieval-dovecote, renaissance-workshop (early modern) and industrial-pump-house. They have newly authored geometry and no existing gameplay envelope. Each is fitted inside a 0.86-unit footprint and awaits owner integration.
+The five additions are prehistoric-granary (Iron Age-inspired), roman-granary, medieval-dovecote, renaissance-workshop (early modern) and industrial-pump-house. They have newly authored geometry, each fitted inside a 0.86-unit footprint. The owner subsequently selected an eleven-stage historical game progression; all buildings now have integrated KTX2 original/low variants and a live Buildings quality HUD.
 
 Original first-party geometry was captured from {CENSUS.parent / 'plugins/temples/client/temple.ts'}, {CENSUS.parent / 'plugins/structures/client/models.ts'} and {CENSUS.parent / 'plugins/structures/client/fishingHuts.ts'}. {link('Frozen source inventory',KIT/'source-inventory.json')} makes the build independent of later edits to those constructors. The production cottage contributes only its measured bounds. No third-party mesh or texture is reused. All new maps are authored procedural paint; concept pixels are not used as texture maps.
 
@@ -36,7 +36,7 @@ Concept images were generated with the built-in image generator and saved with e
 
 ## Measured assets
 
-Dimensions are glTF X/Y/Z world units, including ancillary props. Original and low have a common placement origin and aligned bounds. Each README records entrance orientation, ground corrections and deliberate differences. Smoke-pit-hut removes the old static smoke bubbles and preserves the building envelope instead; Durand's retains one static sign pose. Scene lighting and runtime sign animation integration remain the owner's work.
+Dimensions are glTF X/Y/Z world units, including ancillary props. Original and low have a common placement origin and aligned bounds. Each README records entrance orientation, ground corrections and deliberate differences. Smoke-pit-hut removes the old static smoke bubbles and preserves the building envelope instead. Durand's is now the owner-selected Crimson Cabaret: newly authored geometry and paint, replacing the old giant dancer with an arched cabaret sign, crimson facade and covered galleries. The six alternative concepts and earlier reference remain archived. Amber windows and red lanterns are painted; the building adds no scene lights.
 
 | Building | Triangles original / low | Dimensions X × Y × Z | Screenshots |
 |---|---:|---|---|
@@ -48,7 +48,7 @@ Reference longhouse: 4,260 / 3,016 triangles, unchanged. These counts are compar
 
 Each building folder contains an editable packed .blend; a GLB with three embedded PNGs; the three standalone PNGs; a separate runtime GLB with embedded UASTC KTX2s; the three standalone KTX2s; concept and prompt; build, UV, placement, compression, mip and memory reports; screenshots; and a rebuild wrapper. The low subfolder contains its independent 1024 atlas, geometry and exports.
 
-All 44 variants passed the delivered audits: exactly one mesh, one primitive and one material; all images packed in the blend; three embedded images matching the standalone files; UVs within 0–1 with no positive-area island overlap; at least 12 pixels between island bounds at the delivered resolution; uniform measured texel density within each atlas; valid tangents; no zero-area exported triangles. Original/low bounds differ by less than 0.0002 world units.
+All 44 variants passed the delivered audits: exactly one mesh, one primitive and one material; all images packed in the blend; three embedded images matching the standalone files; UVs within 0–1 with no positive-area island overlap; at least the required 8 pixels between island bounds at the delivered resolution (12-pixel target, except the repacked Crimson Cabaret low atlas at 9); uniform measured texel density within each atlas; valid tangents; no zero-area exported triangles. Original/low bounds differ by less than 0.0002 world units.
 
 Base colour is sRGB. Normal is linear tangent-space OpenGL/glTF, green +Y, with XYZ retained. MetallicRoughness is linear, G roughness and B metalness, with B exactly zero in PNGs and decoded UASTC at every mip level. Every KTX2 uses UASTC and has a complete chain: 12 levels at 2048, 11 at 1024. No incompatible channel swizzle. KTX-Software glTF-basisu validation passed. Runtime GLBs require KHR_texture_basisu, and preserve geometry accessor bytes, mesh definitions and hierarchy exactly. No Draco or meshopt is present.
 

@@ -5,6 +5,9 @@ KIT=Path(__file__).parent
 NEW=['prehistoric-granary','roman-granary','medieval-dovecote','renaissance-workshop','industrial-pump-house']
 
 def build(name,low,g):
+    if name=='durands':
+        from crimson_cabaret import build as build_cabaret
+        return build_cabaret(low,g)
     box,beam,solid,roof=g['box'],g['beam'],g['solid'],g['roof']
     def cylinder(center,radius,height,kind='stone',top=None,sides=None):
         n=sides or (8 if low else 12); top=radius if top is None else top

@@ -10,7 +10,7 @@ Screenshots are Blender studio renders of the actual exported PNG GLBs, not gene
 
 The unfinished inventory was the temple; camp, hut, timber house, stone cottage, watchtower and Durand's; and all ten fishing-hut variants. The timber-house production GLB was the third-party CreativeTrio cottage; the earlier timber experiment changed its textures only. It has been replaced with newly authored timber-frame geometry. Existing first-party procedural models were used as bases and improved under the owner's exception. The temple retains its original stepped design and placement, with rebuilt geometry.
 
-The five additions are prehistoric-granary (Iron Age-inspired), roman-granary, medieval-dovecote, renaissance-workshop (early modern) and industrial-pump-house. They have newly authored geometry and no existing gameplay envelope. Each is fitted inside a 0.86-unit footprint and awaits owner integration.
+The five additions are prehistoric-granary (Iron Age-inspired), roman-granary, medieval-dovecote, renaissance-workshop (early modern) and industrial-pump-house. They have newly authored geometry, each fitted inside a 0.86-unit footprint. The owner subsequently selected an eleven-stage historical game progression; all buildings now have integrated KTX2 original/low variants and a live Buildings quality HUD.
 
 Original first-party geometry was captured from E:\Development\Projects\Terrace\plugins\temples\client\temple.ts, E:\Development\Projects\Terrace\plugins\structures\client\models.ts and E:\Development\Projects\Terrace\plugins\structures\client\fishingHuts.ts. [Frozen source inventory](E:/Development/Projects/Terrace/.census/building-kit/source-inventory.json) makes the build independent of later edits to those constructors. The production cottage contributes only its measured bounds. No third-party mesh or texture is reused. All new maps are authored procedural paint; concept pixels are not used as texture maps.
 
@@ -18,7 +18,7 @@ Concept images were generated with the built-in image generator and saved with e
 
 ## Measured assets
 
-Dimensions are glTF X/Y/Z world units, including ancillary props. Original and low have a common placement origin and aligned bounds. Each README records entrance orientation, ground corrections and deliberate differences. Smoke-pit-hut removes the old static smoke bubbles and preserves the building envelope instead; Durand's retains one static sign pose. Scene lighting and runtime sign animation integration remain the owner's work.
+Dimensions are glTF X/Y/Z world units, including ancillary props. Original and low have a common placement origin and aligned bounds. Each README records entrance orientation, ground corrections and deliberate differences. Smoke-pit-hut removes the old static smoke bubbles and preserves the building envelope instead. Durand's is now the owner-selected Crimson Cabaret: newly authored geometry and paint, replacing the old giant dancer with an arched cabaret sign, crimson facade and covered galleries. The six alternative concepts and earlier reference remain archived. Amber windows and red lanterns are painted; the building adds no scene lights.
 
 | Building | Triangles original / low | Dimensions X × Y × Z | Screenshots |
 |---|---:|---|---|
@@ -28,7 +28,7 @@ Dimensions are glTF X/Y/Z world units, including ancillary props. Original and l
 | [timber-house](E:/Development/Projects/Terrace/.census/timber-house/README.txt) | 1,632 / 1,040 | 0.585 × 0.539 × 0.909 | [original / low](E:/Development/Projects/Terrace/.census/timber-house/comparison.png) |
 | [stone-cottage](E:/Development/Projects/Terrace/.census/stone-cottage/README.txt) | 3,688 / 1,572 | 0.740 × 0.960 × 0.530 | [original / low](E:/Development/Projects/Terrace/.census/stone-cottage/comparison.png) |
 | [watchtower](E:/Development/Projects/Terrace/.census/watchtower/README.txt) | 3,096 / 1,174 | 0.660 × 2.000 × 0.678 | [original / low](E:/Development/Projects/Terrace/.census/watchtower/comparison.png) |
-| [durands](E:/Development/Projects/Terrace/.census/durands/README.txt) | 7,016 / 4,266 | 0.824 × 2.060 × 0.850 | [original / low](E:/Development/Projects/Terrace/.census/durands/comparison.png) |
+| [durands](E:/Development/Projects/Terrace/.census/durands/README.txt) | 6,224 / 4,388 | 0.824 × 1.270 × 0.850 | [original / low](E:/Development/Projects/Terrace/.census/durands/comparison.png) |
 | [reed-cone](E:/Development/Projects/Terrace/.census/reed-cone/README.txt) | 1,368 / 728 | 0.625 × 0.750 × 0.707 | [original / low](E:/Development/Projects/Terrace/.census/reed-cone/comparison.png) |
 | [lashed-a-frame](E:/Development/Projects/Terrace/.census/lashed-a-frame/README.txt) | 1,036 / 580 | 0.625 × 0.717 × 0.683 | [original / low](E:/Development/Projects/Terrace/.census/lashed-a-frame/comparison.png) |
 | [stilted-hut](E:/Development/Projects/Terrace/.census/stilted-hut/README.txt) | 1,088 / 642 | 0.476 × 0.715 × 0.631 | [original / low](E:/Development/Projects/Terrace/.census/stilted-hut/comparison.png) |
@@ -51,7 +51,7 @@ Reference longhouse: 4,260 / 3,016 triangles, unchanged. These counts are compar
 
 Each building folder contains an editable packed .blend; a GLB with three embedded PNGs; the three standalone PNGs; a separate runtime GLB with embedded UASTC KTX2s; the three standalone KTX2s; concept and prompt; build, UV, placement, compression, mip and memory reports; screenshots; and a rebuild wrapper. The low subfolder contains its independent 1024 atlas, geometry and exports.
 
-All 44 variants passed the delivered audits: exactly one mesh, one primitive and one material; all images packed in the blend; three embedded images matching the standalone files; UVs within 0–1 with no positive-area island overlap; at least 12 pixels between island bounds at the delivered resolution; uniform measured texel density within each atlas; valid tangents; no zero-area exported triangles. Original/low bounds differ by less than 0.0002 world units.
+All 44 variants passed the delivered audits: exactly one mesh, one primitive and one material; all images packed in the blend; three embedded images matching the standalone files; UVs within 0–1 with no positive-area island overlap; at least the required 8 pixels between island bounds at the delivered resolution (12-pixel target, except the repacked Crimson Cabaret low atlas at 9); uniform measured texel density within each atlas; valid tangents; no zero-area exported triangles. Original/low bounds differ by less than 0.0002 world units.
 
 Base colour is sRGB. Normal is linear tangent-space OpenGL/glTF, green +Y, with XYZ retained. MetallicRoughness is linear, G roughness and B metalness, with B exactly zero in PNGs and decoded UASTC at every mip level. Every KTX2 uses UASTC and has a complete chain: 12 levels at 2048, 11 at 1024. No incompatible channel swizzle. KTX-Software glTF-basisu validation passed. Runtime GLBs require KHR_texture_basisu, and preserve geometry accessor bytes, mesh definitions and hierarchy exactly. No Draco or meshopt is present.
 
@@ -61,7 +61,7 @@ Base colour is sRGB. Normal is linear tangent-space OpenGL/glTF, green +Y, with 
 
 Assumption: PNG textures occupy RGBA8 GPU storage with complete mip chains: approximately 64 MiB for the three original maps and 16 MiB for low. Assumption: KTX2 transcodes to BC7 or ASTC 4×4, 16 bytes per block: approximately 16 MiB original and 4 MiB low. Add the vertex/index allocation recorded per variant in its memory-report.json. File sizes are not GPU allocation sizes; UASTC downloads can exceed PNG size.
 
-Repeated structures share mesh and texture allocations. Loading both variants adds their allocations. All 22 packages with both variants resident total 1766.26 MiB under the PNG assumption or 446.26 MiB under the BC7/ASTC assumption, including exported geometry. These are calculations, not live GPU measurements, and exclude CPU copies, loader buffers, driver overhead, instance data, shaders and framebuffers. An uncompressed runtime fallback can cost PNG-level texture memory.
+Repeated structures share mesh and texture allocations. Loading both variants adds their allocations. All 22 packages with both variants resident total 1765.97 MiB under the PNG assumption or 445.97 MiB under the BC7/ASTC assumption, including exported geometry. These are calculations, not live GPU measurements, and exclude CPU copies, loader buffers, driver overhead, instance data, shaders and framebuffers. An uncompressed runtime fallback can cost PNG-level texture memory.
 
 ## Historical plausibility ratings
 
@@ -76,7 +76,7 @@ Assumption: “rate based on historical period” means an editorial plausibilit
 | longhouse | Viking Age-inspired hall, c. 800-1100 CE | 3/5 | Completed reference retained. Carved gables are stylistic; tiled appearance, shutters and chimney-free proportions are not site-specific reconstruction. |
 | stone-cottage | Medieval to early modern stone cottage | 4/5 | Masonry walls, dressed corners, pitched tile roof and chimney are legible; exact region and date unspecified. |
 | watchtower | High/late medieval watchtower | 3/5 | Masonry shaft, arrow slits and corbelled parapet are plausible; very tall narrow proportions and roof are stylized. |
-| durands | Late nineteenth-century Western saloon / fantasy sign | 2/5 | False front and porch fit the broad type; giant rooftop performer sign is a retained Terrace fantasy feature, now static and unlit. |
+| durands | Late nineteenth-century Western cabaret / saloon interpretation | 3/5 | Owner-selected Crimson Cabaret. False front, covered galleries, velvet curtains and painted cabaret emblem are coherent theatrical cues; compressed footprint and large sign are stylized, not a reconstruction. |
 | reed-cone | Preindustrial coastal vernacular; undated | 3/5 | Reed roof, daub and fish processing are plausible; no specific culture or archaeological site is claimed. |
 | lashed-a-frame | Preindustrial temporary fishing shelter; undated | 3/5 | Lashed poles and steep reed cover are plausible; stylized closed entry and simplified lashings. |
 | stilted-hut | Preindustrial waterside vernacular; undated | 3/5 | Raised platform, access ramp and pile braces fit the function; no regional attribution. |

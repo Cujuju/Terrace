@@ -5,10 +5,10 @@ Each variant: editable packed durands.blend; durands.glb with embedded PNGs;
 durands-ktx2.glb with embedded UASTC KTX2s; separate basecolor, normal and
 metallicRoughness PNG and KTX2 maps. Exactly one mesh, primitive and material.
 Hierarchy: RootNode > durands. Identity object transforms; geometry in world units.
-No Draco or meshopt. No production integration or LOD switching implemented.
+No Draco or meshopt. Runtime KTX2 variants are integrated via the Buildings quality HUD.
 
 Provenance
-Improved original first-party Terrace procedural model from plugins/structures/client/models.ts (original procedural base); not third-party geometry. New UVs and all texture maps authored in Blender pipeline.
+New original Blender geometry and procedural paint after owner-selected concept D (Crimson Cabaret). No old mesh, old textures or concept pixels reused.
 Textures are original procedural paint, not generated concept pixels or old maps.
 Concept: durands-concept.png, built-in image generator. Exact prompt: concept-prompt.txt.
 Exact backend image-model version cannot be selected or verified; no version claim.
@@ -17,7 +17,7 @@ The immutable source-inventory.json records first-party procedural base geometry
 The third-party cottage supplies bounds only, never mesh or texture data.
 
 Historical plausibility (editorial judgment, not an authenticity certification)
-2/5 — Late nineteenth-century Western saloon / fantasy sign. False front and porch fit the broad type; giant rooftop performer sign is a retained Terrace fantasy feature, now static and unlit.
+3/5 — Late nineteenth-century Western cabaret / saloon interpretation. Owner-selected Crimson Cabaret. False front, covered galleries, velvet curtains and painted cabaret emblem are coherent theatrical cues; compressed footprint and large sign are stylized, not a reconstruction.
 Rubric: 1 fantasy, 2 hybrid/anachronistic, 3 plausible type with substantial stylization,
 4 coherent period cues, 5 documented reconstruction. None claims reconstruction.
 Broad eras are independent of Terrace tier progression; cultures are not ranked.
@@ -25,22 +25,23 @@ Research and full inventory: E:\Development\Projects\Terrace\.census\building-ki
 
 Placement and LOD alignment
 glTF Y up; entrance +Z.
-Origin: Original placement origin retained; ground contact corrected to zero.
-Original glTF dimensions X/Y/Z: [0.8240382075309753, 2.0600955486297607, 0.8500947952270508]
-Bounds: {'min': [-0.41201910376548767, 0.0, -0.4250473976135254], 'max': [0.41201910376548767, 2.0600955486297607, 0.4250473976135254]}
-Deliberate differences: Original silhouette and horizontal extents preserved. Broad edges chamfered in original; low uses coplanar simplification. Sub-ground source slivers corrected to Y=0.
+Origin: Inherited Durand's footprint center at ground.
+Original glTF dimensions X/Y/Z: [0.8240382075309753, 1.2699999809265137, 0.8500947952270508]
+Bounds: {'min': [-0.41201910376548767, 0.0, -0.4250473976135254], 'max': [0.41201910376548767, 1.2699999809265137, 0.4250473976135254]}
+Deliberate differences: Original Crimson Cabaret replaces the giant freestanding dancer sign with an arched false-front cabaret emblem. X/Z footprint retained at 0.824038 x 0.850095; new roof/sign height about 1.27 rather than 2.060096 world units. No extra scene lights; amber glass and lantern colours are painted.
 Maximum original/low bounds difference: 0.000000000 world units.
 Low preserves the important silhouette; excludes broad-edge chamfers and reduces
 roof segments, curved profiles or small sign detail where applicable.
 
 Measured geometry, UVs and memory
-original: 7,016 triangles, 15,358 exported vertices; 4,039 UV islands; minimum island bounds gap 12.000 px; density 457.484-457.548 px/world unit.
-  GPU mesh 0.743 MiB; PNG total 64.743 MiB; KTX2 BC7/ASTC total 16.743 MiB.
-low: 4,266 triangles, 11,615 exported vertices; 3,641 UV islands; minimum island bounds gap 12.000 px; density 122.375-122.389 px/world unit.
-  GPU mesh 0.556 MiB; PNG total 16.556 MiB; KTX2 BC7/ASTC total 4.556 MiB.
+original: 6,224 triangles, 12,082 exported vertices; 2,814 UV islands; minimum island bounds gap 12.007 px; density 326.265-326.306 px/world unit.
+  GPU mesh 0.589 MiB; PNG total 64.589 MiB; KTX2 BC7/ASTC total 16.589 MiB.
+low: 4,388 triangles, 8,698 exported vertices; 2,112 UV islands; minimum island bounds gap 9.000 px; density 140.502-140.509 px/world unit.
+  GPU mesh 0.423 MiB; PNG total 16.423 MiB; KTX2 BC7/ASTC total 4.423 MiB.
 UVs wholly inside 0-1; exported triangles tested for positive-area intersections.
 No overlapping islands, collapsed UV triangles or zero-area mesh triangles.
-Atlases independently packed at each delivered resolution with a 12 px target gap.
+Atlases independently packed at each delivered resolution. Target gap: original
+12 px; low 9 px.
 Per-face planar projection at uniform density; no stacked/mirrored UV islands.
 
 Texture and runtime verification
@@ -63,8 +64,8 @@ Actual GPU format depends on device support; uncompressed fallback may cost PNG-
 Calculated totals include exported vertex/index bytes, not live GPU measurements.
 Exclude driver allocation, CPU loader/image copies, shaders, scene objects and framebuffers.
 Repeated instances share mesh and textures. Loading both variants adds both totals:
-PNG 81.299 MiB;
-KTX2 21.299 MiB.
+PNG 81.012 MiB;
+KTX2 21.012 MiB.
 
 Screenshots
 durands-45deg.png and durands-closeup.png render the exported PNG GLB in Blender.
@@ -81,4 +82,5 @@ Individual build/audit/render scripts: Blender --background --factory-startup
 Blender: E:\Program Files\Blender Foundation\Blender 5.2\blender.exe
 KTX tools: e:\Scoop\shims\toktx.exe and e:\Scoop\shims\ktx.exe.
 Source scripts live together in E:\Development\Projects\Terrace\.census\building-kit; retain that sibling folder.
-No game process is required. Nothing under plugins is overwritten.
+No game process is required. Build scripts write the census package only; run
+integrate_assets.py separately to verify and refresh production KTX2 copies.
