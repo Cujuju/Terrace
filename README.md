@@ -213,6 +213,7 @@ What ships in `plugins/`:
 
 | | |
 |---|---|
+| `apache` | a helicopter approaches a settlement, makes a low pass, and climbs away |
 | `boats` | a coastal settlement's fleet, which fights the kraken |
 | `chronicle` | the world's history, written from other plugins' events |
 | `daynight` | a slow server-authoritative day/night clock and sky |

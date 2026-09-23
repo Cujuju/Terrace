@@ -47,7 +47,8 @@ aft lower corner sits above the rear pane's forward lower corner. Glazing is
 plain, without painted occupants or reflected scenery.
 The canopy shoulder bevel is reduced to keep the roof border close to the panes.
 
-This is a reusable model asset, not a spawning or combat plugin.
+The `apache` visitor plugin uses the low-resolution asset for settlement fly-bys.
+Both files also remain reusable model assets.
 
 Both resolutions are preserved as standalone GLBs with embedded KTX2 textures:
 

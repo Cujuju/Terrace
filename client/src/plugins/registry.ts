@@ -1,3 +1,4 @@
+import { clientPlugin as apache } from '../../../plugins/apache/client/index.ts';
 import { clientPlugin as boats } from '../../../plugins/boats/client/index.ts';
 import { clientPlugin as chronicle } from '../../../plugins/chronicle/client/index.ts';
 import { clientPlugin as cyclone } from '../../../plugins/cyclone/client/index.ts';
@@ -47,6 +48,7 @@ export const CLIENT_PLUGINS: readonly TerraceClientPlugin[] = [
   mudslides,
   volcanoes,
   saucers,
+  apache,
   chronicle,
   music,
 ];
