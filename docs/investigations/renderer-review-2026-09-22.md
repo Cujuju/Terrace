@@ -24,6 +24,13 @@ No flora or entity-grounding code was changed by the filter-removal work.
 - Generation/revision/disposal rejection and publication after geometry upload
   are necessary. Removing those checks would admit stale render/query state.
 
+Resolution (#504, 2026-09-22): charts stay published through rebuilds; queries
+read live terrain, no snapshot (owner decision). Revision rejection now drops
+only answers older than the displayed geometry. Duplicate `cellRevealed` and
+per-sample adapter lookup removed. Traversal cost measured, left as is. The
+tiny-hole failure had a separate cause, smoothed pick ownership; see
+`docs/decisions/band-smoothing.md`.
+
 ## Flora grounding
 
 - `plugins/flora/client/index.ts` retries all pending ground placements after

@@ -7,6 +7,7 @@ Dated decision records, one file per arc, split from `docs/DESIGN.md` on 2026-09
   - Decisions made 2026-08-19 (build-identity watermark, and two knobs closed)
 - [band-smoothing](band-smoothing.md)
   - Decisions made 2026-09-21 (derived-field preference, feature preservation, protected prototype)
+  - Decisions made 2026-09-22 (plain binomial filter; picking and rebuild publication, #504)
 - [camera](camera.md)
   - Decisions made 2026-08-19 (touch-dolly guard — the two-finger camera reset)
 - [cartographer](cartographer.md)

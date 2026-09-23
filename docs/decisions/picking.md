@@ -22,6 +22,8 @@ Facts about how the client answers "which cell, face and band is under the curso
 - The hit point always lies on the pointer ray, so the crosshair tracks the cursor. A pick re-homed to a neighbouring column names that cell and its surface, never its band: an aim meeting a tall neighbour's smoothed skirt grabs the band under the crosshair, not that column's cap (owner decision 2026-09-18).
 - A held carve keeps cutting from the cell the ray strikes, not one it flies over.
 - A cell outside received chunks is not pickable.
+- A chunk is pickable from its first published chart. A rebuild keeps the previous chart published until the replacement is spliced (2026-09-22).
+- Smoothed surface (`binomial`): the stored column under the hit owns the pick — the span covering the drawn band, else the drawn span beneath it. Neighbour search runs only when neither exists. A hit above the owner's cap carries `ownerHitY`; `resolvePick` validates that instead of `hitY` and clamps the band to the owner's cap (2026-09-22).
 
 ## Layered columns
 
@@ -30,4 +32,6 @@ Facts about how the client answers "which cell, face and band is under the curso
 
 ## Known residual
 
+- During a rebuild, treads and ground queries read live terrain while walls come from the published chart. Measured window per edit: 1–6 frames (2026-09-22, private stack, GPU and CPU meshers).
+- Smoothed picks scan every band a cell's ray segment spans and neighbouring wall segments, so their cost grows with band count. Measured per pick: 0.01–0.24 ms median, ≤ 0.35 ms p95 (raw: 0.01–0.19 ms, ≤ 0.32 ms p95).
 - One mesh per 16×16 chunk with no LOD: a fully revealed 512² world is about 1024 terrain draw calls when zoomed out. Frustum culling applies; nothing else does.

@@ -1,0 +1,1509 @@
+[
+  {
+    "mesherRequested": "gpu",
+    "mode": "raw",
+    "mesher": "gpu",
+    "size": 512,
+    "pitSite": {
+      "tx": 392,
+      "ty": 120,
+      "base": 43,
+      "plateau": 63,
+      "basinRing": [
+        43,
+        43,
+        43,
+        43
+      ]
+    },
+    "strokeSite": {
+      "tx": 280,
+      "ty": 296,
+      "base": 43,
+      "plateau": 63,
+      "basinRing": [
+        43,
+        43,
+        43,
+        43
+      ]
+    },
+    "denial": null,
+    "pitAfterDig": [
+      41,
+      41,
+      41,
+      41
+    ],
+    "rimAfterDig": [
+      43,
+      43,
+      43,
+      43
+    ],
+    "pickTotal": 96,
+    "pickNull": 0,
+    "pickInPit": 39,
+    "anchorInPit": 39,
+    "pickSamples": [
+      {
+        "el": 55,
+        "az": 0,
+        "cell": [
+          392,
+          120
+        ],
+        "pick": [
+          392,
+          135
+        ],
+        "face": "tread",
+        "band": 63,
+        "anchorInPit": false
+      },
+      {
+        "el": 55,
+        "az": 135,
+        "cell": [
+          392,
+          120
+        ],
+        "pick": [
+          403,
+          109
+        ],
+        "face": "tread",
+        "band": 63,
+        "anchorInPit": false
+      },
+      {
+        "el": 55,
+        "az": 270,
+        "cell": [
+          392,
+          120
+        ],
+        "pick": [
+          377,
+          120
+        ],
+        "face": "tread",
+        "band": 63,
+        "anchorInPit": false
+      },
+      {
+        "el": 70,
+        "az": 45,
+        "cell": [
+          392,
+          120
+        ],
+        "pick": [
+          397,
+          126
+        ],
+        "face": "riser",
+        "band": 63,
+        "anchorInPit": false
+      },
+      {
+        "el": 70,
+        "az": 180,
+        "cell": [
+          392,
+          120
+        ],
+        "pick": [
+          392,
+          112
+        ],
+        "face": "tread",
+        "band": 63,
+        "anchorInPit": false
+      },
+      {
+        "el": 70,
+        "az": 315,
+        "cell": [
+          392,
+          120
+        ],
+        "pick": [
+          386,
+          125
+        ],
+        "face": "riser",
+        "band": 63,
+        "anchorInPit": false
+      },
+      {
+        "el": 85,
+        "az": 90,
+        "cell": [
+          392,
+          120
+        ],
+        "pick": [
+          392,
+          120
+        ],
+        "face": "tread",
+        "band": 41,
+        "anchorInPit": true
+      },
+      {
+        "el": 85,
+        "az": 225,
+        "cell": [
+          392,
+          120
+        ],
+        "pick": [
+          392,
+          120
+        ],
+        "face": "tread",
+        "band": 41,
+        "anchorInPit": true
+      }
+    ],
+    "stampClicks": [
+      {
+        "press": 1,
+        "pick": [
+          393,
+          120
+        ],
+        "anchor": [
+          393,
+          120
+        ],
+        "pit": [
+          42,
+          42,
+          42,
+          42
+        ],
+        "rim": 43,
+        "outside": 43
+      },
+      {
+        "press": 2,
+        "pick": [
+          393,
+          121
+        ],
+        "anchor": [
+          393,
+          121
+        ],
+        "pit": [
+          43,
+          43,
+          43,
+          43
+        ],
+        "rim": 43,
+        "outside": 43
+      },
+      {
+        "press": 3,
+        "pick": [
+          393,
+          121
+        ],
+        "anchor": [
+          393,
+          121
+        ],
+        "pit": [
+          44,
+          44,
+          44,
+          44
+        ],
+        "rim": 44,
+        "outside": 43
+      }
+    ],
+    "busyRuns": [
+      4,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3
+    ],
+    "stroke": {
+      "presses": 12,
+      "frames": 323,
+      "busyFrames": 37,
+      "nullPickFrames": 0,
+      "offTargetChunkFrames": 0,
+      "anchorsMissing": 0,
+      "anchorsFar": 0,
+      "repicks": 1,
+      "maxAnchorDist": 1,
+      "pickMsMedian": 0.09999999962747097,
+      "pickMsP95": 0.10000000149011612,
+      "anchors": [
+        {
+          "press": 0,
+          "anchor": [
+            280,
+            296
+          ],
+          "repicked": true,
+          "dist": 0
+        },
+        {
+          "press": 1,
+          "anchor": [
+            280,
+            296
+          ],
+          "repicked": false,
+          "dist": 0
+        },
+        {
+          "press": 2,
+          "anchor": [
+            280,
+            296
+          ],
+          "repicked": false,
+          "dist": 0
+        },
+        {
+          "press": 3,
+          "anchor": [
+            280,
+            296
+          ],
+          "repicked": false,
+          "dist": 0
+        },
+        {
+          "press": 4,
+          "anchor": [
+            280,
+            296
+          ],
+          "repicked": false,
+          "dist": 0
+        },
+        {
+          "press": 5,
+          "anchor": [
+            280,
+            296
+          ],
+          "repicked": false,
+          "dist": 0
+        },
+        {
+          "press": 6,
+          "anchor": [
+            280,
+            297
+          ],
+          "repicked": false,
+          "dist": 1
+        },
+        {
+          "press": 7,
+          "anchor": [
+            280,
+            297
+          ],
+          "repicked": false,
+          "dist": 1
+        },
+        {
+          "press": 8,
+          "anchor": [
+            280,
+            297
+          ],
+          "repicked": false,
+          "dist": 1
+        },
+        {
+          "press": 9,
+          "anchor": [
+            280,
+            297
+          ],
+          "repicked": false,
+          "dist": 1
+        },
+        {
+          "press": 10,
+          "anchor": [
+            280,
+            297
+          ],
+          "repicked": false,
+          "dist": 1
+        },
+        {
+          "press": 11,
+          "anchor": [
+            280,
+            297
+          ],
+          "repicked": false,
+          "dist": 1
+        }
+      ]
+    },
+    "logErrors": [
+      "LOG error Failed to load resource: the server responded with a status of 404 (Not Found)",
+      "LOG error Failed to load resource: net::ERR_CONNECTION_REFUSED",
+      "LOG error Failed to load resource: net::ERR_CONNECTION_REFUSED",
+      "LOG error Failed to load resource: net::ERR_CONNECTION_REFUSED",
+      "LOG error Failed to load resource: net::ERR_CONNECTION_REFUSED",
+      "LOG error Failed to load resource: net::ERR_CONNECTION_REFUSED",
+      "LOG error Failed to load resource: net::ERR_CONNECTION_REFUSED",
+      "CONSOLE error [terrace] client plugin \"wildlife\" exceeded its frame budget: 1.20 ms against a budget of 1.00 ms; skipping the next 2 frames",
+      "CONSOLE error [terrace] client plugin \"mudslides\" exceeded its frame budget: 1.30 ms against a budget of 1.00 ms; skipping the next 2 frames"
+    ]
+  },
+  {
+    "mesherRequested": "gpu",
+    "mode": "binomial",
+    "mesher": "gpu",
+    "size": 512,
+    "pitSite": {
+      "tx": 392,
+      "ty": 120,
+      "base": 43,
+      "plateau": 63,
+      "basinRing": [
+        43,
+        43,
+        43,
+        43
+      ]
+    },
+    "strokeSite": {
+      "tx": 280,
+      "ty": 296,
+      "base": 43,
+      "plateau": 63,
+      "basinRing": [
+        43,
+        43,
+        43,
+        43
+      ]
+    },
+    "denial": null,
+    "pitAfterDig": [
+      41,
+      41,
+      41,
+      41
+    ],
+    "rimAfterDig": [
+      43,
+      43,
+      43,
+      43
+    ],
+    "pickTotal": 96,
+    "pickNull": 0,
+    "pickInPit": 56,
+    "anchorInPit": 56,
+    "pickSamples": [
+      {
+        "el": 55,
+        "az": 0,
+        "cell": [
+          392,
+          120
+        ],
+        "pick": [
+          392,
+          135
+        ],
+        "face": "tread",
+        "band": 63,
+        "anchorInPit": false
+      },
+      {
+        "el": 55,
+        "az": 135,
+        "cell": [
+          392,
+          120
+        ],
+        "pick": [
+          403,
+          109
+        ],
+        "face": "tread",
+        "band": 63,
+        "anchorInPit": false
+      },
+      {
+        "el": 55,
+        "az": 270,
+        "cell": [
+          392,
+          120
+        ],
+        "pick": [
+          377,
+          120
+        ],
+        "face": "tread",
+        "band": 63,
+        "anchorInPit": false
+      },
+      {
+        "el": 70,
+        "az": 45,
+        "cell": [
+          392,
+          120
+        ],
+        "pick": [
+          392,
+          120
+        ],
+        "face": "tread",
+        "band": 42,
+        "anchorInPit": true
+      },
+      {
+        "el": 70,
+        "az": 180,
+        "cell": [
+          392,
+          120
+        ],
+        "pick": [
+          392,
+          120
+        ],
+        "face": "tread",
+        "band": 42,
+        "anchorInPit": true
+      },
+      {
+        "el": 70,
+        "az": 315,
+        "cell": [
+          392,
+          120
+        ],
+        "pick": [
+          392,
+          120
+        ],
+        "face": "tread",
+        "band": 42,
+        "anchorInPit": true
+      },
+      {
+        "el": 85,
+        "az": 90,
+        "cell": [
+          392,
+          120
+        ],
+        "pick": [
+          392,
+          120
+        ],
+        "face": "tread",
+        "band": 42,
+        "anchorInPit": true
+      },
+      {
+        "el": 85,
+        "az": 225,
+        "cell": [
+          392,
+          120
+        ],
+        "pick": [
+          392,
+          120
+        ],
+        "face": "tread",
+        "band": 42,
+        "anchorInPit": true
+      }
+    ],
+    "stampClicks": [
+      {
+        "press": 1,
+        "pick": [
+          393,
+          121
+        ],
+        "anchor": [
+          393,
+          121
+        ],
+        "pit": [
+          42,
+          42,
+          42,
+          42
+        ],
+        "rim": 43,
+        "outside": 43
+      },
+      {
+        "press": 2,
+        "pick": [
+          393,
+          121
+        ],
+        "anchor": [
+          393,
+          121
+        ],
+        "pit": [
+          43,
+          43,
+          43,
+          43
+        ],
+        "rim": 43,
+        "outside": 43
+      },
+      {
+        "press": 3,
+        "pick": [
+          393,
+          121
+        ],
+        "anchor": [
+          393,
+          121
+        ],
+        "pit": [
+          44,
+          44,
+          44,
+          44
+        ],
+        "rim": 44,
+        "outside": 43
+      }
+    ],
+    "busyRuns": [
+      5,
+      5,
+      5,
+      6,
+      5,
+      5,
+      5,
+      5,
+      3,
+      6,
+      5,
+      5
+    ],
+    "stroke": {
+      "presses": 12,
+      "frames": 202,
+      "busyFrames": 60,
+      "nullPickFrames": 0,
+      "offTargetChunkFrames": 0,
+      "anchorsMissing": 0,
+      "anchorsFar": 0,
+      "repicks": 2,
+      "maxAnchorDist": 1,
+      "pickMsMedian": 0.40000000037252903,
+      "pickMsP95": 0.6000000014901161,
+      "anchors": [
+        {
+          "press": 0,
+          "anchor": [
+            280,
+            296
+          ],
+          "repicked": true,
+          "dist": 0
+        },
+        {
+          "press": 1,
+          "anchor": [
+            280,
+            296
+          ],
+          "repicked": false,
+          "dist": 0
+        },
+        {
+          "press": 2,
+          "anchor": [
+            280,
+            296
+          ],
+          "repicked": false,
+          "dist": 0
+        },
+        {
+          "press": 3,
+          "anchor": [
+            280,
+            296
+          ],
+          "repicked": false,
+          "dist": 0
+        },
+        {
+          "press": 4,
+          "anchor": [
+            280,
+            296
+          ],
+          "repicked": false,
+          "dist": 0
+        },
+        {
+          "press": 5,
+          "anchor": [
+            280,
+            296
+          ],
+          "repicked": false,
+          "dist": 0
+        },
+        {
+          "press": 6,
+          "anchor": [
+            280,
+            297
+          ],
+          "repicked": true,
+          "dist": 1
+        },
+        {
+          "press": 7,
+          "anchor": [
+            280,
+            297
+          ],
+          "repicked": false,
+          "dist": 1
+        },
+        {
+          "press": 8,
+          "anchor": [
+            280,
+            297
+          ],
+          "repicked": false,
+          "dist": 1
+        },
+        {
+          "press": 9,
+          "anchor": [
+            280,
+            297
+          ],
+          "repicked": false,
+          "dist": 1
+        },
+        {
+          "press": 10,
+          "anchor": [
+            280,
+            297
+          ],
+          "repicked": false,
+          "dist": 1
+        },
+        {
+          "press": 11,
+          "anchor": [
+            280,
+            297
+          ],
+          "repicked": false,
+          "dist": 1
+        }
+      ]
+    },
+    "logErrors": [
+      "LOG error Failed to load resource: net::ERR_CONNECTION_REFUSED",
+      "LOG error Failed to load resource: net::ERR_CONNECTION_REFUSED",
+      "CONSOLE error [terrace] client plugin \"boats\" exceeded its frame budget: 1.10 ms against a budget of 1.00 ms; skipping the next 2 frames",
+      "CONSOLE error [terrace] client plugin \"monsters\" exceeded its frame budget: 1.10 ms against a budget of 1.00 ms; skipping the next 2 frames",
+      "CONSOLE error [terrace] client plugin \"wildlife\" exceeded its frame budget: 1.30 ms against a budget of 1.00 ms; skipping the next 2 frames",
+      "CONSOLE error [terrace] client plugin \"mudslides\" exceeded its frame budget: 1.50 ms against a budget of 1.00 ms; skipping the next 2 frames",
+      "CONSOLE error [terrace] client plugin \"daynight\" exceeded its frame budget: 2.00 ms against a budget of 1.00 ms; skipping the next 2 frames",
+      "CONSOLE error [terrace] client plugin \"relics\" exceeded its frame budget: 1.20 ms against a budget of 1.00 ms; skipping the next 2 frames",
+      "CONSOLE error [terrace] client plugin \"tornado\" exceeded its frame budget: 4.50 ms against a budget of 1.00 ms; skipping the next 2 frames",
+      "CONSOLE error [terrace] client plugin \"pilgrims\" exceeded its frame budget: 1.10 ms against a budget of 1.00 ms; skipping the next 2 frames"
+    ]
+  },
+  {
+    "mesherRequested": "cpu",
+    "mode": "raw",
+    "mesher": "cpu",
+    "size": 512,
+    "pitSite": {
+      "tx": 392,
+      "ty": 120,
+      "base": 43,
+      "plateau": 63,
+      "basinRing": [
+        43,
+        43,
+        43,
+        43
+      ]
+    },
+    "strokeSite": {
+      "tx": 280,
+      "ty": 296,
+      "base": 43,
+      "plateau": 63,
+      "basinRing": [
+        43,
+        43,
+        43,
+        43
+      ]
+    },
+    "denial": null,
+    "pitAfterDig": [
+      41,
+      41,
+      41,
+      41
+    ],
+    "rimAfterDig": [
+      43,
+      43,
+      43,
+      43
+    ],
+    "pickTotal": 96,
+    "pickNull": 0,
+    "pickInPit": 39,
+    "anchorInPit": 39,
+    "pickSamples": [
+      {
+        "el": 55,
+        "az": 0,
+        "cell": [
+          392,
+          120
+        ],
+        "pick": [
+          392,
+          135
+        ],
+        "face": "tread",
+        "band": 63,
+        "anchorInPit": false
+      },
+      {
+        "el": 55,
+        "az": 135,
+        "cell": [
+          392,
+          120
+        ],
+        "pick": [
+          403,
+          109
+        ],
+        "face": "tread",
+        "band": 63,
+        "anchorInPit": false
+      },
+      {
+        "el": 55,
+        "az": 270,
+        "cell": [
+          392,
+          120
+        ],
+        "pick": [
+          377,
+          120
+        ],
+        "face": "tread",
+        "band": 63,
+        "anchorInPit": false
+      },
+      {
+        "el": 70,
+        "az": 45,
+        "cell": [
+          392,
+          120
+        ],
+        "pick": [
+          397,
+          126
+        ],
+        "face": "riser",
+        "band": 63,
+        "anchorInPit": false
+      },
+      {
+        "el": 70,
+        "az": 180,
+        "cell": [
+          392,
+          120
+        ],
+        "pick": [
+          392,
+          112
+        ],
+        "face": "tread",
+        "band": 63,
+        "anchorInPit": false
+      },
+      {
+        "el": 70,
+        "az": 315,
+        "cell": [
+          392,
+          120
+        ],
+        "pick": [
+          386,
+          125
+        ],
+        "face": "riser",
+        "band": 63,
+        "anchorInPit": false
+      },
+      {
+        "el": 85,
+        "az": 90,
+        "cell": [
+          392,
+          120
+        ],
+        "pick": [
+          392,
+          120
+        ],
+        "face": "tread",
+        "band": 41,
+        "anchorInPit": true
+      },
+      {
+        "el": 85,
+        "az": 225,
+        "cell": [
+          392,
+          120
+        ],
+        "pick": [
+          392,
+          120
+        ],
+        "face": "tread",
+        "band": 41,
+        "anchorInPit": true
+      }
+    ],
+    "stampClicks": [
+      {
+        "press": 1,
+        "pick": [
+          393,
+          120
+        ],
+        "anchor": [
+          393,
+          120
+        ],
+        "pit": [
+          42,
+          42,
+          42,
+          42
+        ],
+        "rim": 43,
+        "outside": 43
+      },
+      {
+        "press": 2,
+        "pick": [
+          393,
+          121
+        ],
+        "anchor": [
+          393,
+          121
+        ],
+        "pit": [
+          43,
+          43,
+          43,
+          43
+        ],
+        "rim": 43,
+        "outside": 43
+      },
+      {
+        "press": 3,
+        "pick": [
+          393,
+          121
+        ],
+        "anchor": [
+          393,
+          121
+        ],
+        "pit": [
+          44,
+          44,
+          44,
+          44
+        ],
+        "rim": 44,
+        "outside": 43
+      }
+    ],
+    "busyRuns": [
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      2,
+      1,
+      1,
+      2,
+      1
+    ],
+    "stroke": {
+      "presses": 12,
+      "frames": 322,
+      "busyFrames": 14,
+      "nullPickFrames": 0,
+      "offTargetChunkFrames": 0,
+      "anchorsMissing": 0,
+      "anchorsFar": 0,
+      "repicks": 1,
+      "maxAnchorDist": 1,
+      "pickMsMedian": 0.09999999962747097,
+      "pickMsP95": 0.19999999925494194,
+      "anchors": [
+        {
+          "press": 0,
+          "anchor": [
+            280,
+            296
+          ],
+          "repicked": true,
+          "dist": 0
+        },
+        {
+          "press": 1,
+          "anchor": [
+            280,
+            296
+          ],
+          "repicked": false,
+          "dist": 0
+        },
+        {
+          "press": 2,
+          "anchor": [
+            280,
+            296
+          ],
+          "repicked": false,
+          "dist": 0
+        },
+        {
+          "press": 3,
+          "anchor": [
+            280,
+            296
+          ],
+          "repicked": false,
+          "dist": 0
+        },
+        {
+          "press": 4,
+          "anchor": [
+            280,
+            296
+          ],
+          "repicked": false,
+          "dist": 0
+        },
+        {
+          "press": 5,
+          "anchor": [
+            280,
+            296
+          ],
+          "repicked": false,
+          "dist": 0
+        },
+        {
+          "press": 6,
+          "anchor": [
+            280,
+            297
+          ],
+          "repicked": false,
+          "dist": 1
+        },
+        {
+          "press": 7,
+          "anchor": [
+            280,
+            297
+          ],
+          "repicked": false,
+          "dist": 1
+        },
+        {
+          "press": 8,
+          "anchor": [
+            280,
+            297
+          ],
+          "repicked": false,
+          "dist": 1
+        },
+        {
+          "press": 9,
+          "anchor": [
+            280,
+            297
+          ],
+          "repicked": false,
+          "dist": 1
+        },
+        {
+          "press": 10,
+          "anchor": [
+            280,
+            297
+          ],
+          "repicked": false,
+          "dist": 1
+        },
+        {
+          "press": 11,
+          "anchor": [
+            280,
+            297
+          ],
+          "repicked": false,
+          "dist": 1
+        }
+      ]
+    },
+    "logErrors": [
+      "LOG error Failed to load resource: net::ERR_CONNECTION_REFUSED",
+      "LOG error Failed to load resource: net::ERR_CONNECTION_REFUSED",
+      "LOG error Failed to load resource: net::ERR_CONNECTION_REFUSED",
+      "LOG error Failed to load resource: net::ERR_CONNECTION_REFUSED",
+      "LOG error Failed to load resource: net::ERR_CONNECTION_REFUSED",
+      "LOG error Failed to load resource: net::ERR_CONNECTION_REFUSED",
+      "LOG error Failed to load resource: net::ERR_CONNECTION_REFUSED",
+      "LOG error Failed to load resource: net::ERR_CONNECTION_REFUSED",
+      "CONSOLE error [terrace] client plugin \"boats\" exceeded its frame budget: 1.30 ms against a budget of 1.00 ms; skipping the next 2 frames",
+      "CONSOLE error [terrace] client plugin \"wildlife\" exceeded its frame budget: 1.70 ms against a budget of 1.00 ms; skipping the next 2 frames"
+    ]
+  },
+  {
+    "mesherRequested": "cpu",
+    "mode": "binomial",
+    "mesher": "cpu",
+    "size": 512,
+    "pitSite": {
+      "tx": 392,
+      "ty": 120,
+      "base": 43,
+      "plateau": 63,
+      "basinRing": [
+        43,
+        43,
+        43,
+        43
+      ]
+    },
+    "strokeSite": {
+      "tx": 280,
+      "ty": 296,
+      "base": 43,
+      "plateau": 63,
+      "basinRing": [
+        43,
+        43,
+        43,
+        43
+      ]
+    },
+    "denial": null,
+    "pitAfterDig": [
+      41,
+      41,
+      41,
+      41
+    ],
+    "rimAfterDig": [
+      43,
+      43,
+      43,
+      43
+    ],
+    "pickTotal": 96,
+    "pickNull": 0,
+    "pickInPit": 56,
+    "anchorInPit": 56,
+    "pickSamples": [
+      {
+        "el": 55,
+        "az": 0,
+        "cell": [
+          392,
+          120
+        ],
+        "pick": [
+          392,
+          135
+        ],
+        "face": "tread",
+        "band": 63,
+        "anchorInPit": false
+      },
+      {
+        "el": 55,
+        "az": 135,
+        "cell": [
+          392,
+          120
+        ],
+        "pick": [
+          403,
+          109
+        ],
+        "face": "tread",
+        "band": 63,
+        "anchorInPit": false
+      },
+      {
+        "el": 55,
+        "az": 270,
+        "cell": [
+          392,
+          120
+        ],
+        "pick": [
+          377,
+          120
+        ],
+        "face": "tread",
+        "band": 63,
+        "anchorInPit": false
+      },
+      {
+        "el": 70,
+        "az": 45,
+        "cell": [
+          392,
+          120
+        ],
+        "pick": [
+          392,
+          120
+        ],
+        "face": "tread",
+        "band": 42,
+        "anchorInPit": true
+      },
+      {
+        "el": 70,
+        "az": 180,
+        "cell": [
+          392,
+          120
+        ],
+        "pick": [
+          392,
+          120
+        ],
+        "face": "tread",
+        "band": 42,
+        "anchorInPit": true
+      },
+      {
+        "el": 70,
+        "az": 315,
+        "cell": [
+          392,
+          120
+        ],
+        "pick": [
+          392,
+          120
+        ],
+        "face": "tread",
+        "band": 42,
+        "anchorInPit": true
+      },
+      {
+        "el": 85,
+        "az": 90,
+        "cell": [
+          392,
+          120
+        ],
+        "pick": [
+          392,
+          120
+        ],
+        "face": "tread",
+        "band": 42,
+        "anchorInPit": true
+      },
+      {
+        "el": 85,
+        "az": 225,
+        "cell": [
+          392,
+          120
+        ],
+        "pick": [
+          392,
+          120
+        ],
+        "face": "tread",
+        "band": 42,
+        "anchorInPit": true
+      }
+    ],
+    "stampClicks": [
+      {
+        "press": 1,
+        "pick": [
+          393,
+          121
+        ],
+        "anchor": [
+          393,
+          121
+        ],
+        "pit": [
+          42,
+          42,
+          42,
+          42
+        ],
+        "rim": 43,
+        "outside": 43
+      },
+      {
+        "press": 2,
+        "pick": [
+          393,
+          121
+        ],
+        "anchor": [
+          393,
+          121
+        ],
+        "pit": [
+          43,
+          43,
+          43,
+          43
+        ],
+        "rim": 43,
+        "outside": 43
+      },
+      {
+        "press": 3,
+        "pick": [
+          393,
+          121
+        ],
+        "anchor": [
+          393,
+          121
+        ],
+        "pit": [
+          44,
+          44,
+          44,
+          44
+        ],
+        "rim": 44,
+        "outside": 43
+      }
+    ],
+    "busyRuns": [
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      3,
+      3,
+      2
+    ],
+    "stroke": {
+      "presses": 12,
+      "frames": 321,
+      "busyFrames": 26,
+      "nullPickFrames": 0,
+      "offTargetChunkFrames": 0,
+      "anchorsMissing": 0,
+      "anchorsFar": 0,
+      "repicks": 2,
+      "maxAnchorDist": 1,
+      "pickMsMedian": 0.2000000011175871,
+      "pickMsP95": 0.40000000037252903,
+      "anchors": [
+        {
+          "press": 0,
+          "anchor": [
+            280,
+            296
+          ],
+          "repicked": true,
+          "dist": 0
+        },
+        {
+          "press": 1,
+          "anchor": [
+            280,
+            296
+          ],
+          "repicked": false,
+          "dist": 0
+        },
+        {
+          "press": 2,
+          "anchor": [
+            280,
+            296
+          ],
+          "repicked": false,
+          "dist": 0
+        },
+        {
+          "press": 3,
+          "anchor": [
+            280,
+            296
+          ],
+          "repicked": false,
+          "dist": 0
+        },
+        {
+          "press": 4,
+          "anchor": [
+            280,
+            296
+          ],
+          "repicked": false,
+          "dist": 0
+        },
+        {
+          "press": 5,
+          "anchor": [
+            280,
+            296
+          ],
+          "repicked": false,
+          "dist": 0
+        },
+        {
+          "press": 6,
+          "anchor": [
+            280,
+            297
+          ],
+          "repicked": true,
+          "dist": 1
+        },
+        {
+          "press": 7,
+          "anchor": [
+            280,
+            297
+          ],
+          "repicked": false,
+          "dist": 1
+        },
+        {
+          "press": 8,
+          "anchor": [
+            280,
+            297
+          ],
+          "repicked": false,
+          "dist": 1
+        },
+        {
+          "press": 9,
+          "anchor": [
+            280,
+            297
+          ],
+          "repicked": false,
+          "dist": 1
+        },
+        {
+          "press": 10,
+          "anchor": [
+            280,
+            297
+          ],
+          "repicked": false,
+          "dist": 1
+        },
+        {
+          "press": 11,
+          "anchor": [
+            280,
+            297
+          ],
+          "repicked": false,
+          "dist": 1
+        }
+      ]
+    },
+    "logErrors": [
+      "LOG error Failed to load resource: net::ERR_CONNECTION_REFUSED",
+      "CONSOLE error [terrace] client plugin \"boats\" exceeded its frame budget: 1.50 ms against a budget of 1.00 ms; skipping the next 2 frames",
+      "LOG error Failed to load resource: net::ERR_CONNECTION_REFUSED",
+      "CONSOLE error [terrace] client plugin \"cyclone\" exceeded its frame budget: 1.20 ms against a budget of 1.00 ms; skipping the next 2 frames",
+      "LOG error Failed to load resource: net::ERR_CONNECTION_REFUSED",
+      "LOG error Failed to load resource: net::ERR_CONNECTION_REFUSED",
+      "LOG error Failed to load resource: net::ERR_CONNECTION_REFUSED",
+      "LOG error Failed to load resource: net::ERR_CONNECTION_REFUSED",
+      "CONSOLE error [terrace] client plugin \"wildlife\" exceeded its frame budget: 1.90 ms against a budget of 1.00 ms; skipping the next 2 frames",
+      "CONSOLE error [terrace] client plugin \"mudslides\" exceeded its frame budget: 1.10 ms against a budget of 1.00 ms; skipping the next 2 frames"
+    ]
+  }
+]
