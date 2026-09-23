@@ -27,6 +27,7 @@ import {
   COASTAL_MIN_WATER_CELLS,
   COASTAL_SEARCH_RADIUS_CELLS,
   SKIFF_MOORING_CLEARANCE_CELLS,
+  createSiteSurveyCache,
   surveySite,
 } from '../client/site.ts';
 import {
@@ -320,6 +321,52 @@ describe('site survey (card 33, coastal classification)', () => {
     expect(surveySite(drawnAt, CENTER.x, CENTER.y)).toEqual(
       surveySite(drawnAt, CENTER.x, CENTER.y),
     );
+  });
+});
+
+describe('site survey cache: one ground read per cell per pass', () => {
+  const CENTER = { x: 200, y: 200 };
+  const NEIGHBOUR = { x: CENTER.x + 2, y: CENTER.y };
+
+  function counted(groundAt: GroundLookup): { at: GroundLookup; reads: Map<string, number> } {
+    const reads = new Map<string, number>();
+    const at: GroundLookup = (x, y) => {
+      const key = `${x},${y}`;
+      reads.set(key, (reads.get(key) ?? 0) + 1);
+      return groundAt(x, y);
+    };
+    return { at, reads };
+  }
+
+  it('surveys exactly as uncached, reading each cell once across neighbouring surveys', () => {
+    const ground = drawnAsLattice(coastGroundAt(CENTER.x));
+    const { at, reads } = counted(ground);
+    const cache = createSiteSurveyCache(() => 0);
+    cache.beginPass();
+    const first = cache.surveyAt(at, CENTER.x, CENTER.y);
+    const second = cache.surveyAt(at, NEIGHBOUR.x, NEIGHBOUR.y);
+    cache.endPass();
+    expect(first).toEqual(surveySite(ground, CENTER.x, CENTER.y));
+    expect(second).toEqual(surveySite(ground, NEIGHBOUR.x, NEIGHBOUR.y));
+    expect(Math.max(...reads.values())).toBe(1);
+  });
+
+  it('reads the ground afresh in the next pass, and never memoizes outside one', () => {
+    let revision = 0;
+    const cache = createSiteSurveyCache(() => revision);
+    const coast = drawnAsLattice(coastGroundAt(CENTER.x));
+    const dry: GroundLookup = () => 4;
+    cache.beginPass();
+    expect(cache.surveyAt(coast, CENTER.x, CENTER.y).kind).toBe('coastal');
+    cache.endPass();
+    revision++;
+    cache.beginPass();
+    expect(cache.surveyAt(dry, CENTER.x, CENTER.y).kind).toBe('inland');
+    cache.endPass();
+    revision++;
+    expect(cache.surveyAt(coast, CENTER.x, CENTER.y).kind).toBe('coastal');
+    revision++;
+    expect(cache.surveyAt(dry, CENTER.x, CENTER.y).kind).toBe('inland');
   });
 });
 
