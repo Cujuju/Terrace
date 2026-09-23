@@ -78,11 +78,11 @@ export async function preloadSaucerModels(
     loaders.push(loader);
   }
 
+  const assets: RigAsset[] = [];
   try {
-    const assets: RigAsset[] = [];
     for (const loader of loaders) {
       const url = await loader();
-      if (typeof url !== 'string') return;
+      if (typeof url !== 'string') throw new Error(`asset loader returned ${typeof url}, not a URL`);
       assets.push(await ctx.loadRigAsset(url, 'sky-environment'));
     }
     const rejected = measureInstalled(assets);
@@ -94,6 +94,7 @@ export async function preloadSaucerModels(
     installed = assets;
   } catch (error) {
     console.error('[saucers] could not load an authored hull — drawing primitives instead', error);
+    for (const asset of assets) asset.dispose();
     installed = null;
   }
 }
@@ -147,7 +148,6 @@ interface FallbackWorkshop {
   readonly dome: BufferGeometry;
   readonly ring: BufferGeometry;
   readonly lights: BufferGeometry;
-  readonly materials: Material[];
   dispose(): void;
 }
 
@@ -187,20 +187,16 @@ function createFallbackWorkshop(): FallbackWorkshop {
   lights.rotateX(Math.PI / 2);
   lights.translate(0, radius * HULL_FLATTEN * 0.6, 0);
 
-  const materials: Material[] = [];
   return {
     hull,
     dome,
     ring,
     lights,
-    materials,
     dispose() {
       hull.dispose();
       dome.dispose();
       ring.dispose();
       lights.dispose();
-      for (const material of materials) material.dispose();
-      materials.length = 0;
     },
   };
 }
@@ -234,7 +230,7 @@ function buildFallbackSaucer(workshop: FallbackWorkshop, variant: number): Sauce
     emissive: lightColour,
     emissiveIntensity: SAUCER_LIGHTS_BASE_EMISSIVE,
   });
-  workshop.materials.push(hullMaterial, domeMaterial, ringMaterial, lightsMaterial);
+  const materials: readonly Material[] = [hullMaterial, domeMaterial, ringMaterial, lightsMaterial];
 
   const root = new Group();
   root.name = `saucers:body:${variant}`;
@@ -266,6 +262,7 @@ function buildFallbackSaucer(workshop: FallbackWorkshop, variant: number): Sauce
     lightsBaseEmissive: SAUCER_LIGHTS_BASE_EMISSIVE,
     muzzle,
     dispose() {
+      for (const material of materials) material.dispose();
       root.clear();
     },
   };

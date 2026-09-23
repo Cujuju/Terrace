@@ -64,7 +64,6 @@ const views = new Map<number, SaucerView>();
 const interpolator = new SaucerInterpolator();
 
 let bolts: readonly LaserBolt[] = [];
-let sinceBolts = 0;
 let crashes: readonly CrashState[] = [];
 let animationSeconds = 0;
 let unsubscribes: Array<() => void> = [];
@@ -112,7 +111,6 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
   if (!(reducedMotion?.matches() ?? false)) animationSeconds += step;
 
   interpolator.advance(dt);
-  sinceBolts += dt;
   const sampled = interpolator.sample();
   reconcileViews(sampled);
 
@@ -125,7 +123,7 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
 
     root.rotation.y = -saucer.heading;
 
-    const turn = step > 0 ? shortestAngle(saucer.heading - view.lastHeading) / step : 0;
+    const turn = dt > 0 ? shortestAngle(saucer.heading - view.lastHeading) / dt : 0;
     view.lastHeading = saucer.heading;
     root.rotation.x = clampSigned(turn / BANK_FULL_TURN_RATE) * MAX_BANK_RADIANS;
 
@@ -152,15 +150,15 @@ function muzzleGlow(id: number): number {
   let youngest = Infinity;
   for (const bolt of bolts) {
     if (bolt.from !== id) continue;
-    const age = boltRenderAge(bolt);
-    if (age < youngest) youngest = age;
+    const age = renderAge(bolt.age);
+    if (age >= 0 && age < youngest) youngest = age;
   }
   if (youngest === Infinity) return 1;
   return 1 + (MUZZLE_FLASH_GAIN - 1) * Math.exp(-MUZZLE_FLASH_DECAY_PER_SECOND * youngest);
 }
 
-function boltRenderAge(bolt: LaserBolt): number {
-  return bolt.age + sinceBolts - interpolator.lagSeconds();
+function renderAge(wireAge: number): number {
+  return wireAge - interpolator.lagSeconds();
 }
 
 function drawBolts(): void {
@@ -172,7 +170,7 @@ function drawBolts(): void {
   for (const bolt of bolts) {
     const shooter = views.get(bolt.from);
     if (shooter === undefined) continue;
-    const age = boltRenderAge(bolt);
+    const age = renderAge(bolt.age);
     if (age < 0) continue;
     boltFrom.set(bolt.x * CELL_WORLD_SIZE, bolt.alt, bolt.y * CELL_WORLD_SIZE);
     boltAim.set(bolt.aimX * CELL_WORLD_SIZE, bolt.aimAlt, bolt.aimY * CELL_WORLD_SIZE);
@@ -189,14 +187,15 @@ function drawCrashes(ctx: ClientPluginCtx): void {
   for (const crash of crashes) {
     const x = crash.x * CELL_WORLD_SIZE;
     const z = crash.y * CELL_WORLD_SIZE;
+    const age = renderAge(crash.age);
     if (crash.water) {
-      rig.show(x, SEA_SURFACE_WORLD_Y, z, crash.age);
-      splashRig.show(x, SEA_SURFACE_WORLD_Y, z, crash.age);
+      rig.show(x, SEA_SURFACE_WORLD_Y, z, age);
+      splashRig.show(x, SEA_SURFACE_WORLD_Y, z, age);
       continue;
     }
     const groundY = ctx.drawnGroundYAt(crash.x, crash.y);
     if (groundY === null) continue;
-    rig.show(x, groundY, z, crash.age);
+    rig.show(x, groundY, z, age);
   }
 }
 
@@ -252,7 +251,6 @@ export const clientPlugin: TerraceClientPlugin = {
         if (state === null) return;
         interpolator.receive(state.saucers);
         bolts = state.lasers;
-        sinceBolts = 0;
         crashes = state.crashes;
       }),
 

@@ -17,7 +17,7 @@ import {
   EXIT_SPEED_MAX_CELLS_PER_SECOND,
   FLYBY_SECONDS,
   HEIGHT_WORLD_SCALE,
-  LASER_BOLT_LIFETIME_SECONDS,
+  LASER_BOLT_RETAIN_SECONDS,
   LASER_BOLT_SPEED_CELLS_PER_SECOND,
   LASER_BURST_REST_MAX_SECONDS,
   LASER_BURST_REST_MIN_SECONDS,
@@ -568,7 +568,7 @@ function advanceFight(dt: number): void {
     shootDown(live, target);
   }
   if (live.bolts.length > 0) {
-    live.bolts = live.bolts.filter((bolt) => bolt.age < LASER_BOLT_LIFETIME_SECONDS);
+    live.bolts = live.bolts.filter((bolt) => bolt.age < LASER_BOLT_RETAIN_SECONDS);
   }
 
   for (const shooter of live.saucers) {
@@ -764,29 +764,29 @@ export function advanceEncounter(world: EncounterWorld, dt: number): EncounterTi
     }
   }
 
+  for (const crash of live.crashes) crash.age += dt;
+  if (live.crashes.length > 0) {
+    live.crashes = live.crashes.filter((crash) => crash.age < CRASH_WIRE_SECONDS);
+  }
+
   const crashed: CrashCell[] = [];
   for (const saucer of live.saucers) {
     if (saucer.phase !== 'resolve') continue;
     saucer.resolveSeconds += dt;
-    if (saucer.resolveSeconds < (saucer.resolution === 'dive' ? saucer.diveSeconds : RESOLVE_SECONDS)) {
-      continue;
-    }
+    const lasts = saucer.resolution === 'dive' ? saucer.diveSeconds : RESOLVE_SECONDS;
+    if (saucer.resolveSeconds < lasts) continue;
     saucer.gone = true;
     const cell = saucer.crashCell;
     if (saucer.resolution !== 'dive' || cell === null) continue;
     applyCrash(world, cell);
-    live.crashes.push({ id: saucer.id, x: cell.x, y: cell.y, water: cell.water, age: 0 });
+    const age = saucer.resolveSeconds - lasts;
+    live.crashes.push({ id: saucer.id, x: cell.x, y: cell.y, water: cell.water, age });
     crashed.push(cell);
   }
   if (live.saucers.some((saucer) => saucer.gone)) {
     const kept = live.saucers.filter((saucer) => !saucer.gone);
     live.saucers.length = 0;
     live.saucers.push(...kept);
-  }
-
-  for (const crash of live.crashes) crash.age += dt;
-  if (live.crashes.length > 0) {
-    live.crashes = live.crashes.filter((crash) => crash.age < CRASH_WIRE_SECONDS);
   }
 
   if (live.stage === 'resolve' && live.saucers.length === 0 && live.crashes.length === 0) {
