@@ -27,6 +27,7 @@ import {
 import { createWildlifeModels } from '../../plugins/wildlife/client/models.ts';
 import { MOVER_GAITS, type MoverGait } from './plugins/kit/moverGait.ts';
 import { loadRigAsset } from './render/rigAsset.ts';
+import { installRigTextureTranscoder } from './render/rigTextureTranscoder.ts';
 import { installSpeciesAsset } from '../../plugins/wildlife/client/species/assetSpecies.ts';
 import { SPECIES_ASSETS } from '../../plugins/wildlife/client/species/assets.ts';
 
@@ -174,6 +175,8 @@ async function main(): Promise<void> {
 
   const { scene, camera, renderer, ground } = buildScene();
   await renderer.init();
+  installRigTextureTranscoder(renderer);
+  await installAssets();
 
   const models = createWildlifeModels(PREVIEW_POPULATION);
   const group = new Group();
@@ -221,4 +224,4 @@ async function main(): Promise<void> {
   requestAnimationFrame(renderFrame);
 }
 
-void installAssets().then(main);
+void main();

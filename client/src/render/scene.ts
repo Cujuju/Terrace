@@ -39,6 +39,7 @@ import { createSkyEnvironment, type SkyEnvironment } from './skyEnvironment.ts';
 import { recordFrame, setFrameCounterSource, setGpuSampleSource } from './frameStats.ts';
 import { createGpuTimer } from './gpuTimer.ts';
 import { routeInstancesThroughAttributes } from './instanceUpload.ts';
+import { installRigTextureTranscoder } from './rigTextureTranscoder.ts';
 import type { SkyRigState } from '../plugins/types.ts';
 import { BOOT_MARKS, markBoot } from '../bootMarks.ts';
 
@@ -115,6 +116,7 @@ export async function createViewport(
     trackTimestamp: true,
   });
   await renderer.init();
+  const uninstallRigTextureTranscoder = installRigTextureTranscoder(renderer);
   // StandardNodeLibrary (three/src/renderers/webgpu/nodes/StandardNodeLibrary.js)
   // pre-registers PointLight in the constructor, and addLight() silently
   // no-ops on an already-registered class -- write the WeakMap directly.
@@ -367,6 +369,7 @@ export async function createViewport(
       window.removeEventListener('pagehide', savePoseNow);
       controls.dispose();
       skyEnvironment.dispose();
+      uninstallRigTextureTranscoder();
       renderer.dispose();
     },
   };

@@ -17,6 +17,7 @@ import { WebGPURenderer } from 'three/webgpu';
 import { backgroundRadiance } from './render/skyEnvironment.ts';
 import warBoatUrl from '../../plugins/boats/client/assets/war-boat.glb?url';
 import { loadRigAsset } from './render/rigAsset.ts';
+import { installRigTextureTranscoder } from './render/rigTextureTranscoder.ts';
 import {
   BOAT_SHAPE,
   createBoatModels,
@@ -110,6 +111,7 @@ async function main(): Promise<void> {
 
   const { scene, camera, renderer } = buildScene();
   await renderer.init();
+  installRigTextureTranscoder(renderer);
 
   await preloadBoatModels(
     { loadRigAsset: (url) => loadRigAsset(url, null) },

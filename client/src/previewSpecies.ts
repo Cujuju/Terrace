@@ -21,6 +21,7 @@ import { WebGPURenderer } from 'three/webgpu';
 import { backgroundRadiance } from './render/skyEnvironment.ts';
 import { bakeRig } from './render/rigSkin.ts';
 import { loadRigAsset } from './render/rigAsset.ts';
+import { installRigTextureTranscoder } from './render/rigTextureTranscoder.ts';
 import { createRigHerd } from './render/rigHerd.ts';
 import { MOVER_GAITS, moverGaitIndex, type MoverGait } from './plugins/kit/moverGait.ts';
 import type { SpeciesModelBuilder, SpeciesModelPool } from '../../plugins/wildlife/client/species/speciesModel.ts';
@@ -129,6 +130,11 @@ async function installAssets(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  const { scene, camera, renderer, ground } = buildScene();
+  await renderer.init();
+  installRigTextureTranscoder(renderer);
+  await installAssets();
+
   const query = new URLSearchParams(window.location.search);
   const species = query.get('species') ?? 'fish';
   const viewName = query.get('view') ?? 'iso';
@@ -173,8 +179,6 @@ async function main(): Promise<void> {
     triangles += (idx ? idx.count : g.getAttribute('position').count) / 3;
   }
 
-  const { scene, camera, renderer, ground } = buildScene();
-  await renderer.init();
   const group = new Group();
   for (const object of herd.meshes) group.add(object);
   scene.add(group);
@@ -217,4 +221,4 @@ async function main(): Promise<void> {
   requestAnimationFrame(renderFrame);
 }
 
-void installAssets().then(main);
+void main();

@@ -2,12 +2,14 @@ import {
   Box3,
   MeshStandardMaterial,
   Vector3,
+  type CompressedTexture,
   type Material,
   type Mesh,
   type Object3D,
   type Texture,
 } from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import type { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
 import {
   applyMapColourSpaces,
   texturesOf,
@@ -24,14 +26,32 @@ export interface RigAsset {
   dispose(): void;
 }
 
+let rigTextureTranscoder: KTX2Loader | null = null;
+
+/** Set by rigTextureTranscoder.ts; without one, a KTX2-textured asset fails to load. */
+export function setRigTextureTranscoder(transcoder: KTX2Loader | null): void {
+  rigTextureTranscoder = transcoder;
+}
+
+function createRigLoader(): GLTFLoader {
+  const loader = new GLTFLoader();
+  if (rigTextureTranscoder !== null) loader.setKTX2Loader(rigTextureTranscoder);
+  return loader;
+}
+
 export async function loadRigAsset(url: string, environment: Texture | null): Promise<RigAsset> {
-  const gltf = await new GLTFLoader().loadAsync(url);
+  const gltf = await createRigLoader().loadAsync(url);
   return createRigAsset(url, gltf.scene, environment);
 }
 
 export async function parseRigAsset(data: ArrayBuffer, label: string): Promise<RigAsset> {
-  const gltf = await new GLTFLoader().parseAsync(data, '');
+  const gltf = await createRigLoader().parseAsync(data, '');
   return createRigAsset(label, gltf.scene, null);
+}
+
+function fullMipChainLength(texture: CompressedTexture): number {
+  const { width, height } = texture.image as { width: number; height: number };
+  return Math.floor(Math.log2(Math.max(width, height))) + 1;
 }
 
 function createRigAsset(label: string, scene: Object3D, environment: Texture | null): RigAsset {
@@ -71,7 +91,18 @@ function createRigAsset(label: string, scene: Object3D, environment: Texture | n
   }
 
   for (const texture of textures) {
-    texture.generateMipmaps = true;
+    // The GPU cannot render mips into a compressed format, so a KTX2 map must ship its full chain.
+    if ((texture as CompressedTexture).isCompressedTexture === true) {
+      const levels = fullMipChainLength(texture as CompressedTexture);
+      if (texture.mipmaps.length < levels) {
+        throw new Error(
+          `rigAsset "${label}": compressed texture "${texture.name || '(unnamed)'}" carries ` +
+            `${texture.mipmaps.length} of ${levels} mip levels — encode it with --genmipmap`,
+        );
+      }
+    } else {
+      texture.generateMipmaps = true;
+    }
     texture.anisotropy = RIG_TEXTURE_ANISOTROPY;
   }
 

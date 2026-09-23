@@ -15,6 +15,7 @@ import {
 } from 'three';
 import { WebGPURenderer } from 'three/webgpu';
 import { backgroundRadiance } from './render/skyEnvironment.ts';
+import { installRigTextureTranscoder } from './render/rigTextureTranscoder.ts';
 import {
   MAX_STRUCTURE_TIER,
   STRUCTURE_TIER_COUNT,
@@ -146,6 +147,7 @@ async function main(): Promise<void> {
 
   const { scene, camera, renderer } = buildScene();
   await renderer.init();
+  installRigTextureTranscoder(renderer);
 
   await preloadStructureModels(timberHouseUrl);
   const models = createStructureModels();
