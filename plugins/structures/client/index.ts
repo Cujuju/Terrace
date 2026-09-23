@@ -82,7 +82,7 @@ function applyChanges(
   for (const cell of upgraded) buildings.set(structureKey(cell.x, cell.y), cell);
 }
 
-const STRUCTURE_SURFACE_DRAW_OBJECTS = 35;
+const STRUCTURE_SURFACE_DRAW_OBJECTS = 36;
 
 const SKIFF_SURFACE_DRAW_OBJECTS = 1;
 

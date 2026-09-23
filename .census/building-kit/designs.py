@@ -5,6 +5,9 @@ KIT=Path(__file__).parent
 NEW=['prehistoric-granary','roman-granary','medieval-dovecote','renaissance-workshop','industrial-pump-house']
 
 def build(name,low,g):
+    if name=='ricks':
+        from black_vault import build as build_vault
+        return build_vault(low,g)
     if name=='durands':
         from crimson_cabaret import build as build_cabaret
         return build_cabaret(low,g)

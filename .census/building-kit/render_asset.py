@@ -40,6 +40,7 @@ front=json.loads((ROOT/'build-report.json').read_text())['placement']['front_glt
 az=-48 if front=='+Z' else -42
 target=centre.copy();target.z=height*.40
 shots=[('45deg',az,45,scale,target)]
+if NAME=='ricks': shots=[('45deg',-60,30,scale*.86,target)]
 close=target.copy();close.z=height*.55
 if front=='+Z':close.y=-(hi[2]*.65)
 else:close.x=hi[0]*.55

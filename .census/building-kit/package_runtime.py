@@ -24,7 +24,7 @@ for label,folder in [('original',ROOT),('low',ROOT/'low')]:
     out=copy.deepcopy(doc); replacements={}; texture_info=[]
     for im in doc['images']:
         name=im['name']; png=folder/(name+'.png'); ktx=folder/(name+'.ktx2')
-        srgb='basecolor' in name
+        srgb='basecolor' in name or 'emissive' in name
         cmd=[TOKTX,'--t2','--encode','uastc','--uastc_quality','2','--zcmp','9','--genmipmap','--assign_oetf','srgb' if srgb else 'linear','--assign_primaries','bt709' if srgb else 'none','--upper_left_maps_to_s0t0','--threads','4']
         if 'normal' in name: cmd+=['--normalize']
         print('ENCODE',label,name,flush=True)

@@ -8,7 +8,9 @@ review=ROOT/'.review'; review.mkdir(exist_ok=True)
 report={}
 for label,folder in [('original',ROOT),('low',ROOT/'low')]:
     report[label]={}
-    for kind in ('basecolor','normal','metallicRoughness'):
+    kinds=['basecolor','normal','metallicRoughness']
+    if (folder/(BUILDING+'-emissive.png')).exists(): kinds.append('emissive')
+    for kind in kinds:
         name=BUILDING+'-'+kind; decoded=review/(label+'-'+kind+'.png')
         subprocess.run([shutil.which('ktx'),'extract','--transcode','rgba8',str(folder/(name+'.ktx2')),str(decoded)],check=True)
         arrays=[]

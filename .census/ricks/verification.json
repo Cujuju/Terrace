@@ -1,0 +1,128 @@
+{
+  "glb_sha256": "e4779b57306be53ab572229ded65eb5ab57e2ffe875cec76938acf6af5836de2",
+  "mesh_count": 1,
+  "primitive_count": 1,
+  "material_count": 1,
+  "triangles": 7224,
+  "exported_vertices": 16679,
+  "nodes": [
+    {
+      "mesh": 0,
+      "name": "ricks"
+    },
+    {
+      "children": [
+        0
+      ],
+      "name": "RootNode"
+    }
+  ],
+  "dimensions_gltf_y_up": [
+    0.8600000739097595,
+    0.38566359877586365,
+    0.7264037132263184
+  ],
+  "uv_islands": 4269,
+  "uv_min_max": [
+    0.0029296875,
+    0.9969426393508911
+  ],
+  "uv_overlap_pairs": [],
+  "uv_candidate_pairs_checked": 3040,
+  "minimum_island_bounds_gap_pixels": 12.000244140625,
+  "texel_density_min_max": [
+    572.7242556527424,
+    573.2182498256051
+  ],
+  "zero_area_triangles": 0,
+  "normal_length_error_max": 1.1855133408289475e-07,
+  "tangent_normal_dot_max": 0.000112279481619737,
+  "compression_extensions": [
+    "KHR_materials_emissive_strength"
+  ],
+  "textures": {
+    "ricks-emissive": {
+      "format": "image/png",
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "matches_external_bytes": true
+    },
+    "ricks-normal": {
+      "format": "image/png",
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "matches_external_bytes": true
+    },
+    "ricks-basecolor": {
+      "format": "image/png",
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "matches_external_bytes": true
+    },
+    "ricks-metallicRoughness": {
+      "format": "image/png",
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "matches_external_bytes": true
+    }
+  },
+  "roughness_range": [
+    0.2980392277240753,
+    0.9411765336990356
+  ],
+  "metalness_range": [
+    0.0,
+    0.0
+  ],
+  "normal_map_length_error_max": 0.00431215763092041,
+  "blend": {
+    "mesh_count": 1,
+    "material_count": 1,
+    "vertices": 6028,
+    "triangles": 7224,
+    "uv_layers": [
+      "UVMap"
+    ],
+    "images_packed": true,
+    "objects": [
+      "ricks",
+      "RootNode"
+    ]
+  },
+  "bounds_gltf_y_up": {
+    "min": [
+      -0.43000003695487976,
+      0.0,
+      -0.3390448987483978
+    ],
+    "max": [
+      0.43000003695487976,
+      0.38566359877586365,
+      0.38735881447792053
+    ]
+  },
+  "emissive_material": {
+    "emissiveFactor": [
+      1,
+      1,
+      1
+    ],
+    "emissiveTexture": {
+      "index": 0
+    },
+    "extensions": {
+      "KHR_materials_emissive_strength": {
+        "emissiveStrength": 1.600000023841858
+      }
+    }
+  },
+  "passed": true
+}

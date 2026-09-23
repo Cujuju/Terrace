@@ -8,7 +8,7 @@ Five fictional bioweapons-lab exterior concepts for Terrace, generated on 2026-0
 - D — The Doctor's House: converted Gothic manor.
 - E — The Backyard Lab: eccentric retro workshop.
 
-No option has been selected. These are generated concepts, not Blender models or in-game captures. The game was not started or modified.
+The owner selected **B — The Black Vault** on 2026-09-23 and requested faithful reproduction, emissive lighting, and game integration. The finished-model package is `E:\Development\Projects\Terrace\.census\ricks\`. These five archived images remain the original generated concepts.
 
 Grouped local gallery: `E:\Development\Projects\Terrace\.census\ricks-concepts\gallery.html`. Artifact and SendUserFile tools were unavailable in this session. This follows the previous local delivery fallback.
 

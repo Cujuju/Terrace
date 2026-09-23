@@ -76,7 +76,12 @@ bpy.ops.wm.open_mainfile(filepath=str(ROOT/(BUILDING+'.blend')))
 mesh=bpy.data.objects[BUILDING].data; mesh.calc_loop_triangles()
 report['blend']=dict(mesh_count=len(bpy.data.meshes),material_count=len(bpy.data.materials),vertices=len(mesh.vertices),triangles=len(mesh.loop_triangles),uv_layers=[u.name for u in mesh.uv_layers],images_packed=all(i.packed_file is not None for i in bpy.data.images if i.type=='IMAGE'),objects=[o.name for o in bpy.data.objects])
 report['bounds_gltf_y_up']={'min':pos.min(axis=0).tolist(),'max':pos.max(axis=0).tolist()}
-report['passed']=not pairs and gap>=8 and uv.min()>=0 and uv.max()<=1 and len(doc['images'])==3 and all(t['matches_external_bytes'] for t in report['textures'].values()) and report['blend']['images_packed'] and min(density)>0 and report['zero_area_triangles']==0 and report['metalness_range']==[0.,0.] and report['mesh_count']==1 and report['material_count']==1 and 'TANGENT' in attributes
+has_emission=json.loads((ROOT/'build-report.json').read_text()).get('emissive',False)
+if has_emission:
+    mat=doc['materials'][0]
+    report['emissive_material']={key:mat[key] for key in ('emissiveFactor','emissiveTexture','extensions') if key in mat}
+    assert 'emissiveTexture' in mat and max(mat.get('emissiveFactor',[0]))>0
+report['passed']=not pairs and gap>=8 and uv.min()>=0 and uv.max()<=1 and len(doc['images'])==(4 if has_emission else 3) and all(t['matches_external_bytes'] for t in report['textures'].values()) and report['blend']['images_packed'] and min(density)>0 and report['zero_area_triangles']==0 and report['metalness_range']==[0.,0.] and report['mesh_count']==1 and report['material_count']==1 and 'TANGENT' in attributes
 (ROOT/'verification.json').write_text(json.dumps(report,indent=2))
 print(json.dumps(report,indent=2),flush=True)
 if not report['passed']: raise RuntimeError('Asset audit failed; inspect verification.json')
