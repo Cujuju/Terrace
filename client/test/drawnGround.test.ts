@@ -6,7 +6,6 @@ import {
   chunkIndex,
   drawnBandOfSample,
   drawnLevelThreshold,
-  wallFoldedHeight,
   BAND_HEIGHT,
   type ClimbPath,
 } from '@terrace/shared';
@@ -28,7 +27,7 @@ import {
 import {
   assembleLoops,
   domainInside,
-  loadSampleField,
+  loadBandField,
   marchLevel,
 } from '../src/terrain/contours.ts';
 import { simplifyLoop } from '../src/terrain/contourSmoothing.ts';
@@ -100,9 +99,7 @@ function drawnBandIndependent(mirror: TerrainMirror, px: number, pz: number): nu
     lowest = Math.min(lowest, drawnBandOfSample(mirror.map.cells[i]));
   }
   for (let band = highest; band >= lowest; band--) {
-    loadSampleField(
-      (i, j) => wallFoldedHeight(sampleRenderHeight(mirror, originX + i, originZ + j), band),
-    );
+    loadBandField((i, j) => sampleRenderHeight(mirror, originX + i, originZ + j), band);
     const segmentCount = marchLevel(drawnLevelThreshold(band), originX, originZ, null);
     const wholeInside = domainInside(drawnLevelThreshold(band), null);
     const polygons: CapPolygon[] = groupLoops(

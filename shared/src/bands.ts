@@ -26,10 +26,10 @@ export function drawnBandOfSample(height: number): number {
 }
 
 /**
- * Wall rule: `height` folded into bands `band - 1 .. band`, keeping its in-band
- * offset, so every band of a tall step draws where its one-band edge does.
+ * Wall rule: the field band `band` is drawn from. `height` folds into bands
+ * `band - 1 .. band`, in-band offset kept, so a tall step's bands share one wall.
  */
-export function wallFoldedHeight(height: number, band: number): number {
+export function drawnBandField(height: number, band: number): number {
   const own = drawnBandOfSample(height);
   const offset = height - bandFloorHeight(own);
   return bandFloorHeight(own >= band ? band : band - 1) + offset;

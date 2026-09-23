@@ -5,14 +5,13 @@ import {
   chunksPerEdge,
   drawnBandOfSample,
   drawnLevelThreshold,
-  wallFoldedHeight,
 } from '@terrace/shared';
 import { CELL_WORLD_SIZE } from '../../config.ts';
 import { sampleHeight, type TerrainMirror } from '../../terrain/mirror.ts';
 import {
   assembleLoops,
   domainInside,
-  loadSampleField,
+  loadBandField,
   marchLevel,
   type ContourLoop,
 } from '../../terrain/contours.ts';
@@ -89,7 +88,8 @@ export function appendRegionTile(
   const tilesPerEdge = chunksPerEdge(mirror.map.size);
   const tileX = (tile % tilesPerEdge) * CHUNK_SIZE;
   const tileZ = Math.floor(tile / tilesPerEdge) * CHUNK_SIZE;
-  loadSampleField((i, j) => fieldAt(tileX + i, tileZ + j));
+  // A band field, so the sheet's edge fans and walls exactly as the terrain's does.
+  loadBandField((i, j) => fieldAt(tileX + i, tileZ + j), region.surfaceBand);
   const segmentCount = marchLevel(threshold, tileX, tileZ, null);
   const loops = assembleLoops(segmentCount, tileX, tileZ, domainInside(threshold, null))
     .map(simplifyLoop)
@@ -129,8 +129,7 @@ function regionFieldAt(
     const besideWet = CARDINAL_NEIGHBOURS.some(([dx, dy]) => wet(x + dx, y + dy));
     if (besideWet) {
       const real = sampleHeight(mirror, x, y);
-      // The terrain's wall rule places this edge; the sheet follows it.
-      if (drawnBandOfSample(real) !== region.surfaceBand) return wallFoldedHeight(real, region.surfaceBand);
+      if (drawnBandOfSample(real) !== region.surfaceBand) return real;
       return beyondRegion;
     }
     return beyondRegion;

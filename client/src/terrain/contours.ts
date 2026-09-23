@@ -4,8 +4,10 @@ import {
   DRAWN_GROUND_COORD_DENOM,
   ISOLINE_SAMPLES_PER_CELL,
   MAX_BRUSH_RADIUS,
+  drawnBandField,
   drawnCrossingFraction,
-  drawnIsolineAt,
+  drawnEdgeCrossing,
+  drawnFannedIsolinePoints,
 } from '@terrace/shared';
 import { sampleRenderHeight, type TerrainMirror } from './mirror.ts';
 
@@ -38,6 +40,9 @@ let activeLattice = LATTICE_PER_CHUNK;
 export const SAMPLE_COUNT = LATTICE_PER_CHUNK * LATTICE_PER_CHUNK;
 const SAMPLE_CAPACITY = MAX_LATTICE_PER_SPAN * MAX_LATTICE_PER_SPAN;
 export const samples = new Int32Array(SAMPLE_CAPACITY);
+// A band field's raw heights, which place a tall step's fanned crossings.
+const rawSamples = new Int32Array(SAMPLE_CAPACITY);
+let activeBand: number | null = null;
 
 const H_EDGE_COUNT = MAX_LATTICE_SPAN * MAX_LATTICE_PER_SPAN;
 const V_EDGE_COUNT = MAX_LATTICE_PER_SPAN * MAX_LATTICE_SPAN;
@@ -47,6 +52,9 @@ const MAX_SEGMENTS = 2 * MAX_LATTICE_SPAN * MAX_LATTICE_SPAN;
 const edgeCrossed = new Uint8Array(EDGE_COUNT);
 const edgeX = new Float64Array(EDGE_COUNT);
 const edgeZ = new Float64Array(EDGE_COUNT);
+// The unfanned wall crossing, which the interior isoline is solved against.
+const wallX = new Float64Array(EDGE_COUNT);
+const wallZ = new Float64Array(EDGE_COUNT);
 const segmentFrom = new Int32Array(MAX_SEGMENTS);
 const segmentTo = new Int32Array(MAX_SEGMENTS);
 const segmentUsed = new Uint8Array(MAX_SEGMENTS);
@@ -57,8 +65,11 @@ const ISOLINE_POINTS_PER_SEGMENT = ISOLINE_SAMPLES_PER_CELL - 1;
 const segmentIsoX = new Float64Array(MAX_SEGMENTS * ISOLINE_POINTS_PER_SEGMENT);
 const segmentIsoZ = new Float64Array(MAX_SEGMENTS * ISOLINE_POINTS_PER_SEGMENT);
 const segmentIsoCount = new Int32Array(MAX_SEGMENTS);
+const isoU = new Float64Array(ISOLINE_POINTS_PER_SEGMENT);
+const isoV = new Float64Array(ISOLINE_POINTS_PER_SEGMENT);
 
 export function loadSamples(mirror: TerrainMirror, originX: number, originZ: number): void {
+  activeBand = null;
   activeSpan = CHUNK_SIZE;
   activeLattice = LATTICE_PER_CHUNK;
   for (let j = 0; j < activeLattice; j++) {
@@ -79,6 +90,7 @@ export function loadSampleField(
   if (span < 1 || span > MAX_LATTICE_SPAN) {
     throw new RangeError(`lattice span ${span} outside [1, ${MAX_LATTICE_SPAN}]`);
   }
+  activeBand = null;
   activeSpan = span;
   activeLattice = span + 1;
   for (let j = 0; j < activeLattice; j++) {
@@ -86,6 +98,20 @@ export function loadSampleField(
       samples[j * activeLattice + i] = fill(i, j);
     }
   }
+}
+
+/** Band `band`'s field from raw heights: marched with a tall step's bands fanned. */
+export function loadBandField(
+  fillRaw: (i: number, j: number) => number,
+  band: number,
+  span: number = CHUNK_SIZE,
+): void {
+  loadSampleField((i, j) => {
+    const raw = fillRaw(i, j);
+    rawSamples[j * (span + 1) + i] = raw;
+    return drawnBandField(raw, band);
+  }, span);
+  activeBand = band;
 }
 
 const horizontalEdgeKey = (i: number, j: number): number => j * MAX_LATTICE_SPAN + i;
@@ -157,6 +183,11 @@ export function marchLevel(
     samples[j * activeLattice + i] + bias >= threshold;
   const heightAt = (i: number, j: number): number =>
     samples[j * activeLattice + i];
+  const rawAt = (i: number, j: number): number => rawSamples[j * activeLattice + i]!;
+  const fanBand = crossingOverride === null ? activeBand : null;
+  // A band field fans a tall step's bands around its wall; any other field crosses at `wall`.
+  const fanned = (outsideRaw: number, insideRaw: number, wall: number): number =>
+    fanBand === null ? wall : drawnEdgeCrossing(outsideRaw, insideRaw, fanBand);
 
   const traceIsoline = (
     segment: number,
@@ -167,50 +198,29 @@ export function marchLevel(
   ): void => {
     segmentIsoCount[segment] = 0;
     if (crossingOverride !== null) return;
-    const ax = edgeX[fromKey] - originX - i;
-    const az = edgeZ[fromKey] - originZ - j;
-    const bx = edgeX[toKey] - originX - i;
-    const bz = edgeZ[toKey] - originZ - j;
-    const spanU = Math.abs(bx - ax);
-    const spanV = Math.abs(bz - az);
-    if (spanU + spanV < ISOLINE_SAMPLES_PER_CELL / DRAWN_GROUND_COORD_DENOM) return;
-    const alongX = spanU >= spanV;
-    const northWest = heightAt(i, j);
-    const northEast = heightAt(i + 1, j);
-    const southWest = heightAt(i, j + 1);
-    const southEast = heightAt(i + 1, j + 1);
+    const ax = wallX[fromKey] - originX - i;
+    const az = wallZ[fromKey] - originZ - j;
+    const bx = wallX[toKey] - originX - i;
+    const bz = wallZ[toKey] - originZ - j;
+    const count = drawnFannedIsolinePoints(
+      heightAt(i, j),
+      heightAt(i + 1, j),
+      heightAt(i, j + 1),
+      heightAt(i + 1, j + 1),
+      threshold,
+      [ax, az],
+      [bx, bz],
+      [edgeX[fromKey] - originX - i, edgeZ[fromKey] - originZ - j],
+      [edgeX[toKey] - originX - i, edgeZ[toKey] - originZ - j],
+      isoU,
+      isoV,
+    );
     const base = segment * ISOLINE_POINTS_PER_SEGMENT;
-    const chordLengthSquared = (bx - ax) * (bx - ax) + (bz - az) * (bz - az);
-    let written = 0;
-    let advanced = 0;
-    for (let k = 1; k < ISOLINE_SAMPLES_PER_CELL; k++) {
-      const t = k / ISOLINE_SAMPLES_PER_CELL;
-      const fixedUnits = clampUnits(
-        Math.round(
-          (alongX ? ax + (bx - ax) * t : az + (bz - az) * t) * DRAWN_GROUND_COORD_DENOM,
-        ),
-      );
-      const solved = drawnIsolineAt(
-        northWest,
-        northEast,
-        southWest,
-        southEast,
-        threshold,
-        fixedUnits,
-        alongX,
-      );
-      if (solved === null || solved <= 0 || solved >= 1) continue;
-      const fixed = fixedUnits / DRAWN_GROUND_COORD_DENOM;
-      const u = alongX ? fixed : solved;
-      const v = alongX ? solved : fixed;
-      const along = ((u - ax) * (bx - ax) + (v - az) * (bz - az)) / chordLengthSquared;
-      if (!(along > advanced) || !(along < 1)) continue;
-      advanced = along;
-      segmentIsoX[base + written] = originX + i + u;
-      segmentIsoZ[base + written] = originZ + j + v;
-      written++;
+    for (let k = 0; k < count; k++) {
+      segmentIsoX[base + k] = originX + i + isoU[k]!;
+      segmentIsoZ[base + k] = originZ + j + isoV[k]!;
     }
-    segmentIsoCount[segment] = written;
+    segmentIsoCount[segment] = count;
   };
 
   for (let j = 0; j < activeLattice; j++) {
@@ -222,8 +232,11 @@ export function marchLevel(
       const s = right
         ? crossingFraction(heightAt(i, j), heightAt(i + 1, j), threshold, crossingOverride)
         : crossingFraction(heightAt(i + 1, j), heightAt(i, j), threshold, crossingOverride);
+      const fan = fanned(right ? rawAt(i, j) : rawAt(i + 1, j), right ? rawAt(i + 1, j) : rawAt(i, j), s);
       edgeCrossed[key] = 1;
-      edgeX[key] = originX + (right ? i + s : i + 1 - s);
+      wallX[key] = originX + (right ? i + s : i + 1 - s);
+      wallZ[key] = originZ + j;
+      edgeX[key] = originX + (right ? i + fan : i + 1 - fan);
       edgeZ[key] = originZ + j;
     }
   }
@@ -236,9 +249,12 @@ export function marchLevel(
       const s = far
         ? crossingFraction(heightAt(i, j), heightAt(i, j + 1), threshold, crossingOverride)
         : crossingFraction(heightAt(i, j + 1), heightAt(i, j), threshold, crossingOverride);
+      const fan = fanned(far ? rawAt(i, j) : rawAt(i, j + 1), far ? rawAt(i, j + 1) : rawAt(i, j), s);
       edgeCrossed[key] = 1;
+      wallX[key] = originX + i;
+      wallZ[key] = originZ + (far ? j + s : j + 1 - s);
       edgeX[key] = originX + i;
-      edgeZ[key] = originZ + (far ? j + s : j + 1 - s);
+      edgeZ[key] = originZ + (far ? j + fan : j + 1 - fan);
     }
   }
 
@@ -281,11 +297,6 @@ export function marchLevel(
     }
   }
   return count;
-}
-
-function clampUnits(units: number): number {
-  if (!(units > 0)) return 0;
-  return units > DRAWN_GROUND_COORD_DENOM ? DRAWN_GROUND_COORD_DENOM : units;
 }
 
 function squareEdgeKey(i: number, j: number, slot: number): number {

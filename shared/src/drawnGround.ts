@@ -10,6 +10,7 @@ import {
 } from './columns.ts';
 import { cellIndex, type Heightmap } from './grid.ts';
 import { SHEER_RISE_HEIGHT_UNITS_PER_CELL } from './traversal.ts';
+import { drawnSquareHoldsBand } from './drawnSquare.ts';
 
 export {
   DRAWN_GROUND_BAND_BIAS,
@@ -20,7 +21,7 @@ import {
   DRAWN_GROUND_BAND_BIAS,
   bandLevelHeight,
   drawnBandOfSample,
-  wallFoldedHeight,
+  drawnBandField,
 } from './bands.ts';
 
 export const DRAWN_GROUND_COORD_DENOM = 1024;
@@ -107,7 +108,7 @@ function clampCell(index: number, size: number): number {
 function sampleOf(map: Heightmap, x: number, y: number, band: number | null): number {
   return band === TOP_CEILING_FIELD
     ? map.cells[cellIndex(map, x, y)]!
-    : wallFoldedHeight(columnSampleAtBand(map, x, y, band), band);
+    : drawnBandField(columnSampleAtBand(map, x, y, band), band);
 }
 
 export function drawnCornerNumerator(
@@ -256,9 +257,43 @@ function lowestCornerBand(map: Heightmap, qx: number, qz: number): number {
   return lowest;
 }
 
-/** Band `band` is solid at the point: its wall-rule field blends to its floor or above. */
+function rawSampleOf(map: Heightmap, x: number, y: number, band: number): number {
+  return columnSampleAtBand(map, x, y, band);
+}
+
+/**
+ * Band `band` is solid at the point. Its field's bilinear blend decides it,
+ * except where a tall step fans its bands: there, the fanned outline itself.
+ */
 function bandSolidAt(map: Heightmap, qx: number, qz: number, band: number): boolean {
-  return bandOfNumerator(drawnFieldNumerator(map, qx, qz, band)) >= band;
+  const i0 = drawnCornerIndex(qx);
+  const j0 = drawnCornerIndex(qz);
+  const x0 = clampCell(i0, map.size);
+  const x1 = clampCell(i0 + 1, map.size);
+  const z0 = clampCell(j0, map.size);
+  const z1 = clampCell(j0 + 1, map.size);
+  const raw = [
+    rawSampleOf(map, x0, z0, band),
+    rawSampleOf(map, x1, z0, band),
+    rawSampleOf(map, x1, z1, band),
+    rawSampleOf(map, x0, z1, band),
+  ];
+  let lowest = Infinity;
+  let highest = -Infinity;
+  for (const h of raw) {
+    const b = drawnBandOfSample(h);
+    if (b < lowest) lowest = b;
+    if (b > highest) highest = b;
+  }
+  if (highest - lowest <= 1) {
+    return bandOfNumerator(drawnFieldNumerator(map, qx, qz, band)) >= band;
+  }
+  return drawnSquareHoldsBand(
+    raw,
+    band,
+    (qx - i0 * DRAWN_GROUND_COORD_DENOM) / DRAWN_GROUND_COORD_DENOM,
+    (qz - j0 * DRAWN_GROUND_COORD_DENOM) / DRAWN_GROUND_COORD_DENOM,
+  );
 }
 
 export function drawnBandAt(map: Heightmap, x: number, z: number): number {

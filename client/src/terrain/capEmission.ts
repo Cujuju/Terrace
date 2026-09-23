@@ -11,7 +11,6 @@ import {
   spanAt,
   spanCapHeight,
   spanCount,
-  wallFoldedHeight,
 } from '@terrace/shared';
 import {
   BAND_WORLD_HEIGHT,
@@ -35,6 +34,7 @@ import {
   assembleLoops,
   domainInside,
   isSeamSegment,
+  loadBandField,
   loadSampleField,
   loadSamples,
   marchLevel,
@@ -559,13 +559,11 @@ export function planChunkCaps(
   const floorBand = buriedFloorBand(mirror, originX, originZ);
   const layered = floorBand !== null;
   const loadLevel = (band: number): void => {
-    loadSampleField(
-      (i, j) => wallFoldedHeight(
-        layered
-          ? sampleRenderBandHeight(mirror, originX + i, originZ + j, band)
-          : topSamples[j * LATTICE_PER_CHUNK + i]!,
-        band,
-      ),
+    loadBandField(
+      (i, j) => layered
+        ? sampleRenderBandHeight(mirror, originX + i, originZ + j, band)
+        : topSamples[j * LATTICE_PER_CHUNK + i]!,
+      band,
       CHUNK_SIZE,
     );
   };
@@ -874,8 +872,9 @@ export function chunkBandContourLoops(
 ): { x: number; z: number; onBorder: boolean }[][] {
   const originX = cx * CHUNK_SIZE;
   const originZ = cy * CHUNK_SIZE;
-  loadSampleField(
-    (i, j) => wallFoldedHeight(sampleRenderBandHeight(mirror, originX + i, originZ + j, band), band),
+  loadBandField(
+    (i, j) => sampleRenderBandHeight(mirror, originX + i, originZ + j, band),
+    band,
     CHUNK_SIZE,
   );
   const threshold = drawnLevelThreshold(band);

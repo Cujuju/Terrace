@@ -5,6 +5,7 @@ export * from './heightmap.ts';
 export * from './columns.ts';
 export * from './chunks.ts';
 export * from './sculpt/sweep.ts';
+export * from './drawnSquare.ts';
 export { encodeSmoothedEdges } from './sculpt/smoothedEdges.ts';
 export {
   SCULPT_PRESS_UNITS_PER_CELL,

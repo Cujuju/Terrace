@@ -3,6 +3,9 @@ import {
   BEDROCK_BAND,
   CELL_WORLD_SIZE,
   DRAWN_GROUND_BAND_BIAS,
+  DRAWN_FAN_CLEARANCE_CELLS,
+  DRAWN_FAN_MAX_BANDS,
+  DRAWN_FAN_SPACING_CELLS,
   DRAWN_GROUND_CENTRE_CLEARANCE,
   DRAWN_GROUND_COORD_DENOM,
   DRAWN_GROUND_CROSSING_MIDPOINT,
@@ -142,8 +145,8 @@ fn levelThreshold(level : i32) -> i32 {
 fn bandFloorHeight(band : i32) -> i32 {
   return band * BAND_HEIGHT + SHORE_HEIGHT;
 }
-// shared/wallFoldedHeight: the height folded into bands band - 1 .. band, offset kept.
-fn wallFoldedHeight(h : i32, band : i32) -> i32 {
+// shared/drawnBandField: the height folded into bands band - 1 .. band, offset kept.
+fn drawnBandField(h : i32, band : i32) -> i32 {
   let own = drawnBandOfSample(h);
   return bandFloorHeight(select(band - 1, band, own >= band)) + h - bandFloorHeight(own);
 }
@@ -258,6 +261,9 @@ const SADDLE_5_SPLIT_CASE : i32 = ${wgslI32(MARCH_SADDLE_5_SPLIT_CASE)};
 const SADDLE_10_SPLIT_CASE : i32 = ${wgslI32(MARCH_SADDLE_10_SPLIT_CASE)};
 const ISOLINE_SAMPLES_PER_CELL : i32 = ${wgslI32(ISOLINE_SAMPLES_PER_CELL)};
 const CROSSING_CLEARANCE : f32 = ${wgslF32(DRAWN_GROUND_CENTRE_CLEARANCE)};
+const FAN_SPACING : f32 = ${wgslF32(DRAWN_FAN_SPACING_CELLS)};
+const FAN_MAX_BANDS : f32 = ${wgslF32(DRAWN_FAN_MAX_BANDS)};
+const FAN_CLEARANCE : f32 = ${wgslF32(DRAWN_FAN_CLEARANCE_CELLS)};
 const SIMPLIFY_EPSILON : f32 = ${wgslF32(DRAWN_GROUND_SIMPLIFY_EPSILON)};
 const CROSSING_MIDPOINT : f32 = ${wgslF32(DRAWN_GROUND_CROSSING_MIDPOINT)};
 const SHEER_RISE_HEIGHT_UNITS_PER_CELL : f32 = ${wgslF32(SHEER_RISE_HEIGHT_UNITS_PER_CELL)};
@@ -311,7 +317,9 @@ var<private> emitLimit : u32;
 var<private> lipEntry : u32;
 
 var<private> cornerHeight : array<i32, 4>;
+var<private> cornerRaw : array<i32, 4>;
 var<private> crossing : array<vec2f, 4>;
+var<private> wallCrossing : array<vec2f, 4>;
 var<private> corner : array<vec2f, 4>;
 var<private> candidate : array<vec2f, ${wgslI32(ISOLINE_SAMPLES_PER_CELL - 1)}>;
 var<private> line : array<vec2f, MAX_POLYLINE>;
@@ -357,11 +365,23 @@ fn isolineUnits(nw : i32, ne : i32, sw : i32, se : i32, threshold : i32,
 
 ${SPAN_BAND_WGSL}
 
-// The field a level marches on: the plain cell height, or the column's sample at
-// that band once the chunk holds a layered column, folded by the wall rule.
-fn levelHeight(local : i32, band : i32) -> i32 {
-  if (!chunkLayered) { return wallFoldedHeight(cellHeight[local], band); }
-  return wallFoldedHeight(columnSampleAtBand(local, band), band);
+// The raw height a level reads: the plain cell height, or the column's sample at
+// that band once the chunk holds a layered column. Its field is drawnBandField.
+fn levelRaw(local : i32, band : i32) -> i32 {
+  if (!chunkLayered) { return cellHeight[local]; }
+  return columnSampleAtBand(local, band);
+}
+
+// shared/drawnEdgeCrossing: a tall step fans its bands evenly around the wall.
+fn fanCrossing(wall : f32, outsideRaw : i32, insideRaw : i32, band : i32) -> f32 {
+  let low = drawnBandOfSample(outsideRaw);
+  let bands = drawnBandOfSample(insideRaw) - low;
+  if (bands <= 1 || f32(bands) > FAN_MAX_BANDS) { return wall; }
+  let halfSteps = f32(bands - 1) / 2.0;
+  let room = min(wall, 1.0 - wall) - FAN_CLEARANCE;
+  if (room / halfSteps < CROSSING_CLEARANCE) { return wall; }
+  let spacing = min(room / halfSteps, FAN_SPACING);
+  return wall + (f32(band - low - 1) - halfSteps) * spacing;
 }
 
 fn crossingFraction(outsideHeight : i32, insideHeight : i32, threshold : i32) -> f32 {
@@ -459,8 +479,12 @@ fn buildPolyline(polyCase : i32, polyIndex : i32, threshold : i32, refine : bool
     n += 1u;
     if (!isContour || !refine) { continue; }
     let b = refPosition(next);
-    let localA = a - origin;
-    let localB = b - origin;
+    // shared/drawnFannedIsolinePoints: solved on the wall chord, shifted by the
+    // ends' fan shifts blended along it, kept clear of the square's edges.
+    let localA = wallCrossing[here - CORNER_REFS] - origin;
+    let localB = wallCrossing[next - CORNER_REFS] - origin;
+    let shiftA = a - origin - localA;
+    let shiftB = b - origin - localB;
     let span = abs(localB - localA);
     if (span.x + span.y < f32(ISOLINE_SAMPLES_PER_CELL) / f32(COORD_DENOM)) { continue; }
     let alongX = span.x >= span.y;
@@ -484,13 +508,14 @@ fn buildPolyline(polyCase : i32, polyIndex : i32, threshold : i32, refine : bool
       let along = dot(point - localA, localB - localA) / chordSquared;
       if (!(along > advanced) || !(along < 1.0)) { continue; }
       advanced = along;
-      candidate[candidates] = point;
+      candidate[candidates] = clamp(point + mix(shiftA, shiftB, along),
+        vec2f(CROSSING_CLEARANCE), vec2f(1.0 - CROSSING_CLEARANCE));
       candidates += 1;
     }
-    var prev = localA;
+    var prev = a - origin;
     for (var c = 0; c < candidates; c++) {
       let hereP = candidate[c];
-      let nextP = select(localB, candidate[min(c + 1, candidates - 1)], c + 1 < candidates);
+      let nextP = select(b - origin, candidate[min(c + 1, candidates - 1)], c + 1 < candidates);
       let area = abs((hereP.x - prev.x) * (nextP.y - prev.y)
         - (hereP.y - prev.y) * (nextP.x - prev.x));
       let chordLength = length(nextP - prev);
@@ -632,15 +657,16 @@ fn appendLips(n : u32, band : i32) {
 
 // Crossings run along the canonical edge direction (north to south, west to
 // east), so two squares sharing an edge produce the same f32 point.
-fn computeCrossings(mask : i32, threshold : i32) {
-  crossingsOf(mask, false, 0.0, threshold);
+fn computeCrossings(mask : i32, level : i32) {
+  crossingsOf(mask, false, 0.0, level);
 }
 
 fn computeFixedCrossings(mask : i32, fixedCrossing : f32) {
   crossingsOf(mask, true, fixedCrossing, 0);
 }
 
-fn crossingsOf(mask : i32, useFixed : bool, fixedCrossing : f32, threshold : i32) {
+fn crossingsOf(mask : i32, useFixed : bool, fixedCrossing : f32, level : i32) {
+  let threshold = levelThreshold(level);
   var lowOf = array<i32, 4>(0, 1, 3, 0);
   var highOf = array<i32, 4>(1, 2, 2, 3);
   for (var side = 0; side < 4; side++) {
@@ -650,14 +676,19 @@ fn crossingsOf(mask : i32, useFixed : bool, fixedCrossing : f32, threshold : i32
     let a = lowOf[side];
     let b = highOf[side];
     var t = fixedCrossing;
+    var fan = fixedCrossing;
     if (!useFixed) {
       if ((mask & (1 << u32(b))) != 0) {
         t = crossingFraction(cornerHeight[a], cornerHeight[b], threshold);
+        fan = fanCrossing(t, cornerRaw[a], cornerRaw[b], level);
       } else {
-        t = 1.0 - crossingFraction(cornerHeight[b], cornerHeight[a], threshold);
+        let fromB = crossingFraction(cornerHeight[b], cornerHeight[a], threshold);
+        t = 1.0 - fromB;
+        fan = 1.0 - fanCrossing(fromB, cornerRaw[b], cornerRaw[a], level);
       }
     }
-    crossing[side] = mix(corner[a], corner[b], t);
+    wallCrossing[side] = mix(corner[a], corner[b], t);
+    crossing[side] = mix(corner[a], corner[b], fan);
   }
 }
 
@@ -673,11 +704,12 @@ fn emitLevel(level : i32, localRef : array<i32, 4>, at : u32) -> u32 {
   let threshold = levelThreshold(level);
   var mask = 0;
   for (var c = 0; c < 4; c++) {
-    cornerHeight[c] = levelHeight(localRef[c], level);
+    cornerRaw[c] = levelRaw(localRef[c], level);
+    cornerHeight[c] = drawnBandField(cornerRaw[c], level);
     if (cornerHeight[c] + BAND_BIAS >= threshold) { mask |= 1 << u32(c); }
   }
   if (mask == 0) { return 0u; }
-  computeCrossings(mask, threshold);
+  computeCrossings(mask, level);
   let polyCase = saddleCase(mask, BAND_BIAS, threshold);
   let withRiser = level != chunkLowestBand;
   let capY = capYOfBand(level);
