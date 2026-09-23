@@ -8,7 +8,7 @@ const RISER_MAX_NORMAL_Y = 0.5;
 
 const decalOn = uniform(0);
 const decalAim = uniform(new Vector2());
-const decalReach = uniform(0);
+const decalReachSq = uniform(0);
 const decalFootY = uniform(0);
 const decalCapY = uniform(0);
 const decalColor = uniform(new Color());
@@ -24,7 +24,7 @@ export interface RiserDecal {
 
 export function showRiserDecal(decal: RiserDecal): void {
   decalAim.value.set(decal.aimX, decal.aimZ);
-  decalReach.value = decal.reach;
+  decalReachSq.value = decal.reach * decal.reach;
   decalFootY.value = decal.footY;
   decalCapY.value = decal.capY;
   decalOn.value = 1;
@@ -44,12 +44,14 @@ export function setRiserDecalTint(color: number, opacity: number): void {
 export function applyRiserDecal(material: NodeMaterial): void {
   compose(material, 'output', (previous) => {
     const faceNormal = cross(dFdx(positionWorld), dFdy(positionWorld));
-    const wall = step(
-      faceNormal.y.mul(faceNormal.y),
-      dot(faceNormal, faceNormal).mul(RISER_MAX_NORMAL_Y * RISER_MAX_NORMAL_Y),
-    );
-    const slab = step(decalFootY, positionWorld.y).mul(step(positionWorld.y, decalCapY));
-    const reach = step(positionWorld.xz.distance(decalAim), decalReach);
+    const normalSq = dot(faceNormal, faceNormal);
+    // A degenerate zero normal is no wall.
+    const wall = step(faceNormal.y.mul(faceNormal.y), normalSq.mul(RISER_MAX_NORMAL_Y * RISER_MAX_NORMAL_Y))
+      .mul(step(normalSq, 0).oneMinus());
+    // The band's slab, (foot, cap]: the tread below is outside it.
+    const slab = step(positionWorld.y, decalFootY).oneMinus().mul(step(positionWorld.y, decalCapY));
+    const offset = positionWorld.xz.sub(decalAim);
+    const reach = step(dot(offset, offset), decalReachSq);
     const cover = decalOn.mul(wall).mul(slab).mul(reach).mul(decalOpacity);
     return vec4(mix(previous.rgb, decalColor, cover), previous.a);
   });

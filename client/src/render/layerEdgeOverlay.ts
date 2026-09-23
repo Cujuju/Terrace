@@ -527,6 +527,9 @@ export function createLayerEdgeOverlay(
     grabbed.geometry = geometry;
   };
 
+  /** The segment point nearest the last distanceSqToSegment query. */
+  const nearest = { x: 0, z: 0 };
+
   const distanceSqToSegment = (
     px: number, pz: number,
     ax: number, az: number, bx: number, bz: number,
@@ -536,8 +539,10 @@ export function createLayerEdgeOverlay(
     const lengthSq = vx * vx + vz * vz;
     let t = lengthSq === 0 ? 0 : ((px - ax) * vx + (pz - az) * vz) / lengthSq;
     t = t < 0 ? 0 : t > 1 ? 1 : t;
-    const dx = px - (ax + t * vx);
-    const dz = pz - (az + t * vz);
+    nearest.x = ax + t * vx;
+    nearest.z = az + t * vz;
+    const dx = px - nearest.x;
+    const dz = pz - nearest.z;
     return dx * dx + dz * dz;
   };
 
@@ -639,6 +644,9 @@ export function createLayerEdgeOverlay(
       // The riser is the wall under that cap: one band down, the face the aim names.
       const footY = (band - 1) * BAND_HEIGHT * HEIGHT_WORLD_SCALE;
       let written = 0;
+      let anchorX = atX;
+      let anchorZ = atZ;
+      let anchorDistanceSq = Infinity;
       let minX = Infinity;
       let minZ = Infinity;
       let maxX = -Infinity;
@@ -651,7 +659,13 @@ export function createLayerEdgeOverlay(
           const az = flat[i + 1]!;
           const bx = flat[i + 2]!;
           const bz = flat[i + 3]!;
-          if (distanceSqToSegment(atX, atZ, ax, az, bx, bz) > spanSq) continue;
+          const distanceSq = distanceSqToSegment(atX, atZ, ax, az, bx, bz);
+          if (distanceSq > spanSq) continue;
+          if (distanceSq < anchorDistanceSq) {
+            anchorDistanceSq = distanceSq;
+            anchorX = nearest.x;
+            anchorZ = nearest.z;
+          }
           ensureGrabbedCapacity(written + FLOATS_PER_SEGMENT);
           const ay = y;
           const by = y;
@@ -672,7 +686,15 @@ export function createLayerEdgeOverlay(
         return true;
       }
 
-      showRiserDecal({ aimX: atX, aimZ: atZ, reach: litSpanWorldUnits, footY, capY });
+      // The wall under the lit lip: centred where the lip passes nearest the aim,
+      // reaching every lit segment end, so wall and lip line light the same run.
+      let reachSq = 0;
+      for (let i = 0; i < written; i += POSITION_FLOATS_PER_VERTEX) {
+        const dx = grabbedPositions[i]! - anchorX;
+        const dz = grabbedPositions[i + 2]! - anchorZ;
+        reachSq = Math.max(reachSq, dx * dx + dz * dz);
+      }
+      showRiserDecal({ aimX: anchorX, aimZ: anchorZ, reach: Math.sqrt(reachSq), footY, capY });
 
       grabbedAttribute.clearUpdateRanges();
       grabbedAttribute.addUpdateRange(0, written);
