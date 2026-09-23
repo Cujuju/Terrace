@@ -38,7 +38,11 @@ history, including the rejected protected behavior and its measured overhead.
   a smoothed pit as in raw mode. Record: `docs/decisions/band-smoothing.md`.
 - Open: a height blur widens a 10-band cliff from 0.9 to 2.6 cells (shared-math
   check). Candidate: per-band field, heights clamped to ±1 band around each
-  threshold, same kernel. Offline prototype, then owner visual review.
+  threshold, same kernel. Offline prototype built; owner visual review pending
+  (`docs/decisions/band-smoothing.md`). Production port would touch
+  `shared/src/drawnFieldFilter.ts`, `shared/src/drawnGround.ts`,
+  `client/src/terrain/drawnSurface.ts`, `client/src/terrain/capEmission.ts`,
+  `client/src/render/gpuMesher/terrainGpuInputs.ts`, `mesherWgsl.ts`.
 - Open: a layered column in the one-cell halo puts the whole chunk on the
   layered path (`capEmission.ts`, GPU `ENTRY_LAYERED`).
 - Open: CPU filter cost — nine closure reads per sample, per-sample receipt

@@ -54,6 +54,33 @@ Owner decision: queries read live terrain; no immutable published snapshot.
 - Probe and raw results:
   `E:\Development\Projects\Terrace\scratch-band-investigation\pick-probe\`.
 
+## Per-band clamped filter prototype — 2026-09-22
+
+Offline only; owner visual review pending. Each band blurs its own field:
+heights clamped to ±1 band around that band's contour height, same `[1,2,1]²/16`
+kernel. Band outlines stay nested (monotone clamp, positive kernel).
+
+Production contour resolution:
+
+| Fixture | Measure | Original | Current filter | Clamped |
+|---|---|---:|---:|---:|
+| Stamp | total turning, rad | 614 | 240 | 159 |
+| Stamp | band-12 area, cells | 76.4 | 70.0 | 72.5 |
+| Stamp then smooth | total turning, rad | 570 | 203 | 139 |
+| Jagged 8-band cliff | cliff width, cells | 1.07 | 2.69 | 0.77 |
+| Jagged 8-band cliff | top tread area, cells | 494 | 468 | 499 |
+
+- The current filter turns stamped walls and cliffs into stepped slopes; the
+  clamped filter keeps them vertical. Clamped cliffs are narrower than the
+  original (0.77 vs 1.07 cells): every band shares one outline.
+- One-cell terrace, hole, channel and saddle controls vanish and the one-cell
+  ridge nearly does, as with the current filter.
+- Layer-opening slice, band 4: solid area 385 original, 403 current, 372
+  clamped — the opening grows instead of shrinking.
+- Files: `clamped-field.mjs`, fixture and variant in `build-protected-data.mjs`.
+  Viewer: `node build-protected-comparison.mjs <out.html>`, then choose
+  **Per-band clamped filter**.
+
 ## Owner decisions — 2026-09-21
 
 - Prefer derived-field filtering to Bezier rounding: “derived looks better
