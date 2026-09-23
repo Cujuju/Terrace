@@ -3,6 +3,9 @@ import {
   DRAWN_GROUND_CELL_CENTRE,
   drawnBandAt,
 } from '@terrace/shared';
+import { drawnSurface } from './drawnSurface.ts';
+import { drawnBandOfSample } from '@terrace/shared';
+import { sampleRenderHeight } from './mirror.ts';
 import { drawnBandCapY } from './capEmission.ts';
 import { type ContourLoop } from './contours.ts';
 import {
@@ -37,14 +40,19 @@ export function createDrawnGround(mirror: TerrainMirror, store: DrawnGroundStore
     store.chartOf(chunkOf(cellX), chunkOf(cellZ));
 
   const drawnBandOf = (cellX: number, cellZ: number): number =>
-    drawnBandAt(
+    chartAt(cellX, cellZ)?.plan.blocky
+      ? drawnBandOfSample(sampleRenderHeight(mirror, cellX, cellZ))
+      : drawnBandAt(
       mirror.map,
       cellX + DRAWN_GROUND_CELL_CENTRE,
       cellZ + DRAWN_GROUND_CELL_CENTRE,
+      drawnSurface(mirror),
     );
 
   const drawnBandOfFractional = (x: number, z: number): number =>
-    drawnBandAt(mirror.map, x, z);
+    chartAt(x - DRAWN_GROUND_CELL_CENTRE, z - DRAWN_GROUND_CELL_CENTRE)?.plan.blocky
+      ? drawnBandOfSample(sampleRenderHeight(mirror, Math.floor(x), Math.floor(z)))
+      : drawnBandAt(mirror.map, x, z, drawnSurface(mirror));
 
   return {
     capYAt(cellX: number, cellZ: number): number {

@@ -137,6 +137,7 @@ describe('applySculpt options — compatibility with the pre-2026-08-14 contract
       spanBand: null,
       sweepFrom: null,
       smoothLambda: 50,
+      smoothBilateral: false, smoothCooldown: false, smoothFeather: 0, smoothFullSteps: false, smoothKernel: 'cross', smoothRim: 0, smoothUnbiased: false,
     });
   });
 

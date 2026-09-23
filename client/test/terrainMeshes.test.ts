@@ -1331,6 +1331,31 @@ describe('headroom at settle', () => {
     clock.frame();
   }
 
+  it('publishes only the current input revision and ignores late disposal failures', async () => {
+    const { meshes, clock, held } = settleSetup([chunkPayload(0, 0, 0)], new Map([[ORIGIN, SMALL_RUN]]));
+    stream(clock);
+    let published = 0;
+    meshes.onChunkDrawn(() => published++);
+    held.hold();
+    meshes.update([ORIGIN]);
+    clock.frame();
+    meshes.update([ORIGIN]);
+    await held.release();
+    clock.frame();
+    expect(meshes.drawnGround().size()).toBe(0);
+    expect(published).toBe(0);
+    await held.release();
+    clock.frame();
+    expect(meshes.drawnGround().size()).toBe(1);
+    expect(published).toBe(1);
+    meshes.update([ORIGIN]);
+    clock.frame();
+    meshes.dispose();
+    await held.lose();
+    expect(meshes.pendingCount()).toBe(0);
+    expect(meshes.drawnGround().size()).toBe(0);
+  });
+
   it('grows on a FRAME, with no explicit settle() call', () => {
     const sizes = new Map<number, number>([[ORIGIN, SMALL_RUN]]);
     const { meshes, clock } = settleSetup([chunkPayload(0, 0, 0)], sizes);

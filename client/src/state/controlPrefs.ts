@@ -4,6 +4,7 @@ import { resetFrameRatePrefs } from './frameRatePrefs.ts';
 import { resetFrontierMistPrefs } from './frontierMistPrefs.ts';
 import { resetLayerEdgePrefs } from './layerEdgePrefs.ts';
 import { resetMultisamplePrefs } from './multisamplePrefs.ts';
+import { resetTerrainSurfacePrefs } from './terrainSurfacePrefs.ts';
 import { resetTerrainMesherPrefs } from './terrainMesherPrefs.ts';
 import { resetVoidPrefs } from './voidPrefs.ts';
 
@@ -138,6 +139,7 @@ export function resetBindings(): void {
   resetFrameRatePrefs();
   resetMultisamplePrefs();
   resetTerrainMesherPrefs();
+  resetTerrainSurfacePrefs();
   try {
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(TOUCH_STORAGE_KEY);

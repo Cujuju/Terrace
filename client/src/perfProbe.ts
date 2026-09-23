@@ -1,3 +1,4 @@
+import { terrainSurfaceMode } from './state/terrainSurfacePrefs.ts';
 import {
   BufferAttribute,
   Color,
@@ -1330,6 +1331,7 @@ function parityDetail(ctx: ProbeContext): Record<string, unknown> {
   return {
     blockyChunks: ctx.world.blockyChunks(),
     meshersActive: ctx.world.terrainMesherActive(),
+    surfaceMode: terrainSurfaceMode(),
   };
 }
 
@@ -2272,6 +2274,7 @@ export function installPerfProbe(deps: {
           textures: renderer.info.memory.textures,
           rendererBackend: rendererBackendName(renderer),
           terrainMesher: world.terrainMesherActive(),
+          surfaceMode: terrainSurfaceMode(),
           terrainResidentBytes: world.terrainResidentBytes(),
           gpuMesher: world.gpuMesherStats(),
           ...result.detail,

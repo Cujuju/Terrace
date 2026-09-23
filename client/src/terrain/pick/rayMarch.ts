@@ -50,6 +50,7 @@ export const CELL_CENTRE_OFFSET = 0.5;
 export const marchStepLimit = (worldSize: number): number => 2 * worldSize + 2;
 
 export function cellRevealed(mirror: TerrainMirror, x: number, y: number): boolean {
+  if (mirror.isDrawnCell && !mirror.isDrawnCell(x, y)) return false;
   return hasChunk(
     mirror,
     chunkIndex(

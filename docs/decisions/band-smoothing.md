@@ -1,5 +1,29 @@
 # Band smoothing
 
+## Current owner decision — 2026-09-22
+
+Remove the protection portion of the binomial filter. This supersedes the
+September 21 requirement to preserve tiny terraces and holes. The current kernel
+is one immutable-input 3×3 `[1,2,1]²/16` pass, with no extrema, diagonal, or layered
+feature veto. Missing-input fallback and world-edge clamping remain correctness
+rules. Undersides keep their existing binary extraction. Stored terrain and
+server sculpt math remain unchanged; the setting remains default off.
+
+Filter reach is now one cell: CPU/GPU filtered input windows shrink from 21×21
+to 19×19. Raw mode restores 18×18 CPU worker and 17×17 GPU input windows. GPU
+resident slots still reserve the maximum 19×19 stride and the synchronization
+barrier remains unconditional because WGSL rejects the conditional form.
+
+Workspace typecheck, 536 shared tests, and 786 client tests pass (one skipped).
+Actual WebGPU/CPU cap and wall comparisons pass existing tolerances for all 80
+golden-fixture chunks in each mode, including layered and world-edge fixtures.
+These checks do not establish that the owner's live Stamp/Hard/2.0 interaction
+is fixed. Three requested independent reviews are recorded in
+`E:\Development\Projects\Terrace\docs\investigations\renderer-review-2026-09-22.md`.
+
+The protected implementation and measurements below are historical evidence,
+not the current filter specification.
+
 ## Owner decisions — 2026-09-21
 
 - Prefer derived-field filtering to Bezier rounding: “derived looks better
@@ -141,3 +165,51 @@ measurements are narrower evidence, not substitutes for those checks.
 
 No new regression tests were written and the Terrace app was not started or
 stopped. Those actions remain subject to the repository's permission rules.
+
+
+## Production implementation and live verification
+
+The owner authorized implementation with minimal contract-level tests and a
+controlled app instance. **Smooth terrain bands** is a persistent, default-off
+client preference. Its integer field definition lives in shared code; no server,
+wire format, stored heights, or sculpt behavior changes. It uses the existing
+budgeted terrain rebuild when switched, preserving the camera and world mirror.
+A large revealed area rebuilds over several seconds.
+
+The protected kernel exactly matches the reviewed prototype at 81,920 sample
+positions. Executed WebGPU/CPU comparisons pass the existing geometry tolerance
+for 80 chunks across the five golden fixtures in both modes. A world-edge clamp
+mismatch was found and corrected during this check. Top fields are reused across
+GPU levels; a bounded revision-invalidated client cache removes repeated query
+work without changing the filter.
+
+Filtered picking now intersects canonical published contour walls and shared
+field treads before assigning a legal original column owner. Canonical pick
+segments are independent of the optional decorative Smooth lines setting and
+available at reveal edges. Layered underside rules remain guarded; blocky mesh
+fallbacks report their actual top-box representation. Stale generations/revisions
+cannot publish charts or notify grounded objects, and dirty chunks remain
+unavailable until their replacement geometry is written.
+
+The new regression coverage is limited to five contract cases: shared arithmetic
+and feature protection (three), worker/streaming/cache agreement (one), and stale
+answer/publication lifecycle (one). Existing suites and the actual GPU probe are
+reused. The implementation record in the plan carries current counts, observed
+cost, and unrelated workspace-test failures. Actual production appearance still
+needs the owner's acceptance; broad topology preservation and post-contour
+high-frequency fairing are not claimed.
+
+## Owner interaction review and measured overhead
+
+The owner reports Stamp, Hard, width 2.0 failing to close small holes with band
+smoothing enabled, and working with it disabled. Implementation acceptance and
+commit are held. The CPU comparison URL's permanent mode override was separately
+corrected so the live toggle works there; rebuilding now has visible feedback.
+
+Isolated measurements show that the protected sampling path is 8–9 times the
+basic binomial averaging cost. CPU stamp rebuilds range from a small increase on
+noise to 1.4 → 9.1 ms on terraces and 8.6 → 46.5 ms on a played stress fixture.
+These are stage timings, not FPS measurements. Protection often restores raw
+samples and can suppress smoothing heavily, but the exact cause of the reported
+brush behavior remains unverified. The full method, limits and numbers are in
+`E:\Development\Projects\Terrace\docs\investigations\terrain-filter-overhead.md`.

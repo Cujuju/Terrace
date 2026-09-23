@@ -94,6 +94,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
   window.addEventListener('blur', onWindowBlur);
 
   return {
+    cancelStroke: onWindowBlur,
     hoverTarget: (): TerrainRayPick | null => hoverTarget(s),
     heldBand: (): number | null => s.strokeGrab,
     carveHeldBand: (): number | null => s.strokeCarveBand,

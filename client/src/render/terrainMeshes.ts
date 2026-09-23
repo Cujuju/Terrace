@@ -407,7 +407,7 @@ export function createTerrainMeshes(
     return sm;
   };
 
-  const spliceChunk = (sm: SuperMesh, chunkIdx: number, answer: ChunkAnswer): void => {
+  const spliceChunk = (sm: SuperMesh, chunkIdx: number, answer: ChunkAnswer): boolean => {
     const count = answer.vertexCount;
     let slot = sm.slots.get(chunkIdx);
     // A chunk's first build takes no slack: load-time layout and residency stay as they were.
@@ -492,6 +492,7 @@ export function createTerrainMeshes(
     sm.splicedThisPass = true;
     sm.mesh.geometry.setDrawRange(0, sm.liveEnd);
     updateBounds(sm);
+    return bounds !== null;
   };
 
   const pending = new Set<number>();
@@ -518,11 +519,30 @@ export function createTerrainMeshes(
   };
 
   let generation = 0;
+  let disposed = false;
+  const revisions = new Map<number, number>();
+  const answerRevisions = new WeakMap<ChunkAnswer, number>();
+  // Capture the chosen mode once. Shared sources may outlive this arena.
+  const buildMirror: TerrainMirror = {
+    map: mirror.map,
+    received: mirror.received,
+    surfaceMode: mirror.surfaceMode,
+    get surfaceRevision() { return mirror.surfaceRevision; },
+  };
 
   let loggedUnacceptedAnswer = false;
 
-  const receive = (chunkIdx: number, answer: ChunkAnswer | null): void => {
+  const receive = (chunkIdx: number, answer: ChunkAnswer | null, submittedGeneration: number, revision: number): void => {
+    if (disposed || submittedGeneration !== generation) {
+      if (answer) releaseAnswer(answer);
+      return;
+    }
     inFlight.delete(chunkIdx);
+    if (revision !== revisions.get(chunkIdx)) {
+      if (answer) releaseAnswer(answer);
+      retry.add(chunkIdx);
+      return;
+    }
     if (answer === null) {
       if (mirror.received.has(chunkIdx)) retry.add(chunkIdx);
       return;
@@ -541,28 +561,33 @@ export function createTerrainMeshes(
       }
       return;
     }
+    answerRevisions.set(answer, revision);
     ready.push(answer);
   };
 
   const submit = (chunkIdx: number): void => {
     if (!mirror.received.has(chunkIdx)) return;
     inFlight.add(chunkIdx);
-    const answer = buildSource.build(mirror, chunkIdx, generation);
-    if (answer instanceof Promise) void answer.then((settled) => receive(chunkIdx, settled));
-    else receive(chunkIdx, answer);
+    const submittedGeneration = generation;
+    const revision = revisions.get(chunkIdx) ?? 0;
+    const answer = buildSource.build(buildMirror, chunkIdx, generation);
+    if (answer instanceof Promise) void answer.then(
+      (settled) => receive(chunkIdx, settled, submittedGeneration, revision),
+      () => receive(chunkIdx, null, submittedGeneration, revision),
+    );
+    else receive(chunkIdx, answer, submittedGeneration, revision);
   };
 
   const spliceAnswer = (answer: ChunkAnswer): void => {
     const startedMs = now();
-    drawnGroundStore.publishRastered(
-      answer.chunkIdx,
-      answer.plan,
-      answer.topLevel,
-      answer.lips,
-    );
+    if (disposed || answerRevisions.get(answer) !== revisions.get(answer.chunkIdx)) {
+      releaseAnswer(answer);
+      return;
+    }
     const superIdx = superIndexOf(answer.chunkIdx);
     const sm = superMeshes.get(superIdx) ?? createSuperMesh(superIdx);
-    spliceChunk(sm, answer.chunkIdx, answer);
+    if (!spliceChunk(sm, answer.chunkIdx, answer)) return;
+    drawnGroundStore.publishRastered(answer.chunkIdx, answer.plan, answer.topLevel, answer.lips);
     for (const handler of chunkDrawnHandlers) handler(answer.chunkIdx);
     const elapsedMs = now() - startedMs;
     chunksSpliced++;
@@ -749,6 +774,8 @@ export function createTerrainMeshes(
       lastUpdateMs = now();
       for (const chunkIdx of dirty) {
         if (!mirror.received.has(chunkIdx)) continue;
+        drawnGroundStore.invalidate(chunkIdx);
+        revisions.set(chunkIdx, (revisions.get(chunkIdx) ?? 0) + 1);
         pending.add(chunkIdx);
       }
       if (firstUpdateMs === null && pending.size > 0) {
@@ -827,6 +854,7 @@ export function createTerrainMeshes(
       return built;
     },
     dispose(): void {
+      disposed = true;
       stopDraining?.();
       clear();
       if (ownsStore) store.destroy();

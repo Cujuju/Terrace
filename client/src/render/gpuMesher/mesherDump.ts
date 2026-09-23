@@ -299,7 +299,7 @@ function chunkFacts(mirror: TerrainMirror, chunkIdx: number): MesherDumpFacts | 
   }
   const latticeBands: number[] = [];
   for (let at = 0; at < LATTICE_PER_CHUNK * LATTICE_PER_CHUNK; at++) {
-    latticeBands.push(drawnBandOfSample(entry.lattice[at]!));
+    latticeBands.push(drawnBandOfSample(entry.lattice[(Math.floor(at / LATTICE_PER_CHUNK) + entry.halo) * entry.latticeEdge + at % LATTICE_PER_CHUNK + entry.halo]!));
   }
   return {
     chunkIdx, cx, cy,

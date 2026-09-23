@@ -1,3 +1,4 @@
+import { smoothTerrainBands, setSmoothTerrainBands, terrainSurfaceRebuilding } from '../state/terrainSurfacePrefs.ts';
 import { For, Show, type JSX } from 'solid-js';
 import {
   ACTION_PRECEDENCE,
@@ -478,6 +479,15 @@ export function ControlsPanel(): JSX.Element {
         />
       </div>
 
+      <label class="hud-row controls-row">
+        <span class="controls-label">Smooth terrain bands</span>
+        <input type="checkbox" class="controls-check" checked={smoothTerrainBands()}
+          title="Applies a gentle averaging filter to terrain contours. Rebuilds the visible terrain."
+          onChange={(event) => setSmoothTerrainBands(event.currentTarget.checked)} />
+      </label>
+      <Show when={terrainSurfaceRebuilding()}>
+        <p class="hud-hint" role="status">Rebuilding terrain…</p>
+      </Show>
       <div class="hud-row controls-row">
         <span class="controls-label">Smooth lines</span>
         <input

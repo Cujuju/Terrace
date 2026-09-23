@@ -1,4 +1,4 @@
-import { CHUNK_SIZE, applyPackedSpans, chunkIndex, chunksPerEdge } from '@terrace/shared';
+import { CHUNK_SIZE, applyPackedSpans, chunkIndex, chunksPerEdge, type DrawnSurfaceMode } from '@terrace/shared';
 import { CLIFF_PALETTE, TERRAIN_PALETTE } from './bandColors.ts';
 import {
   COMPONENTS_PER_COLOR,
@@ -25,6 +25,7 @@ export const CHUNK_PALETTES: ChunkPalettes = {
 };
 
 export interface ChunkJobRequest {
+  readonly surfaceMode?: DrawnSurfaceMode;
   readonly generation: number;
   readonly chunkIdx: number;
   readonly worldSize: number;
@@ -97,8 +98,8 @@ export function extractChunkWindow(
 
   const windowX = Math.max(0, originX - JOB_WINDOW_REACH_CELLS);
   const windowY = Math.max(0, originY - JOB_WINDOW_REACH_CELLS);
-  const windowRight = Math.min(worldSize - 1, originX + CHUNK_SIZE);
-  const windowBottom = Math.min(worldSize - 1, originY + CHUNK_SIZE);
+  const windowRight = Math.min(worldSize - 1, originX + CHUNK_SIZE + (mirror.surfaceMode === 'binomial' ? JOB_WINDOW_REACH_CELLS : 0));
+  const windowBottom = Math.min(worldSize - 1, originY + CHUNK_SIZE + (mirror.surfaceMode === 'binomial' ? JOB_WINDOW_REACH_CELLS : 0));
   const windowWidth = windowRight - windowX + 1;
   const windowHeight = windowBottom - windowY + 1;
 
@@ -135,6 +136,7 @@ export function extractChunkWindow(
   }
 
   return {
+    surfaceMode: mirror.surfaceMode,
     generation,
     chunkIdx,
     worldSize,
@@ -164,6 +166,8 @@ export function loadWindow(
   request: ChunkJobRequest,
 ): TerrainMirror {
   const { mirror } = workspace;
+  mirror.surfaceMode = request.surfaceMode ?? 'raw';
+  mirror.surfaceRevision = (mirror.surfaceRevision ?? 0) + 1;
   const worldSize = mirror.map.size;
   const cells = mirror.map.cells;
   for (let j = 0; j < request.windowHeight; j++) {

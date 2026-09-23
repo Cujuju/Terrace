@@ -147,6 +147,7 @@ function cpuUnits(positions: Float32Array, vertices: number, ox: number, oz: num
 
 async function measure(world: GoldenWorldName): Promise<FixtureRow> {
   const mirror = fixtureMirror(world);
+  if (new URLSearchParams(location.search).get('surface') === 'binomial') mirror.surfaceMode = 'binomial';
   const chunks = fixtureChunkCount(mirror);
   const cols = chunksPerEdge(mirror.map.size);
   const disagreeing: ChunkRow[] = [];

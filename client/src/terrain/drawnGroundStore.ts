@@ -1,4 +1,4 @@
-import { CHUNK_SIZE, chunksPerEdge } from '@terrace/shared';
+import { CHUNK_SIZE, chunksPerEdge, drawnLevelThreshold } from '@terrace/shared';
 import { BAND_GRID_CELLS } from './bandGrid.ts';
 import { CLIFF_PALETTE, TERRAIN_PALETTE } from './bandColors.ts';
 import { planChunkCaps, type ChunkDrawnCaps, type ChunkPalettes } from './capEmission.ts';
@@ -41,6 +41,7 @@ export interface DrawnGroundStore {
   chartOf(chunkX: number, chunkZ: number): ChunkChart | null;
   /** Chunks the mesher drew blocky, ascending. The parity harness exempts their pixels. */
   blockyChunkIndices(): number[];
+  invalidate(chunkIdx: number): void;
   clear(): void;
   size(): number;
 }
@@ -120,6 +121,7 @@ export function createDrawnGroundStore(worldSize: number): DrawnGroundStore {
       }
       return blocky.sort((a, b) => a - b);
     },
+    invalidate(chunkIdx): void { charts.delete(chunkIdx); },
     clear(): void {
       charts.clear();
     },
@@ -141,7 +143,7 @@ export function publishPlannedChunk(
     : {
         blocky: false,
         levels: plan.levels.map((level, index) => ({
-          threshold: level.threshold,
+          threshold: drawnLevelThreshold(level.sampleBand),
           sampleBand: level.sampleBand,
           capY: level.capY,
           polygons: plan.polygonsPerLevel[index]!,

@@ -10,6 +10,7 @@ import {
 } from './columns.ts';
 import { cellIndex, type Heightmap } from './grid.ts';
 import { SHEER_RISE_HEIGHT_UNITS_PER_CELL } from './traversal.ts';
+import type { DrawnSurfaceField } from './drawnFieldFilter.ts';
 
 export {
   DRAWN_GROUND_BAND_BIAS,
@@ -122,6 +123,7 @@ export function drawnFieldNumerator(
   qx: number,
   qz: number,
   band: number | null = TOP_CEILING_FIELD,
+  surface?: DrawnSurfaceField,
 ): number {
   const i0 = drawnCornerIndex(qx);
   const j0 = drawnCornerIndex(qz);
@@ -130,10 +132,10 @@ export function drawnFieldNumerator(
   const z0 = clampCell(j0, map.size);
   const z1 = clampCell(j0 + 1, map.size);
   return drawnCornerNumerator(
-    sampleOf(map, x0, z0, band),
-    sampleOf(map, x1, z0, band),
-    sampleOf(map, x0, z1, band),
-    sampleOf(map, x1, z1, band),
+    surface ? surface.sample(x0, z0, band) : sampleOf(map, x0, z0, band),
+    surface ? surface.sample(x1, z0, band) : sampleOf(map, x1, z0, band),
+    surface ? surface.sample(x0, z1, band) : sampleOf(map, x0, z1, band),
+    surface ? surface.sample(x1, z1, band) : sampleOf(map, x1, z1, band),
     qx - i0 * DRAWN_GROUND_COORD_DENOM,
     qz - j0 * DRAWN_GROUND_COORD_DENOM,
   );
@@ -179,17 +181,17 @@ export function drawnIsolineAt(
   return (insideLow ? low : high) / ISOLINE_SOLVE_DENOM;
 }
 
-function bandOfNumerator(numerator: number): number {
-  return Math.floor((numerator - SHORE_NUMERATOR) / BAND_NUMERATOR);
+function bandOfNumerator(numerator: number, scale = 1): number {
+  return Math.floor((numerator - SHORE_NUMERATOR * scale) / (BAND_NUMERATOR * scale));
 }
 
-function lowestDrawnBandNear(map: Heightmap, qx: number, qz: number): number {
+function lowestDrawnBandNear(map: Heightmap, qx: number, qz: number, reach = 0): number {
   const i0 = drawnCornerIndex(qx);
   const j0 = drawnCornerIndex(qz);
   let lowest = drawnBandOfSample(BEDROCK_FLOOR);
   let found = false;
-  for (let dz = 0; dz <= 1; dz++) {
-    for (let dx = 0; dx <= 1; dx++) {
+  for (let dz = -reach; dz <= 1 + reach; dz++) {
+    for (let dx = -reach; dx <= 1 + reach; dx++) {
       const x = clampCell(i0 + dx, map.size);
       const y = clampCell(j0 + dz, map.size);
       const count = spanCount(map, x, y);
@@ -206,11 +208,11 @@ function lowestDrawnBandNear(map: Heightmap, qx: number, qz: number): number {
   return lowest;
 }
 
-function anyCellLayered(map: Heightmap, qx: number, qz: number): boolean {
+function anyCellLayered(map: Heightmap, qx: number, qz: number, reach = 0): boolean {
   const i0 = drawnCornerIndex(qx);
   const j0 = drawnCornerIndex(qz);
-  for (let dz = 0; dz <= 1; dz++) {
-    for (let dx = 0; dx <= 1; dx++) {
+  for (let dz = -reach; dz <= 1 + reach; dz++) {
+    for (let dx = -reach; dx <= 1 + reach; dx++) {
       const x = clampCell(i0 + dx, map.size);
       const y = clampCell(j0 + dz, map.size);
       if (map.columnSpans.has(cellIndex(map, x, y))) return true;
@@ -219,14 +221,29 @@ function anyCellLayered(map: Heightmap, qx: number, qz: number): boolean {
   return false;
 }
 
-export function drawnBandAt(map: Heightmap, x: number, z: number): number {
+function highestDrawnBandNear(map: Heightmap, qx: number, qz: number, reach: number): number {
+  let highest = -Infinity;
+  for (let dz = -reach; dz <= 1 + reach; dz++) {
+    for (let dx = -reach; dx <= 1 + reach; dx++) {
+      highest = Math.max(highest, drawnBandOfSample(sampleOf(map,
+        clampCell(drawnCornerIndex(qx) + dx, map.size),
+        clampCell(drawnCornerIndex(qz) + dz, map.size), null)));
+    }
+  }
+  return highest;
+}
+
+export function drawnBandAt(map: Heightmap, x: number, z: number, surface?: DrawnSurfaceField): number {
   const qx = quantizeDrawnCoord(x);
   const qz = quantizeDrawnCoord(z);
-  const top = bandOfNumerator(drawnFieldNumerator(map, qx, qz));
-  if (map.columnSpans.size === 0 || !anyCellLayered(map, qx, qz)) return top;
-  const lowest = lowestDrawnBandNear(map, qx, qz);
+  const scale = surface?.scale ?? 1;
+  const reach = surface?.reach ?? 0;
+  const fieldTop = bandOfNumerator(drawnFieldNumerator(map, qx, qz, null, surface), scale);
+  if (map.columnSpans.size === 0 || !anyCellLayered(map, qx, qz, reach)) return fieldTop;
+  const top = reach ? highestDrawnBandNear(map, qx, qz, reach) : fieldTop;
+  const lowest = lowestDrawnBandNear(map, qx, qz, reach);
   for (let band = top; band > lowest; band--) {
-    if (bandOfNumerator(drawnFieldNumerator(map, qx, qz, band)) >= band) return band;
+    if (bandOfNumerator(drawnFieldNumerator(map, qx, qz, band, surface), scale) >= band) return band;
   }
   return lowest;
 }
@@ -240,22 +257,26 @@ export function drawnLayerCapAt(
   x: number,
   z: number,
   band: number,
+  surface?: DrawnSurfaceField,
 ): number | null {
   const qx = quantizeDrawnCoord(x);
   const qz = quantizeDrawnCoord(z);
-  const top = bandOfNumerator(drawnFieldNumerator(map, qx, qz));
-  if (map.columnSpans.size === 0 || !anyCellLayered(map, qx, qz)) {
-    return band <= top ? top : null;
+  const scale = surface?.scale ?? 1;
+  const reach = surface?.reach ?? 0;
+  const fieldTop = bandOfNumerator(drawnFieldNumerator(map, qx, qz, null, surface), scale);
+  if (map.columnSpans.size === 0 || !anyCellLayered(map, qx, qz, reach)) {
+    return band <= fieldTop ? fieldTop : null;
   }
+  const top = reach ? highestDrawnBandNear(map, qx, qz, reach) : fieldTop;
   const solidAt = (b: number): boolean =>
-    bandOfNumerator(drawnFieldNumerator(map, qx, qz, b)) >= b;
+    bandOfNumerator(drawnFieldNumerator(map, qx, qz, b, surface), scale) >= b;
   if (!solidAt(band)) return null;
-  // A band's field never exceeds the top field, so `top` bounds the climb.
+  // Independently filtered band fields require a raw-support upper bound.
   let cap = band;
   while (cap < top && solidAt(cap + 1)) cap++;
   return cap;
 }
 
-export function drawnHeightAt(map: Heightmap, x: number, z: number): number {
-  return bandLevelHeight(drawnBandAt(map, x, z));
+export function drawnHeightAt(map: Heightmap, x: number, z: number, surface?: DrawnSurfaceField): number {
+  return bandLevelHeight(drawnBandAt(map, x, z, surface));
 }

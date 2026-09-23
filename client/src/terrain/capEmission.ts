@@ -7,6 +7,7 @@ import {
   drawnBandOfSample,
   drawnBandOfSpan,
   drawnLevelThreshold,
+  drawnSurfaceThreshold,
   isSpanDrawn,
   spanAt,
   spanCapHeight,
@@ -24,6 +25,7 @@ import {
 } from './bandColors.ts';
 import {
   sampleRenderBandHeight,
+  sampleRenderHeight,
   sampleRenderBandSolid,
   type TerrainMirror,
 } from './mirror.ts';
@@ -42,6 +44,7 @@ import {
   type ContourPoint,
 } from './contours.ts';
 import { simplifyLoop } from './contourSmoothing.ts';
+import { drawnSurface } from './drawnSurface.ts';
 import { bridgeHole, earClip, groupLoops, type CapPolygon } from './triangulation.ts';
 
 export const SKIRT_PICK_INSET = 1 / 1024;
@@ -156,21 +159,22 @@ export interface SampleBandRange {
 export function sampleBandRange(
   values: ArrayLike<number>,
   count: number = SAMPLE_COUNT,
+  scale = 1,
 ): SampleBandRange {
   let lowestBand = Infinity;
   let highestBand = -Infinity;
   for (let i = 0; i < count; i++) {
-    const band = drawnBandOfSample(values[i]!);
+    const band = drawnBandOfSample(values[i]! / scale);
     if (band < lowestBand) lowestBand = band;
     if (band > highestBand) highestBand = band;
   }
   return { lowestBand, highestBand };
 }
 
-function makeLevels(palettes: ChunkPalettes, floorBand: number | null): ContourLevel[] {
-  const range = sampleBandRange(samples);
+function makeLevels(palettes: ChunkPalettes, floorBand: number | null, scale = 1, highest?: number): ContourLevel[] {
+  const range = sampleBandRange(samples, SAMPLE_COUNT, scale);
   let lowestBand = range.lowestBand;
-  const highestBand = range.highestBand;
+  const highestBand = highest ?? range.highestBand;
   if (floorBand !== null && floorBand < lowestBand) lowestBand = floorBand;
 
   const levels: ContourLevel[] = [];
@@ -187,7 +191,7 @@ function makeLevels(palettes: ChunkPalettes, floorBand: number | null): ContourL
       ? undersideIndex
       : paletteIndex;
     levels.push({
-      threshold: drawnLevelThreshold(k),
+      threshold: drawnSurfaceThreshold(k, scale),
       sampleBand: k,
       capY,
       undersideY: k === lowestBand ? capY : below,
@@ -552,15 +556,32 @@ export function planChunkCaps(
   loadSamples(mirror, originX, originZ);
 
   const floorBand = buriedFloorBand(mirror, originX, originZ);
-  const layered = floorBand !== null;
+  const surface = drawnSurface(mirror);
+  // Halo columns can affect band fields even when the centre lattice is plain.
+  const layered = floorBand !== null || (surface !== undefined && anyColumnLayered(
+    mirror.map, Math.max(0, originX - 1), Math.max(0, originZ - 1),
+    Math.min(mirror.map.size, originX + CHUNK_SIZE + 2) - Math.max(0, originX - 1),
+    Math.min(mirror.map.size, originZ + CHUNK_SIZE + 2) - Math.max(0, originZ - 1),
+  ));
+  let highest: number | undefined;
+  if (surface) {
+    highest = -Infinity;
+    for (let j = -1; j <= CHUNK_SIZE + 1; j++) {
+      for (let i = -1; i <= CHUNK_SIZE + 1; i++) {
+        highest = Math.max(highest, drawnBandOfSample(sampleRenderHeight(mirror, originX + i, originZ + j)));
+      }
+    }
+    loadSampleField((i, j) => surface.sample(originX + i, originZ + j, null));
+  }
   const loadLevel = (band: number): void => {
     loadSampleField(
-      (i, j) => sampleRenderBandHeight(mirror, originX + i, originZ + j, band),
+      (i, j) => surface ? surface.sample(originX + i, originZ + j, band)
+        : sampleRenderBandHeight(mirror, originX + i, originZ + j, band),
       CHUNK_SIZE,
     );
   };
 
-  const levels = makeLevels(palettes, floorBand);
+  const levels = makeLevels(palettes, floorBand, surface?.scale ?? 1, highest);
 
   let capTriangles = 0;
   let skirtTriangles = 0;
@@ -766,7 +787,7 @@ export function writeChunkVertexData(
     : {
         blocky: false,
         levels: levels.map((level, index) => ({
-          threshold: level.threshold,
+          threshold: drawnLevelThreshold(level.sampleBand),
           sampleBand: level.sampleBand,
           capY: level.capY,
           polygons: polygonsPerLevel[index],
@@ -864,11 +885,12 @@ export function chunkBandContourLoops(
 ): { x: number; z: number; onBorder: boolean }[][] {
   const originX = cx * CHUNK_SIZE;
   const originZ = cy * CHUNK_SIZE;
+  const surface = drawnSurface(mirror);
   loadSampleField(
-    (i, j) => sampleRenderBandHeight(mirror, originX + i, originZ + j, band),
+    (i, j) => surface ? surface.sample(originX + i, originZ + j, band) : sampleRenderBandHeight(mirror, originX + i, originZ + j, band),
     CHUNK_SIZE,
   );
-  const threshold = drawnLevelThreshold(band);
+  const threshold = drawnSurfaceThreshold(band, surface?.scale ?? 1);
   const segmentCount = marchLevel(threshold, originX, originZ, null);
   return finishLoops(segmentCount, originX, originZ, domainInside(threshold, null));
 }

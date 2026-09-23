@@ -1,4 +1,4 @@
-import { createEffect } from 'solid-js';
+import { createEffect, on } from 'solid-js';
 import { render } from 'solid-js/web';
 import { Raycaster, Vector2 } from 'three';
 import { connect, type ConnectionStatus, type TerrainSink } from './net/connection.ts';
@@ -15,6 +15,7 @@ import { voidAnchor, voidStyle } from './state/voidPrefs.ts';
 import { creaseLook, layerEdgeStyle, lipHighlight } from './state/layerEdgePrefs.ts';
 import { cellLinesVisible, cellLook } from './state/layerEdgePrefs.ts';
 import { bandGridVisible } from './state/layerEdgePrefs.ts';
+import { terrainSurfaceMode, terrainSurfaceRebuilding, setTerrainSurfaceRebuilding } from './state/terrainSurfacePrefs.ts';
 import { smoothLinesEnabled } from './state/layerEdgePrefs.ts';
 import { frameRateTarget, frameRateTargetFps } from './state/frameRatePrefs.ts';
 import { multisampleEnabled, multisampleSetting } from './state/multisamplePrefs.ts';
@@ -233,6 +234,12 @@ const deniedAwareSink: TerrainSink = {
 
 // The four brush cues: refused (red), offline (grey/hollow, never red), ghost
 // (the intent left but predicted nothing), flat (posture refusal, crosshair only).
+createEffect(on(terrainSurfaceMode, (mode) => {
+  sculptInput.cancelStroke();
+  world.setTerrainSurfaceMode(mode);
+  setTerrainSurfaceRebuilding(world.pendingTerrainCount() > 0);
+}));
+
 const denialCue = createDenialCue(() => sculptInput.refusedHold(), {
   offline: () => sculptInput.offlineHold(),
   ghost: () => world.ghostSeqs().length > 0,
@@ -257,6 +264,9 @@ let frozenCursorShown = false;
 // The aim the overlays are drawn for; a camera gesture holds it.
 let heldAim: TerrainRayPick | null = null;
 viewport.onFrame(() => {
+  if (terrainSurfaceRebuilding() && world.pendingTerrainCount() === 0) {
+    setTerrainSurfaceRebuilding(false);
+  }
   world.setBrushRefused(denialCue.isRed());
   // While the drag plane is off the ray the stroke is frozen: show a crosshair.
   // Lane E greys the held highlight via sculptInput.dragDescentFrozen().

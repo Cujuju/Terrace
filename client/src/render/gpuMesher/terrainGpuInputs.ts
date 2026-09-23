@@ -1,9 +1,11 @@
-import { CHUNK_SIZE, cellIndex, chunksPerEdge, SPAN_STRIDE } from '@terrace/shared';
+import { CHUNK_SIZE, cellIndex, chunksPerEdge, SPAN_STRIDE, anyColumnLayered } from '@terrace/shared';
 import { buriedFloorBand, sampleBandRange } from '../../terrain/capEmission.ts';
 import { LATTICE_PER_CHUNK, SAMPLE_COUNT } from '../../terrain/contours.ts';
 import { renderSampleCell, type TerrainMirror } from '../../terrain/mirror.ts';
+import { drawnSurface } from '../../terrain/drawnSurface.ts';
 
-export const WINDOW_LATTICE_SAMPLES = SAMPLE_COUNT;
+export const WINDOW_LATTICE_EDGE = CHUNK_SIZE + 3;
+export const WINDOW_LATTICE_SAMPLES = WINDOW_LATTICE_EDGE ** 2;
 
 /** Layered (floor, ceiling) pairs one chunk window may carry; past it the chunk is CPU work. */
 export const WINDOW_SPAN_PAIRS = 2048;
@@ -26,6 +28,9 @@ export const ENTRY_ORIGIN_Z_CELLS = 5;
 export const ENTRY_LOCAL_ORIGIN_X_UNITS = 6;
 export const ENTRY_LOCAL_ORIGIN_Z_UNITS = 7;
 export const ENTRY_VERTEX_LIMIT = 9;
+export const ENTRY_SURFACE_SCALE = 8;
+export const ENTRY_WORLD_SIZE = 10;
+export const ENTRY_RECEIVED_MASK = 11;
 
 export const SQUARES_PER_CHUNK = CHUNK_SIZE * CHUNK_SIZE;
 
@@ -92,6 +97,11 @@ function exposedChunk(
 }
 
 export interface WindowEntryData {
+  readonly surfaceScale: number;
+  readonly latticeEdge: number;
+  readonly halo: number;
+  readonly worldSize: number;
+  readonly receivedMask: number;
   readonly layered: boolean;
   readonly exposed: boolean;
   readonly chunkLowestBand: number;
@@ -118,10 +128,11 @@ function createScratch(): ExtractScratch {
 }
 
 const scratch = createScratch();
+const filteredCentral = new Int32Array(SAMPLE_COUNT);
 
 /**
- * The 17x17 lattice the CPU mesher would march, resolved through the same seam
- * pull-back, plus the chunk-level values makeLevels derives.
+ * Raw uses the original 17x17 lattice; binomial adds one sample per side (19x19).
+ * Incomplete stencils use the same render-sample pull-back as CPU queries.
  */
 export function extractWindowEntry(
   mirror: TerrainMirror,
@@ -134,13 +145,17 @@ export function extractWindowEntry(
   const originXCells = cx * CHUNK_SIZE;
   const originZCells = cy * CHUNK_SIZE;
 
-  const { lattice, latticeDesc, spanPairs } = scratch;
+  const halo = mirror.surfaceMode === 'binomial' ? 1 : 0;
+  const latticeEdge = LATTICE_PER_CHUNK + 2 * halo;
+  const lattice = scratch.lattice.subarray(0, latticeEdge ** 2);
+  const latticeDesc = scratch.latticeDesc.subarray(0, latticeEdge ** 2);
+  const spanPairs = scratch.spanPairs;
   let pairsUsed = 0;
-  for (let j = 0; j < LATTICE_PER_CHUNK; j++) {
-    for (let i = 0; i < LATTICE_PER_CHUNK; i++) {
-      const cell = renderSampleCell(mirror, originXCells + i, originZCells + j);
+  for (let j = 0; j < latticeEdge; j++) {
+    for (let i = 0; i < latticeEdge; i++) {
+      const cell = renderSampleCell(mirror, originXCells + i - halo, originZCells + j - halo);
       const index = cellIndex(map, cell.x, cell.y);
-      const at = j * LATTICE_PER_CHUNK + i;
+      const at = j * latticeEdge + i;
       lattice[at] = map.cells[index]!;
       const packed = map.columnSpans.get(index);
       if (packed === undefined) {
@@ -156,16 +171,38 @@ export function extractWindowEntry(
   }
 
   const floorBand = buriedFloorBand(mirror, originXCells, originZCells);
-  const range = sampleBandRange(lattice, WINDOW_LATTICE_SAMPLES);
+  const surface = drawnSurface(mirror);
+  const central = surface ? filteredCentral : lattice;
+  if (surface) {
+    for (let j = 0; j < LATTICE_PER_CHUNK; j++) {
+      for (let i = 0; i < LATTICE_PER_CHUNK; i++) {
+        central[j * LATTICE_PER_CHUNK + i] = surface.sample(originXCells + i, originZCells + j, null);
+      }
+    }
+  }
+  const range = sampleBandRange(central, SAMPLE_COUNT, surface?.scale ?? 1);
+  const highestBand = surface ? sampleBandRange(lattice, lattice.length).highestBand : range.highestBand;
+  let receivedMask = 0;
+  for (let b = 0; surface && b < 9; b++) {
+    const nx = cx - 1 + b % 3, ny = cy - 1 + Math.floor(b / 3);
+    if (nx >= 0 && ny >= 0 && nx < chunkCols && ny < chunkCols && mirror.received.has(ny * chunkCols + nx)) receivedMask |= 1 << b;
+  }
+  const x0 = Math.max(0, originXCells - halo), y0 = Math.max(0, originZCells - halo);
   const chunkLowestBand =
     floorBand !== null && floorBand < range.lowestBand ? floorBand : range.lowestBand;
 
   // The arrays alias a module-level scratch: the caller must upload before extracting again.
   return {
-    layered: floorBand !== null,
+    surfaceScale: surface?.scale ?? 1,
+    latticeEdge, halo,
+    worldSize: map.size,
+    receivedMask,
+    layered: floorBand !== null || (surface !== undefined && anyColumnLayered(map, x0, y0,
+      Math.min(map.size, originXCells + CHUNK_SIZE + halo + 1) - x0,
+      Math.min(map.size, originZCells + CHUNK_SIZE + halo + 1) - y0)),
     exposed: exposedChunk(mirror, cx, cy, chunkCols),
     chunkLowestBand,
-    highestBand: range.highestBand,
+    highestBand,
     originXCells,
     originZCells,
     lattice,

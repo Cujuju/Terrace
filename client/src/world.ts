@@ -176,6 +176,7 @@ export interface World extends TerrainSink {
   setCellLinesVisible(visible: boolean): void;
   setBandGridVisible(visible: boolean): void;
   setLipSmoothing(enabled: boolean): void;
+  setTerrainSurfaceMode(mode: import('@terrace/shared').DrawnSurfaceMode): void;
   setBrushRefused(refused: boolean): void;
   /** Cap band of the layer holding `spanBand` (the column top when null); after a lower, the layer just beneath it. */
   bandAtCell(x: number, y: number, spanBand: number | null): number | null;
@@ -415,9 +416,11 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
 
   // One wiring path for a fresh world and for a live mesher swap. The mirror is the
   // caller's: a swap keeps the one it already has.
+  let surfaceMode: import('@terrace/shared').DrawnSurfaceMode = 'raw';
   const buildTerrain = (
     nextMirror: TerrainMirror,
   ): { meshes: TerrainMeshes; ground: DrawnGround } => {
+    nextMirror.surfaceMode = surfaceMode;
     const worldSize = nextMirror.map.size;
     meshes?.dispose();
     layerEdges?.dispose();
@@ -445,6 +448,8 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
     nextLayerEdges.setBandGridVisible(bandGridVisible);
     nextLayerEdges.setLipSmoothing(lipSmoothing);
     const nextGround = createDrawnGround(nextMirror, nextMeshes.drawnGround());
+    nextMirror.isDrawnCell = (x, y) => nextGround.isDrawnAt(x, y);
+    nextMirror.isBlockyCell = (x, y) => nextMeshes.drawnGround().chartOf(Math.floor(x / CHUNK_SIZE), Math.floor(y / CHUNK_SIZE))?.plan.blocky ?? false;
     nextMeshes.onChunkDrawn((chunkIdx) => {
       nextLayerEdges.refreshChunk(chunkIdx);
       drawnChunkScratch.clear();
@@ -701,6 +706,12 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
     setBandGridVisible(visible: boolean): void {
       bandGridVisible = visible;
       layerEdges?.setBandGridVisible(visible);
+    },
+    setTerrainSurfaceMode(mode): void {
+      if (mode === surfaceMode) return;
+      surfaceMode = mode;
+      terrainEpoch++;
+      rebuildTerrain();
     },
     setLipSmoothing(enabled: boolean): void {
       lipSmoothing = enabled;

@@ -1,0 +1,16 @@
+<!doctype html><meta charset="utf-8"><title>Terrain filter overhead diagnostic</title>
+<canvas id="viewport"></canvas><pre id="status">Starting…</pre>
+<script type="module">
+import { WebGPURenderer } from 'three/webgpu';
+import { setup, kernel } from '../scratch-band-investigation/measure-filter-overhead.mjs';
+const renderer=new WebGPURenderer({canvas:document.querySelector('canvas'),antialias:false});
+renderer.setSize(1,1,false);await renderer.init();
+const bench=setup(renderer);
+const result=window.__filterOverhead={date:new Date().toISOString(),userAgent:navigator.userAgent,kernel:[],cpu:[],gpu:[],failure:null,done:false};
+const status=document.querySelector('#status');
+try {
+  for(const name of ['genesis-noise','terrace','played']) {status.textContent=`Kernel: ${name}`;result.kernel.push(kernel(name));await new Promise(r=>setTimeout(r,0));}
+  for(const name of ['genesis-noise','terrace','played']) {status.textContent=`CPU workers: ${name}`;result.cpu.push(await bench.cpu(name));}
+  for(const name of ['genesis-noise','terrace','played']) {status.textContent=`GPU: ${name}`;result.gpu.push(await bench.gpu(name));}
+} catch(e) {result.failure=String(e);} finally {bench.dispose();renderer.dispose();result.done=true;status.textContent=JSON.stringify(result,null,2);}
+</script>

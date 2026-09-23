@@ -28,10 +28,12 @@ in the README.
 
 ## Rendering and plugins
 
-- Terrain-band smoothing must preserve one-cell terraces and small holes.
-  The owner judges matched before/after images, including changes caused by
-  feature protection. Derived-field filtering is the preferred direction;
-  its protected prototype is awaiting visual review. See
+- Terrain-band smoothing uses one plain 3×3 binomial pass, without small-feature
+  protection. The owner judges appearance and sculpting behavior; tiny terraces
+  or holes may disappear. Derived-field filtering is the preferred direction;
+  the default-off **Smooth terrain bands** setting selects the shared filtered
+  field for CPU/GPU geometry, picking and client grounding. Stored terrain is
+  unchanged. Production appearance remains subject to owner review. See
   [band smoothing](decisions/band-smoothing.md).
 - **≥ 140 fps on the owner's machine** (≈ 7 ms per frame). What does not fit is
   budgeted (`docs/decisions/mesh-budgets.md`) or moved off the frame.

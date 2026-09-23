@@ -52,6 +52,7 @@ export interface SculptInputOptions {
 }
 
 export interface SculptInput {
+  cancelStroke(): void;
   hoverTarget(): TerrainRayPick | null;
   heldBand(): number | null;
   carveHeldBand(): number | null;

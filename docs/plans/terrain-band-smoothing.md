@@ -1,9 +1,118 @@
-# Protected derived-field smoothing and live comparison
+# Derived-field smoothing and live comparison
 
-Status: implementation plan, 2026-09-21. Production implementation has not started.
+Status: plain binomial implementation built, default off. On September 22 the owner explicitly removed feature protection. Typecheck, shared/client suites and actual GPU parity pass. Live sculpting acceptance remains unresolved; separate renderer reviews are complete.
+
+## September 22 amendment — current specification
+
+This amendment supersedes every feature-preservation requirement, radius-two
+dependency, and 21×21 production input window in the original plan below.
+The remaining original plan and implementation measurements are retained as
+history, including the rejected protected behavior and its measured overhead.
+
+- Shared and WGSL kernels now use a single 3×3 `[1,2,1]²/16` pass. No extrema,
+  diagonal, or layered-feature guards remain. Missing-input fallback and world
+  clamping remain. The three shared contract cases now verify plain averaging,
+  exact arithmetic, immutable inputs, and streaming fallback.
+- Mode is `raw | binomial`; persisted `protected-binomial` migrates to `binomial`.
+- Filtered CPU/GPU inputs are 19×19; raw CPU input is restored to 18×18 and raw
+  GPU input to 17×17. Input bounds, seam invalidation, band support bounds and
+  owner search follow the smaller reach. No contour resolution increase occurs.
+- GPU uploads/copies use the active mode's length. Resident slots/workgroup
+  arrays still reserve the maximum 19×19 capacity, and the second workgroup
+  barrier remains unconditional for WGSL uniformity validation.
+- Existing worker contract coverage checks both input dimensions and seam,
+  world-edge, missing-neighbor and cache agreement. No extra test suite added.
+- Verification: workspace typecheck passes; shared 536 pass; client 786 pass,
+  one skipped; actual CPU/WebGPU parity passes 80 chunks per mode across five
+  fixtures. Historical unrelated mana/reveal failures and the empty temples
+  suite remain documented below under the owner's commit exception.
+- Protection cost results remain archived; they must not be represented as
+  measurements of this revised pipeline. The protected kernel is retained only
+  in the scratch investigation for historical comparisons.
+- Three requested read-only reviews completed. Findings and remaining runtime
+  uncertainties: `E:\Development\Projects\Terrace\docs\investigations\renderer-review-2026-09-22.md`.
+
+## Original implementation and plan (superseded where amended above)
 Prototype: `d4664f4e`; follow-up shape requirement: `ed67fc78`.
 Tracker: https://github.com/Cujuju/Terrace/issues/503.
 Design record: `E:\Development\Projects\Terrace\docs\decisions\band-smoothing.md`.
+
+## Implementation record
+
+The owner authorized implementation, controlled app runs, and minimal contract-level
+regression tests. The first increment now implements the shared protected field,
+CPU workers, the WGSL backend, ground queries, canonical-contour picking, streaming
+invalidation, safe publication, and the persistent **Smooth terrain bands** setting.
+The additional post-contour fairing experiment remains unbuilt.
+
+Owner review follow-up: the CPU comparison URL prevented live toggling because
+`surface=` overrode the setting permanently. That override now applies only until
+an explicit settings change. The reported hole-closing/sculpting behavior still
+needs reproduction with the affected brush and an off/on comparison. Idle frame
+timings below do not establish acceptable sculpting latency or worst-case cost.
+The affected brush is **Stamp, Hard, width 2.0**; the owner confirms that disabling
+band smoothing restores expected brush behavior. Stage measurements now show
+material overhead, especially in CPU meshing; see
+`E:\Development\Projects\Terrace\docs\investigations\terrain-filter-overhead.md`.
+This supersedes any inference that similar idle frame medians imply acceptable
+sculpting performance. Protection is expensive but has not been proven to cause
+the hole-closing failure.
+
+Implementation refinements from measurement and inspection:
+
+- Surface mode is captured in each arena's build-mirror view; each submitted job
+  captures arena generation and chunk revision in its completion closure. Workers
+  serialize the mode with the input window. GPU resident entries keep scale,
+  world size and receipt mask immutable from count through emit. This avoids
+  adding duplicate revision fields to every answer format.
+- The client adapter keeps a bounded 32,768-sample cache per mirror, cleared on
+  terrain revision or receipt changes. Unmanaged diagnostic mirrors bypass it.
+  GPU unlayered samples are computed once per workgroup, reused across levels.
+- Filtered picking intersects actual published riser segments and shared-field
+  tread planes before assigning an original column owner. The earlier raw-column
+  candidate heuristic selected nonexistent treads after contours moved. Underside
+  selection retains the existing rules because layered-neighbour guards preserve
+  those boundaries. Decorative line smoothing never changes picking segments.
+- A dirty or unpublished chart is unavailable to ground/pick consumers. Geometry
+  is written successfully before its chart and notifications are published.
+- Raw top-box fallback is explicitly queried as its published representation.
+- The settings show **Rebuilding terrain…** during a live surface switch. A DEV
+  `surface=` URL selects the initial comparison mode without saving it; an explicit
+  checkbox change takes control so that comparison URLs remain interactive.
+- Existing stale full-object expectations in the sculpt defaults/HUD contract
+  tests were brought up to date with the already-committed options. No sculpt
+  behavior changed as part of this implementation.
+
+Evidence collected so far:
+
+- Shared production kernel versus independent reviewed prototype: **81,920 exact
+  sample matches**, including signed bands, layered fields and world edges.
+- Actual WebGPU geometry probe: all **80 chunks / five fixtures** pass its existing
+  cap/wall area thresholds in both raw and protected modes. The run caught and
+  fixed a filtered world-edge clamping mismatch. Raw geometry is unchanged by
+  the reduced-denominator, overflow-safe GPU isoline arithmetic.
+- Shared suite: **536 passing**. Final client suite: **786 passing, one existing skip**. Workspace typecheck passes.
+- The complete workspace run also reports failures in unmodified mana and reveal
+  tests, and the temples package's empty test suite (no tests found). These are outside the
+  smoothing change; the full workspace command is not green. The owner explicitly
+  authorized committing with these unrelated failures documented.
+- Private app: both GPU and CPU worker modes render the protected field. GPU toggle rebuilds 400 received chunks, preserves the camera,
+  persists the setting, and leaves original terrain data alone. An isolated CPU
+  rapid-toggle run settled the last request with identical camera and sampled
+  height hash; 400 chunks drained in about 11.2 seconds. A 30-ray live probe after the picking fix
+  found 15 tread hits, all agreeing with the shared ground query.
+- A follow-up GPU checkbox check queued 402 chunks and drained to zero while
+  remaining on the GPU backend. Chunk 528 changed from 11,825 protected triangles
+  to 11,643 raw triangles; its measured cap and wall areas changed as well.
+- Live spot timing in the isolated Frostwick copy: raw median frame work about
+  4.4 ms; protected about 4.5 ms after caching (about 13 ms before caching).
+  These observations are not a controlled performance benchmark. A 400-chunk
+  rebuild took approximately 13–15 seconds, so the setting is live but its
+  transition is visibly incremental, not instantaneous.
+
+Release acceptance is still subject to the owner's production visual review.
+The exhaustive stress matrix below is a release checklist, not a claim that
+all device-loss, adversarial topology, or edit-load scenarios have been exercised.
 
 ## 1. Outcome and scope
 

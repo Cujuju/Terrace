@@ -1,3 +1,4 @@
+import { protectedDrawnSample } from './protected-kernel-reference.ts';
 import { readFile, writeFile } from 'node:fs/promises';
 import { gunzipSync, gzipSync } from 'node:zlib';
 import { createHash } from 'node:crypto';
@@ -144,8 +145,18 @@ for (const fixture of fixtures) {
       : Int32Array.from(map.cells);
     const layeredCells = new Set(map.columnSpans.keys());
     const derived = deriveProtectedField(raw, size, layeredCells);
+    // Archived protected kernel; production now uses the plain binomial pass.
+    // Retain the original experiment as an independent parity reference.
+    const filterSource = { size, sample: (x, y) => raw[y * size + x],
+      layered: (x, y) => layeredCells.has(y * size + x), available: () => true };
+    const filterScratch = new Int32Array(25);
+    const productionProtected = Int32Array.from(raw, (_, i) =>
+      protectedDrawnSample(filterSource, i % size, Math.floor(i / size), band, filterScratch));
+    if (productionProtected.some((value, i) => value !== derived.protectedField[i])) {
+      throw new Error(`${name}, band ${band}: production/prototype mismatch`);
+    }
     const fields = { production: [raw, 1], 'full-filter': [derived.full, FILTER_DENOM],
-      'protected-filter': [derived.protectedField, FILTER_DENOM], 'strict-filter': [derived.strictField, FILTER_DENOM],
+      'protected-filter': [productionProtected, FILTER_DENOM], 'strict-filter': [derived.strictField, FILTER_DENOM],
       'band-clamp-only': [derived.clamped, FILTER_DENOM] };
     for (const [resolution, mod] of [['production', production], ['dense', dense]]) {
       const modes = resolutions[resolution] ??= {};

@@ -1,5 +1,6 @@
 import {
   drawnSpanCapHeight,
+  drawnBandOfSample,
   drawnSpanIndexCoveringBand,
   isSpanDrawn,
   spanAt,
@@ -11,6 +12,7 @@ import { blockyCellCapY, drawnBandAtY, drawnBandCapY } from '../capEmission.ts';
 import type { TerrainMirror } from '../mirror.ts';
 import { columnOwningBand, drawnCapMet } from './bandOwner.ts';
 import { refineRiserToDrawnFace } from './drawnFaceRefine.ts';
+import { filteredHitInCell } from './filteredCellHit.ts';
 import { cellRevealed, scaleRayToCellSpace } from './rayMarch.ts';
 import type { DrawnCap, DrawnRisers, TerrainRayPick, Vec3 } from './types.ts';
 
@@ -32,6 +34,47 @@ export function terrainHitInCell(
   risers: DrawnRisers | null,
 ): TerrainRayPick | null {
   if (!cellRevealed(mirror, i, j)) return null;
+  if (mirror.surfaceMode !== 'binomial' || mirror.isBlockyCell?.(i, j)) {
+    return legacyTerrainHitInCell(mirror, i, j, origin, direction, tEnter, tExit, risers);
+  }
+  const hit = filteredHitInCell(mirror, i, j, origin, direction, tEnter, tExit, risers);
+  // Undersides retain their binary geometry and existing owner rules.
+  if (direction.y <= 0) return hit;
+  const underside = legacyTerrainHitInCell(mirror, i, j, origin, direction, tEnter, tExit, risers);
+  if (underside?.face !== 'underside') return hit;
+  return hit === null || underside.hitY < hit.hitY ? underside : hit;
+}
+
+function legacyTerrainHitInCell(
+  mirror: TerrainMirror,
+  i: number,
+  j: number,
+  origin: Vec3,
+  direction: Vec3,
+  tEnter: number,
+  tExit: number,
+  risers: DrawnRisers | null,
+): TerrainRayPick | null {
+  if (!cellRevealed(mirror, i, j)) return null;
+
+  // The bounded mesher fallback draws raw top-column boxes, including over
+  // layered inputs. Query the geometry actually published for that chunk.
+  if (mirror.isBlockyCell?.(i, j)) {
+    const band = drawnBandOfSample(mirror.map.cells[j * mirror.map.size + i]!);
+    const capY = drawnBandCapY(band);
+    const entryY = origin.y + tEnter * direction.y;
+    const exitY = origin.y + tExit * direction.y;
+    if (Math.min(entryY, exitY) > capY) return null;
+    const inside = entryY < capY;
+    if (!inside && direction.y >= 0) return null;
+    const t = inside ? tEnter : (capY - origin.y) / direction.y;
+    if (t > tExit) return null;
+    const hitY = origin.y + t * direction.y;
+    return { x: i, y: j, spanIndex: spanCount(mirror.map, i, j) - 1,
+      surfaceY: capY, face: inside ? 'riser' : 'tread',
+      band: inside ? drawnBandAtY(hitY) : band, hitY,
+      hitX: origin.x + t * direction.x, hitZ: origin.z + t * direction.z };
+  }
 
   const oy = origin.y;
   const dy = direction.y;
@@ -118,7 +161,9 @@ export function terrainHitInCell(
         surfaceY: drawnSpanCapHeight(hitSpan) * HEIGHT_WORLD_SCALE,
       };
     } else if (direction.y < 0) {
-      const found = columnOwningBand(mirror, i, j, hitMet.u, hitMet.v, hitMet.band, hit.hitY) ?? {
+      const candidate = columnOwningBand(mirror, i, j, hitMet.u, hitMet.v, hitMet.band, hit.hitY);
+      if (!candidate && mirror.surfaceMode === 'binomial') return null;
+      const found = candidate ?? {
         x: i,
         y: j,
         spanIndex: count - 1,

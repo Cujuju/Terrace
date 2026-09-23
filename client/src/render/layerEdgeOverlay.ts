@@ -10,7 +10,7 @@ import {
   Vector3,
 } from 'three';
 import type { Object3D } from 'three';
-import { BAND_HEIGHT, CHUNK_SIZE, drawnBandAt } from '@terrace/shared';
+import { BAND_HEIGHT, CHUNK_SIZE } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from '../config.ts';
 import { LIP_LIFT_WORLD_UNITS } from '../terrain/capPlanFlat.ts';
 import type { DrawnGroundStore } from '../terrain/drawnGroundStore.ts';
@@ -125,11 +125,6 @@ export function createLayerEdgeOverlay(
   let bandGridVisible = false;
   let lipSmoothing = false;
   const restingVisible = (): boolean => style !== 'normal';
-  const drapeLipY = (x: number, z: number): number =>
-    drawnBandAt(mirror.map, x / CELL_WORLD_SIZE, z / CELL_WORLD_SIZE) *
-      BAND_HEIGHT *
-      HEIGHT_WORLD_SCALE +
-    LIP_LIFT_WORLD_UNITS;
   const material = new LineBasicMaterial({
     color: DEBUG_COLOR,
     transparent: true,
@@ -460,12 +455,12 @@ export function createLayerEdgeOverlay(
     if (positions.length < FLOATS_PER_SEGMENT) return;
 
     const smoothedPositions = lipSmoothing
-      ? smoothLipSegments(positions, 6, bands, drapeLipY)
+      ? smoothLipSegments(positions, 6, bands)
       : null;
-    const smoothedFlat = lipSmoothing ? smoothLipSegments(flat, 4, bands) : null;
+    // Picking follows filled geometry, regardless of decorative line smoothing.
     const lipPositions = smoothedPositions?.coords ?? positions;
-    const lipFlat = smoothedFlat?.coords ?? flat;
-    const lipBands = smoothedPositions?.bands ?? bands;
+    const lipFlat = flat;
+    const lipBands = bands;
 
     const perBand = new Map<number, Float32Array>();
     for (let i = 0; i + 2 < lipBands.length; i += 3) {
@@ -625,7 +620,17 @@ export function createLayerEdgeOverlay(
     lipNear,
 
     segmentsOf(chunkIdx, band) {
-      return segmentsByChunk.get(chunkIdx)?.get(band);
+      // Canonical published contours are also available at the reveal edge,
+      // where decorative lines wait for neighbouring chunks.
+      const chart = drawnGround.chartOf(chunkIdx % chunksPerEdge, Math.floor(chunkIdx / chunksPerEdge));
+      if (!chart) return undefined;
+      const { bands, flat } = chart.lips;
+      for (let at = 0; at + 2 < bands.length; at += 3) {
+        if (bands[at] !== band) continue;
+        return flat.subarray(bands[at + 1]! * FLOATS_PER_FLAT_SEGMENT,
+          (bands[at + 1]! + bands[at + 2]!) * FLOATS_PER_FLAT_SEGMENT);
+      }
+      return undefined;
     },
 
     lightBand(cell, band, atX, atZ, litSpanWorldUnits) {
@@ -685,8 +690,8 @@ export function createLayerEdgeOverlay(
           const bz = flat[i + 3]!;
           if (distanceSqToSegment(atX, atZ, ax, az, bx, bz) > spanSq) continue;
           ensureGrabbedCapacity(written + FLOATS_PER_SEGMENT);
-          const ay = lipSmoothing ? drapeLipY(ax, az) : y;
-          const by = lipSmoothing ? drapeLipY(bx, bz) : y;
+          const ay = y;
+          const by = y;
           grabbedPositions[written++] = ax;
           grabbedPositions[written++] = ay;
           grabbedPositions[written++] = az;

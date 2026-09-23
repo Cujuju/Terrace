@@ -14,11 +14,16 @@ import {
   type Heightmap,
   type JoinSnapshotMessage,
   type TerrainDiffMessage,
+  type DrawnSurfaceMode,
 } from '@terrace/shared';
 
 export interface TerrainMirror {
   readonly map: Heightmap;
   readonly received: Set<number>;
+  surfaceMode?: DrawnSurfaceMode;
+  surfaceRevision?: number;
+  isDrawnCell?: (x: number, y: number) => boolean;
+  isBlockyCell?: (x: number, y: number) => boolean;
 }
 
 export function createTerrainMirror(worldSize: number): TerrainMirror {
@@ -105,9 +110,18 @@ export function chunksDirtiedByCell(
   x: number,
   y: number,
 ): number[] {
+  mirror.surfaceRevision = (mirror.surfaceRevision ?? 0) + 1;
   const worldSize = mirror.map.size;
   const perEdge = chunksPerEdge(worldSize);
   const out: number[] = [];
+  if (mirror.surfaceMode === 'binomial') {
+    // A square reads four filtered corners, each with a radius-one kernel.
+    for (let cy = Math.floor((y - 2) / CHUNK_SIZE); cy <= Math.floor((y + 1) / CHUNK_SIZE); cy++) {
+      for (let cx = Math.floor((x - 2) / CHUNK_SIZE); cx <= Math.floor((x + 1) / CHUNK_SIZE); cx++) {
+        addChunk(out, worldSize, perEdge, cx, cy);
+      }
+    }
+  }
   addSampleReaders(out, worldSize, perEdge, x, y);
 
   const lastInChunkColumn = (x + 1) % CHUNK_SIZE === 0;
@@ -188,8 +202,16 @@ function applyChunkPayload(mirror: TerrainMirror, chunk: ChunkPayload): number[]
 
   const idx = chunkIndex(worldSize, chunk.cx, chunk.cy);
   mirror.received.add(idx);
+  mirror.surfaceRevision = (mirror.surfaceRevision ?? 0) + 1;
 
   const dirty = [idx];
+  if (mirror.surfaceMode === 'binomial') {
+    const perEdge = chunksPerEdge(worldSize);
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) addChunk(dirty, worldSize, perEdge, chunk.cx + dx, chunk.cy + dy);
+    }
+    return dirty;
+  }
   if (chunk.cx > 0) dirty.push(chunkIndex(worldSize, chunk.cx - 1, chunk.cy));
   if (chunk.cy > 0) dirty.push(chunkIndex(worldSize, chunk.cx, chunk.cy - 1));
   if (chunk.cx > 0 && chunk.cy > 0) {
