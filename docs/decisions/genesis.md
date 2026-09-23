@@ -2,6 +2,39 @@
 
 Dated decisions moved out of `docs/DESIGN.md` on 2026-09-01. Settled with the owner; do not relitigate without new information.
 
+## Structured terrain — 2026-09-23
+
+Owner request: worlds should not look like random noise. Code:
+`server/src/world/genesis-field.ts`.
+
+**Supersedes** from 2026-08-25/26: the five-octave value-noise field, the
+roughness floor derivation, the baseline band draw and the 256 land ceiling.
+The land, basin, island and trench passes keep their rules.
+
+- Integer gradient noise, quintic fade, each octave's lattice offset. No floats.
+- Domain warp bends coasts and ranges.
+- Continents: a drawn land share of 15–45% sets the coast. Shelf to
+  `FRESH_SHELF_BANDS_BELOW_SEA`, slope to the abyss (640 below sea). The field
+  is continuous through the coast.
+- Regions: plains, hill country, ridged ranges. Peaks reach
+  `GENESIS_PEAK_HEIGHT_ABOVE_SEA` (640), one ramp anchor above the snow line.
+  Relief is drawn 40–100%, square-rooted.
+- Valleys: priority-flood drainage; a cell draining half a neighbourhood or
+  more sinks one band per doubling; walls one band per `RAMP_CELLS_PER_BAND`.
+- No slope steeper than half a band per cell: the narrowest terrace the edge
+  encoding draws exactly.
+- Starter land: the continental value is raised around the starter square's
+  highest point until twice `GENESIS_MIN_STARTER_LAND_CELLS` sit halfway up the
+  coast rise. The island pass remains as a backstop.
+- Basin drop is sized from the highest ground within its radius plus the
+  top-up rounds, not from the global ceiling (which swallowed 448-cell worlds).
+- Edges are encoded from the continuous field (`encodeLevelEdges`), not the
+  band layout: within 1/8 cell of the field's contours on slopes up to half a
+  band per cell. `encodeSmoothedEdges` remains for saved worlds.
+- Cost at 2048 cells: about 3.5 s (was 0.7 s). At 4096: about 15 s.
+- Tests: the two island-pass tests now test the starter rise;
+  `shared/test/level-edges.test.ts` covers the field encoding.
+
 ## Decisions made 2026-08-25/26 (archipelago genesis, and MIN_WORLD_SIZE, #181)
 
 **Supersedes:** the 2026-08-19 starter-profile decision (the fixed shelf/slope
