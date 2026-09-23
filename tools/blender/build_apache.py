@@ -17,11 +17,11 @@ from export_glb import export_scene_glb
 
 FOOTPRINT = 1.0
 TRIANGLE_BUDGET = 1050
-ATLAS_SIZE = 1024
+ATLAS_SIZE = 256
 TILE_SIZE = ATLAS_SIZE // 4
 PAINT_SIZE = 256
 PAINT_SCALE = TILE_SIZE / PAINT_SIZE
-UV_PADDING = round(10 * PAINT_SCALE)
+UV_PADDING = 10 * PAINT_SCALE
 PROFILE_PIXELS_PER_UNIT = 30.0
 PROFILE_MAST_X = 225.0
 PROFILE_DATUM_Y = 110.0
@@ -290,11 +290,12 @@ def atlas():
         tangent /= np.linalg.norm(tangent,axis=-1,keepdims=True)
         normals[ty:ty+TILE_SIZE,tx:tx+TILE_SIZE,:3] = tangent*.5+.5
         # Extend edge pixels through the atlas gutters to prevent mip seams.
+        padding = round(UV_PADDING)
         for array in (p,r,normals[ty:ty+TILE_SIZE,tx:tx+TILE_SIZE]):
-            array[:UV_PADDING] = array[UV_PADDING]
-            array[-UV_PADDING:] = array[-UV_PADDING-1]
-            array[:,:UV_PADDING] = array[:,UV_PADDING:UV_PADDING+1]
-            array[:,-UV_PADDING:] = array[:,-UV_PADDING-1:-UV_PADDING]
+            array[:padding] = array[padding]
+            array[-padding:] = array[-padding-1]
+            array[:,:padding] = array[:,padding:padding+1]
+            array[:,-padding:] = array[:,-padding-1:-padding]
 
     material = bpy.data.materials.new('apache_olive_atlas')
     material.use_nodes = True
