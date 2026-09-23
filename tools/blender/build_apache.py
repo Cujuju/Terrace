@@ -17,7 +17,7 @@ from export_glb import export_scene_glb
 
 FOOTPRINT = 1.0
 TRIANGLE_BUDGET = 1050
-ATLAS_SIZE = 2048
+ATLAS_SIZE = 1024
 TILE_SIZE = ATLAS_SIZE // 4
 PAINT_SIZE = 256
 PAINT_SCALE = TILE_SIZE / PAINT_SIZE
@@ -138,18 +138,18 @@ def atlas():
             for u in (151,190,290,348,480):
                 body_rect(u,84,u+2,129,(56,64,39))
         if tile == WINDSCREEN:
-            shine = np.clip((yy - xx * 0.24) / 256, 0, 1)[..., None]
-            p[:, :, :3] = (np.array((17, 24, 27)) + shine * np.array((47, 56, 62))) / 255
+            p[:, :, :3] = np.array((26, 38, 42)) / 255
             frame(10, 10, 246, 246, (57, 64, 44), 15)
             frame(25, 25, 231, 231, (11, 19, 20), 3)
-            rect(34, 214, 220, 218, (129, 142, 140))
             r[:, :, :3] = 0.19
         if tile == GLASS:
             p[:,:,:3] = np.array(PALETTE[PLAIN])/255
             # Trace the two side apertures separately: upright forward corner,
             # swept roof, narrow central post, and a clipped rear top corner.
-            panes = [([(103,92),(104,79),(118,65),(146,52),(150,52),(150,81)],
-                      [(107,89),(108,80),(121,67),(147,55),(147,79)]),
+            # The front sill stays level at its nose, then bends upward. Its
+            # aft corner sits above the rear pane's forward sill (v points down).
+            panes = [([(103,92),(104,79),(118,65),(146,52),(150,52),(150,77),(115,92)],
+                      [(107,89),(108,80),(121,67),(147,55),(147,75),(115,89)]),
                      ([(152,52),(182,49),(188,50),(192,53),(191,60),(180,78),(152,82)],
                       [(155,54),(182,52),(187,53),(189,55),(187,60),(177,75),(155,79)])]
             for outer, inner in panes:
@@ -158,10 +158,6 @@ def atlas():
                 seal = [tuple(centre+(np.array(pt)-centre)*1.045) for pt in inner]
                 window_polygon(seal,(13,22,23))
                 window_polygon(inner,(26,38,42))
-            window_polygon([(110,80),(125,67),(145,59),(141,68),(129,71),(120,82)],(110,135,145))
-            window_polygon([(157,56),(182,54),(178,61),(166,64),(156,72)],(133,151,154))
-            window_polygon([(120,82),(124,74),(128,72),(131,75),(130,79),(141,77),(139,81)],(19,26,27))
-            window_polygon([(160,74),(163,65),(168,62),(172,65),(170,69),(177,69),(175,74)],(20,27,28))
             r[:,:,:3] = .26
         if tile == VENT:
             radius = np.sqrt((xx-128)**2+(yy-128)**2)
@@ -278,12 +274,8 @@ def atlas():
             p[:,:,:3] *= shade[...,None]
             r[:,:,:3] = np.clip(.78+noise/120-.07*(yy/PAINT_SIZE)[...,None],.55,.88)
         if tile in (GLASS,WINDSCREEN):
-            p[:,:,:3] *= (.79+.31*yy/PAINT_SIZE)[...,None]
             glass = (p[:,:,2]>p[:,:,0]*1.12) & (p[:,:,2]>.12)
-            reflected_sky = np.exp(-((yy-xx*.28-160)/31)**2)
-            glint = np.exp(-((xx*.42+yy-218)/3.5)**2)
-            p[glass,:3] += (reflected_sky[...,None]*np.array((.08,.10,.12))+
-                            glint[...,None]*np.array((.13,.15,.16)))[glass]
+            # Plain opaque glazing: no painted occupants or reflected scenery.
             r[glass,:3] = .21
         if tile == STEEL:
             p[:,:,:3] *= (.60+.72*np.exp(-((xx-165)/58)**2))[...,None]

@@ -37,6 +37,9 @@ and a level barrel with a wider muzzle. The owner accepted these shapes on
 Rotor blades use triangular airfoil sections to recover triangles for the pods.
 The side glazing follows separate traced apertures, with an upright forward
 corner, narrow centre post, clipped rear upper corner and thin rubber seals.
+The front pane has a short level bottom edge before its upward bend, and its
+aft lower corner sits above the rear pane's forward lower corner. Glazing is
+plain, without painted occupants or reflected scenery.
 The canopy shoulder bevel is reduced to keep the roof border close to the panes.
 
 This is a reusable model asset, not a spawning or combat plugin.
@@ -45,7 +48,7 @@ This is a reusable model asset, not a spawning or combat plugin.
 | --- | --- |
 | Triangles | 1,050 (872 body, 40 main rotor, 40 tail rotor, 98 gun) |
 | Meshes / materials | 4 / 1, shared opaque PBR material |
-| Textures | Three embedded 2048² atlases: base colour, packed metallic/roughness, tangent normal |
+| Textures | Three embedded 1024² atlases: base colour, packed metallic/roughness, tangent normal |
 | Rest bounds, world units | X 0.997 × Y 0.260 × Z 0.776 |
 | Full rotor sweep | Fits a 1 × 1 world-unit footprint |
 
@@ -88,7 +91,7 @@ and studio views; no running game was started or changed for verification.
 The shared material allows the existing `bakeRig` path to merge the four parts
 into one surface; `rigHerd` can instance that surface. These are integration
 capabilities, not a measured frame-time result. Assumption: three uncompressed
-RGBA8 2K maps with full mip chains occupy about 64 MiB of shared GPU texture
+RGBA8 1K maps with full mip chains occupy about 16 MiB of shared GPU texture
 memory. The PNG-compressed GLB file size does not describe resident GPU memory.
 The Apache-specific renderer adds a true orthographic side elevation, a quarter
 view and a game view, using fresh timestamped filenames to avoid cached previews.
