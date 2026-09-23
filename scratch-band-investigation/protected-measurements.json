@@ -1,7 +1,7 @@
 {
   "status": "Offline appearance prototype; owner review pending. Not production CPU/GPU validation.",
   "archiveSha256": "8af1517517438a34af046d388b5cdd7c0b5aa10fcfda5f1b08d7de3d4c66b4bc",
-  "contourSourceSha256": "9a9b4ca2ddbe2269f50f31c88319e33ee8094c7c8f1a05fff2abcad2b2d880ef",
+  "contourSourceSha256": "ce40d0f70db47ce6f086dece96a52aa209c1712784044626607786c2d49e6135",
   "settings": {
     "filterWeights": [
       1,
@@ -84,6 +84,18 @@
           "exactOriginalHoleContours": true
         },
         {
+          "resolution": "production",
+          "band": 0,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 1024,
+          "vertices": 4,
+          "absoluteTurn": 6.283185307179586,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
           "resolution": "dense",
           "band": 0,
           "method": "production",
@@ -135,6 +147,18 @@
           "resolution": "dense",
           "band": 0,
           "method": "band-clamp-only",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 1024,
+          "vertices": 4,
+          "absoluteTurn": 6.283185307179586,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 0,
+          "method": "clamped-filter",
           "components": 1,
           "holes": 0,
           "areaCells": 1024,
@@ -221,6 +245,18 @@
           "exactOriginalHoleContours": true
         },
         {
+          "resolution": "production",
+          "band": 1,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 445.2371201058233,
+          "vertices": 236,
+          "absoluteTurn": 14.268448556616313,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
           "resolution": "dense",
           "band": 1,
           "method": "production",
@@ -277,6 +313,18 @@
           "areaCells": 467.4317546784878,
           "vertices": 300,
           "absoluteTurn": 80.6836375170364,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 1,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 445.30058738794213,
+          "vertices": 608,
+          "absoluteTurn": 14.669987016659075,
           "exactOriginalContours": false,
           "exactOriginalHoleContours": true
         },
@@ -358,6 +406,18 @@
           "exactOriginalHoleContours": true
         },
         {
+          "resolution": "production",
+          "band": 2,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 418.9513054592269,
+          "vertices": 244,
+          "absoluteTurn": 12.427883543248116,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
           "resolution": "dense",
           "band": 2,
           "method": "production",
@@ -414,6 +474,18 @@
           "areaCells": 450.1899208966595,
           "vertices": 824,
           "absoluteTurn": 66.35815613393495,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 2,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 418.94692451868764,
+          "vertices": 312,
+          "absoluteTurn": 12.321985014833398,
           "exactOriginalContours": false,
           "exactOriginalHoleContours": true
         },
@@ -495,6 +567,18 @@
           "exactOriginalHoleContours": true
         },
         {
+          "resolution": "production",
+          "band": 3,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 418.9513054592269,
+          "vertices": 244,
+          "absoluteTurn": 12.427883543248116,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
           "resolution": "dense",
           "band": 3,
           "method": "production",
@@ -551,6 +635,18 @@
           "areaCells": 437.4388327107907,
           "vertices": 980,
           "absoluteTurn": 55.46244754819065,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 3,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 418.94692451868764,
+          "vertices": 312,
+          "absoluteTurn": 12.321985014833398,
           "exactOriginalContours": false,
           "exactOriginalHoleContours": true
         },
@@ -632,6 +728,18 @@
           "exactOriginalHoleContours": true
         },
         {
+          "resolution": "production",
+          "band": 4,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 418.9513054592269,
+          "vertices": 244,
+          "absoluteTurn": 12.427883543248116,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
           "resolution": "dense",
           "band": 4,
           "method": "production",
@@ -688,6 +796,18 @@
           "areaCells": 426.11008716732005,
           "vertices": 1090,
           "absoluteTurn": 48.55704022444482,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 4,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 418.94692451868764,
+          "vertices": 312,
+          "absoluteTurn": 12.321985014833398,
           "exactOriginalContours": false,
           "exactOriginalHoleContours": true
         },
@@ -769,6 +889,18 @@
           "exactOriginalHoleContours": true
         },
         {
+          "resolution": "production",
+          "band": 5,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 418.9513054592269,
+          "vertices": 244,
+          "absoluteTurn": 12.427883543248116,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
           "resolution": "dense",
           "band": 5,
           "method": "production",
@@ -825,6 +957,18 @@
           "areaCells": 415.33819972371714,
           "vertices": 1036,
           "absoluteTurn": 47.118806156422906,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 5,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 418.94692451868764,
+          "vertices": 312,
+          "absoluteTurn": 12.321985014833398,
           "exactOriginalContours": false,
           "exactOriginalHoleContours": true
         },
@@ -906,6 +1050,18 @@
           "exactOriginalHoleContours": true
         },
         {
+          "resolution": "production",
+          "band": 6,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 418.9513054592269,
+          "vertices": 244,
+          "absoluteTurn": 12.427883543248116,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
           "resolution": "dense",
           "band": 6,
           "method": "production",
@@ -962,6 +1118,18 @@
           "areaCells": 404.56577619775646,
           "vertices": 930,
           "absoluteTurn": 52.235743851213904,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 6,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 418.94692451868764,
+          "vertices": 312,
+          "absoluteTurn": 12.321985014833398,
           "exactOriginalContours": false,
           "exactOriginalHoleContours": true
         },
@@ -1043,6 +1211,18 @@
           "exactOriginalHoleContours": true
         },
         {
+          "resolution": "production",
+          "band": 7,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 418.9513054592269,
+          "vertices": 244,
+          "absoluteTurn": 12.427883543248116,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
           "resolution": "dense",
           "band": 7,
           "method": "production",
@@ -1099,6 +1279,18 @@
           "areaCells": 393.2116365780961,
           "vertices": 778,
           "absoluteTurn": 59.054512833615384,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 7,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 418.94692451868764,
+          "vertices": 312,
+          "absoluteTurn": 12.321985014833398,
           "exactOriginalContours": false,
           "exactOriginalHoleContours": true
         },
@@ -1180,6 +1372,18 @@
           "exactOriginalHoleContours": true
         },
         {
+          "resolution": "production",
+          "band": 8,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 402.2685217574808,
+          "vertices": 203,
+          "absoluteTurn": 9.757512260439055,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
           "resolution": "dense",
           "band": 8,
           "method": "production",
@@ -1236,6 +1440,18 @@
           "areaCells": 380.2956028878689,
           "vertices": 680,
           "absoluteTurn": 72.09758366490124,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 8,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 402.26041764241717,
+          "vertices": 264,
+          "absoluteTurn": 9.741185496022556,
           "exactOriginalContours": false,
           "exactOriginalHoleContours": true
         },
@@ -1317,6 +1533,18 @@
           "exactOriginalHoleContours": true
         },
         {
+          "resolution": "production",
+          "band": 9,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 340.96063472893326,
+          "vertices": 271,
+          "absoluteTurn": 12.518626632695744,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
           "resolution": "dense",
           "band": 9,
           "method": "production",
@@ -1373,6 +1601,18 @@
           "areaCells": 326.5021520586717,
           "vertices": 833,
           "absoluteTurn": 33.762401853709356,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 9,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 340.93385592091806,
+          "vertices": 344,
+          "absoluteTurn": 12.552775098078532,
           "exactOriginalContours": false,
           "exactOriginalHoleContours": true
         },
@@ -1454,6 +1694,18 @@
           "exactOriginalHoleContours": true
         },
         {
+          "resolution": "production",
+          "band": 10,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 166.66585942399695,
+          "vertices": 175,
+          "absoluteTurn": 10.237511148494388,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
           "resolution": "dense",
           "band": 10,
           "method": "production",
@@ -1510,6 +1762,18 @@
           "areaCells": 169.75584860935373,
           "vertices": 416,
           "absoluteTurn": 15.799450459689082,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 10,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 166.6836458685981,
+          "vertices": 290,
+          "absoluteTurn": 10.356090597041343,
           "exactOriginalContours": false,
           "exactOriginalHoleContours": true
         },
@@ -1591,6 +1855,18 @@
           "exactOriginalHoleContours": true
         },
         {
+          "resolution": "production",
+          "band": 11,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 110.88741509559924,
+          "vertices": 164,
+          "absoluteTurn": 9.320294471545122,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
           "resolution": "dense",
           "band": 11,
           "method": "production",
@@ -1647,6 +1923,18 @@
           "areaCells": 110.53440675655071,
           "vertices": 330,
           "absoluteTurn": 12.001766563901489,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 11,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 110.88102113596489,
+          "vertices": 210,
+          "absoluteTurn": 9.20835884794033,
           "exactOriginalContours": false,
           "exactOriginalHoleContours": true
         },
@@ -1728,6 +2016,18 @@
           "exactOriginalHoleContours": true
         },
         {
+          "resolution": "production",
+          "band": 12,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 72.51862668032533,
+          "vertices": 141,
+          "absoluteTurn": 8.842556803374677,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
           "resolution": "dense",
           "band": 12,
           "method": "production",
@@ -1784,6 +2084,18 @@
           "areaCells": 70.12938178210453,
           "vertices": 255,
           "absoluteTurn": 11.752832952314243,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 12,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 72.50832327004264,
+          "vertices": 137,
+          "absoluteTurn": 8.861628360987208,
           "exactOriginalContours": false,
           "exactOriginalHoleContours": true
         },
@@ -1865,6 +2177,18 @@
           "exactOriginalHoleContours": true
         },
         {
+          "resolution": "production",
+          "band": 13,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 19.39636761175842,
+          "vertices": 80,
+          "absoluteTurn": 6.283185307179586,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
           "resolution": "dense",
           "band": 13,
           "method": "production",
@@ -1921,6 +2245,18 @@
           "areaCells": 19.762913475930816,
           "vertices": 104,
           "absoluteTurn": 6.283185307179698,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 13,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 19.396764781695083,
+          "vertices": 96,
+          "absoluteTurn": 6.283185307179593,
           "exactOriginalContours": false,
           "exactOriginalHoleContours": true
         },
@@ -2002,6 +2338,18 @@
           "exactOriginalHoleContours": true
         },
         {
+          "resolution": "production",
+          "band": 14,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 0.8696795155605628,
+          "vertices": 18,
+          "absoluteTurn": 6.670105912691404,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
           "resolution": "dense",
           "band": 14,
           "method": "production",
@@ -2058,6 +2406,18 @@
           "areaCells": 1.1062873701254148,
           "vertices": 72,
           "absoluteTurn": 8.163430363834511,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 14,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 0.8681749626994133,
+          "vertices": 38,
+          "absoluteTurn": 6.684953952096698,
           "exactOriginalContours": false,
           "exactOriginalHoleContours": true
         },
@@ -2139,6 +2499,18 @@
           "exactOriginalHoleContours": true
         },
         {
+          "resolution": "production",
+          "band": 15,
+          "method": "clamped-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
           "resolution": "dense",
           "band": 15,
           "method": "production",
@@ -2190,6 +2562,18 @@
           "resolution": "dense",
           "band": 15,
           "method": "band-clamp-only",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 15,
+          "method": "clamped-filter",
           "components": 0,
           "holes": 0,
           "areaCells": 0,
@@ -2289,6 +2673,18 @@
           "exactOriginalHoleContours": true
         },
         {
+          "resolution": "production",
+          "band": 0,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 1024,
+          "vertices": 4,
+          "absoluteTurn": 6.283185307179586,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
           "resolution": "dense",
           "band": 0,
           "method": "production",
@@ -2340,6 +2736,18 @@
           "resolution": "dense",
           "band": 0,
           "method": "band-clamp-only",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 1024,
+          "vertices": 4,
+          "absoluteTurn": 6.283185307179586,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 0,
+          "method": "clamped-filter",
           "components": 1,
           "holes": 0,
           "areaCells": 1024,
@@ -2426,6 +2834,18 @@
           "exactOriginalHoleContours": true
         },
         {
+          "resolution": "production",
+          "band": 1,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 473.3257947834419,
+          "vertices": 320,
+          "absoluteTurn": 13.523197335502799,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
           "resolution": "dense",
           "band": 1,
           "method": "production",
@@ -2482,6 +2902,18 @@
           "areaCells": 467.43154868483543,
           "vertices": 299,
           "absoluteTurn": 80.68382164796971,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 1,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 473.3709328357542,
+          "vertices": 609,
+          "absoluteTurn": 13.65206777635216,
           "exactOriginalContours": false,
           "exactOriginalHoleContours": true
         },
@@ -2563,6 +2995,18 @@
           "exactOriginalHoleContours": true
         },
         {
+          "resolution": "production",
+          "band": 2,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 418.9513054592269,
+          "vertices": 244,
+          "absoluteTurn": 12.427883543248116,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
           "resolution": "dense",
           "band": 2,
           "method": "production",
@@ -2619,6 +3063,18 @@
           "areaCells": 450.1377436936312,
           "vertices": 836,
           "absoluteTurn": 66.56481739655763,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 2,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 418.94692451868764,
+          "vertices": 312,
+          "absoluteTurn": 12.321985014833398,
           "exactOriginalContours": false,
           "exactOriginalHoleContours": true
         },
@@ -2700,6 +3156,18 @@
           "exactOriginalHoleContours": true
         },
         {
+          "resolution": "production",
+          "band": 3,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 418.9513054592269,
+          "vertices": 244,
+          "absoluteTurn": 12.427883543248116,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
           "resolution": "dense",
           "band": 3,
           "method": "production",
@@ -2756,6 +3224,18 @@
           "areaCells": 437.31609284598426,
           "vertices": 993,
           "absoluteTurn": 55.83252683419201,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 3,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 418.94692451868764,
+          "vertices": 312,
+          "absoluteTurn": 12.321985014833398,
           "exactOriginalContours": false,
           "exactOriginalHoleContours": true
         },
@@ -2837,6 +3317,18 @@
           "exactOriginalHoleContours": true
         },
         {
+          "resolution": "production",
+          "band": 4,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 418.9513054592269,
+          "vertices": 244,
+          "absoluteTurn": 12.427883543248116,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
           "resolution": "dense",
           "band": 4,
           "method": "production",
@@ -2893,6 +3385,18 @@
           "areaCells": 425.88562987019145,
           "vertices": 1119,
           "absoluteTurn": 49.422452490359305,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 4,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 418.94692451868764,
+          "vertices": 312,
+          "absoluteTurn": 12.321985014833398,
           "exactOriginalContours": false,
           "exactOriginalHoleContours": true
         },
@@ -2974,6 +3478,18 @@
           "exactOriginalHoleContours": true
         },
         {
+          "resolution": "production",
+          "band": 5,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 418.9513054592269,
+          "vertices": 244,
+          "absoluteTurn": 12.427883543248116,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
           "resolution": "dense",
           "band": 5,
           "method": "production",
@@ -3030,6 +3546,18 @@
           "areaCells": 414.96074549790507,
           "vertices": 1059,
           "absoluteTurn": 49.38935599862774,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 5,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 418.94692451868764,
+          "vertices": 312,
+          "absoluteTurn": 12.321985014833398,
           "exactOriginalContours": false,
           "exactOriginalHoleContours": true
         },
@@ -3111,6 +3639,18 @@
           "exactOriginalHoleContours": true
         },
         {
+          "resolution": "production",
+          "band": 6,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 418.325427913269,
+          "vertices": 254,
+          "absoluteTurn": 12.806752463141253,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
           "resolution": "dense",
           "band": 6,
           "method": "production",
@@ -3167,6 +3707,18 @@
           "areaCells": 403.93924568748764,
           "vertices": 943,
           "absoluteTurn": 55.65487955380869,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 6,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 418.3256638914018,
+          "vertices": 325,
+          "absoluteTurn": 12.89728379054528,
           "exactOriginalContours": false,
           "exactOriginalHoleContours": true
         },
@@ -3248,6 +3800,18 @@
           "exactOriginalHoleContours": true
         },
         {
+          "resolution": "production",
+          "band": 7,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 417.2814614898244,
+          "vertices": 248,
+          "absoluteTurn": 13.38449429656143,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
           "resolution": "dense",
           "band": 7,
           "method": "production",
@@ -3304,6 +3868,18 @@
           "areaCells": 391.7833070389218,
           "vertices": 816,
           "absoluteTurn": 67.77828523096545,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 7,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 417.2718747046378,
+          "vertices": 337,
+          "absoluteTurn": 13.477202553571548,
           "exactOriginalContours": false,
           "exactOriginalHoleContours": true
         },
@@ -3385,6 +3961,18 @@
           "exactOriginalHoleContours": true
         },
         {
+          "resolution": "production",
+          "band": 8,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 375.5356189234336,
+          "vertices": 246,
+          "absoluteTurn": 10.130243350257564,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
           "resolution": "dense",
           "band": 8,
           "method": "production",
@@ -3441,6 +4029,18 @@
           "areaCells": 376.77700261569936,
           "vertices": 546,
           "absoluteTurn": 73.80136545479955,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 8,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 375.5328475763967,
+          "vertices": 261,
+          "absoluteTurn": 10.004384962325755,
           "exactOriginalContours": false,
           "exactOriginalHoleContours": true
         },
@@ -3522,6 +4122,18 @@
           "exactOriginalHoleContours": true
         },
         {
+          "resolution": "production",
+          "band": 9,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 271.61460916994906,
+          "vertices": 242,
+          "absoluteTurn": 12.413026666695787,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
           "resolution": "dense",
           "band": 9,
           "method": "production",
@@ -3578,6 +4190,18 @@
           "areaCells": 288.08610217206115,
           "vertices": 540,
           "absoluteTurn": 52.32725863086161,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 9,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 271.5698502733956,
+          "vertices": 377,
+          "absoluteTurn": 12.549816237903952,
           "exactOriginalContours": false,
           "exactOriginalHoleContours": true
         },
@@ -3659,6 +4283,18 @@
           "exactOriginalHoleContours": true
         },
         {
+          "resolution": "production",
+          "band": 10,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 148.0279038959319,
+          "vertices": 174,
+          "absoluteTurn": 6.487048045324259,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
           "resolution": "dense",
           "band": 10,
           "method": "production",
@@ -3715,6 +4351,18 @@
           "areaCells": 148.96977642710897,
           "vertices": 283,
           "absoluteTurn": 7.977653866267904,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 10,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 148.0276297975434,
+          "vertices": 179,
+          "absoluteTurn": 6.337135564991826,
           "exactOriginalContours": false,
           "exactOriginalHoleContours": true
         },
@@ -3796,6 +4444,18 @@
           "exactOriginalHoleContours": true
         },
         {
+          "resolution": "production",
+          "band": 11,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 86.13673655161404,
+          "vertices": 116,
+          "absoluteTurn": 6.5963355999603674,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
           "resolution": "dense",
           "band": 11,
           "method": "production",
@@ -3852,6 +4512,18 @@
           "areaCells": 87.64853259147503,
           "vertices": 255,
           "absoluteTurn": 14.587772506772406,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 11,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 86.0541650848836,
+          "vertices": 117,
+          "absoluteTurn": 6.539751545237478,
           "exactOriginalContours": false,
           "exactOriginalHoleContours": true
         },
@@ -3933,6 +4605,18 @@
           "exactOriginalHoleContours": true
         },
         {
+          "resolution": "production",
+          "band": 12,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 28.17855511257119,
+          "vertices": 83,
+          "absoluteTurn": 7.26474002685951,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
           "resolution": "dense",
           "band": 12,
           "method": "production",
@@ -3993,6 +4677,18 @@
           "exactOriginalHoleContours": true
         },
         {
+          "resolution": "dense",
+          "band": 12,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 28.183315235607267,
+          "vertices": 117,
+          "absoluteTurn": 7.226262070134692,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
           "band": 12,
           "diagnostics": {
             "membershipChanges": 207,
@@ -4070,6 +4766,18 @@
           "exactOriginalHoleContours": true
         },
         {
+          "resolution": "production",
+          "band": 13,
+          "method": "clamped-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
           "resolution": "dense",
           "band": 13,
           "method": "production",
@@ -4127,6 +4835,18 @@
           "vertices": 5,
           "absoluteTurn": 6.283185307179806,
           "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 13,
+          "method": "clamped-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": false,
           "exactOriginalHoleContours": true
         },
         {
@@ -4207,6 +4927,18 @@
           "exactOriginalHoleContours": true
         },
         {
+          "resolution": "production",
+          "band": 14,
+          "method": "clamped-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
           "resolution": "dense",
           "band": 14,
           "method": "production",
@@ -4258,6 +4990,18 @@
           "resolution": "dense",
           "band": 14,
           "method": "band-clamp-only",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 14,
+          "method": "clamped-filter",
           "components": 0,
           "holes": 0,
           "areaCells": 0,
@@ -4357,6 +5101,18 @@
           "exactOriginalHoleContours": true
         },
         {
+          "resolution": "production",
+          "band": 12,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 222.91700137537316,
+          "vertices": 200,
+          "absoluteTurn": 6.580515200848703,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
           "resolution": "dense",
           "band": 12,
           "method": "production",
@@ -4413,6 +5169,18 @@
           "areaCells": 222.2158183141853,
           "vertices": 116,
           "absoluteTurn": 7.041950770419993,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 12,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 222.91591587014068,
+          "vertices": 167,
+          "absoluteTurn": 6.3136725665102675,
           "exactOriginalContours": false,
           "exactOriginalHoleContours": true
         },
@@ -4507,6 +5275,18 @@
           "exactOriginalHoleContours": true
         },
         {
+          "resolution": "production",
+          "band": 1,
+          "method": "clamped-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
           "resolution": "dense",
           "band": 1,
           "method": "production",
@@ -4562,6 +5342,18 @@
           "holes": 0,
           "areaCells": 0.0000019073486328125,
           "vertices": 4,
+          "absoluteTurn": 0,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 1,
+          "method": "clamped-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
           "absoluteTurn": 0,
           "exactOriginalContours": false,
           "exactOriginalHoleContours": true
@@ -4657,6 +5449,18 @@
           "exactOriginalHoleContours": false
         },
         {
+          "resolution": "production",
+          "band": 0,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 1024,
+          "vertices": 4,
+          "absoluteTurn": 6.283185307179586,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": false
+        },
+        {
           "resolution": "dense",
           "band": 0,
           "method": "production",
@@ -4712,6 +5516,18 @@
           "holes": 1,
           "areaCells": 1023.9997874375597,
           "vertices": 8,
+          "absoluteTurn": 6.283185307179586,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": false
+        },
+        {
+          "resolution": "dense",
+          "band": 0,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 1024,
+          "vertices": 4,
           "absoluteTurn": 6.283185307179586,
           "exactOriginalContours": false,
           "exactOriginalHoleContours": false
@@ -4807,6 +5623,18 @@
           "exactOriginalHoleContours": false
         },
         {
+          "resolution": "production",
+          "band": 4,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 1,
+          "areaCells": 372.10759327837394,
+          "vertices": 296,
+          "absoluteTurn": 18.7110688504277,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": false
+        },
+        {
           "resolution": "dense",
           "band": 4,
           "method": "production",
@@ -4863,6 +5691,18 @@
           "areaCells": 387.1287680014085,
           "vertices": 1120,
           "absoluteTurn": 55.11958493948055,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": false
+        },
+        {
+          "resolution": "dense",
+          "band": 4,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 1,
+          "areaCells": 372.0968424391181,
+          "vertices": 408,
+          "absoluteTurn": 18.605170322012988,
           "exactOriginalContours": false,
           "exactOriginalHoleContours": false
         },
@@ -4957,6 +5797,18 @@
           "exactOriginalHoleContours": true
         },
         {
+          "resolution": "production",
+          "band": 1,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 0.015626907348632812,
+          "vertices": 6,
+          "absoluteTurn": 6.283185307179586,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
           "resolution": "dense",
           "band": 1,
           "method": "production",
@@ -5011,6 +5863,18 @@
           "components": 1,
           "holes": 0,
           "areaCells": 0.019533157348632812,
+          "vertices": 6,
+          "absoluteTurn": 6.283185307179586,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 1,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 0.015626907348632812,
           "vertices": 6,
           "absoluteTurn": 6.283185307179586,
           "exactOriginalContours": false,
@@ -5107,6 +5971,18 @@
           "exactOriginalHoleContours": false
         },
         {
+          "resolution": "production",
+          "band": 0,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 1024,
+          "vertices": 4,
+          "absoluteTurn": 6.283185307179586,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": false
+        },
+        {
           "resolution": "dense",
           "band": 0,
           "method": "production",
@@ -5163,6 +6039,18 @@
           "areaCells": 1023.7528318696704,
           "vertices": 10,
           "absoluteTurn": 12.566370614359172,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": false
+        },
+        {
+          "resolution": "dense",
+          "band": 0,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 1024,
+          "vertices": 4,
+          "absoluteTurn": 6.283185307179586,
           "exactOriginalContours": false,
           "exactOriginalHoleContours": false
         },
@@ -5257,6 +6145,18 @@
           "exactOriginalHoleContours": true
         },
         {
+          "resolution": "production",
+          "band": 1,
+          "method": "clamped-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
           "resolution": "dense",
           "band": 1,
           "method": "production",
@@ -5317,6 +6217,18 @@
           "exactOriginalHoleContours": true
         },
         {
+          "resolution": "dense",
+          "band": 1,
+          "method": "clamped-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
           "band": 1,
           "diagnostics": {
             "membershipChanges": 0,
@@ -5331,6 +6243,2756 @@
             },
             "thinSamples": 2,
             "saddleSquares": 1,
+            "windowAgreement": {
+              "windowSize": 21,
+              "comparedSamples": 1156,
+              "differingSamples": 0,
+              "scope": "Complete interior windows only; no missing-chunk policy modeled."
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "cliff-control",
+      "inputUnchanged": true,
+      "inputHash": "12ce56f9848e18409cdc6b612aa4cd84f890c52bc04b62d6950f23284537e537",
+      "rows": [
+        {
+          "resolution": "production",
+          "band": 0,
+          "method": "production",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 1024,
+          "vertices": 4,
+          "absoluteTurn": 6.283185307179586,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 0,
+          "method": "full-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 1024,
+          "vertices": 4,
+          "absoluteTurn": 6.283185307179586,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 0,
+          "method": "protected-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 1024,
+          "vertices": 4,
+          "absoluteTurn": 6.283185307179586,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 0,
+          "method": "strict-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 1024,
+          "vertices": 4,
+          "absoluteTurn": 6.283185307179586,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 0,
+          "method": "band-clamp-only",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 1024,
+          "vertices": 4,
+          "absoluteTurn": 6.283185307179586,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 0,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 1024,
+          "vertices": 4,
+          "absoluteTurn": 6.283185307179586,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 0,
+          "method": "production",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 1024,
+          "vertices": 4,
+          "absoluteTurn": 6.283185307179586,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 0,
+          "method": "full-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 1024,
+          "vertices": 4,
+          "absoluteTurn": 6.283185307179586,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 0,
+          "method": "protected-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 1024,
+          "vertices": 4,
+          "absoluteTurn": 6.283185307179586,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 0,
+          "method": "strict-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 1024,
+          "vertices": 4,
+          "absoluteTurn": 6.283185307179586,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 0,
+          "method": "band-clamp-only",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 1024,
+          "vertices": 4,
+          "absoluteTurn": 6.283185307179586,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 0,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 1024,
+          "vertices": 4,
+          "absoluteTurn": 6.283185307179586,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "band": 0,
+          "diagnostics": {
+            "membershipChanges": 77,
+            "strictMembershipChanges": 0,
+            "guardedChanges": 0,
+            "maxNumerator": 3216,
+            "guardCounts": {
+              "thin": 0,
+              "saddle": 0,
+              "layered": 0,
+              "any": 0
+            },
+            "thinSamples": 0,
+            "saddleSquares": 0
+          }
+        },
+        {
+          "resolution": "production",
+          "band": 1,
+          "method": "production",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 863.4999265670776,
+          "vertices": 91,
+          "absoluteTurn": 28.9389208163351,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 1,
+          "method": "full-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 863.6024836131505,
+          "vertices": 164,
+          "absoluteTurn": 18.283957086420493,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 1,
+          "method": "protected-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 863.6024836131505,
+          "vertices": 164,
+          "absoluteTurn": 18.283957086420493,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 1,
+          "method": "strict-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 863.6024836131505,
+          "vertices": 164,
+          "absoluteTurn": 18.283957086420493,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 1,
+          "method": "band-clamp-only",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 863.6024836131505,
+          "vertices": 164,
+          "absoluteTurn": 18.283957086420493,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 1,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 863.6024836131505,
+          "vertices": 164,
+          "absoluteTurn": 18.283957086420493,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 1,
+          "method": "production",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 863.4999173879623,
+          "vertices": 487,
+          "absoluteTurn": 29.18358414038328,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 1,
+          "method": "full-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 863.60259275777,
+          "vertices": 186,
+          "absoluteTurn": 18.328471209215703,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 1,
+          "method": "protected-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 863.60259275777,
+          "vertices": 186,
+          "absoluteTurn": 18.328471209215703,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 1,
+          "method": "strict-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 863.60259275777,
+          "vertices": 186,
+          "absoluteTurn": 18.328471209215703,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 1,
+          "method": "band-clamp-only",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 863.60259275777,
+          "vertices": 186,
+          "absoluteTurn": 18.328471209215703,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 1,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 863.60259275777,
+          "vertices": 186,
+          "absoluteTurn": 18.328471209215703,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "band": 1,
+          "diagnostics": {
+            "membershipChanges": 77,
+            "strictMembershipChanges": 0,
+            "guardedChanges": 0,
+            "maxNumerator": 3216,
+            "guardCounts": {
+              "thin": 0,
+              "saddle": 0,
+              "layered": 0,
+              "any": 0
+            },
+            "thinSamples": 0,
+            "saddleSquares": 0
+          }
+        },
+        {
+          "resolution": "production",
+          "band": 2,
+          "method": "production",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 671.4999265670776,
+          "vertices": 91,
+          "absoluteTurn": 28.9389208163351,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 2,
+          "method": "full-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 671.6024836131504,
+          "vertices": 164,
+          "absoluteTurn": 18.283957086420493,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 2,
+          "method": "protected-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 671.6024836131504,
+          "vertices": 164,
+          "absoluteTurn": 18.283957086420493,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 2,
+          "method": "strict-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 671.6024836131504,
+          "vertices": 164,
+          "absoluteTurn": 18.283957086420493,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 2,
+          "method": "band-clamp-only",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 671.6024836131504,
+          "vertices": 164,
+          "absoluteTurn": 18.283957086420493,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 2,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 671.6024836131504,
+          "vertices": 164,
+          "absoluteTurn": 18.283957086420493,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 2,
+          "method": "production",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 671.4999173879623,
+          "vertices": 487,
+          "absoluteTurn": 29.18358414038328,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 2,
+          "method": "full-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 671.60259275777,
+          "vertices": 186,
+          "absoluteTurn": 18.328471209215703,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 2,
+          "method": "protected-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 671.60259275777,
+          "vertices": 186,
+          "absoluteTurn": 18.328471209215703,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 2,
+          "method": "strict-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 671.60259275777,
+          "vertices": 186,
+          "absoluteTurn": 18.328471209215703,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 2,
+          "method": "band-clamp-only",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 671.60259275777,
+          "vertices": 186,
+          "absoluteTurn": 18.328471209215703,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 2,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 671.60259275777,
+          "vertices": 186,
+          "absoluteTurn": 18.328471209215703,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "band": 2,
+          "diagnostics": {
+            "membershipChanges": 77,
+            "strictMembershipChanges": 0,
+            "guardedChanges": 0,
+            "maxNumerator": 3216,
+            "guardCounts": {
+              "thin": 0,
+              "saddle": 0,
+              "layered": 0,
+              "any": 0
+            },
+            "thinSamples": 0,
+            "saddleSquares": 0
+          }
+        },
+        {
+          "resolution": "production",
+          "band": 3,
+          "method": "production",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 528.5519273281097,
+          "vertices": 80,
+          "absoluteTurn": 38.26615764991433,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 3,
+          "method": "full-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 554.7015665993096,
+          "vertices": 131,
+          "absoluteTurn": 26.98454847084185,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 3,
+          "method": "protected-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 554.7015665993096,
+          "vertices": 131,
+          "absoluteTurn": 26.98454847084185,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 3,
+          "method": "strict-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 531.5854921191931,
+          "vertices": 100,
+          "absoluteTurn": 40.8842900843086,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 3,
+          "method": "band-clamp-only",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 531.5854921191931,
+          "vertices": 100,
+          "absoluteTurn": 40.8842900843086,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 3,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 523.8634042153756,
+          "vertices": 175,
+          "absoluteTurn": 18.471340453456534,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 3,
+          "method": "production",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 529.059498116374,
+          "vertices": 289,
+          "absoluteTurn": 38.32224752846571,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 3,
+          "method": "full-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 554.7992809663217,
+          "vertices": 434,
+          "absoluteTurn": 27.221119735924695,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 3,
+          "method": "protected-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 554.7992809663217,
+          "vertices": 434,
+          "absoluteTurn": 27.221119735924695,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 3,
+          "method": "strict-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 532.7727607041597,
+          "vertices": 133,
+          "absoluteTurn": 40.83303356372789,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 3,
+          "method": "band-clamp-only",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 532.7727607041597,
+          "vertices": 133,
+          "absoluteTurn": 40.83303356372789,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 3,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 523.8807597637173,
+          "vertices": 242,
+          "absoluteTurn": 18.467200260787575,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "band": 3,
+          "diagnostics": {
+            "membershipChanges": 77,
+            "strictMembershipChanges": 0,
+            "guardedChanges": 0,
+            "maxNumerator": 3216,
+            "guardCounts": {
+              "thin": 0,
+              "saddle": 0,
+              "layered": 0,
+              "any": 0
+            },
+            "thinSamples": 0,
+            "saddleSquares": 0
+          }
+        },
+        {
+          "resolution": "production",
+          "band": 4,
+          "method": "production",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 523.1635546684265,
+          "vertices": 102,
+          "absoluteTurn": 34.06708762391755,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 4,
+          "method": "full-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 537.2025214225054,
+          "vertices": 142,
+          "absoluteTurn": 17.098317871649307,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 4,
+          "method": "protected-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 537.2025214225054,
+          "vertices": 142,
+          "absoluteTurn": 17.098317871649307,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 4,
+          "method": "strict-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 524.9832616183542,
+          "vertices": 102,
+          "absoluteTurn": 35.46033782602389,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 4,
+          "method": "band-clamp-only",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 524.9832616183542,
+          "vertices": 102,
+          "absoluteTurn": 35.46033782602389,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 4,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 511.6024836131504,
+          "vertices": 164,
+          "absoluteTurn": 18.283957086420486,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 4,
+          "method": "production",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 523.3384899646044,
+          "vertices": 366,
+          "absoluteTurn": 34.124911587227295,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 4,
+          "method": "full-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 537.2279698058962,
+          "vertices": 346,
+          "absoluteTurn": 17.059921593725882,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 4,
+          "method": "protected-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 537.2279698058962,
+          "vertices": 346,
+          "absoluteTurn": 17.059921593725882,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 4,
+          "method": "strict-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 525.2281309839439,
+          "vertices": 344,
+          "absoluteTurn": 35.57846258450552,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 4,
+          "method": "band-clamp-only",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 525.2281309839439,
+          "vertices": 344,
+          "absoluteTurn": 35.57846258450552,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 4,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 511.60259275777,
+          "vertices": 186,
+          "absoluteTurn": 18.32847120921569,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "band": 4,
+          "diagnostics": {
+            "membershipChanges": 77,
+            "strictMembershipChanges": 0,
+            "guardedChanges": 0,
+            "maxNumerator": 3216,
+            "guardCounts": {
+              "thin": 0,
+              "saddle": 0,
+              "layered": 0,
+              "any": 0
+            },
+            "thinSamples": 0,
+            "saddleSquares": 0
+          }
+        },
+        {
+          "resolution": "production",
+          "band": 5,
+          "method": "production",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 518.3261151313782,
+          "vertices": 102,
+          "absoluteTurn": 31.032463178890655,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 5,
+          "method": "full-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 525.5215965270996,
+          "vertices": 175,
+          "absoluteTurn": 18.37113438981381,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 5,
+          "method": "protected-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 525.5215965270996,
+          "vertices": 175,
+          "absoluteTurn": 18.37113438981381,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 5,
+          "method": "strict-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 519.3182300817138,
+          "vertices": 102,
+          "absoluteTurn": 31.708461630379226,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 5,
+          "method": "band-clamp-only",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 519.3182300817138,
+          "vertices": 102,
+          "absoluteTurn": 31.708461630379226,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 5,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 511.6024836131504,
+          "vertices": 164,
+          "absoluteTurn": 18.283957086420486,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 5,
+          "method": "production",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 518.3970814943314,
+          "vertices": 410,
+          "absoluteTurn": 31.22597569626044,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 5,
+          "method": "full-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 525.5428552695682,
+          "vertices": 247,
+          "absoluteTurn": 18.320208184143024,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 5,
+          "method": "protected-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 525.5428552695682,
+          "vertices": 247,
+          "absoluteTurn": 18.320208184143024,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 5,
+          "method": "strict-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 519.4045245134326,
+          "vertices": 410,
+          "absoluteTurn": 31.82528284155375,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 5,
+          "method": "band-clamp-only",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 519.4045245134326,
+          "vertices": 410,
+          "absoluteTurn": 31.82528284155375,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 5,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 511.60259275777,
+          "vertices": 186,
+          "absoluteTurn": 18.32847120921569,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "band": 5,
+          "diagnostics": {
+            "membershipChanges": 77,
+            "strictMembershipChanges": 0,
+            "guardedChanges": 0,
+            "maxNumerator": 3216,
+            "guardCounts": {
+              "thin": 0,
+              "saddle": 0,
+              "layered": 0,
+              "any": 0
+            },
+            "thinSamples": 0,
+            "saddleSquares": 0
+          }
+        },
+        {
+          "resolution": "production",
+          "band": 6,
+          "method": "production",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 513.7492785453796,
+          "vertices": 102,
+          "absoluteTurn": 29.196295730958536,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 6,
+          "method": "full-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 516.1069387708393,
+          "vertices": 175,
+          "absoluteTurn": 18.593125345289135,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 6,
+          "method": "protected-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 516.1069387708393,
+          "vertices": 175,
+          "absoluteTurn": 18.593125345289135,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 6,
+          "method": "strict-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 514.0602093892211,
+          "vertices": 102,
+          "absoluteTurn": 29.30476471486081,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 6,
+          "method": "band-clamp-only",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 514.0602093892211,
+          "vertices": 102,
+          "absoluteTurn": 29.30476471486081,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 6,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 511.6024836131504,
+          "vertices": 164,
+          "absoluteTurn": 18.283957086420486,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 6,
+          "method": "production",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 513.769090026617,
+          "vertices": 476,
+          "absoluteTurn": 29.47210914526048,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 6,
+          "method": "full-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 516.1160544582776,
+          "vertices": 219,
+          "absoluteTurn": 18.590863423134113,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 6,
+          "method": "protected-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 516.1160544582776,
+          "vertices": 219,
+          "absoluteTurn": 18.590863423134113,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 6,
+          "method": "strict-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 514.0829433067823,
+          "vertices": 471,
+          "absoluteTurn": 29.544393925372294,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 6,
+          "method": "band-clamp-only",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 514.0829433067823,
+          "vertices": 471,
+          "absoluteTurn": 29.544393925372294,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 6,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 511.60259275777,
+          "vertices": 186,
+          "absoluteTurn": 18.32847120921569,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "band": 6,
+          "diagnostics": {
+            "membershipChanges": 77,
+            "strictMembershipChanges": 0,
+            "guardedChanges": 0,
+            "maxNumerator": 3216,
+            "guardCounts": {
+              "thin": 0,
+              "saddle": 0,
+              "layered": 0,
+              "any": 0
+            },
+            "thinSamples": 0,
+            "saddleSquares": 0
+          }
+        },
+        {
+          "resolution": "production",
+          "band": 7,
+          "method": "production",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 509.2505955696106,
+          "vertices": 102,
+          "absoluteTurn": 29.279236164943494,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 7,
+          "method": "full-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 507.0980418069023,
+          "vertices": 175,
+          "absoluteTurn": 18.702224961139994,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 7,
+          "method": "protected-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 507.0980418069023,
+          "vertices": 175,
+          "absoluteTurn": 18.702224961139994,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 7,
+          "method": "strict-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 508.91953753804614,
+          "vertices": 102,
+          "absoluteTurn": 29.329247448221036,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 7,
+          "method": "band-clamp-only",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 508.91953753804614,
+          "vertices": 102,
+          "absoluteTurn": 29.329247448221036,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 7,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 511.6024836131504,
+          "vertices": 164,
+          "absoluteTurn": 18.283957086420486,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 7,
+          "method": "production",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 509.2307511419058,
+          "vertices": 476,
+          "absoluteTurn": 29.45476399905813,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 7,
+          "method": "full-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 507.0891056231088,
+          "vertices": 219,
+          "absoluteTurn": 18.71408261053024,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 7,
+          "method": "protected-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 507.0891056231088,
+          "vertices": 219,
+          "absoluteTurn": 18.71408261053024,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 7,
+          "method": "strict-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 508.89663507822183,
+          "vertices": 465,
+          "absoluteTurn": 29.546204377677054,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 7,
+          "method": "band-clamp-only",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 508.89663507822183,
+          "vertices": 465,
+          "absoluteTurn": 29.546204377677054,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 7,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 511.60259275777,
+          "vertices": 186,
+          "absoluteTurn": 18.32847120921569,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "band": 7,
+          "diagnostics": {
+            "membershipChanges": 77,
+            "strictMembershipChanges": 0,
+            "guardedChanges": 0,
+            "maxNumerator": 3216,
+            "guardCounts": {
+              "thin": 0,
+              "saddle": 0,
+              "layered": 0,
+              "any": 0
+            },
+            "thinSamples": 0,
+            "saddleSquares": 0
+          }
+        },
+        {
+          "resolution": "production",
+          "band": 8,
+          "method": "production",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 504.67375898361206,
+          "vertices": 102,
+          "absoluteTurn": 31.091504838269596,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 8,
+          "method": "full-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 497.69985460553846,
+          "vertices": 171,
+          "absoluteTurn": 18.5096622327994,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 8,
+          "method": "protected-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 497.69985460553846,
+          "vertices": 171,
+          "absoluteTurn": 18.5096622327994,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 8,
+          "method": "strict-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 503.66034534437256,
+          "vertices": 102,
+          "absoluteTurn": 31.55166572759764,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 8,
+          "method": "band-clamp-only",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 503.66034534437256,
+          "vertices": 102,
+          "absoluteTurn": 31.55166572759764,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 8,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 511.6024836131504,
+          "vertices": 164,
+          "absoluteTurn": 18.283957086420486,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 8,
+          "method": "production",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 504.6027626246214,
+          "vertices": 410,
+          "absoluteTurn": 31.26771393100727,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 8,
+          "method": "full-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 497.6788565669741,
+          "vertices": 241,
+          "absoluteTurn": 18.471033748688825,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 8,
+          "method": "protected-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 497.6788565669741,
+          "vertices": 241,
+          "absoluteTurn": 18.471033748688825,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 8,
+          "method": "strict-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 503.57392360260076,
+          "vertices": 415,
+          "absoluteTurn": 31.757116297835424,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 8,
+          "method": "band-clamp-only",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 503.57392360260076,
+          "vertices": 415,
+          "absoluteTurn": 31.757116297835424,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 8,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 511.60259275777,
+          "vertices": 186,
+          "absoluteTurn": 18.32847120921569,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "band": 8,
+          "diagnostics": {
+            "membershipChanges": 77,
+            "strictMembershipChanges": 0,
+            "guardedChanges": 0,
+            "maxNumerator": 3216,
+            "guardCounts": {
+              "thin": 0,
+              "saddle": 0,
+              "layered": 0,
+              "any": 0
+            },
+            "thinSamples": 0,
+            "saddleSquares": 0
+          }
+        },
+        {
+          "resolution": "production",
+          "band": 9,
+          "method": "production",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 499.8363194465637,
+          "vertices": 102,
+          "absoluteTurn": 34.071934263922074,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 9,
+          "method": "full-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 486.1015365004537,
+          "vertices": 142,
+          "absoluteTurn": 17.4158949362722,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 9,
+          "method": "protected-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 486.1015365004537,
+          "vertices": 142,
+          "absoluteTurn": 17.4158949362722,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 9,
+          "method": "strict-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 497.9938042092581,
+          "vertices": 102,
+          "absoluteTurn": 35.38496212679262,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 9,
+          "method": "band-clamp-only",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 497.9938042092581,
+          "vertices": 102,
+          "absoluteTurn": 35.38496212679262,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 9,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 511.6024836131504,
+          "vertices": 164,
+          "absoluteTurn": 18.283957086420486,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 9,
+          "method": "production",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 499.661330729723,
+          "vertices": 366,
+          "absoluteTurn": 34.17164644982246,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 9,
+          "method": "full-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 486.0730600997806,
+          "vertices": 357,
+          "absoluteTurn": 17.36899720006687,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 9,
+          "method": "protected-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 486.0730600997806,
+          "vertices": 357,
+          "absoluteTurn": 17.36899720006687,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 9,
+          "method": "strict-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 497.74716140493547,
+          "vertices": 338,
+          "absoluteTurn": 35.69544029978822,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 9,
+          "method": "band-clamp-only",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 497.74716140493547,
+          "vertices": 338,
+          "absoluteTurn": 35.69544029978822,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 9,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 511.60259275777,
+          "vertices": 186,
+          "absoluteTurn": 18.32847120921569,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "band": 9,
+          "diagnostics": {
+            "membershipChanges": 77,
+            "strictMembershipChanges": 0,
+            "guardedChanges": 0,
+            "maxNumerator": 3216,
+            "guardCounts": {
+              "thin": 0,
+              "saddle": 0,
+              "layered": 0,
+              "any": 0
+            },
+            "thinSamples": 0,
+            "saddleSquares": 0
+          }
+        },
+        {
+          "resolution": "production",
+          "band": 10,
+          "method": "production",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 494.44794940948486,
+          "vertices": 80,
+          "absoluteTurn": 38.263300936394415,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 10,
+          "method": "full-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 468.47472176204144,
+          "vertices": 131,
+          "absoluteTurn": 27.532883002861013,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 10,
+          "method": "protected-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 468.47472176204144,
+          "vertices": 131,
+          "absoluteTurn": 27.532883002861013,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 10,
+          "method": "strict-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 495.53125,
+          "vertices": 25,
+          "absoluteTurn": 23.561944901923816,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 10,
+          "method": "band-clamp-only",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 495.53125,
+          "vertices": 25,
+          "absoluteTurn": 23.561944901923816,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 10,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 499.34839049379013,
+          "vertices": 171,
+          "absoluteTurn": 18.701744234127762,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 10,
+          "method": "production",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 493.9403483271599,
+          "vertices": 289,
+          "absoluteTurn": 38.422597884570315,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 10,
+          "method": "full-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 468.3732589557767,
+          "vertices": 440,
+          "absoluteTurn": 27.721316446517537,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 10,
+          "method": "protected-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 468.3732589557767,
+          "vertices": 440,
+          "absoluteTurn": 27.721316446517537,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 10,
+          "method": "strict-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 495.53125,
+          "vertices": 25,
+          "absoluteTurn": 23.561944901923816,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 10,
+          "method": "band-clamp-only",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 495.53125,
+          "vertices": 25,
+          "absoluteTurn": 23.561944901923816,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 10,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 499.3312408288323,
+          "vertices": 241,
+          "absoluteTurn": 18.71133383258441,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "band": 10,
+          "diagnostics": {
+            "membershipChanges": 77,
+            "strictMembershipChanges": 0,
+            "guardedChanges": 0,
+            "maxNumerator": 3216,
+            "guardCounts": {
+              "thin": 0,
+              "saddle": 0,
+              "layered": 0,
+              "any": 0
+            },
+            "thinSamples": 0,
+            "saddleSquares": 0
+          }
+        },
+        {
+          "resolution": "production",
+          "band": 11,
+          "method": "production",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 319.49992656707764,
+          "vertices": 91,
+          "absoluteTurn": 28.938920816335145,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 11,
+          "method": "full-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 319.6024836131505,
+          "vertices": 164,
+          "absoluteTurn": 18.283957086420543,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 11,
+          "method": "protected-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 319.6024836131505,
+          "vertices": 164,
+          "absoluteTurn": 18.283957086420543,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 11,
+          "method": "strict-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 319.6024836131505,
+          "vertices": 164,
+          "absoluteTurn": 18.283957086420543,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 11,
+          "method": "band-clamp-only",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 319.6024836131505,
+          "vertices": 164,
+          "absoluteTurn": 18.283957086420543,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 11,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 319.6024836131505,
+          "vertices": 164,
+          "absoluteTurn": 18.283957086420543,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 11,
+          "method": "production",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 319.49991738796234,
+          "vertices": 487,
+          "absoluteTurn": 29.183584140383278,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 11,
+          "method": "full-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 319.60259275777,
+          "vertices": 186,
+          "absoluteTurn": 18.32847120921562,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 11,
+          "method": "protected-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 319.60259275777,
+          "vertices": 186,
+          "absoluteTurn": 18.32847120921562,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 11,
+          "method": "strict-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 319.60259275777,
+          "vertices": 186,
+          "absoluteTurn": 18.32847120921562,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 11,
+          "method": "band-clamp-only",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 319.60259275777,
+          "vertices": 186,
+          "absoluteTurn": 18.32847120921562,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 11,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 319.60259275777,
+          "vertices": 186,
+          "absoluteTurn": 18.32847120921562,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "band": 11,
+          "diagnostics": {
+            "membershipChanges": 77,
+            "strictMembershipChanges": 0,
+            "guardedChanges": 0,
+            "maxNumerator": 3216,
+            "guardCounts": {
+              "thin": 0,
+              "saddle": 0,
+              "layered": 0,
+              "any": 0
+            },
+            "thinSamples": 0,
+            "saddleSquares": 0
+          }
+        },
+        {
+          "resolution": "production",
+          "band": 12,
+          "method": "production",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 127.49992656707764,
+          "vertices": 91,
+          "absoluteTurn": 28.93892081633514,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 12,
+          "method": "full-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 127.6024836131503,
+          "vertices": 164,
+          "absoluteTurn": 18.283957086420543,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 12,
+          "method": "protected-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 127.6024836131503,
+          "vertices": 164,
+          "absoluteTurn": 18.283957086420543,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 12,
+          "method": "strict-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 127.6024836131503,
+          "vertices": 164,
+          "absoluteTurn": 18.283957086420543,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 12,
+          "method": "band-clamp-only",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 127.6024836131503,
+          "vertices": 164,
+          "absoluteTurn": 18.283957086420543,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 12,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 127.6024836131503,
+          "vertices": 164,
+          "absoluteTurn": 18.283957086420543,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 12,
+          "method": "production",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 127.49991738796234,
+          "vertices": 487,
+          "absoluteTurn": 29.183584140383278,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 12,
+          "method": "full-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 127.60259275777003,
+          "vertices": 186,
+          "absoluteTurn": 18.32847120921562,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 12,
+          "method": "protected-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 127.60259275777003,
+          "vertices": 186,
+          "absoluteTurn": 18.32847120921562,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 12,
+          "method": "strict-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 127.60259275777003,
+          "vertices": 186,
+          "absoluteTurn": 18.32847120921562,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 12,
+          "method": "band-clamp-only",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 127.60259275777003,
+          "vertices": 186,
+          "absoluteTurn": 18.32847120921562,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 12,
+          "method": "clamped-filter",
+          "components": 1,
+          "holes": 0,
+          "areaCells": 127.60259275777003,
+          "vertices": 186,
+          "absoluteTurn": 18.32847120921562,
+          "exactOriginalContours": false,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "band": 12,
+          "diagnostics": {
+            "membershipChanges": 77,
+            "strictMembershipChanges": 0,
+            "guardedChanges": 0,
+            "maxNumerator": 3216,
+            "guardCounts": {
+              "thin": 0,
+              "saddle": 0,
+              "layered": 0,
+              "any": 0
+            },
+            "thinSamples": 0,
+            "saddleSquares": 0
+          }
+        },
+        {
+          "resolution": "production",
+          "band": 13,
+          "method": "production",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 13,
+          "method": "full-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 13,
+          "method": "protected-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 13,
+          "method": "strict-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 13,
+          "method": "band-clamp-only",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 13,
+          "method": "clamped-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 13,
+          "method": "production",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 13,
+          "method": "full-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 13,
+          "method": "protected-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 13,
+          "method": "strict-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 13,
+          "method": "band-clamp-only",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 13,
+          "method": "clamped-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "band": 13,
+          "diagnostics": {
+            "membershipChanges": 77,
+            "strictMembershipChanges": 0,
+            "guardedChanges": 0,
+            "maxNumerator": 3216,
+            "guardCounts": {
+              "thin": 0,
+              "saddle": 0,
+              "layered": 0,
+              "any": 0
+            },
+            "thinSamples": 0,
+            "saddleSquares": 0
+          }
+        },
+        {
+          "resolution": "production",
+          "band": 14,
+          "method": "production",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 14,
+          "method": "full-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 14,
+          "method": "protected-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 14,
+          "method": "strict-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 14,
+          "method": "band-clamp-only",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 14,
+          "method": "clamped-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 14,
+          "method": "production",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 14,
+          "method": "full-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 14,
+          "method": "protected-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 14,
+          "method": "strict-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 14,
+          "method": "band-clamp-only",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 14,
+          "method": "clamped-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "band": 14,
+          "diagnostics": {
+            "membershipChanges": 77,
+            "strictMembershipChanges": 0,
+            "guardedChanges": 0,
+            "maxNumerator": 3216,
+            "guardCounts": {
+              "thin": 0,
+              "saddle": 0,
+              "layered": 0,
+              "any": 0
+            },
+            "thinSamples": 0,
+            "saddleSquares": 0
+          }
+        },
+        {
+          "resolution": "production",
+          "band": 15,
+          "method": "production",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 15,
+          "method": "full-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 15,
+          "method": "protected-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 15,
+          "method": "strict-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 15,
+          "method": "band-clamp-only",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 15,
+          "method": "clamped-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 15,
+          "method": "production",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 15,
+          "method": "full-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 15,
+          "method": "protected-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 15,
+          "method": "strict-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 15,
+          "method": "band-clamp-only",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 15,
+          "method": "clamped-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "band": 15,
+          "diagnostics": {
+            "membershipChanges": 77,
+            "strictMembershipChanges": 0,
+            "guardedChanges": 0,
+            "maxNumerator": 3216,
+            "guardCounts": {
+              "thin": 0,
+              "saddle": 0,
+              "layered": 0,
+              "any": 0
+            },
+            "thinSamples": 0,
+            "saddleSquares": 0
+          }
+        },
+        {
+          "resolution": "production",
+          "band": 16,
+          "method": "production",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 16,
+          "method": "full-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 16,
+          "method": "protected-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 16,
+          "method": "strict-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 16,
+          "method": "band-clamp-only",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "production",
+          "band": 16,
+          "method": "clamped-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 16,
+          "method": "production",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 16,
+          "method": "full-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 16,
+          "method": "protected-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 16,
+          "method": "strict-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 16,
+          "method": "band-clamp-only",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "resolution": "dense",
+          "band": 16,
+          "method": "clamped-filter",
+          "components": 0,
+          "holes": 0,
+          "areaCells": 0,
+          "vertices": 0,
+          "absoluteTurn": 0,
+          "exactOriginalContours": true,
+          "exactOriginalHoleContours": true
+        },
+        {
+          "band": 16,
+          "diagnostics": {
+            "membershipChanges": 77,
+            "strictMembershipChanges": 0,
+            "guardedChanges": 0,
+            "maxNumerator": 3216,
+            "guardCounts": {
+              "thin": 0,
+              "saddle": 0,
+              "layered": 0,
+              "any": 0
+            },
+            "thinSamples": 0,
+            "saddleSquares": 0,
             "windowAgreement": {
               "windowSize": 21,
               "comparedSamples": 1156,

@@ -6,7 +6,7 @@ Baseline: `061d0515`. Implementation branch: `t3code/issue-506-impl`.
 
 Public ground queries take rendered world-cell coordinates: world X/Z divided by `CELL_WORLD_SIZE`. The client converts to shared field coordinates with `DRAWN_GROUND_CELL_CENTRE`; availability derives its stencil from the same conversion. Chart selection uses the rendered position, and blocky support uses the nearest lattice sample. Integer probes, world clamping, receipt/publication gates, and raw/binomial modes remain supported.
 
-The exported `drawnGroundYAt(mirror, ground, x, z)` in `E:\Development\Projects\Terrace\client\src\terrain\drawnGround.ts` owns this gate and conversion boundary; `E:\Development\Projects\Terrace\client\src\world.ts` delegates to it. Coordinate with #504 when replacing live field reads with published snapshots. Its chart lifetime/publication work remains separate; this change does not repair dirty-chart invalidation or snapshot consistency independently.
+The exported `drawnGroundYAt(mirror, ground, x, z)` in `E:\Development\Projects\Terrace\client\src\terrain\drawnGround.ts` owns this gate and conversion boundary; `E:\Development\Projects\Terrace\client\src\world.ts` delegates to it. Integration with local main at `a1081d47` retains #504's owner-approved live field reads and previous charts during rebuilds. Immutable published query snapshots are not part of that decision; temporary differences between live terrain and displayed geometry remain possible.
 
 A small optional `ClimbPath` wire descriptor carries the existing entry, exit, foot, raw endpoint heights, heading, leg, and seed-derived identity. It changes serialization and client adaptation, not server movement advancement, terrain math, climb timing, or fall decisions. Existing server projections already spread `climbWireOf`.
 
@@ -57,7 +57,7 @@ Swimmer correctness costs four additional queries per full update. Endpoint cach
 
 ## Remaining limits and integration
 
-- #504 must integrate its published query snapshots with the corrected client coordinate boundary. #505 should retain this rendered-world-cell public contract.
+- #504's chart publication changes are integrated. The availability regression uses an unpublished neighboring chunk instead of the removed per-chunk invalidation API. #505 should retain this rendered-world-cell public contract.
 - Five hull probes establish the existing sampled clearance contract, not exact collision over every point of an animated hull. Arbitrary narrow obstacles between probes and held LOD frames are not proven collision-free.
 - The deployed client and server should be updated together. Older servers remain parseable and get continuous raw-height fallback, but lack the endpoint information needed for the full drawn-support guarantee.
 - The original browser harness exercises production geometry and movement code. A subsequent networked visual review and ibex clearance correction are recorded in `C:/Users/<user>/.t3/worktrees/Terrace/issue-506-impl-20260922/docs/investigations/issue-506-live-visual-2026-09-22.md`: endpoint and swimmer observations support this patch, and the observed ibex face-leg clipping was corrected and visually rechecked. The review's broader gameplay limits still apply. #364 remains open. #412 has controlled endpoint evidence; neither related issue was closed automatically.

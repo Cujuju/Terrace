@@ -1331,7 +1331,7 @@ describe('headroom at settle', () => {
     clock.frame();
   }
 
-  it('publishes only the current input revision and ignores late disposal failures', async () => {
+  it('keeps the chart through a rebuild, splices each newer build and ignores late disposal failures', async () => {
     const { meshes, clock, held } = settleSetup([chunkPayload(0, 0, 0)], new Map([[ORIGIN, SMALL_RUN]]));
     stream(clock);
     let published = 0;
@@ -1339,15 +1339,17 @@ describe('headroom at settle', () => {
     held.hold();
     meshes.update([ORIGIN]);
     clock.frame();
+    expect(meshes.drawnGround().size()).toBe(1);
     meshes.update([ORIGIN]);
     await held.release();
     clock.frame();
-    expect(meshes.drawnGround().size()).toBe(0);
-    expect(published).toBe(0);
+    // Older than the pending edit, newer than the display: it replaces the display.
+    expect(meshes.drawnGround().size()).toBe(1);
+    expect(published).toBe(1);
     await held.release();
     clock.frame();
     expect(meshes.drawnGround().size()).toBe(1);
-    expect(published).toBe(1);
+    expect(published).toBe(2);
     meshes.update([ORIGIN]);
     clock.frame();
     meshes.dispose();

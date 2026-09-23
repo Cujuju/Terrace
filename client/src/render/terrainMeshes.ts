@@ -521,6 +521,9 @@ export function createTerrainMeshes(
   let generation = 0;
   let disposed = false;
   const revisions = new Map<number, number>();
+  // Input revision of the geometry on screen. A build older than the latest edit still
+  // replaces it when newer; the chunk stays queued for the latest.
+  const displayedRevisions = new Map<number, number>();
   const answerRevisions = new WeakMap<ChunkAnswer, number>();
   // Capture the chosen mode once. Shared sources may outlive this arena.
   const buildMirror: TerrainMirror = {
@@ -538,11 +541,6 @@ export function createTerrainMeshes(
       return;
     }
     inFlight.delete(chunkIdx);
-    if (revision !== revisions.get(chunkIdx)) {
-      if (answer) releaseAnswer(answer);
-      retry.add(chunkIdx);
-      return;
-    }
     if (answer === null) {
       if (mirror.received.has(chunkIdx)) retry.add(chunkIdx);
       return;
@@ -580,13 +578,15 @@ export function createTerrainMeshes(
 
   const spliceAnswer = (answer: ChunkAnswer): void => {
     const startedMs = now();
-    if (disposed || answerRevisions.get(answer) !== revisions.get(answer.chunkIdx)) {
+    const revision = answerRevisions.get(answer) ?? 0;
+    if (disposed || revision < (displayedRevisions.get(answer.chunkIdx) ?? 0)) {
       releaseAnswer(answer);
       return;
     }
     const superIdx = superIndexOf(answer.chunkIdx);
     const sm = superMeshes.get(superIdx) ?? createSuperMesh(superIdx);
     if (!spliceChunk(sm, answer.chunkIdx, answer)) return;
+    displayedRevisions.set(answer.chunkIdx, revision);
     drawnGroundStore.publishRastered(answer.chunkIdx, answer.plan, answer.topLevel, answer.lips);
     for (const handler of chunkDrawnHandlers) handler(answer.chunkIdx);
     const elapsedMs = now() - startedMs;
@@ -686,6 +686,7 @@ export function createTerrainMeshes(
     retry.clear();
     inFlight.clear();
     ready.length = 0;
+    displayedRevisions.clear();
     generation++;
   };
 
@@ -774,7 +775,6 @@ export function createTerrainMeshes(
       lastUpdateMs = now();
       for (const chunkIdx of dirty) {
         if (!mirror.received.has(chunkIdx)) continue;
-        drawnGroundStore.invalidate(chunkIdx);
         revisions.set(chunkIdx, (revisions.get(chunkIdx) ?? 0) + 1);
         pending.add(chunkIdx);
       }

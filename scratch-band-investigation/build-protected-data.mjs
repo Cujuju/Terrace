@@ -10,6 +10,7 @@ import { bandLevelHeight, drawnBandOfSample, drawnLevelThreshold, DRAWN_GROUND_B
 import { CHUNK_SIZE } from '../shared/src/constants.ts';
 import { deriveProtectedField, FILTER_DENOM, FILTER_WEIGHTS, RAW_NEIGHBOR_REACH,
   GUARD_THIN, GUARD_SADDLE, GUARD_LAYER } from './protected-field.mjs';
+import { clampedBandField } from './clamped-field.mjs';
 
 const ORIGIN = 16;
 const SPAN = 32;
@@ -46,6 +47,21 @@ for (const kind of ['ridge', 'channel', 'saddle']) {
   }
   fixtures.push({ name: `one-cell-${kind}-control`, bands: [kind === 'channel' ? 0 : 1],
     map: { size, cells, columnSpans: new Map() } });
+}
+
+// Cliff control: an 8-band wall along a one-cell-jagged line, gentle terraces on each side.
+{
+  const CLIFF_LOW_BAND = 2, CLIFF_HIGH_BAND = 10, JAG_PERIOD = 3;
+  const cells = new Int16Array(size * size);
+  for (let y = 0; y < size; y++) {
+    const edge = CENTER + (Math.floor(y / JAG_PERIOD) % 2);
+    for (let x = 0; x < size; x++) {
+      const gentle = Math.floor(Math.abs(x - edge) / 6);
+      cells[y * size + x] = bandLevelHeight(x < edge ? CLIFF_LOW_BAND - Math.min(gentle, CLIFF_LOW_BAND)
+        : CLIFF_HIGH_BAND + gentle);
+    }
+  }
+  fixtures.push({ name: 'cliff-control', bands: [], map: { size, cells, columnSpans: new Map() } });
 }
 
 function extract(mod, field, band, scale) {
@@ -135,7 +151,7 @@ const report = {
 for (const fixture of fixtures) {
   const { map, name } = fixture;
   const inputHashBefore = digest(JSON.stringify({ cells: [...map.cells], spans: [...map.columnSpans].map(([i, s]) => [i, [...s]]) }));
-  const full = name === 'stamp' || name === 'stamp-smooth';
+  const full = name === 'stamp' || name === 'stamp-smooth' || name === 'cliff-control';
   const bands = full ? Array.from({ length: drawnBandOfSample(Math.max(...map.cells)) + 2 }, (_, i) => i)
     : name === 'layered-opening-control' ? [4] : [fixture.bands.at(-1)];
   const resolutions = {};
@@ -157,7 +173,8 @@ for (const fixture of fixtures) {
     }
     const fields = { production: [raw, 1], 'full-filter': [derived.full, FILTER_DENOM],
       'protected-filter': [productionProtected, FILTER_DENOM], 'strict-filter': [derived.strictField, FILTER_DENOM],
-      'band-clamp-only': [derived.clamped, FILTER_DENOM] };
+      'band-clamp-only': [derived.clamped, FILTER_DENOM],
+      'clamped-filter': [clampedBandField(raw, size, band), FILTER_DENOM] };
     for (const [resolution, mod] of [['production', production], ['dense', dense]]) {
       const modes = resolutions[resolution] ??= {};
       let baseline, baselineHoles;

@@ -150,7 +150,8 @@ describe('drawnGround', () => {
     mirror.map.cells[z * WORLD_SIZE + CHUNK_SIZE + 1] = bandLevelHeight(8);
     expect(drawnGroundYAt(mirror, ground, CHUNK_SIZE + 0.1, z)).toBe(drawnBandCapY(3));
     expect(drawnGroundYAt(mirror, ground, CHUNK_SIZE + 0.75, z)).toBe(drawnBandCapY(8));
-    store.invalidate(0);
+    store.clear();
+    store.publish(rightChunk, { blocky: true, levels: [] });
     expect(drawnGroundYAt(mirror, ground, CHUNK_SIZE - 0.1, z)).toBeNull();
     expect(drawnGroundYAt(mirror, ground, CHUNK_SIZE + 0.1, z)).toBe(drawnBandCapY(3));
     mirror.received.delete(rightChunk);

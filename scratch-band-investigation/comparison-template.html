@@ -21,6 +21,7 @@
         <option value="protected-filter">Local feature protection</option>
         <option value="strict-filter">Local protection + band clamp</option>
         <option value="band-clamp-only">Band clamp only</option>
+        <option value="clamped-filter">Per-band clamped filter</option>
       </select>
     </label></div>
     <label class="form-label">View
@@ -62,7 +63,7 @@ const dataset=JSON.parse(await new Response(new Blob([bytes]).stream().pipeThrou
 if(reviewConfig.prototype){
   root.querySelector('#tbr-resolution-label').hidden=false;
   root.querySelector('#tbr-protection-label').hidden=false;
-  for(const [value,label]of [['one-cell-ridge-control','One-cell ridge'],['one-cell-channel-control','One-cell channel'],['one-cell-saddle-control','Diagonal saddle']]){
+  for(const [value,label]of [['one-cell-ridge-control','One-cell ridge'],['one-cell-channel-control','One-cell channel'],['one-cell-saddle-control','Diagonal saddle'],['cliff-control','Jagged 8-band cliff']]){
     const option=document.createElement('option');option.value=value;option.textContent=label;fixtureInput.append(option);
   }
 }
@@ -158,7 +159,7 @@ function rebuild(){
   viewInput.disabled=!fixture.full;schedule();
 }
 function remember(){window.openai?.setWidgetState?.({modelContent:{terrain:fixtureInput.value,view:viewInput.value,zoom:Number(zoomInput.value),creaseLines:edgeInput.checked,...(reviewConfig.prototype?{resolution:resolutionInput.value,protection:protectionInput.value}:{})},privateContent:null}).catch(()=>{});}
-function restore(state){const s=state?.modelContent??state;if(!s)return;if(dataset.some(d=>d.name===s.terrain))fixtureInput.value=s.terrain;if(['top','oblique'].includes(s.view))viewInput.value=s.view;if(s.zoom>=1&&s.zoom<=2.5)zoomInput.value=s.zoom;if(typeof s.creaseLines==='boolean')edgeInput.checked=s.creaseLines;if(['production','dense'].includes(s.resolution))resolutionInput.value=s.resolution;if(['protected-filter','strict-filter','band-clamp-only'].includes(s.protection))protectionInput.value=s.protection;}
+function restore(state){const s=state?.modelContent??state;if(!s)return;if(dataset.some(d=>d.name===s.terrain))fixtureInput.value=s.terrain;if(['top','oblique'].includes(s.view))viewInput.value=s.view;if(s.zoom>=1&&s.zoom<=2.5)zoomInput.value=s.zoom;if(typeof s.creaseLines==='boolean')edgeInput.checked=s.creaseLines;if(['production','dense'].includes(s.resolution))resolutionInput.value=s.resolution;if(['protected-filter','strict-filter','band-clamp-only','clamped-filter'].includes(s.protection))protectionInput.value=s.protection;}
 restore(window.openai?.widgetState);
 fixtureInput.addEventListener('change',()=>{rebuild();remember();});
 for(const input of [resolutionInput,protectionInput])input.addEventListener('change',()=>{rebuild();remember();});

@@ -41,7 +41,6 @@ export interface DrawnGroundStore {
   chartOf(chunkX: number, chunkZ: number): ChunkChart | null;
   /** Chunks the mesher drew blocky, ascending. The parity harness exempts their pixels. */
   blockyChunkIndices(): number[];
-  invalidate(chunkIdx: number): void;
   clear(): void;
   size(): number;
 }
@@ -121,7 +120,6 @@ export function createDrawnGroundStore(worldSize: number): DrawnGroundStore {
       }
       return blocky.sort((a, b) => a - b);
     },
-    invalidate(chunkIdx): void { charts.delete(chunkIdx); },
     clear(): void {
       charts.clear();
     },

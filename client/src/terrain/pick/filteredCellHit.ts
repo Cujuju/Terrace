@@ -1,6 +1,6 @@
 import {
   CHUNK_SIZE, MAX_HEIGHT, MIN_HEIGHT, drawnBandOfSample, drawnLayerCapAt,
-  drawnSpanCapHeight, drawnSpanIndexCoveringBand, spanAt,
+  drawnSpanCapHeight, drawnSpanIndexCoveringBand, isSpanDrawn, spanAt, spanIndexBelowBand,
 } from '@terrace/shared';
 import { BAND_WORLD_HEIGHT, HEIGHT_WORLD_SCALE } from '../../config.ts';
 import { intersectRayWithWall } from '../drawnFace.ts';
@@ -31,14 +31,17 @@ export function filteredHitInCell(
     if (t < tEnter || t > tExit || t >= nearest) return;
     const u = ray.ox + t * ray.dx, v = ray.oz + t * ray.dz;
     const hitY = origin.y + t * direction.y;
-    const own = drawnSpanIndexCoveringBand(mirror.map, i, j, band);
+    // The stored column under the hit owns it, as in raw mode: a filled-in pit
+    // still names the pit, so a raise closes it.
+    const own = drawnSpanIndexCoveringBand(mirror.map, i, j, band) ?? drawnSpanBelow(mirror, i, j, band);
     const owner = own === null ? columnOwningBand(mirror, i, j, u, v, band, hitY)
       : { x: i, y: j, spanIndex: own };
     if (!owner) return;
     nearest = t;
+    const surfaceY = drawnSpanCapHeight(spanAt(mirror.map, owner.x, owner.y, owner.spanIndex)) * HEIGHT_WORLD_SCALE;
     result = { ...owner, face, band, hitY,
-      hitX: origin.x + t * direction.x, hitZ: origin.z + t * direction.z,
-      surfaceY: drawnSpanCapHeight(spanAt(mirror.map, owner.x, owner.y, owner.spanIndex)) * HEIGHT_WORLD_SCALE };
+      hitX: origin.x + t * direction.x, hitZ: origin.z + t * direction.z, surfaceY,
+      ...(hitY > surfaceY ? { ownerHitY: surfaceY } : {}) };
   };
   for (let band = first; band <= last; band++) {
     const capY = band * BAND_WORLD_HEIGHT;
@@ -65,4 +68,9 @@ export function filteredHitInCell(
     }
   }
   return result;
+}
+
+function drawnSpanBelow(mirror: TerrainMirror, i: number, j: number, band: number): number | null {
+  const below = spanIndexBelowBand(mirror.map, i, j, band);
+  return below !== null && isSpanDrawn(spanAt(mirror.map, i, j, below)) ? below : null;
 }

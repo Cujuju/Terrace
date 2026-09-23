@@ -32,6 +32,24 @@ history, including the rejected protected behavior and its measured overhead.
 - Three requested read-only reviews completed. Findings and remaining runtime
   uncertainties: `E:\Development\Projects\Terrace\docs\investigations\renderer-review-2026-09-22.md`.
 
+## September 22 amendment — #504 absorbed
+
+- Done: smoothed pick ownership and rebuild publication. Stamp/Hard/2.0 closes
+  a smoothed pit as in raw mode. Record: `docs/decisions/band-smoothing.md`.
+- Open: a height blur widens a 10-band cliff from 0.9 to 2.6 cells (shared-math
+  check). Candidate: per-band field, heights clamped to ±1 band around each
+  threshold, same kernel. Offline prototype built; owner visual review pending
+  (`docs/decisions/band-smoothing.md`). Production port would touch
+  `shared/src/drawnFieldFilter.ts`, `shared/src/drawnGround.ts`,
+  `client/src/terrain/drawnSurface.ts`, `client/src/terrain/capEmission.ts`,
+  `client/src/render/gpuMesher/terrainGpuInputs.ts`, `mesherWgsl.ts`.
+- Open: a layered column in the one-cell halo puts the whole chunk on the
+  layered path (`capEmission.ts`, GPU `ENTRY_LAYERED`).
+- Open: CPU filter cost — nine closure reads per sample, per-sample receipt
+  checks, a global cache cleared on every edit.
+- Done: `client/test/terrainMeshes.test.ts` now asserts the chart survives a
+  rebuild and each newer build is spliced.
+
 ## Original implementation and plan (superseded where amended above)
 Prototype: `d4664f4e`; follow-up shape requirement: `ed67fc78`.
 Tracker: https://github.com/Cujuju/Terrace/issues/503.

@@ -24,6 +24,63 @@ is fixed. Three requested independent reviews are recorded in
 The protected implementation and measurements below are historical evidence,
 not the current filter specification.
 
+## Picking and rebuild publication — 2026-09-22 (#504)
+
+Owner decision: queries read live terrain; no immutable published snapshot.
+
+- Cause of the Stamp/Hard/2.0 pit failure: smoothing drew the pit floor above
+  its stored top, and picking handed the hit to the nearest rim column that
+  covered the drawn band. Stamp targets the anchor's stored band plus one, so
+  each press raised rim and pit together. Fix: the stored column under the hit
+  owns the pick (`picking.md`).
+- Dirty chunks no longer lose their chart. Picks previously failed on every
+  rebuild frame, in raw mode too: raw picks struck the next chunk, smoothed
+  picks returned nothing. A finished build newer than the displayed geometry is
+  spliced even when a later edit is pending; stale generation, mode and
+  disposed answers are still rejected. Supersedes "dirty chunks remain
+  unavailable until their replacement geometry is written" below.
+- Live probe, private stack, 2×2 pit two bands deep, 96 aimed rays, three
+  stamp clicks, 12-press held stroke at 120 ms, GPU and CPU meshers:
+
+  | Measure | Before, raw | Before, smoothed | After, raw | After, smoothed |
+  |---|---|---|---|---|
+  | Pit-floor picks owned by a pit cell | 39/96 | 0/96 | 39/96 | 56/96 |
+  | Pit after 2 stamp clicks (rim 43) | 43 | 43 (rim 45) | 43 | 43 |
+  | Rebuild frames with a wrong or missing pick | all | all | 0 | 0 |
+
+- Rebuild window per edit: 1–3 frames CPU, 3–6 GPU. Walls come from the
+  published chart and treads from live terrain until the new chart publishes.
+- Pick cost did not justify a traversal index (figures in `picking.md`).
+- Probe and raw results:
+  `E:\Development\Projects\Terrace\scratch-band-investigation\pick-probe\`.
+
+## Per-band clamped filter prototype — 2026-09-22
+
+Offline only; owner visual review pending. Each band blurs its own field:
+heights clamped to ±1 band around that band's contour height, same `[1,2,1]²/16`
+kernel. Band outlines stay nested (monotone clamp, positive kernel).
+
+Production contour resolution:
+
+| Fixture | Measure | Original | Current filter | Clamped |
+|---|---|---:|---:|---:|
+| Stamp | total turning, rad | 614 | 240 | 159 |
+| Stamp | band-12 area, cells | 76.4 | 70.0 | 72.5 |
+| Stamp then smooth | total turning, rad | 570 | 203 | 139 |
+| Jagged 8-band cliff | cliff width, cells | 1.07 | 2.69 | 0.77 |
+| Jagged 8-band cliff | top tread area, cells | 494 | 468 | 499 |
+
+- The current filter turns stamped walls and cliffs into stepped slopes; the
+  clamped filter keeps them vertical. Clamped cliffs are narrower than the
+  original (0.77 vs 1.07 cells): every band shares one outline.
+- One-cell terrace, hole, channel and saddle controls vanish and the one-cell
+  ridge nearly does, as with the current filter.
+- Layer-opening slice, band 4: solid area 385 original, 403 current, 372
+  clamped — the opening grows instead of shrinking.
+- Files: `clamped-field.mjs`, fixture and variant in `build-protected-data.mjs`.
+  Viewer: `node build-protected-comparison.mjs <out.html>`, then choose
+  **Per-band clamped filter**.
+
 ## Owner decisions — 2026-09-21
 
 - Prefer derived-field filtering to Bezier rounding: “derived looks better

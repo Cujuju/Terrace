@@ -34,6 +34,8 @@ export interface TerrainRayPick {
   readonly hitZ: number;
   /** The drawn band this pick names, decided once where the hit is decided. */
   readonly band: number;
+  /** Set when a smoothed surface floats above the owning span: that span's cap height, validated in place of hitY. */
+  readonly ownerHitY?: number;
 }
 
 export type CellVisitor = (i: number, j: number, tEnter: number, tExit: number) => boolean;

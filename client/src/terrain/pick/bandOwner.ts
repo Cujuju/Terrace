@@ -35,12 +35,13 @@ export function drawnCapMet(
   // falling between samples.
   const bandsCrossed = Math.ceil(Math.abs(reach * ray.dy) / BAND_WORLD_HEIGHT);
   const samples = Math.max(DRAWN_CAP_SAMPLES_PER_CELL, bandsCrossed);
+  const surface = drawnSurface(mirror);
   for (let s = 0; s <= samples; s++) {
     const t = tEnter + (reach * s) / samples;
     const u = ray.ox + t * ray.dx;
     const v = ray.oz + t * ray.dz;
     // The layer at the ray's own height: a carved gap under a roof is open.
-    const band = drawnLayerCapAt(mirror.map, u, v, bandHoldingY(ray.oy + t * ray.dy), drawnSurface(mirror));
+    const band = drawnLayerCapAt(mirror.map, u, v, bandHoldingY(ray.oy + t * ray.dy), surface);
     if (band !== null) {
       return { t, band, capY: band * BAND_WORLD_HEIGHT, drawnY: drawnBandCapY(band), u, v };
     }
