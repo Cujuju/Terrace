@@ -1,20 +1,25 @@
 # Apache gunship
 
-Original stylized AH-64/Longbow asset for Terrace. Geometry and texture artwork
+Original stylized AH-64 asset for Terrace. Geometry and texture artwork
 are generated locally; there are no downloaded meshes or texture dependencies.
 Silhouette reference: [Boeing AH-64 Apache](https://www.boeing.com/defense/military-rotorcraft/ah-64-apache).
-Cockpit, gear, nose and tail were revised against the owner's supplied side-view
-photograph: compact sloping tandem glazing, solid rear housing, splayed braced
-main legs, thick shouldered tires and an aft-swept tail-wheel support.
+The silhouette is traced from the owner's latest 577 × 162 side elevation:
+canopy roof/sill, fuselage roof/belly, nacelles, low tail boom, swept fin and wheel
+centres. The builder keeps these as source-image coordinates (30 pixels per
+construction unit), then fits the completed aircraft to the world-unit budget.
+Assumption: cross-section widths are estimated from the accompanying quarter-view
+photo. Both latest references omit the radar dome, so this version omits it too.
+Canopy and hull UVs span their complete profiles; glazing and panel markings no
+longer repeat on every polygon. Geometry is original, not extracted from the photos.
 
 This is a reusable model asset, not a spawning or combat plugin.
 
 | Budget | Exported asset |
 | --- | --- |
-| Triangles | 992 (824 body, 68 main rotor, 60 tail rotor, 40 gun) |
+| Triangles | 1,000 (828 body, 68 main rotor, 60 tail rotor, 44 gun) |
 | Meshes / materials | 4 / 1, shared opaque PBR material |
 | Textures | Embedded 1024² base colour and 1024² packed metallic/roughness |
-| Rest bounds, world units | X 0.977 × Y 0.295 × Z 0.877 |
+| Rest bounds, world units | X 0.980 × Y 0.269 × Z 0.756 |
 | Full rotor sweep | Fits a 1 × 1 world-unit footprint |
 
 The saucer diameter is `SAUCER_DIAMETER_CELLS * CELL_WORLD_SIZE = 1` world unit.
@@ -46,9 +51,12 @@ Rebuild and independently inspect in PowerShell:
 & 'E:\Program Files\Blender Foundation\Blender 5.2\blender.exe' --background --python-exit-code 1 --python 'E:\Development\Projects\Terrace\tools\blender\build_apache.py' -- 'E:\Development\Projects\Terrace\client\src\assets\apache'
 & 'E:\Program Files\Blender Foundation\Blender 5.2\blender.exe' --background --python-exit-code 1 --python 'E:\Development\Projects\Terrace\tools\blender\stat_glb.py' -- 'E:\Development\Projects\Terrace\client\src\assets\apache\apache.glb' --footprint 1 1 --height 0.4
 & 'E:\Program Files\Blender Foundation\Blender 5.2\blender.exe' --background --python-exit-code 1 --python 'E:\Development\Projects\Terrace\tools\blender\render_glb.py' -- 'E:\Development\Projects\Terrace\client\src\assets\apache\apache.glb' 'E:\Development\Projects\Terrace\tools\blender\out\apache' --views bow34,side,top,game
+& 'E:\Program Files\Blender Foundation\Blender 5.2\blender.exe' --background --python-exit-code 1 --python 'E:\Development\Projects\Terrace\tools\blender\render_apache.py' -- 'E:\Development\Projects\Terrace\client\src\assets\apache\apache.glb' 'E:\Development\Projects\Terrace\tools\blender\out\apache'
 ```
 
 The builder refuses exports over 1,000 triangles and sizes from the complete
 main and tail rotor sweeps. It uses Blender's bundled NumPy and the project's
 shared GLB export recipe. Reviewed with fresh-import bounds/material/UV checks
-and four studio views; no running game was started or changed for verification.
+and studio views; no running game was started or changed for verification.
+The Apache-specific renderer adds a true orthographic side elevation, a quarter
+view and a game view, using fresh timestamped filenames to avoid cached previews.

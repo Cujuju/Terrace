@@ -20,14 +20,32 @@ TRIANGLE_BUDGET = 1000
 ATLAS_SIZE = 1024
 TILE_SIZE = ATLAS_SIZE // 4
 UV_PADDING = 10
+PROFILE_PIXELS_PER_UNIT = 30.0
+PROFILE_MAST_X = 225.0
+PROFILE_DATUM_Y = 110.0
 ROTOR_RADIUS = 7.3
-ROTOR_CENTRE = (0.0, 0.0, 2.15)
-TAIL_ROTOR_CENTRE = (-7.65, 0.30, 1.70)
-GUN_CENTRE = (3.45, 0.0, -0.65)
-MAIN_WHEEL_RADIUS = 0.42
+MAIN_WHEEL_RADIUS = 10 / PROFILE_PIXELS_PER_UNIT
 MAIN_WHEEL_WIDTH = 0.30
 MAIN_WHEEL_SIDES = 10
 PARTS = {}
+
+
+def profile_point(u, v, lateral=0):
+    return ((PROFILE_MAST_X-u)/PROFILE_PIXELS_PER_UNIT, lateral,
+            (PROFILE_DATUM_Y-v)/PROFILE_PIXELS_PER_UNIT)
+
+
+ROTOR_CENTRE = profile_point(225, 22)
+TAIL_ROTOR_CENTRE = profile_point(524, 43, .27)
+GUN_CENTRE = profile_point(138, 117)
+MUZZLE = profile_point(101, 125)
+NOSE = profile_point(61, 100)
+TAIL_TIP = profile_point(515, 120)
+TOP = profile_point(225, 8)
+CANOPY_U_RANGE = (100, 200)
+CANOPY_V_RANGE = (45, 96)
+BODY_U_RANGE = (75, 520)
+BODY_V_RANGE = (75, 135)
 
 # Each tile is reused across matching surfaces; detail never adds geometry.
 PALETTE = [
@@ -66,7 +84,22 @@ def atlas():
             yy, xx = np.ogrid[:TILE_SIZE, :TILE_SIZE]
             p[(xx - cx) ** 2 + (yy - cy) ** 2 <= radius ** 2, :3] = np.array(c) / 255
 
-        if tile in (HULL, PANEL, WING, TAIL, MARKING):
+        def polygon(points, colour):
+            yy, xx = np.mgrid[:TILE_SIZE, :TILE_SIZE]
+            inside = np.zeros((TILE_SIZE,TILE_SIZE),dtype=bool)
+            for a,b in zip(points,points[1:]+points[:1]):
+                if a[1] == b[1]:
+                    continue
+                inside ^= ((a[1] > yy) != (b[1] > yy)) & (
+                    xx < (b[0]-a[0])*(yy-a[1])/(b[1]-a[1])+a[0])
+            p[inside,:3] = np.array(colour)/255
+
+        def window_polygon(points, colour):
+            polygon([(UV_PADDING+(u-CANOPY_U_RANGE[0])/(CANOPY_U_RANGE[1]-CANOPY_U_RANGE[0])*(TILE_SIZE-2*UV_PADDING),
+                      UV_PADDING+(CANOPY_V_RANGE[1]-v)/(CANOPY_V_RANGE[1]-CANOPY_V_RANGE[0])*(TILE_SIZE-2*UV_PADDING))
+                     for u,v in points],colour)
+
+        if tile in (PANEL, WING, TAIL, MARKING):
             frame(22, 23, 234, 230, (36, 43, 28))
             rect(25, 229, 231, 231, (101, 106, 73))
             rect(25, 140, 231, 142, (44, 50, 33))
@@ -74,21 +107,38 @@ def atlas():
             rect(91, 70, 98, 75, (146, 145, 114))
             for i in range(5):
                 rect(147 + i * 12, 59, 151 + i * 12, 88, (31, 39, 26))
-        if tile in (GLASS, WINDSCREEN):
+        if tile == HULL:
+            def body_rect(u0,v0,u1,v1,c):
+                x0,x1 = [round(UV_PADDING+(u-BODY_U_RANGE[0])/(BODY_U_RANGE[1]-BODY_U_RANGE[0])*(TILE_SIZE-2*UV_PADDING)) for u in (u0,u1)]
+                y0,y1 = [round(UV_PADDING+(BODY_V_RANGE[1]-v)/(BODY_V_RANGE[1]-BODY_V_RANGE[0])*(TILE_SIZE-2*UV_PADDING)) for v in (v1,v0)]
+                frame(x0,y0,x1,y1,c,1)
+            for bounds in [(86,95,102,108),(166,95,184,114),(196,94,226,117),
+                           (254,98,281,124),(330,98,338,117),(370,107,449,123)]:
+                body_rect(*bounds,(47,54,34))
+            for u in (151,190,290,348,480):
+                body_rect(u,84,u+2,129,(56,64,39))
+        if tile == WINDSCREEN:
             yy, xx = np.mgrid[:TILE_SIZE, :TILE_SIZE]
             shine = np.clip((yy - xx * 0.24) / 256, 0, 1)[..., None]
             p[:, :, :3] = (np.array((17, 24, 27)) + shine * np.array((47, 56, 62))) / 255
-            if tile == GLASS:
-                rect(60, 35, 97, 144, (24, 28, 27))
-                rect(75, 38, 135, 114, (32, 36, 33))
-                circle(114, 146, 27, (65, 69, 60))
-                rect(116, 140, 142, 149, (18, 24, 23))
-                reflection = (xx > 157 + yy*.18) & (xx < 180 + yy*.18)
-                p[reflection, :3] = np.array((100, 118, 124))/255
             frame(10, 10, 246, 246, (57, 64, 44), 15)
             frame(25, 25, 231, 231, (11, 19, 20), 3)
             rect(34, 214, 220, 218, (129, 142, 140))
             r[:, :, :3] = 0.19
+        if tile == GLASS:
+            p[:,:,:3] = np.array(PALETTE[PLAIN])/255
+            panes = [([(103,92),(108,77),(124,64),(150,53),(149,81)],
+                      [(106,89),(111,77),(126,65),(147,57),(146,79)]),
+                     ([(152,52),(187,49),(189,58),(180,77),(152,82)],
+                      [(155,55),(184,52),(186,58),(178,74),(155,78)])]
+            for outer, inner in panes:
+                window_polygon(outer,(119,123,104))
+                window_polygon(inner,(26,38,42))
+            window_polygon([(110,80),(125,67),(145,59),(141,68),(129,71),(120,82)],(110,135,145))
+            window_polygon([(157,56),(182,54),(178,61),(166,64),(156,72)],(133,151,154))
+            window_polygon([(120,82),(124,74),(128,72),(131,75),(130,79),(141,77),(139,81)],(19,26,27))
+            window_polygon([(160,74),(163,65),(168,62),(172,65),(170,69),(177,69),(175,74)],(20,27,28))
+            r[:,:,:3] = .26
         if tile == VENT:
             frame(22, 22, 234, 234, (101, 103, 70), 4)
             for y in range(34, 224, 15):
@@ -225,82 +275,101 @@ def main_wheel(centre):
 
 
 def build_geometry():
-    loft('fuselage', [(-3.0,0,0,.48,.48),(-1.9,0,-.04,.78,.73),
-         (.1,0,-.08,.87,.79),(2.8,0,-.10,.76,.66),
-         (4.85,0,-.06,.53,.43),(5.65,0,-.05,.38,.31)])
-    loft('fuselage', [(-7.8,0,.72,.12,.17),(-6.7,0,.52,.22,.24),
-         (-3.0,0,.08,.47,.46)], sides=6, tile=TAIL)
+    # Stations trace the owner's side elevation: image x, roof y, belly y, half-width.
+    stations = [(80,90,110,.34),(104,87,114,.48),(150,84,119,.65),
+                (194,78,121,.73),(242,77,125,.78),(291,80,131,.80),
+                (322,80,132,.59),(346,86,132,.41),(380,92,127,.31),
+                (480,102,127,.18),(515,108,128,.10)]
+    vertices = []
+    for u,top,bottom,width in stations:
+        bevel = min(3,(bottom-top)/4)
+        vertices.extend(profile_point(u,v,y) for v,y in
+                        [(top,0),(top+bevel,width),(bottom-bevel,width),
+                         (bottom,0),(bottom-bevel,-width),(top+bevel,-width)])
+    faces = [tuple(reversed(range(6)))]
+    for j in range(len(stations)-1):
+        faces.extend((j*6+i,j*6+(i+1)%6,(j+1)*6+(i+1)%6,(j+1)*6+i)
+                     for i in range(6))
+    faces.append(tuple(range((len(stations)-1)*6,len(stations)*6)))
+    add('fuselage',vertices,faces,HULL)
     # Six-sided angular tandem canopy, with painted frames on each glass face.
-    canopy = [(-.15,.63,.54,1.34),(1.45,.63,.56,1.39),
-              (2.3,.60,.52,1.37),(3.1,.56,.44,1.04),
-              (4.2,.48,.35,.79),(4.85,.40,.30,.36)]
+    canopy = [(102,82,94,.47),(124,63,90,.54),(153,51,84,.61),
+              (184,48,79,.61),(199,46,77,.63),(235,46,77,.66),
+              (286,54,82,.65),(321,76,84,.49)]
     verts = []
-    for x, width, base, top in canopy:
-        verts.extend([(x,-width,base),(x,-width,top-.18),(x,-width*.67,top),
-                      (x,width*.67,top),(x,width,top-.18),(x,width,base)])
+    for u,top,bottom,width in canopy:
+        shoulder = float(np.interp(u,[s[0] for s in stations],[s[1] for s in stations]))+5
+        bottom = max(bottom,shoulder)
+        verts.extend(profile_point(u,v,y) for v,y in
+                     [(bottom,-width),(top+3,-width),(top,-width*.66),
+                      (top,width*.66),(top+3,width),(bottom,width)])
     faces, labels = [tuple(reversed(range(6)))], [PANEL]
     for j in range(len(canopy)-1):
         for i in range(6):
             faces.append((j*6+i,j*6+(i+1)%6,(j+1)*6+(i+1)%6,(j+1)*6+i))
-            glass = GLASS if i in (0,4) and j in (1,3) else WINDSCREEN
-            solid = i == 5 or (i == 2 and j in (1,3))
-            labels.append(PANEL if j == 0 else PLAIN if solid else glass)
+            labels.append(GLASS if j < 4 and i in (0,4) else
+                          WINDSCREEN if j < 3 and i != 5 else PLAIN)
     faces.append(tuple(range((len(canopy)-1)*6,len(canopy)*6)))
     labels.append(PLAIN)
     add('fuselage', verts, faces, labels)
     for side in (-1,1):
-        y = side*.94
+        y = side*.93
         engine_face_start = len(PARTS['fuselage'][2])
-        loft('fuselage', [(-2.6,y,.6,.30,.27),(-2.25,y,.64,.45,.38),
-             (-.45,y,.70,.47,.42),(.35,y,.68,.34,.32)], sides=6, tile=PANEL, cap=VENT)
+        loft('fuselage', [(*profile_point(317,72,y),.38,.45),
+                         (*profile_point(306,70,y),.46,.49),
+                         (*profile_point(245,68,y),.46,.49)],sides=6,tile=PANEL,cap=VENT)
         outer_engine_face = 5 if side == 1 else 2
         PARTS['fuselage'][2][engine_face_start + 7 + outer_engine_face] = MARKING
-        loft('fuselage', [(-3.12,y,.59,.25,.21),(-2.5,y,.64,.33,.25)],
-             sides=6, tile=STEEL, cap=DARK)
-        prism('fuselage', [(.05,side*.6,.05),(-1.05,side*.65,.05),
-              (-1.55,side*2.8,-.10),(-.60,side*2.8,-.10)], .12, tile=WING)
+        loft('fuselage',[(*profile_point(245,68,y),.29,.30),
+                        (*profile_point(231,68,y),.25,.27)],sides=6,tile=PLAIN,cap=DARK)
+        prism('fuselage',[profile_point(218,91,side*.65),profile_point(268,96,side*.65),
+                         profile_point(277,107,side*2.6),profile_point(243,104,side*2.6)],.09,tile=WING)
         # One pod and two silhouette missiles per wing; launch tubes are paint.
-        rod('fuselage',(-1.55,side*1.8,-.52),(.18,side*1.8,-.52),.29,
+        rod('fuselage',profile_point(257,120,side*1.8),profile_point(197,120,side*1.8),.27,
             tile=PANEL,sides=8,cap=ROCKET)
         for row in (-1,1):
-            my = side*2.50 + row*.14
-            loft('fuselage',[(-2.0,my,-.42,.085,.085),(-.25,my,-.42,.085,.085),
-                            (.18,my,-.42,.025,.025)],sides=4,tile=MISSILE,cap=DARK)
-        wheel = (2.05,side*1.35,-1.40)
-        rod('fuselage',(3.05,side*.60,-.48),wheel,.105,tile=PLAIN,sides=4)
-        rod('fuselage',(1.35,side*.65,-.46),wheel,.07,tile=STEEL,sides=4)
+            my = side*2.38 + row*.13
+            loft('fuselage',[(*profile_point(266,115,my),.075,.075),
+                            (*profile_point(205,115,my),.075,.075),
+                            (*profile_point(194,115,my),.022,.022)],sides=4,tile=MISSILE,cap=DARK)
+        wheel = profile_point(189,145,side*1.12)
+        rod('fuselage',profile_point(164,118,side*.55),wheel,.085,tile=PLAIN,sides=4)
+        rod('fuselage',profile_point(187,120,side*.62),wheel,.065,tile=STEEL,sides=4)
         main_wheel(wheel)
-    prism('fuselage',[(-7.40,0,.59),(-6.55,0,.62),(-7.35,0,2.35),
-                     (-8.05,0,2.50)],.13,axis=1,tile=TAIL)
-    prism('fuselage',[(-6.05,-1.2,.61),(-6.75,-1.2,.61),
-                     (-6.75,1.2,.61),(-6.05,1.2,.61)],.09,tile=WING)
-    rod('fuselage',(-6.85,0,.41),(-7.48,0,-.62),.075,tile=PLAIN,sides=4)
-    rod('fuselage',(-7.15,0,.60),(-7.48,0,-.62),.055,sides=4)
-    rod('fuselage',(-7.48,-.12,-.69),(-7.48,.12,-.69),.25,tile=RUBBER,sides=8)
-    rod('fuselage',(0,0,.65),ROTOR_CENTRE,.15)
-    rod('main_rotor',(0,0,2.06),(0,0,2.26),.34,tile=STEEL,sides=6)
+    prism('fuselage',[profile_point(u,v) for u,v in
+                     [(483,105),(509,47),(524,26),(548,28),(513,116)]],.13,axis=1,tile=TAIL)
+    prism('fuselage',[profile_point(493,104,-1.2),profile_point(527,105,-1.2),
+                     profile_point(527,105,1.2),profile_point(493,104,1.2)],.07,tile=WING)
+    tail_wheel = profile_point(536,145)
+    rod('fuselage',profile_point(510,123),tail_wheel,.065,tile=PLAIN,sides=4)
+    rod('fuselage',profile_point(519,125),tail_wheel,.045,sides=4)
+    rod('fuselage',profile_point(536,145,-.09),profile_point(536,145,.09),.20,tile=RUBBER,sides=8)
+    rod('fuselage',profile_point(225,46),ROTOR_CENTRE,.095)
+    rod('main_rotor',profile_point(225,26),profile_point(225,19),.35,tile=STEEL,sides=6)
     for i in range(4):
         angle = math.radians(18) + i*math.pi/2
-        shape = [(.28,-.14,2.18),(ROTOR_RADIUS,-.18,2.11),
-                 (ROTOR_RADIUS-.16,.15,2.11),(.28,.20,2.18)]
+        rotor_z = ROTOR_CENTRE[2]
+        shape = [(.28,-.14,rotor_z),(ROTOR_RADIUS,-.18,rotor_z-.02),
+                 (ROTOR_RADIUS-.16,.15,rotor_z-.02),(.28,.20,rotor_z)]
         outline = [(x*math.cos(angle)-y*math.sin(angle),
                     x*math.sin(angle)+y*math.cos(angle),z) for x,y,z in shape]
         prism('main_rotor',outline,.035,tile=BLADE)
-    rod('fuselage',(0,0,2.26),(0,0,2.66),.095)
-    # Low-sided Longbow radome, kept static above the rotor joint.
-    rod('fuselage',(0,0,2.62),(0,0,2.89),.55,tile=PLAIN,sides=10)
+    rod('fuselage',profile_point(225,22),profile_point(225,8),.10,tile=STEEL,sides=4)
+    rod('fuselage',profile_point(225,9),profile_point(225,8),.22,tile=DARK,sides=6)
     cx, cy, cz = TAIL_ROTOR_CENTRE
     rod('tail_rotor',(cx,cy-.1,cz),(cx,cy+.1,cz),.13,sides=4)
     for angle in (25,80,205,260):
         a = math.radians(angle)
         outline = [(cx+r*math.cos(a)-w*math.sin(a),cy,
                     cz+r*math.sin(a)+w*math.cos(a))
-                   for r,w in ((.1,-.07),(1.0,-.08),(1.0,.08),(.1,.07))]
+                   for r,w in ((.1,-.09),(1.25,-.12),(1.25,.12),(.1,.09))]
         prism('tail_rotor',outline,.025,axis=1,tile=BLADE)
-    loft('fuselage',[(5.28,0,.02,.27,.27),(5.60,0,.02,.42,.42),
-                    (5.90,0,.02,.28,.29)], sides=6,tile=DARK,cap=SENSOR)
-    rod('chin_gun',GUN_CENTRE,(3.45,0,-1.14),.19,tile=DARK)
-    rod('chin_gun',(3.30,0,-1.14),(4.7,0,-1.14),.065,tile=STEEL)
+    loft('fuselage',[(*profile_point(80,100),.26,.26),(*profile_point(70,100),.36,.36),
+                    (*NOSE,.24,.25)],sides=6,tile=DARK,cap=SENSOR)
+    rod('fuselage',profile_point(79,84),profile_point(70,84),.14,tile=PLAIN,sides=6,cap=DARK)
+    rod('chin_gun',GUN_CENTRE,profile_point(143,132),.12,tile=DARK,sides=4)
+    rod('chin_gun',profile_point(143,132),MUZZLE,.045,tile=STEEL)
+    rod('chin_gun',profile_point(117,118),profile_point(143,136),.04,tile=DARK,sides=4)
 
 
 def make_mesh(name, material, parent, pivot, scale, centre):
@@ -315,6 +384,7 @@ def make_mesh(name, material, parent, pivot, scale, centre):
     bm.free()
     uv = mesh.uv_layers.new(name='UVMap')
     for face, tile in zip(mesh.polygons, tiles):
+        face.use_smooth = tile in (HULL,DARK)
         points = [mesh.vertices[mesh.loops[i].vertex_index].co for i in face.loop_indices]
         normal_axis = max(range(3), key=lambda a: abs(face.normal[a]))
         axes = [a for a in range(3) if a != normal_axis]
@@ -322,6 +392,12 @@ def make_mesh(name, material, parent, pivot, scale, centre):
         hi = [max(p[a] for p in points) for a in axes]
         for loop, p in zip(face.loop_indices, points):
             local = [(p[a]-lo[j])/max(hi[j]-lo[j],1e-8) for j,a in enumerate(axes)]
+            if tile in (GLASS,HULL):
+                model_point = p/scale + Vector(pivot)
+                u = PROFILE_MAST_X-model_point.x*PROFILE_PIXELS_PER_UNIT
+                v = PROFILE_DATUM_Y-model_point.z*PROFILE_PIXELS_PER_UNIT
+                urange,vrange = (CANOPY_U_RANGE,CANOPY_V_RANGE) if tile == GLASS else (BODY_U_RANGE,BODY_V_RANGE)
+                local = [(u-urange[0])/(urange[1]-urange[0]),(vrange[1]-v)/(vrange[1]-vrange[0])]
             uv.data[loop].uv = tuple(((tile%4 if j==0 else tile//4)*TILE_SIZE +
                 UV_PADDING + local[j]*(TILE_SIZE-2*UV_PADDING))/ATLAS_SIZE for j in range(2))
     obj = bpy.data.objects.new(name, mesh)
@@ -368,8 +444,7 @@ def main():
         parent = root if name == 'fuselage' else empty(
             name+'_pivot',(Vector(pivot)-centre)*scale,root)
         make_mesh(name,material,parent,pivot,scale,centre)
-    for name, point in [('muzzle',(4.7,0,-1.14)),('nose',(5.90,0,.02)),
-                        ('tail_tip',(-7.8,0,.72)),('top',(0,0,2.89))]:
+    for name, point in [('muzzle',MUZZLE),('nose',NOSE),('tail_tip',TAIL_TIP),('top',TOP)]:
         parent = bpy.data.objects['chin_gun_pivot'] if name == 'muzzle' else root
         origin = Vector(GUN_CENTRE) if name == 'muzzle' else centre
         empty(name,(Vector(point)-origin)*scale,parent)
