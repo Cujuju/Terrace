@@ -1,5 +1,13 @@
 # Band smoothing
 
+## Filter retired — 2026-09-23
+
+The derived-field filter, the **Smooth terrain bands** setting and filtered
+picking are removed. Smooth outlines now come from stored heights: stamp, drag
+and genesis encode edge distance in-band (`sculpt-tools.md`, 2026-09-23). Tall
+steps draw as vertical walls; steps of up to 4 bands fan ¼ cell apart.
+Everything below is historical.
+
 ## Current owner decision — 2026-09-22
 
 Remove the protection portion of the binomial filter. This supersedes the

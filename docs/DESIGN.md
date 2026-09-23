@@ -22,19 +22,20 @@ in the README.
 - A cell is a column of solid spans, so overhangs and caves are representable.
 - Terraces are `BAND_HEIGHT` tall; a click moves one band; a tread is one world
   unit wide.
-- The default brush edits only its footprint. Relaxation runs only under the
-  smooth tool.
+- The default brush edits only its footprint. Stamp and drag change bands only
+  inside theirs, and rewrite in-band heights up to `EDGE_REGION_MARGIN_CELLS`
+  (1) beyond it. Relaxation runs only under the smooth tool.
 - Sea and freshwater are derived from the terrain, never simulated.
 
 ## Rendering and plugins
 
-- Terrain-band smoothing uses one plain 3×3 binomial pass, without small-feature
-  protection. The owner judges appearance and sculpting behavior; tiny terraces
-  or holes may disappear. Derived-field filtering is the preferred direction;
-  the default-off **Smooth terrain bands** setting selects the shared filtered
-  field for CPU/GPU geometry, picking and client grounding. Stored terrain is
-  unchanged. Production appearance remains subject to owner review. See
-  [band smoothing](decisions/band-smoothing.md).
+- Band edges are drawn from stored heights; no derived-field filter. A cell's
+  in-band height encodes its distance to the nearest band edge
+  (`EDGE_UNITS_PER_CELL` = 8 units per cell). All bands of a tall step share one
+  wall; steps of up to `DRAWN_FAN_MAX_BANDS` (4) bands fan ¼ cell apart
+  (`shared/src/drawnSquare.ts`). CPU contours and the GPU mesher match. See
+  [band smoothing](decisions/band-smoothing.md) and
+  [sculpt tools](decisions/sculpt-tools.md).
 - **≥ 140 fps on the owner's machine** (≈ 7 ms per frame). What does not fit is
   budgeted (`docs/decisions/mesh-budgets.md`) or moved off the frame.
 - Terrain edits patch vertex buffers in place, never rebuild geometry.
