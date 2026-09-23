@@ -146,12 +146,17 @@ def atlas():
             r[:, :, :3] = 0.19
         if tile == GLASS:
             p[:,:,:3] = np.array(PALETTE[PLAIN])/255
-            panes = [([(103,92),(108,77),(124,64),(150,53),(149,81)],
-                      [(106,89),(111,77),(126,65),(147,57),(146,79)]),
-                     ([(152,52),(187,49),(189,58),(180,77),(152,82)],
-                      [(155,55),(184,52),(186,58),(178,74),(155,78)])]
+            # Trace the two side apertures separately: upright forward corner,
+            # swept roof, narrow central post, and a clipped rear top corner.
+            panes = [([(103,92),(104,79),(118,65),(146,52),(150,52),(150,81)],
+                      [(107,89),(108,80),(121,67),(147,55),(147,79)]),
+                     ([(152,52),(182,49),(188,50),(192,53),(191,60),(180,78),(152,82)],
+                      [(155,54),(182,52),(187,53),(189,55),(187,60),(177,75),(155,79)])]
             for outer, inner in panes:
-                window_polygon(outer,(77,84,67))
+                window_polygon(outer,(90,96,77))
+                centre = np.mean(inner,axis=0)
+                seal = [tuple(centre+(np.array(pt)-centre)*1.045) for pt in inner]
+                window_polygon(seal,(13,22,23))
                 window_polygon(inner,(26,38,42))
             window_polygon([(110,80),(125,67),(145,59),(141,68),(129,71),(120,82)],(110,135,145))
             window_polygon([(157,56),(182,54),(178,61),(166,64),(156,72)],(133,151,154))
@@ -535,8 +540,8 @@ def build_geometry():
         shoulder = float(np.interp(u,[s[0] for s in stations],[s[1] for s in stations]))+5
         bottom = max(bottom,shoulder)
         verts.extend(profile_point(u,v,y) for v,y in
-                     [(bottom,-width),(top+3,-width),(top,-width*.66),
-                      (top,width*.66),(top+3,width),(bottom,width)])
+                     [(bottom,-width),(top+1.5,-width),(top,-width*.66),
+                      (top,width*.66),(top+1.5,width),(bottom,width)])
     faces, labels = [tuple(reversed(range(6)))], [PLAIN]
     for j in range(len(canopy)-1):
         for i in range(5):  # The lower shell is buried inside the hull.

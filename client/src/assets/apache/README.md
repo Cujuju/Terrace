@@ -35,6 +35,9 @@ The gun has paired rearward-raked supports, a low receiver, an open lower guard,
 and a level barrel with a wider muzzle. The owner accepted these shapes on
 2026-09-22. Lens coatings, seals and small fittings remain texture detail.
 Rotor blades use triangular airfoil sections to recover triangles for the pods.
+The side glazing follows separate traced apertures, with an upright forward
+corner, narrow centre post, clipped rear upper corner and thin rubber seals.
+The canopy shoulder bevel is reduced to keep the roof border close to the panes.
 
 This is a reusable model asset, not a spawning or combat plugin.
 
