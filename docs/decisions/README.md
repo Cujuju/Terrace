@@ -61,6 +61,7 @@ Dated decision records, one file per arc, split from `docs/DESIGN.md` on 2026-09
   - Decisions made 2026-08-26 (a plugin asks the host for its sibling)
   - Decisions made 2026-08-26 (one plugin's code reloads in place, #198)
   - Decisions made 2026-09-01 (three world invariants are plain data on the plugin view, #277)
+  - Decisions made 2026-09-22 (plugins held while a snapshot's terrain builds)
 - [relaxation](relaxation.md)
   - Decisions made 2026-08-29 (relaxation conserves height; the steepest legal slope is MAX_STEP + 1, #108)
 - [restart-and-persistence](restart-and-persistence.md)

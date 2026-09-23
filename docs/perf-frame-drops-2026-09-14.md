@@ -363,6 +363,14 @@ warmed by re-runs (first-show compile); two junk side-2 pipelines on one core `M
 at the tail of the settle pass (identity not captured, load-time only); no re-arm across a world switch;
 `compileAsync` returns early on device loss.
 
+**Update 2026-09-22 (`10a728d0`, `11a650c3`, `f5bd07dd`).** The warmup is now driven by the plugin
+host's build hold (`docs/decisions/plugin-host.md`), not by `terrain-queue-empty`. A pass runs when a
+snapshot arms the hold, and another runs once the terrain is drawn and the batched terrain changes have
+been delivered. Plugins draw again only after that second pass. Held plugin layers stay visible, go
+undrawn through `setRenderObjectFunction`, and are passed to `warmHiddenDrawables` as `undrawn`: their
+drawables warm like hidden ones. Passes return a promise; calls made during a pass share one follow-up
+pass. The "no re-arm across a world switch" residual is closed: every snapshot build warms.
+
 ## Evidence index (all untracked, all kept per instruction)
 
 - `.census/census-perfprobe-G-farview-drawcalls.json` — far-view census + stats + profile (main exhibit)

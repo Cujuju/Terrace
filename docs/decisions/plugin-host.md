@@ -145,3 +145,33 @@ the inward registry kind plugins join, so fire's and mudslides' bridges do
 not change. Snow that cannot be sited must still be able to become rain
 across the split (#285). Kit contract tests are written BEFORE the code they
 cover, and kept short.
+
+## Decisions made 2026-09-22 (plugins held while a snapshot's terrain builds)
+
+**Why.** Join and world-change builds with plugins took 10.1 s and 27.7 s; with `?plugins=off`, 0.6–1.1 s (Frostwick 512², 400 chunks). Cause: per-chunk `onTerrainChanged` calls ran inside the 1.5 ms splice budget (structures, flora), and flora re-uploaded instance buffers every frame.
+
+**The hold.**
+- `world.onSnapshot` arms it before its first terrain notification. A pose-phase frame callback clears it when `pendingTerrainCount()` is 0. Only snapshots arm it; sculpts, unlocks and mesher swaps do not.
+- While held, the host skips plugin frame runners, batches `onTerrainChanged` per subscriber (copied; the world reuses its set), skips ground shade, and does not draw plugin objects.
+- Server messages, timers, audio and input keep running.
+
+**Plugins are not drawn; they are not hidden.** Draws are filtered with `renderer.setRenderObjectFunction`. Hiding a layer hides its light bank, which re-keys every lit pipeline in the scene on engage and on release (measured 0.4–2.3 s frames). `compileAsync` ignores the custom function (`Renderer.js:917`), so the warmup still compiles undrawn plugin objects.
+
+**Release order.** Terrain drawn → one subscriber's batch per frame, still undrawn → a warmup pass begun after the deliveries → filter cleared. The warmup compiles what the deliveries build before it draws.
+
+**Measured (3 rounds, plugins on).**
+
+| Build | Before | Terrain drawn | Plugins drawn |
+|---|---|---|---|
+| Join | 10.1 s | 1.7–2.7 s | 3.3–5.3 s |
+| Switch to Reach (2048²) | 0.94 s | 0.24–0.31 s | +55 ms |
+| Switch to Frostwick | 27.7 s | 0.56–0.58 s | 0.72–0.82 s |
+
+Worst frame after plugins are drawn: 7–104 ms, the same as plugins-off.
+
+**Residuals.**
+- A chunk whose build never succeeds keeps plugins held for that world.
+- Join release waits 1.5–2.6 s for the cold warmup.
+- The structures batch (`surveySite`, ~128 ms) lands in one held frame: 110–250 ms.
+- Plugin boot work outside frames (monster yeti templates) is not held.
+- The shadow pass bypasses the filter; no shadow maps are in use.

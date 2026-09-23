@@ -48,9 +48,12 @@ in the README.
 - Spawn paths construct no materials or node graphs: rigs, lights, materials
   and geometries are built at attach (or on idle, as monster templates are),
   pooled and reused.
-- `client/src/render/settleWarmup.ts` compiles hidden drawables at terrain
-  settle. A material set that only exists after settle gets a hidden specimen
+- `client/src/render/settleWarmup.ts` compiles hidden drawables, and plugin
+  drawables not yet drawn, during every snapshot build, before plugins draw
+  again. A material set that only exists after that gets a hidden specimen
   in the layer and a `requestShaderWarmup()` call once it is added.
+- Nothing hides a plugin layer: that hides its light bank. The build hold
+  filters draws instead (`docs/decisions/plugin-host.md`, 2026-09-22).
 
 ## Glossary
 
