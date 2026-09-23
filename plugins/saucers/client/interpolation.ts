@@ -4,7 +4,7 @@ import {
   lerpAngle,
   type PoseSegment,
 } from '../../../client/src/plugins/kit/interpolator.ts';
-import type { SaucerPhase, SaucerState } from '../protocol.ts';
+import { MAX_RENDER_LAG_SECONDS, type SaucerPhase, type SaucerState } from '../protocol.ts';
 
 export { lerp, lerpAngle };
 
@@ -21,7 +21,7 @@ export interface InterpolatedSaucer {
 }
 
 export const MIN_INTERPOLATION_SECONDS = 1 / 60;
-export const MAX_INTERPOLATION_SECONDS = 0.25;
+export const MAX_INTERPOLATION_SECONDS = MAX_RENDER_LAG_SECONDS;
 
 export const DEFAULT_INTERPOLATION_SECONDS = 0.1;
 

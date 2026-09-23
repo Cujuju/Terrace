@@ -172,6 +172,10 @@ Worst frame after plugins are drawn: 7–104 ms, the same as plugins-off.
 **Residuals.**
 - A chunk whose build never succeeds keeps plugins held for that world.
 - Join release waits 1.5–2.6 s for the cold warmup.
-- The structures batch (`surveySite`, ~128 ms) lands in one held frame: 110–250 ms.
-- Plugin boot work outside frames (monster yeti templates) is not held.
+- The structures batch lands in one held frame: 76–97 ms on join, 48 ms on a switch (2026-09-23, after the survey memo below).
+- Monster template assembly (43–45 ms per yeti) runs on the main thread when the worker answers, held or not.
 - The shadow pass bypasses the filter; no shadow maps are in use.
+
+**Follow-up 2026-09-23.**
+- Structures (`da726d44`): `SiteSurveyCache` reads each cell's drawn ground once per pass. Surveys read ~3,056 cells each and neighbours overlap 10×; 300 surveys went from 150–207 ms to 53 ms with identical results. Release rebuild: 128 → ~66 ms.
+- Monsters (`8b1ac029`): a module worker runs the unchanged template factories and returns each `organicSurface` result keyed by a hash of its inputs. The main thread assembles around them; a key miss builds locally. Main-thread cost per yeti: 213–259 → 43–45 ms. The idle-callback scheduler and its 4 s timeout are removed. Without a worker, a template builds on first use.

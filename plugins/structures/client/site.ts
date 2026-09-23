@@ -178,10 +178,27 @@ export interface SiteSurveyCache {
 export function createSiteSurveyCache(revisionAt: TerrainRevisionLookup): SiteSurveyCache {
   const entries = new Map<number, CachedSurvey>();
   let pass = 0;
+  // Ground cannot move inside a synchronous pass, and neighbouring surveys read the
+  // same cells: one lookup per cell per pass.
+  const ground = new Map<number, number | null>();
+  let inPass = false;
+  const memoized =
+    (drawnAt: GroundLookup): GroundLookup =>
+    (x, y) => {
+      const key = structureKey(x, y);
+      let groundY = ground.get(key);
+      if (groundY === undefined) {
+        groundY = drawnAt(x, y);
+        ground.set(key, groundY);
+      }
+      return groundY;
+    };
 
   return {
     beginPass(): void {
       pass++;
+      ground.clear();
+      inPass = true;
     },
 
     surveyAt(drawnAt: GroundLookup, x: number, y: number): SiteSurvey {
@@ -192,7 +209,7 @@ export function createSiteSurveyCache(revisionAt: TerrainRevisionLookup): SiteSu
         cached.pass = pass;
         return cached.survey;
       }
-      const survey = surveySite(drawnAt, x, y);
+      const survey = surveySite(inPass ? memoized(drawnAt) : drawnAt, x, y);
       if (survey.pending) {
         if (cached !== undefined) {
           cached.revision = UNCACHEABLE_REVISION;
@@ -214,6 +231,8 @@ export function createSiteSurveyCache(revisionAt: TerrainRevisionLookup): SiteSu
 
     endPass(): void {
       for (const [key, entry] of entries) if (entry.pass !== pass) entries.delete(key);
+      ground.clear();
+      inPass = false;
     },
 
     clear(): void {

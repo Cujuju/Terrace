@@ -370,6 +370,8 @@ been delivered. Plugins draw again only after that second pass. Held plugin laye
 undrawn through `setRenderObjectFunction`, and are passed to `warmHiddenDrawables` as `undrawn`: their
 drawables warm like hidden ones. Passes return a promise; calls made during a pass share one follow-up
 pass. The "no re-arm across a world switch" residual is closed: every snapshot build warms.
+2026-09-23 (`8b1ac029`): monster template surfaces build in a worker, not on `requestIdleCallback`; all six
+templates are warmed with specimens at join.
 
 ## Evidence index (all untracked, all kept per instruction)
 

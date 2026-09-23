@@ -11,8 +11,8 @@ Assumption: cross-section widths are estimated from the accompanying quarter-vie
 photo. Both latest references omit the radar dome, so this version omits it too.
 Canopy and hull UVs span their complete profiles; glazing and panel markings no
 longer repeat on every polygon. Geometry is original, not extracted from the photos.
-The latest revision was built and exported through live Blender MCP, with the
-reference aligned behind the mesh. The nose deck, curved nose pod, canopy stations,
+The silhouette was reviewed through live Blender MCP, with the reference aligned
+behind the mesh. The nose deck, curved nose pod, canopy stations,
 roof fairing, engine height, tail-boom roof, fin tip and rotor rest pose were
 adjusted against that overlay. It remains a low-poly approximation of the reference.
 
@@ -21,6 +21,11 @@ axles; the tail gear has a trailing knuckle. The ventral fin has the reference's
 vertical stem and rearward foot. The chin gun has a receiver, cradle and separate
 barrel. Rounded engine nacelles use continuous side UVs, circular intake detail
 and dark aft exhausts.
+The side weapon wings have nearly straight leading edges, tapered trailing
+edges and shallow downward slope, corrected against the supplied front and
+quarter views. Assumption: exact planform dimensions are estimated from those
+perspective images. The [Army wing installation drawing](https://apachehelicopter.tpub.com/TM-1-1520-238-23P-1/css/TM-1-1520-238-23P-1_421.htm)
+was used as an additional shape check. The correction adds no triangles.
 The tail rotor uses two offset pairs at 55°/125° spacing, documented in
 [AFIT's Apache tail-rotor study](https://scholar.afit.edu/etd/2946/).
 Panel lips, recess shadows, hull curvature, wheel hubs and optical reflections
@@ -44,11 +49,22 @@ The canopy shoulder bevel is reduced to keep the roof border close to the panes.
 
 This is a reusable model asset, not a spawning or combat plugin.
 
-| Budget | Exported asset |
+Both resolutions are preserved as standalone GLBs with their textures embedded:
+
+| File | Texture resolution | Purpose |
+| --- | --- | --- |
+| `E:\Development\Projects\Terrace\client\src\assets\apache\apache.glb` | Three 256² atlases | Default game asset |
+| `E:\Development\Projects\Terrace\client\src\assets\apache\apache-high.glb` | Three 2048² atlases | High-resolution textures for close inspection |
+
+The variants share the final geometry, UVs, rig and plain corrected windows.
+High/low refers to texture resolution; both contain 1,050 triangles. Running the
+builder regenerates both from the same source, including every final correction.
+
+| Budget | Default game asset |
 | --- | --- |
 | Triangles | 1,050 (872 body, 40 main rotor, 40 tail rotor, 98 gun) |
 | Meshes / materials | 4 / 1, shared opaque PBR material |
-| Textures | Three embedded 1024² atlases: base colour, packed metallic/roughness, tangent normal |
+| Textures | Three embedded 256² atlases: base colour, packed metallic/roughness, tangent normal |
 | Rest bounds, world units | X 0.997 × Y 0.260 × Z 0.776 |
 | Full rotor sweep | Fits a 1 × 1 world-unit footprint |
 
@@ -80,6 +96,7 @@ Rebuild and independently inspect in PowerShell:
 ```powershell
 & 'E:\Program Files\Blender Foundation\Blender 5.2\blender.exe' --background --python-exit-code 1 --python 'E:\Development\Projects\Terrace\tools\blender\build_apache.py' -- 'E:\Development\Projects\Terrace\client\src\assets\apache'
 & 'E:\Program Files\Blender Foundation\Blender 5.2\blender.exe' --background --python-exit-code 1 --python 'E:\Development\Projects\Terrace\tools\blender\stat_glb.py' -- 'E:\Development\Projects\Terrace\client\src\assets\apache\apache.glb' --footprint 1 1 --height 0.4
+& 'E:\Program Files\Blender Foundation\Blender 5.2\blender.exe' --background --python-exit-code 1 --python 'E:\Development\Projects\Terrace\tools\blender\stat_glb.py' -- 'E:\Development\Projects\Terrace\client\src\assets\apache\apache-high.glb' --footprint 1 1 --height 0.4
 & 'E:\Program Files\Blender Foundation\Blender 5.2\blender.exe' --background --python-exit-code 1 --python 'E:\Development\Projects\Terrace\tools\blender\render_glb.py' -- 'E:\Development\Projects\Terrace\client\src\assets\apache\apache.glb' 'E:\Development\Projects\Terrace\tools\blender\out\apache' --views bow34,side,top,game
 & 'E:\Program Files\Blender Foundation\Blender 5.2\blender.exe' --background --python-exit-code 1 --python 'E:\Development\Projects\Terrace\tools\blender\render_apache.py' -- 'E:\Development\Projects\Terrace\client\src\assets\apache\apache.glb' 'E:\Development\Projects\Terrace\tools\blender\out\apache'
 ```
@@ -91,13 +108,20 @@ and studio views; no running game was started or changed for verification.
 The shared material allows the existing `bakeRig` path to merge the four parts
 into one surface; `rigHerd` can instance that surface. These are integration
 capabilities, not a measured frame-time result. Assumption: three uncompressed
-RGBA8 1K maps with full mip chains occupy about 16 MiB of shared GPU texture
+RGBA8 256² maps with full mip chains occupy about 1 MiB of shared GPU texture
 memory. The PNG-compressed GLB file size does not describe resident GPU memory.
+Compared at approximately 300 pixels of aircraft width, 256² retained the window
+outlines and nearly matched 512² and 1024². This is an asset preview comparison;
+larger maps only improve close inspection detail at that display scale.
+The latest wing review includes front, quarter and planform close-ups. The main
+rotor is hidden only in the planform inspection render to expose both wing edges.
 The Apache-specific renderer adds a true orthographic side elevation, a quarter
 view and a game view, using fresh timestamped filenames to avoid cached previews.
 
-For live Blender work, `build_asset(output_directory)` builds in the active scene
-without resetting the open file. Use an empty asset scene with no conflicting
+For live Blender work, `build_asset(output_directory)` builds the game variant;
+`build_asset(output_directory, high_resolution=True)` builds the high-resolution
+variant. Both build in the active scene without resetting the open file.
+Use an empty asset scene with no conflicting
 rig names. It exports only the new rig's selected objects from that active scene;
 reference images, cameras, and objects selected in other scenes are excluded.
 The local authoring/review copy, including its packed reference and comparison

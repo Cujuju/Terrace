@@ -46,7 +46,7 @@ in the README.
   permanently visible, parked by intensity 0 only. Nothing after attach adds,
   removes, hides or reparents a light.
 - Spawn paths construct no materials or node graphs: rigs, lights, materials
-  and geometries are built at attach (or on idle, as monster templates are),
+  and geometries are built at attach (or in a worker, as monster template surfaces are),
   pooled and reused.
 - `client/src/render/settleWarmup.ts` compiles hidden drawables, and plugin
   drawables not yet drawn, during every snapshot build, before plugins draw

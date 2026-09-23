@@ -1,6 +1,8 @@
-"""Build a textured, rigid-jointed Apache GLB. Run with Blender --background --python.
+"""Build low- and high-texture-resolution Apache GLBs with identical geometry.
 
-Arguments after --: output directory. No external textures or Python dependencies.
+Run with Blender --background --python. Arguments after --: output directory.
+Writes apache.glb (256px atlases) and apache-high.glb (2048px atlases).
+No external textures or Python dependencies.
 """
 
 import math
@@ -17,11 +19,11 @@ from export_glb import export_scene_glb
 
 FOOTPRINT = 1.0
 TRIANGLE_BUDGET = 1050
-ATLAS_SIZE = 1024
+ATLAS_SIZE = 256
 TILE_SIZE = ATLAS_SIZE // 4
 PAINT_SIZE = 256
 PAINT_SCALE = TILE_SIZE / PAINT_SIZE
-UV_PADDING = round(10 * PAINT_SCALE)
+UV_PADDING = 10 * PAINT_SCALE
 PROFILE_PIXELS_PER_UNIT = 30.0
 PROFILE_MAST_X = 225.0
 PROFILE_DATUM_Y = 110.0
@@ -290,11 +292,12 @@ def atlas():
         tangent /= np.linalg.norm(tangent,axis=-1,keepdims=True)
         normals[ty:ty+TILE_SIZE,tx:tx+TILE_SIZE,:3] = tangent*.5+.5
         # Extend edge pixels through the atlas gutters to prevent mip seams.
+        padding = round(UV_PADDING)
         for array in (p,r,normals[ty:ty+TILE_SIZE,tx:tx+TILE_SIZE]):
-            array[:UV_PADDING] = array[UV_PADDING]
-            array[-UV_PADDING:] = array[-UV_PADDING-1]
-            array[:,:UV_PADDING] = array[:,UV_PADDING:UV_PADDING+1]
-            array[:,-UV_PADDING:] = array[:,-UV_PADDING-1:-UV_PADDING]
+            array[:padding] = array[padding]
+            array[-padding:] = array[-padding-1]
+            array[:,:padding] = array[:,padding:padding+1]
+            array[:,-padding:] = array[:,-padding-1:-padding]
 
     material = bpy.data.materials.new('apache_olive_atlas')
     material.use_nodes = True
@@ -552,8 +555,12 @@ def build_geometry():
                          (*profile_point(247,70,y),.47,.45),
                          (*profile_point(238,70,y),.34,.34),
                          (*profile_point(232,70,y),.28,.28)],sides=8,tile=MARKING,cap=(DARK,VENT))
-        prism('fuselage',[profile_point(215,95,side*.65),profile_point(264,98,side*.65),
-                         profile_point(237,109,side*2.6),profile_point(197,108,side*2.6)],.08,tile=WING)
+        # The front and quarter references show almost straight leading edges,
+        # tapered trailing edges and shallow droop, not forward-swept shelves.
+        # The tip remains aft of the leading-edge root; keep both wings planar.
+        prism('fuselage',[profile_point(215,98,side*.65),profile_point(264,103,side*.65),
+                         profile_point(253,103+36*5/49,side*2.6),
+                         profile_point(217,103,side*2.6)],.08,tile=WING)
         # One pod and two silhouette missiles per wing; launch tubes are paint.
         rod('fuselage',profile_point(257,120,side*1.8),profile_point(197,120,side*1.8),.27,
             tile=PLAIN,sides=6,cap=ROCKET)
@@ -650,7 +657,12 @@ def empty(name, location, parent=None):
     return obj
 
 
-def build_asset(out):
+def build_asset(out, *, high_resolution=False):
+    global ATLAS_SIZE, TILE_SIZE, PAINT_SCALE, UV_PADDING
+    ATLAS_SIZE = 2048 if high_resolution else 256
+    TILE_SIZE = ATLAS_SIZE // 4
+    PAINT_SCALE = TILE_SIZE / PAINT_SIZE
+    UV_PADDING = 10 * PAINT_SCALE
     os.makedirs(out, exist_ok=True)
     PARTS.clear()
     material = atlas()
@@ -689,15 +701,18 @@ def build_asset(out):
     bpy.ops.object.select_all(action='DESELECT')
     for obj in [root,*root.children_recursive]:
         obj.select_set(True)
-    export_scene_glb(os.path.join(out,'apache.glb'), selected_only=True)
-    print(f'APACHE: {count} triangles, {len(PARTS)} meshes, 1 material; swept footprint {FOOTPRINT}')
+    filename = 'apache-high.glb' if high_resolution else 'apache.glb'
+    export_scene_glb(os.path.join(out,filename), selected_only=True)
+    print(f'APACHE: {count} triangles, {len(PARTS)} meshes, 1 material; '
+          f'{ATLAS_SIZE}px atlases; swept footprint {FOOTPRINT}')
     return root
 
 
 def main():
     args = sys.argv[sys.argv.index('--')+1:]
-    bpy.ops.wm.read_factory_settings(use_empty=True)
-    build_asset(os.path.abspath(args[0]))
+    for high_resolution in (False, True):
+        bpy.ops.wm.read_factory_settings(use_empty=True)
+        build_asset(os.path.abspath(args[0]), high_resolution=high_resolution)
 
 
 if __name__ == '__main__':

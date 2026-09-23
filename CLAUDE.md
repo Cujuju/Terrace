@@ -44,7 +44,7 @@ shared checkout is blocked from inside a worktree until you do.
   Node 24 can run it directly via type stripping.
 - Clients send intents, never heights. The server is authoritative.
 - Nothing "gamey" in core — mana, followers, reveal timing are plugins.
-- Never start or shut down the app (server or client) without the owner's permission in the current turn.
+- Never interrupt any stack (server or client) the owner may have running. You may start and stop your own stack.
 
 
 # TypeScript
