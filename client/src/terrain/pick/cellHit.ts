@@ -55,8 +55,6 @@ function legacyTerrainHitInCell(
   tExit: number,
   risers: DrawnRisers | null,
 ): TerrainRayPick | null {
-  if (!cellRevealed(mirror, i, j)) return null;
-
   // The bounded mesher fallback draws raw top-column boxes, including over
   // layered inputs. Query the geometry actually published for that chunk.
   if (mirror.isBlockyCell?.(i, j)) {
