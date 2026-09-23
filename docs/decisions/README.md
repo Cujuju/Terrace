@@ -40,6 +40,7 @@ Dated decision records, one file per arc, split from `docs/DESIGN.md` on 2026-09
   - Decisions made 2026-08-20 (boats fight the kraken; the mechanic settled)
 - [mesh-budgets](mesh-budgets.md)
   - Decisions made 2026-08-19 (mesh budgets recalibrated — the blocky fallback, #38)
+  - Decisions made 2026-09-23 (upload only what changed: slotted water and lip runs, partial texture writes)
 - [monsters](monsters.md)
   - Decisions made 2026-08-22 (the yeti shrinks to a quarter — owner request)
 - [movement](movement.md)
