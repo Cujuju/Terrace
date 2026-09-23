@@ -2,6 +2,8 @@ import {
   Box3,
   BufferGeometry,
   Group,
+  InstancedBufferAttribute,
+  InstancedMesh,
   Material,
   Mesh,
   MeshStandardMaterial,
@@ -11,10 +13,14 @@ import {
   Vector3,
   type ColorRepresentation,
 } from 'three';
+import { MeshStandardNodeMaterial } from 'three/webgpu';
+import { attribute } from 'three/tsl';
 import type { ClientPluginCtx } from '../../../client/src/plugins/types.ts';
 import type { RigAsset } from '../../../client/src/render/rigAsset.ts';
+import { compose } from '../../../client/src/render/materialSlots.ts';
 import {
   CELL_WORLD_SIZE,
+  MAX_SAUCERS_PER_ENCOUNTER,
   SAUCER_DIAMETER_CELLS,
   SAUCER_MUZZLE_DROP_FRACTION,
   SAUCER_VARIANT_COUNT,
@@ -48,7 +54,6 @@ export interface SaucerModel {
   readonly root: Object3D;
   readonly ring: Object3D | null;
   readonly ringGlow: MeshStandardMaterial | null;
-  readonly ringBaseEmissive: number;
   readonly lights: MeshStandardMaterial | null;
   readonly lightsBaseEmissive: number;
   readonly muzzle: Object3D;
@@ -257,7 +262,6 @@ function buildFallbackSaucer(workshop: FallbackWorkshop, variant: number): Sauce
     root,
     ring,
     ringGlow: null,
-    ringBaseEmissive: 0,
     lights: lightsMaterial,
     lightsBaseEmissive: SAUCER_LIGHTS_BASE_EMISSIVE,
     muzzle,
@@ -285,7 +289,6 @@ function buildAuthoredSaucer(asset: RigAsset, variant: number): SaucerModel {
     root,
     ring,
     ringGlow,
-    ringBaseEmissive: ringGlow === null ? 0 : ringGlow.emissiveIntensity,
     lights,
     lightsBaseEmissive: lights === null ? SAUCER_LIGHTS_BASE_EMISSIVE : lights.emissiveIntensity,
     muzzle,
@@ -319,6 +322,135 @@ export function createSaucerModels(): SaucerModels {
     },
     dispose(): void {
       workshop.dispose();
+    },
+  };
+}
+
+export interface SaucerFleet {
+  begin(): void;
+  place(variant: number, x: number, y: number, z: number, yaw: number, roll: number, ringSpin: number, ringGlow: number): void;
+  finish(lightsFlash: number): void;
+  dispose(): void;
+}
+
+interface FleetPart {
+  readonly source: Mesh;
+  readonly batch: InstancedMesh;
+  readonly glow: InstancedBufferAttribute | null;
+}
+
+interface FleetVariant {
+  readonly template: SaucerModel;
+  readonly parts: readonly FleetPart[];
+  count: number;
+}
+
+const INSTANCE_GLOW_ATTRIBUTE = 'instanceGlow';
+
+function glowingCopy(source: MeshStandardMaterial): MeshStandardNodeMaterial {
+  const material = new MeshStandardNodeMaterial({
+    name: source.name,
+    color: source.color,
+    map: source.map,
+    roughness: source.roughness,
+    roughnessMap: source.roughnessMap,
+    metalness: source.metalness,
+    metalnessMap: source.metalnessMap,
+    normalMap: source.normalMap,
+    emissive: source.emissive,
+    emissiveMap: source.emissiveMap,
+    emissiveIntensity: source.emissiveIntensity,
+    envMap: source.envMap,
+    envMapIntensity: source.envMapIntensity,
+    side: source.side,
+    transparent: source.transparent,
+    opacity: source.opacity,
+  });
+  compose(material, 'emissive', (previous) =>
+    previous.mul(attribute<'float'>(INSTANCE_GLOW_ATTRIBUTE, 'float')),
+  );
+  return material;
+}
+
+function batchPart(source: Mesh, variant: number, template: SaucerModel): FleetPart {
+  const glowing = template.ringGlow !== null && source.material === template.ringGlow;
+  const geometry = glowing ? source.geometry.clone() : source.geometry;
+  let glow: InstancedBufferAttribute | null = null;
+  let material = source.material as Material;
+  if (glowing) {
+    glow = new InstancedBufferAttribute(new Float32Array(MAX_SAUCERS_PER_ENCOUNTER).fill(1), 1);
+    geometry.setAttribute(INSTANCE_GLOW_ATTRIBUTE, glow);
+    material = glowingCopy(template.ringGlow!);
+  }
+  const batch = new InstancedMesh(geometry, material, MAX_SAUCERS_PER_ENCOUNTER);
+  batch.name = `saucers:fleet:${variant}:${source.name}`;
+  batch.count = 0;
+  batch.visible = false;
+  batch.frustumCulled = false;
+  batch.matrixAutoUpdate = false;
+  return { source, batch, glow };
+}
+
+// One instanced mesh per variant per part: the template is posed at each saucer and its parts' world matrices become instances.
+export function createSaucerFleet(bank: SaucerModels, parent: Group): SaucerFleet {
+  const variants: FleetVariant[] = [];
+  for (let variant = 0; variant < SAUCER_VARIANT_COUNT; variant++) {
+    const template = bank.create(variant);
+    template.root.rotation.order = 'YXZ';
+    const parts: FleetPart[] = [];
+    template.root.traverse((node) => {
+      if ((node as Partial<Mesh>).isMesh !== true) return;
+      const part = batchPart(node as Mesh, variant, template);
+      parent.add(part.batch);
+      parts.push(part);
+    });
+    variants.push({ template, parts, count: 0 });
+  }
+
+  return {
+    begin(): void {
+      for (const entry of variants) entry.count = 0;
+    },
+    place(variant, x, y, z, yaw, roll, ringSpin, ringGlow): void {
+      const entry = variants[variant] ?? variants[0]!;
+      if (entry.count >= MAX_SAUCERS_PER_ENCOUNTER) return;
+      const { template } = entry;
+      template.root.position.set(x, y, z);
+      template.root.rotation.set(roll, yaw, 0);
+      if (template.ring !== null) template.ring.rotation.y = ringSpin;
+      template.root.updateMatrixWorld(true);
+      const index = entry.count++;
+      for (const part of entry.parts) {
+        part.batch.setMatrixAt(index, part.source.matrixWorld);
+        part.glow?.setX(index, ringGlow);
+      }
+    },
+    finish(lightsFlash): void {
+      for (const entry of variants) {
+        const { template, count } = entry;
+        if (template.lights !== null) template.lights.emissiveIntensity = template.lightsBaseEmissive * lightsFlash;
+        for (const part of entry.parts) {
+          part.batch.count = count;
+          part.batch.visible = count > 0;
+          if (count === 0) continue;
+          part.batch.instanceMatrix.needsUpdate = true;
+          if (part.glow !== null) part.glow.needsUpdate = true;
+        }
+      }
+    },
+    dispose(): void {
+      for (const entry of variants) {
+        for (const part of entry.parts) {
+          part.batch.removeFromParent();
+          part.batch.dispose();
+          if (part.glow !== null) {
+            (part.batch.material as Material).dispose();
+            part.batch.geometry.dispose();
+          }
+        }
+        entry.template.dispose();
+      }
+      variants.length = 0;
     },
   };
 }
