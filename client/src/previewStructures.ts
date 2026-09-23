@@ -30,6 +30,8 @@ import {
 } from '../../plugins/structures/client/models.ts';
 import { FISHING_HUT_BUILDERS, fishingHutVariantIndex } from '../../plugins/structures/client/fishingHuts.ts';
 import { isDurandsCell } from '../../plugins/structures/client/durands.ts';
+import { isRicksCell } from '../../plugins/structures/client/ricks.ts';
+import { preloadAuthoredStructures } from '../../plugins/structures/client/authoredAssets.ts';
 
 const SKY_COLOR = 0x9fc7e8;
 const GROUND_BOUNCE_COLOR = 0x9a948a;
@@ -72,7 +74,17 @@ function findCoastalCell(variant: number): { x: number; y: number } {
   throw new Error(`preview: no cell in the first ${SCAN_EDGE}x${SCAN_EDGE} rolls fishing hut ${variant}`);
 }
 
-function buildScene(): { scene: Scene; camera: PerspectiveCamera; renderer: WebGPURenderer } {
+function findRicksCell(): { x: number; y: number } {
+  const SCAN_EDGE = 64;
+  for (let y = 0; y < SCAN_EDGE; y++) {
+    for (let x = 0; x < SCAN_EDGE; x++) {
+      if (isRicksCell(MAX_STRUCTURE_TIER, x, y)) return { x, y };
+    }
+  }
+  throw new Error('preview: no Ricks cell in the search window');
+}
+
+function buildScene(unlit: boolean): { scene: Scene; camera: PerspectiveCamera; renderer: WebGPURenderer } {
   const canvas = document.getElementById('viewport') as HTMLCanvasElement;
 
   const scene = new Scene();
@@ -84,9 +96,9 @@ function buildScene(): { scene: Scene; camera: PerspectiveCamera; renderer: WebG
   ground.rotation.x = -Math.PI / 2;
   scene.add(ground);
 
-  scene.add(new HemisphereLight(SKY_COLOR, GROUND_BOUNCE_COLOR, HEMISPHERE_LIGHT_INTENSITY));
-  scene.add(new AmbientLight(0xffffff, AMBIENT_FLOOR_INTENSITY));
-  const sun = new DirectionalLight(0xffffff, SUN_LIGHT_INTENSITY);
+  scene.add(new HemisphereLight(SKY_COLOR, GROUND_BOUNCE_COLOR, unlit ? 0 : HEMISPHERE_LIGHT_INTENSITY));
+  scene.add(new AmbientLight(0xffffff, unlit ? 0 : AMBIENT_FLOOR_INTENSITY));
+  const sun = new DirectionalLight(0xffffff, unlit ? 0 : SUN_LIGHT_INTENSITY);
   sun.position.copy(SUN_DIRECTION).multiplyScalar(20);
   scene.add(sun);
 
@@ -97,7 +109,7 @@ function buildScene(): { scene: Scene; camera: PerspectiveCamera; renderer: WebG
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.toneMapping = ACESFilmicToneMapping;
   renderer.toneMappingExposure = TONE_MAPPING_EXPOSURE;
-  scene.background = backgroundRadiance(BACKDROP_COLOR, renderer);
+  scene.background = backgroundRadiance(unlit ? 0x080b10 : BACKDROP_COLOR, renderer);
   renderer.outputColorSpace = SRGBColorSpace;
 
   return { scene, camera, renderer };
@@ -131,6 +143,8 @@ const BESIDE_SPACING_WORLD_UNITS = 1.2;
 async function main(): Promise<void> {
   const query = readQuery();
   const durandsRequested = query.get('durands') === '1';
+  const ricksRequested = query.get('ricks') === '1';
+  const quality = query.get('quality') === 'original' ? 'original' : 'low';
   const hutParam = query.get('hut');
   const hutRequested = hutParam !== null && Number.isInteger(Number(hutParam));
   const hutVariant = hutRequested
@@ -139,22 +153,25 @@ async function main(): Promise<void> {
   const flashOn = query.get('flash') !== 'off';
   const bulbPhaseParam = query.get('bulbphase');
   const requestedTier = Number(query.get('tier') ?? '0');
-  const tier = durandsRequested || hutRequested
+  const tier = durandsRequested || hutRequested || ricksRequested
     ? MAX_STRUCTURE_TIER
     : Math.min(Math.max(requestedTier, 0), STRUCTURE_TIER_COUNT - 1);
 
-  const { scene, camera, renderer } = buildScene();
+  const { scene, camera, renderer } = buildScene(query.get('unlit') === '1');
   await renderer.init();
   installRigTextureTranscoder(renderer);
 
-  const models = createStructureModels();
+  const kit = ricksRequested ? await preloadAuthoredStructures(quality) : undefined;
+  const models = createStructureModels(kit);
   scene.add(models.root);
 
-  const cell = hutRequested
-    ? findCoastalCell(hutVariant)
-    : tier === MAX_STRUCTURE_TIER
-      ? findTopTierCell(durandsRequested)
-      : { x: 0, y: 0 };
+  const cell = ricksRequested
+    ? findRicksCell()
+    : hutRequested
+      ? findCoastalCell(hutVariant)
+      : tier === MAX_STRUCTURE_TIER
+        ? findTopTierCell(durandsRequested)
+        : { x: 0, y: 0 };
   const raceParam = query.get('race');
   const race: SettlerRace =
     raceParam === 'rudy' || raceParam === 'uno' ? raceParam : settlementRace(cell.x, cell.y);
@@ -211,6 +228,9 @@ async function main(): Promise<void> {
     } else {
       (window as unknown as { __previewStats: unknown }).__previewStats = {
         tiers: placements.map((placed) => placed.tier),
+        ricks: ricksRequested,
+        quality: kit === undefined ? 'legacy' : quality,
+        unlit: query.get('unlit') === '1',
         race,
         drawCalls: renderer.info.render.drawCalls,
         triangles: renderer.info.render.triangles,

@@ -1,0 +1,1527 @@
+[
+  {
+    "name": "Grounded octagonal footing",
+    "first_face": 0,
+    "face_count": 10
+  },
+  {
+    "name": "Sloped concrete wall",
+    "first_face": 10,
+    "face_count": 6
+  },
+  {
+    "name": "Sloped concrete wall",
+    "first_face": 16,
+    "face_count": 6
+  },
+  {
+    "name": "Sloped concrete wall",
+    "first_face": 22,
+    "face_count": 6
+  },
+  {
+    "name": "Sloped concrete wall",
+    "first_face": 28,
+    "face_count": 6
+  },
+  {
+    "name": "Sloped concrete wall",
+    "first_face": 34,
+    "face_count": 6
+  },
+  {
+    "name": "Sloped concrete wall",
+    "first_face": 40,
+    "face_count": 6
+  },
+  {
+    "name": "Sloped concrete wall",
+    "first_face": 46,
+    "face_count": 6
+  },
+  {
+    "name": "Sloped concrete wall",
+    "first_face": 52,
+    "face_count": 6
+  },
+  {
+    "name": "Sloped concrete wall",
+    "first_face": 58,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory lower sill",
+    "first_face": 64,
+    "face_count": 8
+  },
+  {
+    "name": "Continuous green window band",
+    "first_face": 72,
+    "face_count": 8
+  },
+  {
+    "name": "Window lower frame",
+    "first_face": 80,
+    "face_count": 6
+  },
+  {
+    "name": "Window lower frame",
+    "first_face": 86,
+    "face_count": 6
+  },
+  {
+    "name": "Window lower frame",
+    "first_face": 92,
+    "face_count": 6
+  },
+  {
+    "name": "Window lower frame",
+    "first_face": 98,
+    "face_count": 6
+  },
+  {
+    "name": "Window lower frame",
+    "first_face": 104,
+    "face_count": 6
+  },
+  {
+    "name": "Window lower frame",
+    "first_face": 110,
+    "face_count": 6
+  },
+  {
+    "name": "Window lower frame",
+    "first_face": 116,
+    "face_count": 6
+  },
+  {
+    "name": "Window lower frame",
+    "first_face": 122,
+    "face_count": 6
+  },
+  {
+    "name": "Window upper frame",
+    "first_face": 128,
+    "face_count": 6
+  },
+  {
+    "name": "Window upper frame",
+    "first_face": 134,
+    "face_count": 6
+  },
+  {
+    "name": "Window upper frame",
+    "first_face": 140,
+    "face_count": 6
+  },
+  {
+    "name": "Window upper frame",
+    "first_face": 146,
+    "face_count": 6
+  },
+  {
+    "name": "Window upper frame",
+    "first_face": 152,
+    "face_count": 6
+  },
+  {
+    "name": "Window upper frame",
+    "first_face": 158,
+    "face_count": 6
+  },
+  {
+    "name": "Window upper frame",
+    "first_face": 164,
+    "face_count": 6
+  },
+  {
+    "name": "Window upper frame",
+    "first_face": 170,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 176,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 182,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 188,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 194,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 200,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 206,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 212,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 218,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 224,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 230,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 236,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 242,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 248,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 254,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 260,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 266,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 272,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 278,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 284,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 290,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 296,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 302,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 308,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 314,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 320,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 326,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 332,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 338,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 344,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 350,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 356,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 362,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 368,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 374,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 380,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 386,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 392,
+    "face_count": 6
+  },
+  {
+    "name": "Clerestory mullion",
+    "first_face": 398,
+    "face_count": 6
+  },
+  {
+    "name": "Heavy octagonal roof cornice",
+    "first_face": 404,
+    "face_count": 6
+  },
+  {
+    "name": "Heavy octagonal roof cornice",
+    "first_face": 410,
+    "face_count": 6
+  },
+  {
+    "name": "Heavy octagonal roof cornice",
+    "first_face": 416,
+    "face_count": 6
+  },
+  {
+    "name": "Heavy octagonal roof cornice",
+    "first_face": 422,
+    "face_count": 6
+  },
+  {
+    "name": "Heavy octagonal roof cornice",
+    "first_face": 428,
+    "face_count": 6
+  },
+  {
+    "name": "Heavy octagonal roof cornice",
+    "first_face": 434,
+    "face_count": 6
+  },
+  {
+    "name": "Heavy octagonal roof cornice",
+    "first_face": 440,
+    "face_count": 6
+  },
+  {
+    "name": "Heavy octagonal roof cornice",
+    "first_face": 446,
+    "face_count": 6
+  },
+  {
+    "name": "Flat graphite roof deck",
+    "first_face": 452,
+    "face_count": 10
+  },
+  {
+    "name": "Fine roof perimeter seam",
+    "first_face": 462,
+    "face_count": 6
+  },
+  {
+    "name": "Fine roof perimeter seam",
+    "first_face": 468,
+    "face_count": 6
+  },
+  {
+    "name": "Fine roof perimeter seam",
+    "first_face": 474,
+    "face_count": 6
+  },
+  {
+    "name": "Fine roof perimeter seam",
+    "first_face": 480,
+    "face_count": 6
+  },
+  {
+    "name": "Fine roof perimeter seam",
+    "first_face": 486,
+    "face_count": 6
+  },
+  {
+    "name": "Fine roof perimeter seam",
+    "first_face": 492,
+    "face_count": 6
+  },
+  {
+    "name": "Fine roof perimeter seam",
+    "first_face": 498,
+    "face_count": 6
+  },
+  {
+    "name": "Fine roof perimeter seam",
+    "first_face": 504,
+    "face_count": 6
+  },
+  {
+    "name": "Stepped concrete buttress",
+    "first_face": 510,
+    "face_count": 11
+  },
+  {
+    "name": "Stepped concrete buttress",
+    "first_face": 521,
+    "face_count": 11
+  },
+  {
+    "name": "Side wall buttress",
+    "first_face": 532,
+    "face_count": 6
+  },
+  {
+    "name": "Inset dark buttress face",
+    "first_face": 538,
+    "face_count": 6
+  },
+  {
+    "name": "Side wall buttress",
+    "first_face": 544,
+    "face_count": 6
+  },
+  {
+    "name": "Inset dark buttress face",
+    "first_face": 550,
+    "face_count": 6
+  },
+  {
+    "name": "Chamfer corner pilaster",
+    "first_face": 556,
+    "face_count": 6
+  },
+  {
+    "name": "Side wall buttress",
+    "first_face": 562,
+    "face_count": 6
+  },
+  {
+    "name": "Inset dark buttress face",
+    "first_face": 568,
+    "face_count": 6
+  },
+  {
+    "name": "Side wall buttress",
+    "first_face": 574,
+    "face_count": 6
+  },
+  {
+    "name": "Inset dark buttress face",
+    "first_face": 580,
+    "face_count": 6
+  },
+  {
+    "name": "Chamfer corner pilaster",
+    "first_face": 586,
+    "face_count": 6
+  },
+  {
+    "name": "Recessed entrance back wall",
+    "first_face": 592,
+    "face_count": 6
+  },
+  {
+    "name": "Chamfered door surround",
+    "first_face": 598,
+    "face_count": 8
+  },
+  {
+    "name": "Door dark gasket",
+    "first_face": 606,
+    "face_count": 8
+  },
+  {
+    "name": "Armored double door leaf",
+    "first_face": 614,
+    "face_count": 7
+  },
+  {
+    "name": "Door handle",
+    "first_face": 621,
+    "face_count": 6
+  },
+  {
+    "name": "Door hinge",
+    "first_face": 627,
+    "face_count": 6
+  },
+  {
+    "name": "Door hinge",
+    "first_face": 633,
+    "face_count": 6
+  },
+  {
+    "name": "Armored double door leaf",
+    "first_face": 639,
+    "face_count": 7
+  },
+  {
+    "name": "Door handle",
+    "first_face": 646,
+    "face_count": 6
+  },
+  {
+    "name": "Door hinge",
+    "first_face": 652,
+    "face_count": 6
+  },
+  {
+    "name": "Door hinge",
+    "first_face": 658,
+    "face_count": 6
+  },
+  {
+    "name": "Ricks sign frame",
+    "first_face": 664,
+    "face_count": 6
+  },
+  {
+    "name": "Ricks nameplate",
+    "first_face": 670,
+    "face_count": 6
+  },
+  {
+    "name": "Raised Ricks lettering",
+    "first_face": 676,
+    "face_count": 979
+  },
+  {
+    "name": "Amber lintel light frame",
+    "first_face": 1655,
+    "face_count": 6
+  },
+  {
+    "name": "Emissive amber lintel light",
+    "first_face": 1661,
+    "face_count": 6
+  },
+  {
+    "name": "Entry lamp casing",
+    "first_face": 1667,
+    "face_count": 6
+  },
+  {
+    "name": "Emissive amber entry light",
+    "first_face": 1673,
+    "face_count": 6
+  },
+  {
+    "name": "Entry lamp casing",
+    "first_face": 1679,
+    "face_count": 6
+  },
+  {
+    "name": "Emissive amber entry light",
+    "first_face": 1685,
+    "face_count": 6
+  },
+  {
+    "name": "Five entrance stair treads",
+    "first_face": 1691,
+    "face_count": 6
+  },
+  {
+    "name": "Five entrance stair treads",
+    "first_face": 1697,
+    "face_count": 6
+  },
+  {
+    "name": "Five entrance stair treads",
+    "first_face": 1703,
+    "face_count": 6
+  },
+  {
+    "name": "Five entrance stair treads",
+    "first_face": 1709,
+    "face_count": 6
+  },
+  {
+    "name": "Five entrance stair treads",
+    "first_face": 1715,
+    "face_count": 6
+  },
+  {
+    "name": "Hazard-striped threshold",
+    "first_face": 1721,
+    "face_count": 6
+  },
+  {
+    "name": "Biohazard plaque frame",
+    "first_face": 1727,
+    "face_count": 6
+  },
+  {
+    "name": "Gold biohazard plaque",
+    "first_face": 1733,
+    "face_count": 6
+  },
+  {
+    "name": "Raised \u2623 lettering",
+    "first_face": 1739,
+    "face_count": 1518
+  },
+  {
+    "name": "Lower amber marker casing",
+    "first_face": 3257,
+    "face_count": 6
+  },
+  {
+    "name": "Emissive amber ground marker",
+    "first_face": 3263,
+    "face_count": 6
+  },
+  {
+    "name": "Lower amber marker casing",
+    "first_face": 3269,
+    "face_count": 6
+  },
+  {
+    "name": "Emissive amber ground marker",
+    "first_face": 3275,
+    "face_count": 6
+  },
+  {
+    "name": "Buttress marker casing",
+    "first_face": 3281,
+    "face_count": 6
+  },
+  {
+    "name": "Emissive buttress marker",
+    "first_face": 3287,
+    "face_count": 6
+  },
+  {
+    "name": "Buttress marker casing",
+    "first_face": 3293,
+    "face_count": 6
+  },
+  {
+    "name": "Emissive buttress marker",
+    "first_face": 3299,
+    "face_count": 6
+  },
+  {
+    "name": "Front wall ventilation recess",
+    "first_face": 3305,
+    "face_count": 6
+  },
+  {
+    "name": "Front vent louver",
+    "first_face": 3311,
+    "face_count": 6
+  },
+  {
+    "name": "Front vent louver",
+    "first_face": 3317,
+    "face_count": 6
+  },
+  {
+    "name": "Front vent louver",
+    "first_face": 3323,
+    "face_count": 6
+  },
+  {
+    "name": "Front vent louver",
+    "first_face": 3329,
+    "face_count": 6
+  },
+  {
+    "name": "Front vent louver",
+    "first_face": 3335,
+    "face_count": 6
+  },
+  {
+    "name": "Front vent louver",
+    "first_face": 3341,
+    "face_count": 6
+  },
+  {
+    "name": "Side marker casing",
+    "first_face": 3347,
+    "face_count": 1
+  },
+  {
+    "name": "Emissive side marker",
+    "first_face": 3348,
+    "face_count": 1
+  },
+  {
+    "name": "Side marker casing",
+    "first_face": 3349,
+    "face_count": 1
+  },
+  {
+    "name": "Emissive side marker",
+    "first_face": 3350,
+    "face_count": 1
+  },
+  {
+    "name": "Side wall ventilation recess",
+    "first_face": 3351,
+    "face_count": 1
+  },
+  {
+    "name": "Side vent louver",
+    "first_face": 3352,
+    "face_count": 1
+  },
+  {
+    "name": "Side vent louver",
+    "first_face": 3353,
+    "face_count": 1
+  },
+  {
+    "name": "Side vent louver",
+    "first_face": 3354,
+    "face_count": 1
+  },
+  {
+    "name": "Side vent louver",
+    "first_face": 3355,
+    "face_count": 1
+  },
+  {
+    "name": "Side vent louver",
+    "first_face": 3356,
+    "face_count": 1
+  },
+  {
+    "name": "Side vent louver",
+    "first_face": 3357,
+    "face_count": 1
+  },
+  {
+    "name": "Side marker casing",
+    "first_face": 3358,
+    "face_count": 1
+  },
+  {
+    "name": "Emissive side marker",
+    "first_face": 3359,
+    "face_count": 1
+  },
+  {
+    "name": "Side marker casing",
+    "first_face": 3360,
+    "face_count": 1
+  },
+  {
+    "name": "Emissive side marker",
+    "first_face": 3361,
+    "face_count": 1
+  },
+  {
+    "name": "Side wall ventilation recess",
+    "first_face": 3362,
+    "face_count": 1
+  },
+  {
+    "name": "Side vent louver",
+    "first_face": 3363,
+    "face_count": 1
+  },
+  {
+    "name": "Side vent louver",
+    "first_face": 3364,
+    "face_count": 1
+  },
+  {
+    "name": "Side vent louver",
+    "first_face": 3365,
+    "face_count": 1
+  },
+  {
+    "name": "Side vent louver",
+    "first_face": 3366,
+    "face_count": 1
+  },
+  {
+    "name": "Side vent louver",
+    "first_face": 3367,
+    "face_count": 1
+  },
+  {
+    "name": "Side vent louver",
+    "first_face": 3368,
+    "face_count": 1
+  },
+  {
+    "name": "Octagonal drum footing",
+    "first_face": 3369,
+    "face_count": 10
+  },
+  {
+    "name": "Heavy drum collar",
+    "first_face": 3379,
+    "face_count": 8
+  },
+  {
+    "name": "Eight tapered emissive green panes",
+    "first_face": 3387,
+    "face_count": 8
+  },
+  {
+    "name": "Octagonal drum cap rim",
+    "first_face": 3395,
+    "face_count": 10
+  },
+  {
+    "name": "Dark solid drum top",
+    "first_face": 3405,
+    "face_count": 10
+  },
+  {
+    "name": "Heavy drum radial collar rib",
+    "first_face": 3415,
+    "face_count": 10
+  },
+  {
+    "name": "Tapered window glazing bar",
+    "first_face": 3425,
+    "face_count": 6
+  },
+  {
+    "name": "Inset drum collar panel",
+    "first_face": 3431,
+    "face_count": 1
+  },
+  {
+    "name": "Collar rib fastener",
+    "first_face": 3432,
+    "face_count": 6
+  },
+  {
+    "name": "Heavy drum radial collar rib",
+    "first_face": 3438,
+    "face_count": 10
+  },
+  {
+    "name": "Tapered window glazing bar",
+    "first_face": 3448,
+    "face_count": 6
+  },
+  {
+    "name": "Inset drum collar panel",
+    "first_face": 3454,
+    "face_count": 1
+  },
+  {
+    "name": "Collar rib fastener",
+    "first_face": 3455,
+    "face_count": 6
+  },
+  {
+    "name": "Heavy drum radial collar rib",
+    "first_face": 3461,
+    "face_count": 10
+  },
+  {
+    "name": "Tapered window glazing bar",
+    "first_face": 3471,
+    "face_count": 6
+  },
+  {
+    "name": "Inset drum collar panel",
+    "first_face": 3477,
+    "face_count": 1
+  },
+  {
+    "name": "Collar rib fastener",
+    "first_face": 3478,
+    "face_count": 6
+  },
+  {
+    "name": "Heavy drum radial collar rib",
+    "first_face": 3484,
+    "face_count": 10
+  },
+  {
+    "name": "Tapered window glazing bar",
+    "first_face": 3494,
+    "face_count": 6
+  },
+  {
+    "name": "Inset drum collar panel",
+    "first_face": 3500,
+    "face_count": 1
+  },
+  {
+    "name": "Collar rib fastener",
+    "first_face": 3501,
+    "face_count": 6
+  },
+  {
+    "name": "Heavy drum radial collar rib",
+    "first_face": 3507,
+    "face_count": 10
+  },
+  {
+    "name": "Tapered window glazing bar",
+    "first_face": 3517,
+    "face_count": 6
+  },
+  {
+    "name": "Inset drum collar panel",
+    "first_face": 3523,
+    "face_count": 1
+  },
+  {
+    "name": "Collar rib fastener",
+    "first_face": 3524,
+    "face_count": 6
+  },
+  {
+    "name": "Heavy drum radial collar rib",
+    "first_face": 3530,
+    "face_count": 10
+  },
+  {
+    "name": "Tapered window glazing bar",
+    "first_face": 3540,
+    "face_count": 6
+  },
+  {
+    "name": "Inset drum collar panel",
+    "first_face": 3546,
+    "face_count": 1
+  },
+  {
+    "name": "Collar rib fastener",
+    "first_face": 3547,
+    "face_count": 6
+  },
+  {
+    "name": "Heavy drum radial collar rib",
+    "first_face": 3553,
+    "face_count": 10
+  },
+  {
+    "name": "Tapered window glazing bar",
+    "first_face": 3563,
+    "face_count": 6
+  },
+  {
+    "name": "Inset drum collar panel",
+    "first_face": 3569,
+    "face_count": 1
+  },
+  {
+    "name": "Collar rib fastener",
+    "first_face": 3570,
+    "face_count": 6
+  },
+  {
+    "name": "Heavy drum radial collar rib",
+    "first_face": 3576,
+    "face_count": 10
+  },
+  {
+    "name": "Tapered window glazing bar",
+    "first_face": 3586,
+    "face_count": 6
+  },
+  {
+    "name": "Inset drum collar panel",
+    "first_face": 3592,
+    "face_count": 1
+  },
+  {
+    "name": "Collar rib fastener",
+    "first_face": 3593,
+    "face_count": 6
+  },
+  {
+    "name": "Octagonal drum footing",
+    "first_face": 3599,
+    "face_count": 10
+  },
+  {
+    "name": "Heavy drum collar",
+    "first_face": 3609,
+    "face_count": 8
+  },
+  {
+    "name": "Eight tapered emissive green panes",
+    "first_face": 3617,
+    "face_count": 8
+  },
+  {
+    "name": "Octagonal drum cap rim",
+    "first_face": 3625,
+    "face_count": 10
+  },
+  {
+    "name": "Dark solid drum top",
+    "first_face": 3635,
+    "face_count": 10
+  },
+  {
+    "name": "Heavy drum radial collar rib",
+    "first_face": 3645,
+    "face_count": 10
+  },
+  {
+    "name": "Tapered window glazing bar",
+    "first_face": 3655,
+    "face_count": 6
+  },
+  {
+    "name": "Inset drum collar panel",
+    "first_face": 3661,
+    "face_count": 1
+  },
+  {
+    "name": "Collar rib fastener",
+    "first_face": 3662,
+    "face_count": 6
+  },
+  {
+    "name": "Heavy drum radial collar rib",
+    "first_face": 3668,
+    "face_count": 10
+  },
+  {
+    "name": "Tapered window glazing bar",
+    "first_face": 3678,
+    "face_count": 6
+  },
+  {
+    "name": "Inset drum collar panel",
+    "first_face": 3684,
+    "face_count": 1
+  },
+  {
+    "name": "Collar rib fastener",
+    "first_face": 3685,
+    "face_count": 6
+  },
+  {
+    "name": "Heavy drum radial collar rib",
+    "first_face": 3691,
+    "face_count": 10
+  },
+  {
+    "name": "Tapered window glazing bar",
+    "first_face": 3701,
+    "face_count": 6
+  },
+  {
+    "name": "Inset drum collar panel",
+    "first_face": 3707,
+    "face_count": 1
+  },
+  {
+    "name": "Collar rib fastener",
+    "first_face": 3708,
+    "face_count": 6
+  },
+  {
+    "name": "Heavy drum radial collar rib",
+    "first_face": 3714,
+    "face_count": 10
+  },
+  {
+    "name": "Tapered window glazing bar",
+    "first_face": 3724,
+    "face_count": 6
+  },
+  {
+    "name": "Inset drum collar panel",
+    "first_face": 3730,
+    "face_count": 1
+  },
+  {
+    "name": "Collar rib fastener",
+    "first_face": 3731,
+    "face_count": 6
+  },
+  {
+    "name": "Heavy drum radial collar rib",
+    "first_face": 3737,
+    "face_count": 10
+  },
+  {
+    "name": "Tapered window glazing bar",
+    "first_face": 3747,
+    "face_count": 6
+  },
+  {
+    "name": "Inset drum collar panel",
+    "first_face": 3753,
+    "face_count": 1
+  },
+  {
+    "name": "Collar rib fastener",
+    "first_face": 3754,
+    "face_count": 6
+  },
+  {
+    "name": "Heavy drum radial collar rib",
+    "first_face": 3760,
+    "face_count": 10
+  },
+  {
+    "name": "Tapered window glazing bar",
+    "first_face": 3770,
+    "face_count": 6
+  },
+  {
+    "name": "Inset drum collar panel",
+    "first_face": 3776,
+    "face_count": 1
+  },
+  {
+    "name": "Collar rib fastener",
+    "first_face": 3777,
+    "face_count": 6
+  },
+  {
+    "name": "Heavy drum radial collar rib",
+    "first_face": 3783,
+    "face_count": 10
+  },
+  {
+    "name": "Tapered window glazing bar",
+    "first_face": 3793,
+    "face_count": 6
+  },
+  {
+    "name": "Inset drum collar panel",
+    "first_face": 3799,
+    "face_count": 1
+  },
+  {
+    "name": "Collar rib fastener",
+    "first_face": 3800,
+    "face_count": 6
+  },
+  {
+    "name": "Heavy drum radial collar rib",
+    "first_face": 3806,
+    "face_count": 10
+  },
+  {
+    "name": "Tapered window glazing bar",
+    "first_face": 3816,
+    "face_count": 6
+  },
+  {
+    "name": "Inset drum collar panel",
+    "first_face": 3822,
+    "face_count": 1
+  },
+  {
+    "name": "Collar rib fastener",
+    "first_face": 3823,
+    "face_count": 6
+  },
+  {
+    "name": "Octagonal drum footing",
+    "first_face": 3829,
+    "face_count": 10
+  },
+  {
+    "name": "Heavy drum collar",
+    "first_face": 3839,
+    "face_count": 8
+  },
+  {
+    "name": "Eight tapered emissive green panes",
+    "first_face": 3847,
+    "face_count": 8
+  },
+  {
+    "name": "Octagonal drum cap rim",
+    "first_face": 3855,
+    "face_count": 10
+  },
+  {
+    "name": "Dark solid drum top",
+    "first_face": 3865,
+    "face_count": 10
+  },
+  {
+    "name": "Heavy drum radial collar rib",
+    "first_face": 3875,
+    "face_count": 10
+  },
+  {
+    "name": "Tapered window glazing bar",
+    "first_face": 3885,
+    "face_count": 6
+  },
+  {
+    "name": "Inset drum collar panel",
+    "first_face": 3891,
+    "face_count": 1
+  },
+  {
+    "name": "Collar rib fastener",
+    "first_face": 3892,
+    "face_count": 6
+  },
+  {
+    "name": "Heavy drum radial collar rib",
+    "first_face": 3898,
+    "face_count": 10
+  },
+  {
+    "name": "Tapered window glazing bar",
+    "first_face": 3908,
+    "face_count": 6
+  },
+  {
+    "name": "Inset drum collar panel",
+    "first_face": 3914,
+    "face_count": 1
+  },
+  {
+    "name": "Collar rib fastener",
+    "first_face": 3915,
+    "face_count": 6
+  },
+  {
+    "name": "Heavy drum radial collar rib",
+    "first_face": 3921,
+    "face_count": 10
+  },
+  {
+    "name": "Tapered window glazing bar",
+    "first_face": 3931,
+    "face_count": 6
+  },
+  {
+    "name": "Inset drum collar panel",
+    "first_face": 3937,
+    "face_count": 1
+  },
+  {
+    "name": "Collar rib fastener",
+    "first_face": 3938,
+    "face_count": 6
+  },
+  {
+    "name": "Heavy drum radial collar rib",
+    "first_face": 3944,
+    "face_count": 10
+  },
+  {
+    "name": "Tapered window glazing bar",
+    "first_face": 3954,
+    "face_count": 6
+  },
+  {
+    "name": "Inset drum collar panel",
+    "first_face": 3960,
+    "face_count": 1
+  },
+  {
+    "name": "Collar rib fastener",
+    "first_face": 3961,
+    "face_count": 6
+  },
+  {
+    "name": "Heavy drum radial collar rib",
+    "first_face": 3967,
+    "face_count": 10
+  },
+  {
+    "name": "Tapered window glazing bar",
+    "first_face": 3977,
+    "face_count": 6
+  },
+  {
+    "name": "Inset drum collar panel",
+    "first_face": 3983,
+    "face_count": 1
+  },
+  {
+    "name": "Collar rib fastener",
+    "first_face": 3984,
+    "face_count": 6
+  },
+  {
+    "name": "Heavy drum radial collar rib",
+    "first_face": 3990,
+    "face_count": 10
+  },
+  {
+    "name": "Tapered window glazing bar",
+    "first_face": 4000,
+    "face_count": 6
+  },
+  {
+    "name": "Inset drum collar panel",
+    "first_face": 4006,
+    "face_count": 1
+  },
+  {
+    "name": "Collar rib fastener",
+    "first_face": 4007,
+    "face_count": 6
+  },
+  {
+    "name": "Heavy drum radial collar rib",
+    "first_face": 4013,
+    "face_count": 10
+  },
+  {
+    "name": "Tapered window glazing bar",
+    "first_face": 4023,
+    "face_count": 6
+  },
+  {
+    "name": "Inset drum collar panel",
+    "first_face": 4029,
+    "face_count": 1
+  },
+  {
+    "name": "Collar rib fastener",
+    "first_face": 4030,
+    "face_count": 6
+  },
+  {
+    "name": "Heavy drum radial collar rib",
+    "first_face": 4036,
+    "face_count": 10
+  },
+  {
+    "name": "Tapered window glazing bar",
+    "first_face": 4046,
+    "face_count": 6
+  },
+  {
+    "name": "Inset drum collar panel",
+    "first_face": 4052,
+    "face_count": 1
+  },
+  {
+    "name": "Collar rib fastener",
+    "first_face": 4053,
+    "face_count": 6
+  },
+  {
+    "name": "Roof vent flashing",
+    "first_face": 4059,
+    "face_count": 6
+  },
+  {
+    "name": "Roof vent housing",
+    "first_face": 4065,
+    "face_count": 6
+  },
+  {
+    "name": "Roof vent cap",
+    "first_face": 4071,
+    "face_count": 6
+  },
+  {
+    "name": "Roof vent louver",
+    "first_face": 4077,
+    "face_count": 6
+  },
+  {
+    "name": "Roof vent louver",
+    "first_face": 4083,
+    "face_count": 6
+  },
+  {
+    "name": "Roof vent louver",
+    "first_face": 4089,
+    "face_count": 6
+  },
+  {
+    "name": "Roof vent flashing",
+    "first_face": 4095,
+    "face_count": 6
+  },
+  {
+    "name": "Roof vent housing",
+    "first_face": 4101,
+    "face_count": 6
+  },
+  {
+    "name": "Roof vent cap",
+    "first_face": 4107,
+    "face_count": 6
+  },
+  {
+    "name": "Roof vent louver",
+    "first_face": 4113,
+    "face_count": 6
+  },
+  {
+    "name": "Roof vent louver",
+    "first_face": 4119,
+    "face_count": 6
+  },
+  {
+    "name": "Roof vent louver",
+    "first_face": 4125,
+    "face_count": 6
+  },
+  {
+    "name": "Roof vent flashing",
+    "first_face": 4131,
+    "face_count": 6
+  },
+  {
+    "name": "Roof vent housing",
+    "first_face": 4137,
+    "face_count": 6
+  },
+  {
+    "name": "Roof vent cap",
+    "first_face": 4143,
+    "face_count": 6
+  },
+  {
+    "name": "Roof vent louver",
+    "first_face": 4149,
+    "face_count": 6
+  },
+  {
+    "name": "Roof vent louver",
+    "first_face": 4155,
+    "face_count": 6
+  },
+  {
+    "name": "Roof vent louver",
+    "first_face": 4161,
+    "face_count": 6
+  },
+  {
+    "name": "Roof vent flashing",
+    "first_face": 4167,
+    "face_count": 6
+  },
+  {
+    "name": "Roof vent housing",
+    "first_face": 4173,
+    "face_count": 6
+  },
+  {
+    "name": "Roof vent cap",
+    "first_face": 4179,
+    "face_count": 6
+  },
+  {
+    "name": "Roof vent louver",
+    "first_face": 4185,
+    "face_count": 6
+  },
+  {
+    "name": "Roof vent louver",
+    "first_face": 4191,
+    "face_count": 6
+  },
+  {
+    "name": "Roof vent louver",
+    "first_face": 4197,
+    "face_count": 6
+  },
+  {
+    "name": "Roof vent flashing",
+    "first_face": 4203,
+    "face_count": 6
+  },
+  {
+    "name": "Roof vent housing",
+    "first_face": 4209,
+    "face_count": 6
+  },
+  {
+    "name": "Roof vent cap",
+    "first_face": 4215,
+    "face_count": 6
+  },
+  {
+    "name": "Roof vent louver",
+    "first_face": 4221,
+    "face_count": 6
+  },
+  {
+    "name": "Roof vent louver",
+    "first_face": 4227,
+    "face_count": 6
+  },
+  {
+    "name": "Roof vent louver",
+    "first_face": 4233,
+    "face_count": 6
+  },
+  {
+    "name": "Beacon socket",
+    "first_face": 4239,
+    "face_count": 10
+  },
+  {
+    "name": "Emissive red status beacon",
+    "first_face": 4249,
+    "face_count": 10
+  },
+  {
+    "name": "Red beacon lens cap",
+    "first_face": 4259,
+    "face_count": 10
+  }
+]

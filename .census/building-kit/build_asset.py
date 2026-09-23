@@ -156,7 +156,7 @@ obj=bpy.data.objects.new(BUILDING,mesh); bpy.context.collection.objects.link(obj
 bpy.context.view_layer.objects.active=obj; obj.select_set(True)
 # Recalculate solid-piece winding before UV projection.
 import bmesh
-bm=bmesh.new(); bm.from_mesh(mesh); bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces)) if BUILDING in NEW+['temple','timber-house','durands'] else bm.normal_update(); bm.to_mesh(mesh); bm.free(); mesh.update()
+bm=bmesh.new(); bm.from_mesh(mesh); bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces)) if BUILDING in NEW+['temple','timber-house','durands','ricks'] else bm.normal_update(); bm.to_mesh(mesh); bm.free(); mesh.update()
 # Tags remain aligned because no face topology operation changes face order.
 charts=[]
 for face,tag in zip(mesh.polygons,tags):
@@ -256,6 +256,7 @@ def surface(pos,ch):
 base=np.zeros((ATLAS_SIZE,ATLAS_SIZE,3)); base[:]=PALETTE['timber']
 normal=np.zeros_like(base); normal[:]=(.5,.5,1)
 mr=np.zeros_like(base); mr[:]=(1,.88,0)
+emissive=np.zeros_like(base) if 'emissive_surface' in globals() else None
 step=.5/density
 for i,ch in enumerate(charts):
     x,y,w,h,_=placements[i]; yy,xx=np.mgrid[y:y+h,x:x+w]
@@ -270,9 +271,14 @@ for i,ch in enumerate(charts):
     base[y:y+h,x:x+w]=color.reshape(h,w,3)
     normal[y:y+h,x:x+w]=(nn*.5+.5).reshape(h,w,3)
     mr[y:y+h,x:x+w,1]=rough.reshape(h,w)
+    if emissive is not None:
+        emissive[y:y+h,x:x+w]=emissive_surface(pos,ch,color).reshape(h,w,3)
     if i%250==0: print('TEXTURE',i,flush=True)
 files=[BUILDING+'-basecolor.png',BUILDING+'-normal.png',BUILDING+'-metallicRoughness.png']
 for name,pixels in zip(files,[base,normal,mr]): write_png(ROOT/name,pixels,srgb=name==files[0])
+if emissive is not None:
+    files.append(BUILDING+'-emissive.png')
+    write_png(ROOT/files[-1],emissive,srgb=True)
 # Single glTF-compatible material with explicit data colour spaces.
 material=bpy.data.materials.new(BUILDING+'_PBR'); material.use_nodes=True; material.use_backface_culling=True
 nodes=material.node_tree.nodes; links=material.node_tree.links; bsdf=nodes.get('Principled BSDF')
@@ -280,7 +286,7 @@ bsdf.inputs['Metallic'].default_value=0
 bsdf.inputs['Roughness'].default_value=1
 images=[]
 for name in files:
-    image=bpy.data.images.load(str(ROOT/name)); image.colorspace_settings.name='sRGB' if name==files[0] else 'Non-Color'
+    image=bpy.data.images.load(str(ROOT/name)); image.colorspace_settings.name='sRGB' if name==files[0] or 'emissive' in name else 'Non-Color'
     node=nodes.new('ShaderNodeTexImage'); node.image=image; node.label=name; node.interpolation='Linear'; images.append(node)
 images[0].location=(-650,300); images[1].location=(-650,-70); images[2].location=(-650,-430)
 links.new(images[0].outputs['Color'],bsdf.inputs['Base Color'])
@@ -288,6 +294,10 @@ normalnode=nodes.new('ShaderNodeNormalMap'); normalnode.location=(-290,-65); nor
 links.new(images[1].outputs['Color'],normalnode.inputs['Color']); links.new(normalnode.outputs['Normal'],bsdf.inputs['Normal'])
 separate=nodes.new('ShaderNodeSeparateColor'); separate.location=(-290,-430)
 links.new(images[2].outputs['Color'],separate.inputs['Color']); links.new(separate.outputs['Green'],bsdf.inputs['Roughness']); links.new(separate.outputs['Blue'],bsdf.inputs['Metallic'])
+if emissive is not None:
+    images[3].location=(-650,-750)
+    links.new(images[3].outputs['Color'],bsdf.inputs['Emission Color'])
+    bsdf.inputs['Emission Strength'].default_value=globals().get('EMISSION_STRENGTH',1.0)
 mesh.materials.append(material)
 for vertex in mesh.vertices: vertex.co*=MODEL_SCALE
 mesh.update()
@@ -320,6 +330,8 @@ export_path.replace(ROOT/(BUILDING+'.glb'))
 report=dict(profile='low' if LOW_DETAIL else 'original',meshes=1,materials=1,vertices=len(mesh.vertices),triangles=len(mesh.loop_triangles),polygons=editable_polygon_count,parts=len(parts),islands=len(charts),texture_size=[ATLAS_SIZE,ATLAS_SIZE],gap_pixels=ISLAND_GAP,density_pixels_per_game_unit=density/MODEL_SCALE,dimensions=list(obj.dimensions),origin=list(obj.location),palette=PALETTE,geometry_source=provenance,texture_source='Original procedural texture paint',image_generator='Built-in image generator; exact backend model unverified')
 report['placement']=placement
 report['texture_source']=globals().get('TEXTURE_PROVENANCE',report['texture_source'])
+report['emissive']=emissive is not None
+if emissive is not None: report['emission_strength']=EMISSION_STRENGTH
 (ROOT/'build-report.json').write_text(json.dumps(report,indent=2))
 (ROOT/'parts.json').write_text(json.dumps(parts,indent=2))
 print(json.dumps(report,indent=2),flush=True)

@@ -1,5 +1,7 @@
 # Authored building runtime assets
 
+Ricks uses owner-selected Black Vault concept B, with matching original/low geometry and a fourth sRGB emissive atlas for green glazing, amber lamps and the red beacon. Sources, selected reference, audits and day/night review are in `E:\Development\Projects\Terrace\.census\ricks\`. No scene lights are added. It appears as a rare top-tier inland variant without changing Durand's or coastal selections.
+
 The original and low folders contain byte-identical copies of the verified runtime GLBs in `E:\Development\Projects\Terrace\.census\<building-id>\` and its `low` subfolder. Reproduce the copies, URL table, shared LOD fitting radii and compression audit with `python E:\Development\Projects\Terrace\.census\building-kit\integrate_assets.py`.
 
 All maps are embedded UASTC KTX2, with full mip chains. Original uses 2048 maps and detailed geometry; low uses 1024 maps and simplified geometry. Base colour is sRGB, normal and metallic/roughness are linear RGB with no swizzle. Each GLB has one mesh, one material and one primitive, using KHR_texture_basisu without mesh compression. Geometry is unchanged from the corresponding PNG GLB.

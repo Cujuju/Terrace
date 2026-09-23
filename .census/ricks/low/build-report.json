@@ -1,0 +1,189 @@
+{
+  "profile": "low",
+  "meshes": 1,
+  "materials": 1,
+  "vertices": 3988,
+  "triangles": 4880,
+  "polygons": 2795,
+  "parts": 271,
+  "islands": 2795,
+  "texture_size": [
+    1024,
+    1024
+  ],
+  "gap_pixels": 12,
+  "density_pixels_per_game_unit": 172.3027353755444,
+  "dimensions": [
+    0.8600000739097595,
+    0.7264037132263184,
+    0.38566359877586365
+  ],
+  "origin": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "palette": {
+    "timber": [
+      0.3,
+      0.245,
+      0.19
+    ],
+    "wall": [
+      0.52,
+      0.455,
+      0.35
+    ],
+    "gable": [
+      0.46,
+      0.385,
+      0.285
+    ],
+    "roof": [
+      0.55,
+      0.335,
+      0.22
+    ],
+    "door": [
+      0.385,
+      0.28,
+      0.185
+    ],
+    "stone": [
+      0.43,
+      0.445,
+      0.42
+    ],
+    "cutstone": [
+      0.51,
+      0.515,
+      0.48
+    ],
+    "iron": [
+      0.16,
+      0.175,
+      0.17
+    ],
+    "dark": [
+      0.085,
+      0.07,
+      0.05
+    ],
+    "carving": [
+      0.32,
+      0.265,
+      0.2
+    ],
+    "thatch": [
+      0.6,
+      0.51,
+      0.33
+    ],
+    "plaster": [
+      0.66,
+      0.6,
+      0.47
+    ],
+    "turf": [
+      0.34,
+      0.42,
+      0.26
+    ],
+    "brick": [
+      0.53,
+      0.32,
+      0.24
+    ],
+    "canvas": [
+      0.65,
+      0.58,
+      0.44
+    ],
+    "fish": [
+      0.5,
+      0.55,
+      0.54
+    ],
+    "paint": [
+      0.4,
+      0.24,
+      0.19
+    ],
+    "slate": [
+      0.32,
+      0.37,
+      0.37
+    ],
+    "concrete": [
+      0.43,
+      0.425,
+      0.39
+    ],
+    "coping": [
+      0.51,
+      0.5,
+      0.455
+    ],
+    "graphite": [
+      0.19,
+      0.195,
+      0.185
+    ],
+    "trim": [
+      0.245,
+      0.25,
+      0.235
+    ],
+    "recess": [
+      0.075,
+      0.083,
+      0.073
+    ],
+    "green": [
+      0.4,
+      0.62,
+      0.105
+    ],
+    "amber": [
+      1.0,
+      0.65,
+      0.1
+    ],
+    "red": [
+      0.96,
+      0.035,
+      0.018
+    ],
+    "stripe": [
+      0.78,
+      0.55,
+      0.08
+    ],
+    "plaque": [
+      0.185,
+      0.188,
+      0.173
+    ],
+    "lettering": [
+      0.87,
+      0.835,
+      0.733
+    ],
+    "gold": [
+      0.886,
+      0.667,
+      0.125
+    ]
+  },
+  "geometry_source": "Original Black Vault geometry authored after owner-selected Ricks concept B; no third-party mesh.",
+  "texture_source": "Original procedural concrete, graphite, green glass and emissive paint; newly typeset Ricks lettering and biohazard glyph. No generated concept pixels used.",
+  "image_generator": "Built-in image generator; exact backend model unverified",
+  "placement": {
+    "front_gltf": "+Z",
+    "origin": "Footprint centered in X; construction origin at ground Y=0",
+    "deliberate_difference": "Rear elevation extrapolated from front-right concept. Three octagonal drums, window belt, recessed doors, five stairs, concrete slope and plaque retained. Low omits collar fasteners and simplifies vent louvers; envelope identical.",
+    "low_alignment": "Low vertices fitted to original bounds before UV packing; shared origin and envelope."
+  },
+  "emissive": true,
+  "emission_strength": 1.6
+}

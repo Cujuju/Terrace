@@ -1,0 +1,47 @@
+{
+  "asset": "Ricks \u2014 Black Vault",
+  "selected_concept": "B",
+  "date": "2026-09-23",
+  "original_low_bounds_delta": 0.0,
+  "runtime": [
+    {
+      "building": "ricks",
+      "quality": "original",
+      "source": ".census\\ricks\\ricks-ktx2.glb",
+      "runtime": "plugins\\structures\\client\\assets\\authored\\original\\ricks.glb",
+      "bytes": 4311948,
+      "sha256": "ce97788a2f04dc2bd3b4741311266ca54f89a92e3de649f8cf3996a3e696ac0b",
+      "texture_resolution": 2048,
+      "mip_levels": 12,
+      "uastc_rgb": true,
+      "geometry_preserved": true
+    },
+    {
+      "building": "ricks",
+      "quality": "low",
+      "source": ".census\\ricks\\low\\ricks-ktx2.glb",
+      "runtime": "plugins\\structures\\client\\assets\\authored\\low\\ricks.glb",
+      "bytes": 1623964,
+      "sha256": "dc7dd4965043e10715b30ac885a2cb1f7d526a4daff8cb4810c7bf9742021dbd",
+      "texture_resolution": 1024,
+      "mip_levels": 11,
+      "uastc_rgb": true,
+      "geometry_preserved": true
+    }
+  ],
+  "geometry_uv_compression_mips_passed": true,
+  "emission_visible_with_no_external_light": true,
+  "app_started": false,
+  "client_build": "passed",
+  "structures_typecheck": "passed",
+  "existing_structures_tests": {
+    "passed": 195,
+    "failed": 2,
+    "cause": "Unchanged assertions require <=6 tiers; existing protocol has 11."
+  },
+  "workspace_typecheck": "Existing Buffer/Uint8Array type errors in client/test/rigAsset.test.ts; no diagnostics in modified sources.",
+  "assumptions": [
+    "Rear elevation extrapolated from the selected front-right concept.",
+    "Cosmetic top-tier inland variant using 24 of 256 hash buckets after the unchanged Durands buckets."
+  ]
+}

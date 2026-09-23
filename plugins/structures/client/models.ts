@@ -29,6 +29,7 @@ import {
   type StructureTier,
 } from '../protocol.ts';
 import { isDurandsCell } from './durands.ts';
+import { isRicksCell } from './ricks.ts';
 import { FISHING_HUT_BUILDERS, FISHING_HUT_NAMES, fishingHutVariantIndex } from './fishingHuts.ts';
 import {
   fitToRadius,
@@ -1872,6 +1873,17 @@ export function createStructureModels(kit?: BuildingAssetKit): StructureModels {
     return mesh;
   });
 
+  const ricksParts = kit?.parts('ricks') ?? [];
+  const ricksMeshes = ricksParts.map((part, partIndex) => {
+    geometries.push(part.geometry);
+    materials.push(part.material);
+    const mesh = new InstancedMesh(part.geometry, part.material, STRUCTURES_CAP * part.localMatrices.length);
+    mesh.name = `structures:ricks:part${String(partIndex)}`;
+    mesh.count = 0;
+    root.add(mesh);
+    return mesh;
+  });
+
   const siteVariantParts: Partial<Record<SiteKind, StructurePart[][]>> = {};
   const siteVariantMeshes: Partial<Record<SiteKind, InstancedMesh[][]>> = {};
   for (const siteKind of Object.keys(SITE_TOP_TIER_VARIANTS) as SiteKind[]) {
@@ -1941,6 +1953,7 @@ export function createStructureModels(kit?: BuildingAssetKit): StructureModels {
     apply(placements: readonly StructurePlacement[]): void {
       const counts = meshesByTier.map((parts) => parts.map(() => 0));
       const durandsCounts = durandsMeshes.map(() => 0);
+      const ricksCounts = ricksMeshes.map(() => 0);
       const siteVariantCounts: Partial<Record<SiteKind, number[][]>> = {};
       for (const siteKind of Object.keys(SITE_TOP_TIER_VARIANTS) as SiteKind[]) {
         siteVariantCounts[siteKind] = siteVariantParts[siteKind]!.map((parts) => parts.map(() => 0));
@@ -1970,6 +1983,11 @@ export function createStructureModels(kit?: BuildingAssetKit): StructureModels {
           continue;
         }
 
+        if (ricksParts.length > 0 && isRicksCell(placement.tier, placement.cellX, placement.cellY)) {
+          writeInstances(ricksParts, ricksMeshes, ricksCounts, null);
+          continue;
+        }
+
         const parts = tierParts[placement.tier];
         const meshes = meshesByTier[placement.tier];
         if (parts === undefined || meshes === undefined) continue;
@@ -1978,6 +1996,7 @@ export function createStructureModels(kit?: BuildingAssetKit): StructureModels {
 
       for (let tier = 0; tier < meshesByTier.length; tier++) finalizeMeshes(meshesByTier[tier], counts[tier]);
       finalizeMeshes(durandsMeshes, durandsCounts);
+      finalizeMeshes(ricksMeshes, ricksCounts);
       for (const siteKind of Object.keys(SITE_TOP_TIER_VARIANTS) as SiteKind[]) {
         const meshes = siteVariantMeshes[siteKind]!;
         const counts = siteVariantCounts[siteKind]!;
@@ -2012,6 +2031,7 @@ export function createStructureModels(kit?: BuildingAssetKit): StructureModels {
     dispose(): void {
       for (const parts of meshesByTier) for (const mesh of parts) mesh.dispose();
       for (const mesh of durandsMeshes) mesh.dispose();
+      for (const mesh of ricksMeshes) mesh.dispose();
       for (const variants of Object.values(siteVariantMeshes)) {
         for (const meshes of variants!) for (const mesh of meshes) mesh.dispose();
       }

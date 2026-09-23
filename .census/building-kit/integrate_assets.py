@@ -5,7 +5,7 @@ import hashlib, json, math, shutil, struct, subprocess, sys
 ROOT = Path(__file__).resolve().parents[2]
 NAMES = ['camp', 'hut', 'prehistoric-granary', 'roman-granary', 'longhouse',
          'timber-house', 'stone-cottage', 'watchtower', 'medieval-dovecote',
-         'renaissance-workshop', 'industrial-pump-house', 'durands',
+         'renaissance-workshop', 'industrial-pump-house', 'durands', 'ricks',
          'reed-cone', 'lashed-a-frame', 'stilted-hut', 'windbreak-dome',
          'upturned-hull', 'twin-hut-yard', 'drying-rack-long-hut',
          'turf-roof-on-stone', 'net-draped-cone', 'smoke-pit-hut', 'temple']
