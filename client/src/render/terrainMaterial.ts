@@ -44,6 +44,7 @@ import {
 } from './gpuMesher/gpuChunkAnswer.ts';
 import { compose } from './materialSlots.ts';
 import { applyGroundShade } from './groundShade.ts';
+import { applyRiserDecal } from './riserDecal.ts';
 
 const TERRAIN_ROUGHNESS = 0.95;
 const TERRAIN_METALNESS = 0;
@@ -135,6 +136,7 @@ export function createTerrainMaterial(
     makeSelfLitAware(material, vertexColor());
   }
   applyGroundShade(material, 'terrain');
+  applyRiserDecal(material);
   return material;
 }
 
