@@ -19,7 +19,7 @@ export type LibrarySculptTool = 'settle';
 /** Every operation `applySculpt` can perform, wire-reachable or not. */
 export type SculptOperation = SculptTool | LibrarySculptTool;
 
-export type SculptProfile = 'soft' | 'hard';
+export type SculptProfile = 'soft' | 'hard' | 'stepped';
 
 export const SCULPT_TOOLS: readonly SculptTool[] = ['stamp', 'smooth', 'drag', 'carve'];
 
@@ -72,7 +72,7 @@ export const SMOOTH_RIM_DEFAULT = 0;
 export const SMOOTH_RIM_MIN = 0;
 export const SMOOTH_RIM_MAX = 100;
 
-export const SCULPT_PROFILES: readonly SculptProfile[] = ['soft', 'hard'];
+export const SCULPT_PROFILES: readonly SculptProfile[] = ['soft', 'hard', 'stepped'];
 
 export type SculptSpill = 'banded' | 'free';
 

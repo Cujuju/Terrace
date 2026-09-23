@@ -21,8 +21,9 @@ import { anchoredTargetHeight, forEachFootprintCell } from './sculpt/footprint.t
 import {
   applyBrush,
   applyLevelFillBrush,
-  applySoftApron,
+  applyStampSkirt,
   stampEdgeShape,
+  stampSkirtReachCells,
 } from './sculpt/stamp.ts';
 import { writeWithEdges } from './sculpt/edges.ts';
 import { applyDragRegion } from './sculpt/drag.ts';
@@ -210,27 +211,30 @@ export function applySculpt(
   const anchorTarget = anchoredSmooth
     ? anchoredTargetHeight(map, cx, cy, meltRaising, targetBand, spanBand)
     : 0;
-  const softCore = profile === 'soft' && anchor === 'clicked' && tool === 'stamp';
-  const skirtCoreTarget = softCore
+  // A clicked stamp with a skirt profile (soft, stepped) hangs lower treads past its core.
+  const skirted =
+    tool === 'stamp' && anchor === 'clicked' && stampSkirtReachCells(radius, profile) > 0;
+  const skirtCoreTarget = skirted
     ? anchoredTargetHeight(map, cx, cy, strokeAmount > 0, targetBand, spanBand)
     : 0;
   // Smooth never deposits: relaxation alone melts roughness within anchor bounds.
   if (deposits) {
-    const levels = profile === 'hard' || softCore;
+    const levels = profile !== 'soft' || skirted;
     const deposit = (): void => {
-      // Radius names the flat under both profiles: the disc levels to the
-      // anchor, and soft hangs its sheet outside that edge.
+      // Radius names the flat under every profile: the disc levels to the
+      // anchor, and a skirt hangs outside that edge.
       if (levels) {
         applyLevelFillBrush(map, cx, cy, radius, strokeAmount, changed, anchor, targetBand, spanBand);
       } else {
         applyBrush(map, cx, cy, radius, strokeAmount, changed, profile, anchor, targetBand, spanBand);
       }
-      if (softCore) {
-        applySoftApron(map, cx, cy, radius, strokeAmount, skirtCoreTarget, spanBand, changed);
+      if (skirted) {
+        applyStampSkirt(map, cx, cy, radius, profile, strokeAmount, skirtCoreTarget, spanBand, changed);
       }
     };
     if (tool === 'stamp' && levels) {
-      const shape = stampEdgeShape(cx, cy, radius, softCore, strokeAmount > 0, spanBand);
+      const skirt = skirted ? profile : null;
+      const shape = stampEdgeShape(cx, cy, radius, skirt, strokeAmount > 0, spanBand);
       writeWithEdges(map, shape, changed, deposit);
     } else {
       deposit();

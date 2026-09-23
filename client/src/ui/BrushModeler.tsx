@@ -52,8 +52,13 @@ import {
   SmoothIcon,
   SoftIcon,
   StampIcon,
+  SteppedIcon,
 } from './BrushIcons.tsx';
-import { TOOLS_WITHOUT_DIRECTION, TOOLS_WITHOUT_EDGE_PROFILE } from '@terrace/shared';
+import {
+  STEPPED_RING_WIDTH_CELLS,
+  TOOLS_WITHOUT_DIRECTION,
+  TOOLS_WITHOUT_EDGE_PROFILE,
+} from '@terrace/shared';
 import {
   CARVE_MAX_DEPTH_BANDS,
   CARVE_MIN_DEPTH_BANDS,
@@ -87,6 +92,7 @@ const DENIAL_TEXT: Record<DenialHint, string> = {
 const PROFILE_TITLE: Record<SculptProfile, string> = {
   soft: 'Soft: rounded hill fading to nothing',
   hard: 'Hard: one terrace at a time',
+  stepped: `Stepped: each lower terrace reaches ${STEPPED_RING_WIDTH_CELLS} cells further out`,
 };
 
 const HINT_BUTTON: Record<string, string> = {
@@ -105,6 +111,7 @@ const TOOL_LABEL: Record<SculptTool, string> = {
 const PROFILE_LABEL: Record<SculptProfile, string> = {
   soft: 'Soft',
   hard: 'Hard',
+  stepped: 'Stepped',
 };
 
 const TOOL_ICON: Record<SculptTool, Component> = {
@@ -117,6 +124,7 @@ const TOOL_ICON: Record<SculptTool, Component> = {
 const PROFILE_ICON: Record<SculptProfile, Component> = {
   soft: SoftIcon,
   hard: HardIcon,
+  stepped: SteppedIcon,
 };
 
 const BRUSH_RUNG_MAX = BRUSH_RADII.length - 1;

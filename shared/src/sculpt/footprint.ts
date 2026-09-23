@@ -78,7 +78,7 @@ export function brushDelta(
   dist: number,
   profile: SculptProfile,
 ): number {
-  if (profile === 'hard') return amount;
+  if (profile !== 'soft') return amount;
   // Linear ramp from the centre to the outermost ring (dist = radius - 1),
   // which keeps the edge fraction instead of fading to nothing.
   const span = radius - 1;

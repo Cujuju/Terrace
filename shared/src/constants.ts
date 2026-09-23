@@ -63,6 +63,12 @@ export const SOFT_APRON_MAX_REACH_CELLS = 2 ** SOFT_APRON_MAX_BANDS - 1;
 /** How far past the core the sheet may reach before the tread cap takes over. */
 export const SOFT_APRON_REACH_PER_RADIUS = 2;
 
+/** A stepped stamp's tread: each band below the target reaches this much further out. */
+export const STEPPED_RING_WIDTH_CELLS = 2;
+
+/** Stepped treads stay within the soft apron's reach, so no stroke reaches further. */
+export const STEPPED_MAX_RINGS = Math.floor(SOFT_APRON_MAX_REACH_CELLS / STEPPED_RING_WIDTH_CELLS);
+
 /** Soft stamp strength at the footprint's outermost ring, as a fraction of the centre. */
 export const SOFT_EDGE_STRENGTH_NUMERATOR = 1;
 export const SOFT_EDGE_STRENGTH_DENOMINATOR = 5;

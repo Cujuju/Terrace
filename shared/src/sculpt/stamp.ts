@@ -2,6 +2,8 @@ import {
   SOFT_APRON_MAX_BANDS,
   SOFT_APRON_MAX_REACH_CELLS,
   SOFT_APRON_REACH_PER_RADIUS,
+  STEPPED_MAX_RINGS,
+  STEPPED_RING_WIDTH_CELLS,
 } from '../constants.ts';
 import { bandLevelHeight, drawnBandOfSample } from '../bands.ts';
 import { cellX, cellY, type Heightmap } from '../grid.ts';
@@ -135,9 +137,25 @@ export function sculptSweepRadius(
   tool: SculptTool,
   anchor: SculptAnchor,
 ): number {
-  return profile === 'soft' && tool === 'stamp' && anchor === 'clicked'
-    ? radius + softApronReachCells(radius)
-    : radius;
+  return tool === 'stamp' && anchor === 'clicked' ? radius + stampSkirtReachCells(radius, profile) : radius;
+}
+
+/** How far past its core a clicked stamp hangs lower treads: soft's apron, stepped's rings. */
+export function stampSkirtReachCells(radius: number, profile: SculptProfile): number {
+  if (profile === 'soft') return softApronReachCells(radius);
+  if (profile === 'stepped') return STEPPED_MAX_RINGS * STEPPED_RING_WIDTH_CELLS;
+  return 0;
+}
+
+/** Bands a skirt cell `distPastCore` rings out sits below the core. */
+export function stampSkirtBandDrop(distPastCore: number, profile: SculptProfile): number {
+  return profile === 'stepped' ? steppedBandDrop(distPastCore) : softApronBandDrop(distPastCore);
+}
+
+/** Each band below the core reaches one tread further: ceil(d / width). */
+export function steppedBandDrop(distPastCore: number): number {
+  if (distPastCore < 1) return 0;
+  return Math.floor((distPastCore + STEPPED_RING_WIDTH_CELLS - 1) / STEPPED_RING_WIDTH_CELLS);
 }
 
 export function softApronReachCells(radius: number): number {
@@ -155,20 +173,20 @@ export function softApronBandDrop(distPastCore: number): number {
   return band < SOFT_APRON_MAX_BANDS ? band : SOFT_APRON_MAX_BANDS;
 }
 
-/** A stamp's outline: its core disc, then each apron ring where the drop steps. */
+/** A stamp's outline: its core disc, then each skirt ring where the drop steps. */
 export function stampEdgeShape(
   cx: number,
   cy: number,
   radius: number,
-  aproned: boolean,
+  skirt: SculptProfile | null,
   raising: boolean,
   spanBand: number | null,
 ): EdgeShape {
   const rings = [footprintRingQuarters(radius)];
-  if (aproned) {
-    const reach = softApronReachCells(radius);
+  if (skirt !== null) {
+    const reach = stampSkirtReachCells(radius, skirt);
     for (let d = 1; d < reach; d++) {
-      if (softApronBandDrop(d) !== softApronBandDrop(d + 1)) {
+      if (stampSkirtBandDrop(d, skirt) !== stampSkirtBandDrop(d + 1, skirt)) {
         rings.push(footprintRingQuarters(radius + d));
       }
     }
@@ -182,14 +200,15 @@ export function stampEdgeShape(
   };
 }
 
-/** The apron only exists under a soft clicked stamp, which is an anchored stroke. */
-const APRON_IS_ANCHORED = true;
+/** A skirt only exists under a clicked stamp, which is an anchored stroke. */
+const SKIRT_IS_ANCHORED = true;
 
-export function applySoftApron(
+export function applyStampSkirt(
   map: Heightmap,
   cx: number,
   cy: number,
   radius: number,
+  profile: SculptProfile,
   amount: number,
   coreTarget: number,
   spanBand: number | null,
@@ -197,9 +216,9 @@ export function applySoftApron(
 ): void {
   if (amount === 0) return;
   const raising = amount > 0;
-  const reach = softApronReachCells(radius);
+  const reach = stampSkirtReachCells(radius, profile);
   const coreBand = drawnBandOfSample(coreTarget);
-  forEachFootprintCell(map, cx, cy, sculptSweepRadius(radius, 'soft', 'stamp', 'clicked'), (i) => {
+  forEachFootprintCell(map, cx, cy, sculptSweepRadius(radius, profile, 'stamp', 'clicked'), (i) => {
     const x = cellX(map.size, i);
     const y = cellY(map.size, i);
     const dx = x - cx;
@@ -212,14 +231,13 @@ export function applySoftApron(
         break;
       }
     }
-    const target = clampHeight(
-      bandLevelHeight(coreBand + (raising ? -softApronBandDrop(dist) : softApronBandDrop(dist))),
-    );
+    const drop = stampSkirtBandDrop(dist, profile);
+    const target = clampHeight(bandLevelHeight(coreBand + (raising ? -drop : drop)));
     const k = graspedSpanIndex(map, i, spanBand);
     if (k === null) return;
     const before = graspedCeiling(map, i, k);
     if (hasReachedBand(before, target, raising)) return;
-    const moved = before + pressDelta(amount, before, APRON_IS_ANCHORED);
+    const moved = before + pressDelta(amount, before, SKIRT_IS_ANCHORED);
     const h = clampHeight(raising ? (moved > target ? target : moved) : (moved < target ? target : moved));
     if (h !== before) {
       writeGraspedCeiling(map, i, k, h);

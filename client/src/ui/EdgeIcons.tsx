@@ -45,6 +45,29 @@ export function HardIcon(): JSX.Element {
   );
 }
 
+export function SteppedIcon(): JSX.Element {
+  return (
+    <svg class="hud-tool__icon" viewBox="0 0 32 32" aria-hidden="true">
+      <defs>
+        <linearGradient id="stepped-fill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#c8f0a8" />
+          <stop offset="1" stop-color="#4f9a4a" />
+        </linearGradient>
+      </defs>
+      <path d="M3 24v-3h3v-3h3v-3h3v-3h3V9h2v3h3v3h3v3h3v3h3v3z" fill="url(#stepped-fill)" />
+      <path
+        d="M3 21h3v-3h3v-3h3v-3h3V9h2v3h3v3h3v3h3v3h3"
+        stroke="#f4fff2"
+        stroke-width="1.2"
+        fill="none"
+        stroke-linejoin="round"
+        stroke-linecap="round"
+      />
+      <rect x="3" y="24" width="26" height="4" rx="1" fill="#5a3a22" />
+    </svg>
+  );
+}
+
 export function RaiseIcon(): JSX.Element {
   return (
     <svg class="hud-tool__icon" viewBox="0 0 32 32" aria-hidden="true">
