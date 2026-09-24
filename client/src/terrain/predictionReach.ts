@@ -8,6 +8,7 @@ import {
   forEachLineCell,
   sculptOptionsOf,
   sculptReachCells,
+  sculptSweepRadius,
   type SculptIntent,
 } from '@terrace/shared';
 import { hasChunk, type TerrainMirror } from './mirror.ts';
@@ -71,7 +72,7 @@ export function createReachChecks(mirror: TerrainMirror): ReachChecks {
 
     canPredictFaithfully(intent: SculptIntent): boolean {
       const options = sculptOptionsOf(intent);
-      const sweep = intent.radius;
+      const sweep = sculptSweepRadius(intent.radius, options.profile, options.tool, options.anchor);
       // A relaxing tool reads and writes a square bbox past its brush, so its
       // whole reach must be known; for the rest the reach IS the sweep.
       const reach = sculptReachCells(

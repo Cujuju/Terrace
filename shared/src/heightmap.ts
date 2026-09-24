@@ -59,6 +59,7 @@ export { forEachFootprintOffset } from './sculpt/footprint.ts';
 export {
   applyBrush,
   applyLevelFillBrush,
+  sculptSweepRadius,
   softApronBandDrop,
   softApronReachCells,
 } from './sculpt/stamp.ts';

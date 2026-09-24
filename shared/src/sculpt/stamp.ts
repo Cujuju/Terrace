@@ -24,6 +24,7 @@ import {
   spreadableFootprintCells,
 } from './footprint.ts';
 import { footprintRingQuarters, type EdgeShape } from './edges.ts';
+import { pinchSkirtCells } from './pinch.ts';
 import { LIBRARY_DEFAULT_SCULPT_OPTIONS } from './options.ts';
 import type { SculptAnchor, SculptProfile, SculptTool } from './options.ts';
 
@@ -129,6 +130,16 @@ export function applyLevelFillBrush(
 
   const targetHeight = clampHeight(bandLevelHeight(extremeBand + (raising ? 1 : -1)));
   fillTowardTarget(map, cx, cy, radius, amount, changed, raising, targetHeight, false, spanBand);
+}
+
+/** Every cell one stroke's brush can write: a clicked stamp's disc plus the sheet it pinches. */
+export function sculptSweepRadius(
+  radius: number,
+  _profile: SculptProfile,
+  tool: SculptTool,
+  anchor: SculptAnchor,
+): number {
+  return tool === 'stamp' && anchor === 'clicked' ? radius + pinchSkirtCells(radius) : radius;
 }
 
 /** How far past its core a clicked stamp hangs lower treads: soft's apron, stepped's rings. */
