@@ -1,6 +1,27 @@
 # Flipper & Shrimp — C + A reconstruction
 
-## Current revision: shallow relief, clear slides, coastal textures
+## Current revision: simplified slides, UV ropes and shells
+
+Current files are in [revision-4](E:/Development/Projects/Terrace/.census/flipper-shrimp-ca/revision-4/). Revision 3 remains available for comparison.
+
+- [Editable Blender scene](E:/Development/Projects/Terrace/.census/flipper-shrimp-ca/revision-4/flipper-shrimp-ca.blend)
+- [Detailed GLB](E:/Development/Projects/Terrace/.census/flipper-shrimp-ca/revision-4/flipper-shrimp-ca.glb)
+- [Lighter GLB](E:/Development/Projects/Terrace/.census/flipper-shrimp-ca/revision-4/flipper-shrimp-ca-light.glb)
+- [Overall render](E:/Development/Projects/Terrace/.census/flipper-shrimp-ca/revision-4/flipper-shrimp-ca.png)
+
+| Geometry | Revision 3 | Revision 4 |
+| --- | ---: | ---: |
+| Slides and rims | 11,240 | 2,232 |
+| Rope details | 7,708 | 2,680 |
+| Shell decorations | 10,674 | 1,056 |
+| Full asset | 113,948 | 90,294 |
+| Lighter export | 53,412 | 42,507 |
+
+The detailed asset loses 23,654 triangles (20.8%). These three groups lose 79.9% of their triangles; the other groups retain their prior geometry counts. Slides use 28 longitudinal samples and a closed cross-section with integrated rims. Suspended ropes use crossed, opaque UV strips; wraps use eight-sided open bands with UV-painted courses and fibre normals. Three connected shell fans replace the overlapping lobes and rib tubes. Normal and color maps carry the fine shell ribs. The shell silhouettes are more compact and the ropes have less volume at close inspection.
+
+The brick/rock, barnacle and mascot texture files are retained unchanged. Light emission is retained. Build and verification commands below now produce revision 4; `verification.json` records actual export counts, slide topology and texture hash comparisons. Runtime performance has not been measured.
+
+## Previous revision: shallow relief, clear slides, coastal textures
 
 The current deliverables are in [revision-3](E:/Development/Projects/Terrace/.census/flipper-shrimp-ca/revision-3/). Earlier versions remain available for comparison.
 
@@ -12,7 +33,7 @@ The dolphin and shrimp are shallow bevelled relief ornaments. The dolphin has a 
 
 The slides retain continuous U-shaped troughs and textured sheen. Entrance arches are removed and support posts terminate below the sampled trough centreline. Rock uses mineral mottling, flecks, pitted normal maps and roughness maps with varied UV offsets. Lower pier posts use clustered barnacle color, normal and roughness maps on simple cylindrical sleeves. Lanterns and the lighthouse use emissive materials with strength 6; the audit records the exported emission and renders the re-imported asset under dim studio lighting.
 
-Build and verification commands below now produce `revision-3`. The detailed inspection results are in that folder's `verification.json`. Water remains static and the asset is not integrated into the game.
+The detailed inspection results for revision 3 are in that folder's `verification.json`. Water remains static and the asset is not integrated into the game.
 
 Current geometry is 113,948 triangles in the detailed asset and 53,412 in the lighter export. Both retain the same painted faces, rock and barnacle maps, and emission. The brick and barnacle appearance should be preserved in later optimization. Measured costs in the detailed source: slides with rolled rims 11,240; shell ornaments/canopy 10,674; pier posts/caps/rope collars 14,760; stone blocks 8,096; barnacle sleeves 1,408. Further savings can come from fewer curve segments and bevels, normal-mapped shell ribs, simpler small trim, and removing hidden stone faces. A 25–35k presentation asset is an unverified target, not a delivered count.
 

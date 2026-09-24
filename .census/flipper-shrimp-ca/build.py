@@ -16,7 +16,7 @@ from mathutils import Vector
 from mathutils.bvhtree import BVHTree
 
 SOURCE_ROOT = Path(__file__).resolve().parent
-ROOT = SOURCE_ROOT / 'revision-3'
+ROOT = SOURCE_ROOT / 'revision-4'
 ROOT.mkdir(exist_ok=True)
 TEX = ROOT / 'textures'
 TEX.mkdir(exist_ok=True)
@@ -155,8 +155,19 @@ def surface(name, color, rough=.45, metal=0, emission=0, pattern=None):
             h=.5+.004*wet*np.sin(TAU*(u*22+.12*np.sin(TAU*v*2)))
             rgb += (wet*(.045+.045*streak))[...,None]*np.array([.7,1.,1.])
         elif pattern == 'rope':
-            h = .5+.28*np.sin(TAU*(u*12+v*24))
-            rgb *= (.8+.25*h)[..., None]
+            # Five wrapped courses and twisted fibres, all UV texture detail.
+            course=.5+.5*np.cos(TAU*v*5)
+            fibre=.5+.5*np.sin(TAU*(u*55-v*15))
+            h=.24+.38*course+.055*fibre
+            rgb *= (.58+.38*course+.10*fibre)[...,None]
+        elif pattern in ('shell','shell_coral'):
+            rib=.5+.5*np.cos(TAU*u*9)
+            fine=.5+.5*np.cos(TAU*(u*90+.035*np.sin(TAU*v)))
+            h=.3+.32*rib+.025*fine
+            rgb *= (.79+.18*rib+.04*fine+.08*v)[...,None]
+            if pattern=='shell_coral':
+                crest=np.exp(-((np.mod(u*9+.5,1)-.5)/.06)**2)
+                rgb=rgb*(1-crest[...,None]*.80)+np.array([1.,.81,.63])*crest[...,None]*.80
         elif pattern == 'roof':
             row = np.floor(v*7)
             x = np.mod(u*5+(row%2)*.5, 1)
@@ -196,7 +207,7 @@ def surface(name, color, rough=.45, metal=0, emission=0, pattern=None):
         node = mat.node_tree.nodes.new('ShaderNodeTexImage'); node.image = base
         mat.node_tree.links.new(node.outputs['Color'], bs.inputs['Base Color'])
         gy, gx = np.gradient(h)
-        strength=32 if pattern=='stone' else 22 if pattern=='barnacles' else 3
+        strength=32 if pattern=='stone' else 22 if pattern=='barnacles' else 10 if pattern in ('rope','shell','shell_coral') else 3
         normal = np.stack((-gx*strength, -gy*strength, np.ones_like(h)), axis=-1)
         normal /= np.linalg.norm(normal, axis=-1)[..., None]
         nim = image_array(name+'-normal', normal*.5+.5, True)
@@ -221,6 +232,8 @@ for key, color, rough, metal, emiss, pat in [
     ('Limestone',(.57,.54,.45),.73,0,0,'stone'),
     ('Warm stone',(.70,.63,.51),.69,0,0,'stone'),
     ('Rope',(.67,.51,.30),.78,0,0,'rope'),
+    ('Ivory shell relief',(.97,.85,.67),.43,0,0,'shell'),
+    ('Coral shell relief',(.97,.46,.29),.38,0,0,'shell_coral'),
     ('Roof',(.10,.37,.48),.37,0,0,'roof'),
     ('Lagoon',(.045,.58,.62),.18,.14,0,'water'),
     ('Cascade',(.25,.74,.79),.20,.1,0,'fall'),
@@ -282,6 +295,25 @@ net_alpha=np.maximum(np.clip((.085-net_a)*22,0,1),np.clip((.085-net_b)*22,0,1))
 net_rgb=np.ones((n,n,3))*np.array([.71,.57,.37])
 net_image=image_array('Nautical-net-decal',net_rgb,alpha=net_alpha)
 net_material=decal_material('Draped rope net - alpha texture',net_image)
+
+# Crossed narrow strips carry painted cylindrical shading and twisted fibre normals.
+# They stay opaque and two-sided; no alpha sorting is needed for the ropes.
+n=512
+vv,uu=np.mgrid[0:n,0:n]/n
+xx=uu*2-1
+cord_twist=.5+.5*np.sin(TAU*(vv*8+uu*2))
+cord_round=np.sqrt(np.clip(1-xx*xx,0,1))
+cord_rgb=np.array([.71,.56,.35])*(.57+.38*cord_round+.10*cord_twist)[...,None]
+rope_cord=surface('UV textured rope cord',(1,1,1),.78)
+bs=next(n for n in rope_cord.node_tree.nodes if n.type=='BSDF_PRINCIPLED')
+node=rope_cord.node_tree.nodes.new('ShaderNodeTexImage');node.image=image_array('Rope cord-color',cord_rgb)
+rope_cord.node_tree.links.new(node.outputs['Color'],bs.inputs['Base Color'])
+normal=np.stack((xx*.65,.14*np.cos(TAU*(vv*8+uu*2)),np.maximum(.2,cord_round)),axis=-1)
+normal/=np.linalg.norm(normal,axis=-1)[...,None]
+node=rope_cord.node_tree.nodes.new('ShaderNodeTexImage');node.image=image_array('Rope cord-normal',normal*.5+.5,True)
+nm=rope_cord.node_tree.nodes.new('ShaderNodeNormalMap')
+rope_cord.node_tree.links.new(node.outputs['Color'],nm.inputs['Color'])
+rope_cord.node_tree.links.new(nm.outputs['Normal'],bs.inputs['Normal'])
 
 
 def mesh(name, verts, faces, mat, smooth=False, uv=None):
@@ -368,6 +400,7 @@ def path(controls, steps=32):
 
 
 def tube(name,points,radius,mat,sides=8):
+    if mat=='Rope': return rope_strip(name,points,radius)
     points=[Vector(p) for p in points]
     verts=[];uv=[]
     radii=[radius]*len(points) if isinstance(radius,(float,int)) else radius
@@ -391,6 +424,30 @@ def tube(name,points,radius,mat,sides=8):
             faces.append((j*sides+k,j*sides+(k+1)%sides,(j+1)*sides+(k+1)%sides,(j+1)*sides+k))
     faces += [tuple(reversed(range(sides))),tuple(range((len(points)-1)*sides,len(points)*sides))]
     return mesh(name,verts,faces,mat,True,uv)
+
+
+def rope_strip(name,points,radius):
+    points=[Vector(p) for p in points];verts=[];uv=[];faces=[]
+    distance=0
+    for j,p in enumerate(points):
+        d=(points[min(j+1,len(points)-1)]-points[max(0,j-1)]).normalized()
+        ref=Vector((0,0,1)) if abs(d.z)<.92 else Vector((0,1,0))
+        a=d.cross(ref).normalized();b=d.cross(a).normalized()
+        if j: distance+=(p-points[j-1]).length
+        for vec in (a,b):
+            verts.extend((p-vec*radius,p+vec*radius))
+            uv.extend(((0,distance*3),(1,distance*3)))
+        if j:
+            for k in (0,2): faces.append(((j-1)*4+k,j*4+k,j*4+k+1,(j-1)*4+k+1))
+    return mesh(name+' UV strips',verts,faces,rope_cord,True,uv)
+
+
+def rope_wrap(name,x,y,z,r,height):
+    verts=[];uv=[];sides=8
+    for zz,v in ((z-height/2,0),(z+height/2,1)):
+        for i in range(sides+1):
+            a=TAU*i/sides;verts.append((x+r*math.cos(a),y+r*math.sin(a),zz));uv.append((i/sides,v))
+    return mesh(name+' UV band',verts,[(i,i+1,i+sides+2,i+sides+1) for i in range(sides)],'Rope',True,uv)
 
 
 def ring(name,center,r,t,mat,plane='xy',seg=32,sides=6):
@@ -421,7 +478,7 @@ def post(x,y,bottom,top,r=.13,wrap=True):
     cylinder('End-grain cap',(x,y,top+.015),r*1.08,.055,'Deck',12)
     if wrap:
         # One collar, texture conveys the individual rope strands.
-        cylinder('Rope lashing',(x,y,top-.23),r*1.16,.20,'Rope',12)
+        rope_wrap('Rope lashing',x,y,top-.23,r*1.10,.20)
     if bottom<.3:
         # Replace the old flat-green collar with a single texture-bearing sleeve.
         # Duplicated seam vertices keep the final cylinder face from stretching UVs.
@@ -442,7 +499,7 @@ def rails(points,z,height=.68,piles=False):
     for (x,y),(xx,yy) in zip(points,points[1:]):
         beam('Handrail',(x,y,z+height-.06),(xx,yy,z+height-.06),.055,'Timber',8)
         for h in (.23,.48):
-            tube('Sagging rope rail',path([(x,y,z+h),((x+xx)/2,(y+yy)/2,z+h-.09),(xx,yy,z+h)],5),.026,'Rope',4)
+            tube('Sagging rope rail',path([(x,y,z+h),((x+xx)/2,(y+yy)/2,z+h-.09),(xx,yy,z+h)],4),.026,'Rope',4)
 
 
 def lantern(x,y,z,scale=1):
@@ -575,7 +632,7 @@ box('Main weathered clubhouse',(0,2.80,4.63),(5.20,2.72,2.22),'Ivory planks',.13
 box('Clubhouse eave',(0,2.80,5.85),(5.50,2.97,.19),'Timber',.045)
 for x in (-2.52,-.91,.91,2.52):
     post(x,1.35,3.48,6.01,.13)
-    if abs(x)>2: cylinder('Facade rope wrap',(x,1.35,4.38),.17,.23,'Rope',12)
+    if abs(x)>2: rope_wrap('Facade rope wrap',x,1.35,4.38,.17,.23)
 for x in (-1.73,1.73):
     porthole(x,1.36,4.74,.46)
     box('Window lower sill',(x,1.19,4.13),(1.20,.35,.13),'Timber',.04)
@@ -659,13 +716,39 @@ for x,z in ((-2.14,6.62),(2.14,6.62),(-1.87,7.80),(1.87,7.80)):
     sphere('Sign iron peg',(x,1.02,z),(.036,.02,.036),'Iron',10,6)
 
 
+def shell_fan(name,center,width,height,depth,mat,angular=37):
+    # One connected convex fan. Shallow corrugation carries the broad silhouette;
+    # the fine ribs and pale crests are in base-color and tangent-space normal maps.
+    x,y,z=center;verts=[(x,y,z)];uv=[(.5,0)];rings=3
+    for row in range(1,rings+1):
+        t=row/rings
+        for k in range(angular):
+            u=k/(angular-1);a=PI*(.05+.90*u)
+            scallop=.955+.045*math.cos(TAU*u*9)
+            radius=t*scallop
+            bulge=depth*math.sin(PI*t*.80)*(.86+.14*math.cos(TAU*u*9))
+            verts.append((x+width*radius*math.cos(a),y-bulge,z+height*radius*math.sin(a)))
+            uv.append((u,t))
+    faces=[(0,1+k,2+k) for k in range(angular-1)]
+    for row in range(rings-1):
+        for k in range(angular-1):
+            a=1+row*angular+k;faces.append((a,a+angular,a+angular+1,a+1))
+    boundary=[0]+[1+row*angular for row in range(rings)]
+    boundary += [1+(rings-1)*angular+k for k in range(1,angular)]
+    boundary += [1+row*angular+angular-1 for row in reversed(range(rings-1))]
+    back=[]
+    for i in boundary:
+        p=verts[i];back.append(len(verts));verts.append((p[0],y+depth*.22,p[2]));uv.append(uv[i])
+    faces.append(tuple(reversed(back)))
+    for j,i in enumerate(boundary):
+        k=(j+1)%len(boundary);faces.append((i,boundary[k],back[k],back[j]))
+    ob=mesh(name,verts,faces,mat,True,uv)
+    bm=bmesh.new();bm.from_mesh(ob.data);bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces));bm.to_mesh(ob.data);bm.free()
+    return ob
+
+
 def scallop(center,r,mat='Shell',ribs=9):
-    x,y,z=center
-    for k in range(ribs):
-        a=PI*(.08+.84*(k+.5)/ribs)
-        p=(x+math.cos(a)*r*.65,y,z+math.sin(a)*r*.57)
-        ob=sphere('Scallop fan rib',p,(r*.10,r*.09,r*.58),'Cream' if k%2 else mat,14,10)
-        ob.rotation_euler.y=PI/2-a
+    shell_fan('Textured scallop ornament',center,r*1.10,r*1.35,r*.14,'Ivory shell relief')
 scallop((0,1.07,8.22),.60)
 scallop((0,-.11,1.77),.34)
 
@@ -708,25 +791,33 @@ print('Painted shallow relief mascots complete',flush=True)
 for side,mat in ((-1,'Blue flume glaze'),(1,'Coral flume glaze')):
     controls=[(side*2.64,.69,3.60),(side*2.23,.18,3.31),(side*1.84,-.48,2.74),
               (side*1.96,-1.22,2.00),(side*1.62,-1.98,1.39),(side*1.10,-2.42,1.11)]
-    pts=path(controls,64); ns=15;verts=[];uv=[]
+    rows=28;pts=path(controls,rows);verts=[];uv=[]
+    angles=np.linspace(-PI*.49,PI*.49,9)
+    # A closed cross-section includes the rolled edges and underside in one mesh.
+    profile=[(.38*math.sin(a),.33*(1-math.cos(a))) for a in angles]
+    profile += [(.414,.345)]
+    profile += [(.43*math.sin(a),.33*(1-math.cos(a))-.05*math.cos(a)) for a in reversed(angles)]
+    profile += [(-.414,.345)]
+    ns=len(profile)
     for j,p in enumerate(pts):
-        d=(pts[min(j+1,63)]-pts[max(j-1,0)]).normalized()
+        d=(pts[min(j+1,rows-1)]-pts[max(j-1,0)]).normalized()
         across=Vector((-d.y,d.x,0)).normalized()
-        for k in range(ns):
-            a=-PI*.49+PI*.98*k/(ns-1)
-            # Broad U-shaped trough; no pinching or disconnected rim at the exit.
-            verts.append(p+across*(.38*math.sin(a))+Vector((0,0,.33*(1-math.cos(a)))))
-            uv.append((k/(ns-1),j/63*3))
-    faces=[(j*ns+k,(j+1)*ns+k,(j+1)*ns+k+1,j*ns+k+1) for j in range(63) for k in range(ns-1)]
+        for k,(xx,zz) in enumerate(profile):
+            verts.append(p+across*xx+Vector((0,0,zz)))
+            uv.append((k/8 if k<9 else (18-k)/8,j/(rows-1)*3))
+    faces=[(j*ns+k,(j+1)*ns+k,(j+1)*ns+(k+1)%ns,j*ns+(k+1)%ns) for j in range(rows-1) for k in range(ns)]
+    faces += [tuple(reversed(range(ns))),tuple(range((rows-1)*ns,rows*ns))]
     ob=mesh('Blue sweeping flume' if side<0 else 'Coral sweeping flume',verts,faces,mat,True,uv)
-    mod=ob.modifiers.new('Fibreglass shell thickness','SOLIDIFY');mod.thickness=.055;mod.offset=-1
-    for k in (0,ns-1):
-        tube('Smooth rolled slide lip',[verts[j*ns+k] for j in range(64)],.032,'Belly' if side<0 else 'Shell',7)
+    ob.data.materials.append(M['Belly' if side<0 else 'Shell'])
+    for face in ob.data.polygons:
+        if face.index<(rows-1)*ns and face.index%ns in (8,9,18,19): face.material_index=1
+    ob['trough_profile_sides']=ns;ob['inner_profile_edges']=8;ob['longitudinal_panels']=rows-1
+    bm=bmesh.new();bm.from_mesh(ob.data);bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces));bm.to_mesh(ob.data);bm.free()
     # Sheen is baked into the glaze texture; no second surface can cross the trough.
     splash(side*1.10,-2.44,1.085,.41)
     # Open landing: no arch or vertical member cuts through the trough entrance.
     # Supports meet the underside of the actual centreline, never pierce its floor.
-    for j in (19,39):
+    for j in (8,17):
         p=pts[j]
         beam('Slide support below trough',(p.x,p.y,.16),(p.x,p.y,p.z-.085),.09,'Timber')
 
@@ -775,13 +866,8 @@ for s,accent in ((-1,'Dolphin'),(1,'Coral')):
     else:
         tube('Shrimp lounge emblem',path([(cx+.29,-3.01,1.3),(cx+.39,-3.02,1.09),(cx+.19,-3.06,.99),(cx-.15,-3.07,1.14)],24),.058,'Coral',7)
 
-# Shell canopy behind right lounge: arched lobes, open to the front.
-for k in range(9):
-    a=PI*.08+PI*.84*(k+.5)/9
-    cx=3.58+math.cos(a)*.91;zz=1.78+math.sin(a)*1.38
-    ob=sphere('Scallop canopy lobe',(cx+.36,-.58,zz),(.24,.44,.69),'Peach' if k%2 else 'Coral',20,12)
-    ob.rotation_euler.y=PI/2-a
-    tube('Scallop canopy pale rib',path([(3.94,-.80,1.80),(3.94+math.cos(a)*.75,-.88,1.78+math.sin(a)*1.13),(3.94+math.cos(a)*1.14,-.81,1.78+math.sin(a)*1.70)],15),.026,'Shell',5)
+# One closed shell fan replaces nine overlapping lobes and nine separate rib tubes.
+shell_fan('Textured scallop canopy',(3.94,-.58,1.78),1.27,1.97,.38,'Coral shell relief',55)
 
 # Smaller signs, sized to remain legible at the review camera.
 for s,body in ((-1,'NO\nFISHING'),(1,'WATER\nWIGGLERS\nWELCOME.')):
@@ -934,24 +1020,27 @@ for screen in bpy.data.screens:
 
 deps=bpy.context.evaluated_depsgraph_get()
 triangles=0;objects=0;all_coords=[]
+part_counts={'slides_and_rims':0,'rope_details':0,'shell_decorations':0}
 for ob in asset.objects:
     if ob.type not in ('MESH','FONT','CURVE'): continue
     ev=ob.evaluated_get(deps);me=ev.to_mesh();me.calc_loop_triangles()
     triangles+=len(me.loop_triangles);objects+=1
+    group='slides_and_rims' if ob.name.startswith(('Blue sweeping flume','Coral sweeping flume','Smooth rolled slide lip')) else 'rope_details' if ob.name.startswith(('Rope lashing','Facade rope wrap','Sagging rope rail','Buoy suspension','Sign hanging rope','Net top rope')) else 'shell_decorations' if ob.name.startswith(('Scallop fan rib','Scallop canopy','Textured scallop')) else None
+    if group: part_counts[group]+=len(me.loop_triangles)
     all_coords.extend([ob.matrix_world@Vector(p) for p in ob.bound_box])
     ev.to_mesh_clear()
 coords=np.array(all_coords)
 report={
-    'revision':3,
+    'revision':4,
     'revision_changes':[
-        'Shallow carved dolphin and shrimp with painted eyes, closed smiles and shell divisions.',
-        'Clear slide entrances with no arches; supports terminate below the actual trough floor.',
-        'Lantern and lighthouse emission strength 6, retained in glTF materials.',
-        'Mottled mineral stone color, pitted normal maps and variable roughness.',
-        'Clustered barnacle color, shell normal relief and roughness on lower pier posts.',
+        'Slides use 28 longitudinal samples and integrated closed rims instead of separate tubes.',
+        'Suspended ropes use crossed opaque UV strips; wrapped ropes use eight-sided UV bands.',
+        'Three connected shell fans replace overlapping lobes; fine ribs use color and normal maps.',
+        'Painted mascots, rock and barnacle textures, and emissive lanterns preserved.',
     ],
     'blender_version':bpy.app.version_string,
     'authoring_objects':objects,'evaluated_triangles':triangles,
+    'optimized_part_triangles':part_counts,
     'materials':len({slot.material for ob in asset.objects for slot in ob.material_slots}),
     'authoring_dimensions':(coords.max(axis=0)-coords.min(axis=0)).tolist(),
     'mascot_design':mascot_report,

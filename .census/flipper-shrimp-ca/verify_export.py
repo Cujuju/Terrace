@@ -4,10 +4,11 @@ import json
 import math
 import struct
 import sys
+import hashlib
 from pathlib import Path
 from mathutils import Vector
 
-ROOT=Path(__file__).resolve().parent/'revision-3'
+ROOT=Path(__file__).resolve().parent/'revision-4'
 bpy.ops.wm.open_mainfile(filepath=str(ROOT/'flipper-shrimp-ca.blend'))
 scene=bpy.context.scene
 collection=next(c for c in scene.collection.children if c.name.startswith('CLUBHOUSE'))
@@ -18,7 +19,8 @@ camera.location=(1.3,-16,11.4)
 camera.rotation_euler=(Vector((0,1,7.8))-camera.location).to_track_quat('-Z','Y').to_euler()
 camera.data.ortho_scale=8.15
 scene.render.filepath=str(ROOT/'mascots-closeup.png')
-bpy.ops.render.render(write_still=True)
+if '--reuse-renders' not in sys.argv or not (ROOT/'mascots-closeup.png').exists():
+    bpy.ops.render.render(write_still=True)
 camera.location=(5.7,-12,5.5)
 camera.rotation_euler=(Vector((2.45,-2.7,.80))-camera.location).to_track_quat('-Z','Y').to_euler()
 camera.data.ortho_scale=4.9
@@ -40,7 +42,14 @@ for item in collection.objects:
         side=-1 if item.name.startswith('Blue') else 1
         intruding=sum(1 for v in surface.vertices if 1.40<v.co.z<1.64 and ((v.co.x-side*3.58)/1.55)**2+((v.co.y+1.25)/1.78)**2<1)
         evaluated.to_mesh_clear()
-        slide_checks.append({'name':item.name,'upward_faces':sum(p.normal.z>0 for p in item.data.polygons),'faces':len(item.data.polygons),'vertices_inside_lounge_deck':intruding})
+        profile=item.get('trough_profile_sides',0)
+        floor_faces=[p for p in item.data.polygons if p.index<item['longitudinal_panels']*profile and p.index%profile<item['inner_profile_edges']] if profile else list(item.data.polygons)
+        edge_uses={}
+        for face in item.data.polygons:
+            ids=list(face.vertices)
+            for a,b in zip(ids,ids[1:]+ids[:1]):
+                key=tuple(sorted((a,b)));edge_uses[key]=edge_uses.get(key,0)+1
+        slide_checks.append({'name':item.name,'upward_floor_faces':sum(p.normal.z>0 for p in floor_faces),'floor_faces':len(floor_faces),'vertices_inside_lounge_deck':intruding,'closed_rims':bool(profile),'nonmanifold_edges':sum(v!=2 for v in edge_uses.values())})
 overlay_count=sum(o.name.startswith('Slide running water') for o in collection.objects)
 lanterns=[o for o in collection.objects if o.name.startswith(('Amber lantern','Lighthouse glowing lantern'))]
 emission_source={}
@@ -48,7 +57,7 @@ for lamp in lanterns:
     bs=next(n for n in lamp.data.materials[0].node_tree.nodes if n.type=='BSDF_PRINCIPLED')
     emission_source[lamp.name]=float(bs.inputs['Emission Strength'].default_value)
 surface_maps={}
-for name in ('Limestone','Warm stone','Barnacled timber','Dolphin painted relief','Shrimp painted relief'):
+for name in ('Limestone','Warm stone','Barnacled timber','Dolphin painted relief','Shrimp painted relief','Rope','UV textured rope cord','Ivory shell relief','Coral shell relief'):
     mat=bpy.data.materials[name]
     surface_maps[name]=[n.image.name for n in mat.node_tree.nodes if n.type=='TEX_IMAGE' and n.image]
 camera.location=oldloc;camera.rotation_euler=oldrot;camera.data.ortho_scale=oldscale
@@ -84,8 +93,22 @@ factor=11.0600004196167/.86
 ob.scale*=factor
 bpy.context.view_layer.update()
 scene.render.filepath=str(ROOT/'export-roundtrip.png')
-bpy.ops.render.render(write_still=True)
+if '--reuse-renders' not in sys.argv or not (ROOT/'export-roundtrip.png').exists():
+    bpy.ops.render.render(write_still=True)
 report=json.loads((ROOT/'verification.json').read_text())
+previous=ROOT.parent/'revision-3'
+previous_report=json.loads((previous/'verification.json').read_text())
+preserved=[]
+for prefix in ('Limestone','Warm stone','Barnacled timber','Dolphin painted relief','Shrimp painted relief'):
+    for old in (previous/'textures').glob(prefix+'*.png'):
+        current=ROOT/'textures'/old.name
+        preserved.append({'texture':old.name,'identical':hashlib.sha256(old.read_bytes()).digest()==hashlib.sha256(current.read_bytes()).digest()})
+report['comparison_to_revision_3']={
+    'previous_triangles':previous_report['evaluated_triangles'],
+    'triangles_removed':previous_report['evaluated_triangles']-report['evaluated_triangles'],
+    'previous_optimized_part_triangles':{'slides_and_rims':11240,'rope_details':7708,'shell_decorations':10674},
+    'preserved_texture_checks':preserved,
+}
 report['export_verified']={
     'triangles':triangles,'mesh_count':len(gltf['meshes']),
     'material_primitives':sum(len(m['primitives']) for m in gltf['meshes']),

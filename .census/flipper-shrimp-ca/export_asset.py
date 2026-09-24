@@ -3,8 +3,16 @@ import bpy
 import bmesh
 import json
 import tempfile
+import struct
 from pathlib import Path
 from mathutils import Vector
+
+
+def glb_triangle_count(path):
+    raw=path.read_bytes()
+    length=struct.unpack_from('<I',raw,12)[0]
+    data=json.loads(raw[20:20+length])
+    return sum(data['accessors'][p['indices']]['count']//3 for m in data['meshes'] for p in m['primitives'])
 
 
 def export_asset(root):
@@ -43,8 +51,10 @@ def export_asset(root):
         bpy.context.view_layer.objects.active=joined
         bpy.ops.object.modifier_apply(modifier=mod.name)
         joined.data.calc_loop_triangles()
-        report['lighter_export_triangles']=len(joined.data.loop_triangles)
+        report['lighter_mesh_triangles']=len(joined.data.loop_triangles)
         bpy.ops.export_scene.gltf(filepath=str(root/'flipper-shrimp-ca-light.glb'),export_format='GLB',use_selection=True,export_apply=True)
+        # The exporter can discard collapsed/degenerate faces; report the file itself.
+        report['lighter_export_triangles']=glb_triangle_count(root/'flipper-shrimp-ca-light.glb')
         report['lighter_export_bytes']=(root/'flipper-shrimp-ca-light.glb').stat().st_size
         (root/'verification.json').write_text(json.dumps(report,indent=2)+'\n')
         print('LIGHTER EXPORT',report['lighter_export_triangles'],flush=True)
@@ -55,6 +65,6 @@ def export_asset(root):
 
 
 if __name__=='__main__':
-    root=Path(__file__).resolve().parent/'revision-3'
+    root=Path(__file__).resolve().parent/'revision-4'
     bpy.ops.wm.open_mainfile(filepath=str(root/'flipper-shrimp-ca.blend'))
     export_asset(root)
