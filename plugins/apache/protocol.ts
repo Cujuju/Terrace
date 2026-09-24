@@ -1,4 +1,4 @@
-import { isFiniteNumber } from '@terrace/shared';
+import { isFiniteNumber, scaleToRealSize } from '@terrace/shared';
 
 export const APACHE_PLUGIN_NAME = 'apache';
 export const APACHE_STATE_MESSAGE = 'state';
@@ -7,6 +7,14 @@ export const FLIGHT_HALF_LENGTH = 20;
 export const FLIGHT_BEND = 4;
 export const APPROACH_HEIGHT = 4;
 export const ROOFTOP_CLEARANCE = 3;
+
+// Authored extents of apache.glb (nose to tail, rotor disc radius); the client checks the GLB against them.
+export const APACHE_AUTHORED_LENGTH_WORLD_UNITS = 0.997;
+export const APACHE_AUTHORED_ROTOR_RADIUS_WORLD_UNITS = 0.388;
+
+export const APACHE_REAL_LENGTH_METRES = 17.7;
+
+export const APACHE_DRAW_SCALE = scaleToRealSize(APACHE_AUTHORED_LENGTH_WORLD_UNITS, APACHE_REAL_LENGTH_METRES);
 
 export interface ApacheFlight {
   readonly id: number;

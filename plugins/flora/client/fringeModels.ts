@@ -10,7 +10,7 @@ import {
   Vector3,
   type Material,
 } from 'three';
-import { CELL_WORLD_SIZE } from '@terrace/shared';
+import { CELL_WORLD_SIZE, drawnCells } from '@terrace/shared';
 import { weldFlatShaded } from '../../../client/src/render/weld.ts';
 import { bakeSolidColor } from '../../../client/src/render/bakeSolidColor.ts';
 import {
@@ -61,8 +61,12 @@ interface StemShape {
   readonly tipColor: number;
 }
 
+const REED_REAL_HEIGHT_METRES = 2;
+
+const HEATHER_REAL_HEIGHT_METRES = 0.4;
+
 const REED: StemShape = {
-  lengthInCells: 0.85,
+  lengthInCells: drawnCells(REED_REAL_HEIGHT_METRES),
   baseWidthInCells: 0.07,
   segments: 6,
   tipSegments: 2,
@@ -73,7 +77,7 @@ const REED: StemShape = {
 };
 
 const HEATHER: StemShape = {
-  lengthInCells: 0.3,
+  lengthInCells: drawnCells(HEATHER_REAL_HEIGHT_METRES),
   baseWidthInCells: 0.06,
   segments: 5,
   tipSegments: 3,

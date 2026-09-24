@@ -9,7 +9,7 @@ import {
   type BufferGeometry,
   type Material,
 } from 'three';
-import { CELL_WORLD_SIZE } from '@terrace/shared';
+import { CELL_WORLD_SIZE, scaleToRealSize } from '@terrace/shared';
 import {
   CROP_PLOT_CLUSTER_CELL_SPAN,
   CROP_SCALE_MAX,
@@ -65,6 +65,17 @@ export interface CropModels {
   dispose(): void;
 }
 
+const WHEAT_REAL_HEIGHT_METRES = 1;
+
+function authoredTopY(geometries: readonly BufferGeometry[]): number {
+  let top = 0;
+  for (const geometry of geometries) {
+    geometry.computeBoundingBox();
+    top = Math.max(top, geometry.boundingBox!.max.y);
+  }
+  return top;
+}
+
 function lambert(): MeshLambertMaterial {
   return new MeshLambertMaterial({ vertexColors: true, flatShading: true });
 }
@@ -72,6 +83,8 @@ function lambert(): MeshLambertMaterial {
 export function createCropModels(): CropModels {
   const built = WHEAT_VARIANT_BUILDERS[SHIPPED_WHEAT_VARIANT]!();
   const geometries: BufferGeometry[] = [built.stalk, built.ear];
+  const drawScale = scaleToRealSize(authoredTopY(geometries), WHEAT_REAL_HEIGHT_METRES);
+  for (const geometry of geometries) geometry.scale(drawScale, drawScale, drawScale);
   bakeSolidColor(built.stalk, STALK_COLOR);
   bakeSolidColor(built.ear, EAR_COLOR);
   const sharedMaterial = lambert();

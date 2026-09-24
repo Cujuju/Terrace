@@ -12,7 +12,7 @@ import {
   Vector3,
   type Material,
 } from 'three';
-import { CELL_WORLD_SIZE } from '@terrace/shared';
+import { CELL_WORLD_SIZE, drawnCells } from '@terrace/shared';
 import { weldFlatShaded } from '../../../client/src/render/weld.ts';
 import { bakeSolidColor } from '../../../client/src/render/bakeSolidColor.ts';
 import {
@@ -53,7 +53,9 @@ const TIP_COLOR = 0xc8e07a;
 // Blossoms are tinted per instance, so their baked color must be identity.
 const INSTANCE_TINT_IDENTITY_COLOR = 0xffffff;
 
-const BLADE_LENGTH_IN_CELLS = 0.5;
+const GRASS_REAL_HEIGHT_METRES = 0.4;
+
+const BLADE_LENGTH_IN_CELLS = drawnCells(GRASS_REAL_HEIGHT_METRES);
 
 const BLADE_BASE_WIDTH_IN_CELLS = 0.09;
 

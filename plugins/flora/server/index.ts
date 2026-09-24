@@ -1,4 +1,4 @@
-import { CHUNK_SIZE, type CellDiff } from '@terrace/shared';
+import { CHUNK_SIZE, drawnWorldUnits, type CellDiff } from '@terrace/shared';
 import type {
   PersistenceSlice,
   SliceLoadOutcome,
@@ -7,6 +7,7 @@ import type {
   WorldApi,
 } from '../../../server/src/plugins/types.ts';
 import {
+  FLORA_CONIFER_REAL_HEIGHT_METRES,
   FLORA_CHANGES_MESSAGE,
   FLORA_CROPS_MESSAGE,
   FLORA_CROP_CHANGES_MESSAGE,
@@ -598,7 +599,7 @@ export const FLORA_TREE_BURN_SECONDS = 22;
 
 export const FLORA_CROP_BURN_SECONDS = 4;
 
-export const FLORA_TREE_FUEL_HEIGHT = 1.5;
+export const FLORA_TREE_FUEL_HEIGHT = drawnWorldUnits(FLORA_CONIFER_REAL_HEIGHT_METRES);
 
 export const FLORA_CROP_FUEL_HEIGHT = 0.35;
 

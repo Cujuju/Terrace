@@ -1,8 +1,14 @@
-import { CELL_WORLD_SIZE, MAX_HEIGHT, MAX_RELIEF_WORLD_UNITS, SEA_LEVEL } from '@terrace/shared';
+import { CELL_WORLD_SIZE, MAX_HEIGHT, MAX_RELIEF_WORLD_UNITS, SEA_LEVEL, cellsAcross } from '@terrace/shared';
 import { createSiblingBridge } from '../../../server/src/plugins/kit/bridge.ts';
 import type { PluginActionSite, WorldApi } from '../../../server/src/plugins/types.ts';
 import { createFlightPose, sampleFlight } from '../flight.ts';
-import { FLIGHT_SECONDS, ROOFTOP_CLEARANCE, type ApacheFlight } from '../protocol.ts';
+import {
+  APACHE_AUTHORED_ROTOR_RADIUS_WORLD_UNITS,
+  APACHE_DRAW_SCALE,
+  FLIGHT_SECONDS,
+  ROOFTOP_CLEARANCE,
+  type ApacheFlight,
+} from '../protocol.ts';
 
 interface StructuresApi {
   standingStructures(): readonly { readonly x: number; readonly y: number }[];
@@ -17,7 +23,11 @@ export const settlements = createSiblingBridge<StructuresApi>({
 });
 
 const HEIGHT_SCALE = MAX_RELIEF_WORLD_UNITS / MAX_HEIGHT;
-const CORRIDOR_RADIUS_CELLS = 3;
+// One cell past the drawn rotor disc covers sampling between cell centres.
+const CORRIDOR_ROUNDING_CELLS = 1;
+const CORRIDOR_RADIUS_CELLS = Math.ceil(
+  cellsAcross(APACHE_AUTHORED_ROTOR_RADIUS_WORLD_UNITS * APACHE_DRAW_SCALE) + CORRIDOR_ROUNDING_CELLS,
+);
 const MAX_TARGET_ATTEMPTS = 6;
 
 function corridorAltitude(world: WorldApi, flight: ApacheFlight, groundCache: Map<number, number>): number | null {

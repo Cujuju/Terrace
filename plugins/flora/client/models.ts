@@ -12,7 +12,16 @@ import {
   type BufferGeometry,
   type Material,
 } from 'three';
-import { FLORA_TREE_CAP, FLORA_TREE_SCALE_MAX, treeKey, type FloraTreeKind, type TreeCell } from '../protocol.ts';
+import { CELL_WORLD_SIZE, scaleToRealSize } from '@terrace/shared';
+import {
+  FLORA_CONIFER_REAL_HEIGHT_METRES,
+  FLORA_TREE_CAP,
+  FLORA_TREE_SCALE_MAX,
+  TREE_CLEARANCE_RADIUS_CELLS,
+  treeKey,
+  type FloraTreeKind,
+  type TreeCell,
+} from '../protocol.ts';
 import { bakeSolidColor } from '../../../client/src/render/bakeSolidColor.ts';
 import {
   MATRIX_FLOATS_PER_INSTANCE,
@@ -27,21 +36,38 @@ import {
   type InstanceReach,
 } from './instanceBounds.ts';
 
-export const TRUNK_HEIGHT = 0.45;
-const TRUNK_TOP_RADIUS = 0.055;
-export const TRUNK_BOTTOM_RADIUS = 0.085;
+const AUTHORED_TRUNK_HEIGHT = 0.45;
+const AUTHORED_CONIFER_CROWN_HEIGHT = 1.05;
+
+export const TREE_DRAW_SCALE = scaleToRealSize(
+  AUTHORED_TRUNK_HEIGHT + AUTHORED_CONIFER_CROWN_HEIGHT,
+  FLORA_CONIFER_REAL_HEIGHT_METRES,
+);
+
+export const TRUNK_HEIGHT = AUTHORED_TRUNK_HEIGHT * TREE_DRAW_SCALE;
+const TRUNK_TOP_RADIUS = 0.055 * TREE_DRAW_SCALE;
+export const TRUNK_BOTTOM_RADIUS = 0.085 * TREE_DRAW_SCALE;
 const TRUNK_SEGMENTS = 5;
 
-export const CONIFER_CROWN_RADIUS = 0.38;
-export const CONIFER_CROWN_HEIGHT = 1.05;
+export const CONIFER_CROWN_RADIUS = 0.38 * TREE_DRAW_SCALE;
+export const CONIFER_CROWN_HEIGHT = AUTHORED_CONIFER_CROWN_HEIGHT * TREE_DRAW_SCALE;
 export const CONIFER_CROWN_SEGMENTS = 6;
 
-export const PINE_CROWN_RADIUS = 0.3;
-export const PINE_CROWN_HEIGHT = 1.3;
+export const PINE_CROWN_RADIUS = 0.3 * TREE_DRAW_SCALE;
+export const PINE_CROWN_HEIGHT = 1.3 * TREE_DRAW_SCALE;
 export const PINE_CROWN_SEGMENTS = 6;
 
-export const BROADLEAF_CROWN_RADIUS = 0.46;
+export const BROADLEAF_CROWN_RADIUS = 0.46 * TREE_DRAW_SCALE;
 export const BROADLEAF_CROWN_SEGMENTS = 6;
+
+// A cell centre checks the half cell around it, so a crown may reach half a cell past the clearance radius.
+const CLEARANCE_CELL_HALF = 0.5;
+const WIDEST_CROWN_REACH_CELLS = (BROADLEAF_CROWN_RADIUS * FLORA_TREE_SCALE_MAX) / CELL_WORLD_SIZE;
+if (WIDEST_CROWN_REACH_CELLS > TREE_CLEARANCE_RADIUS_CELLS + CLEARANCE_CELL_HALF) {
+  throw new RangeError(
+    `the widest crown reaches ${WIDEST_CROWN_REACH_CELLS.toFixed(3)} cells, past TREE_CLEARANCE_RADIUS_CELLS ${TREE_CLEARANCE_RADIUS_CELLS}`,
+  );
+}
 const BROADLEAF_CROWN_RINGS = 4;
 
 const BROADLEAF_CROWN_TRUNK_OVERLAP = 0.95;

@@ -155,6 +155,9 @@ export type FloraTreeKind = (typeof FLORA_TREE_KINDS)[number];
 
 export const FLORA_CONIFER_SHARE_OF_256 = 154;
 
+// The conifer sets the one tree draw scale; pine and broadleaf keep their authored proportions to it.
+export const FLORA_CONIFER_REAL_HEIGHT_METRES = 15;
+
 export const FLORA_TREE_SCALE_MIN = 0.78;
 export const FLORA_TREE_SCALE_MAX = 1.25;
 
@@ -201,7 +204,7 @@ export function treeKindAt(x: number, y: number, height: number): FloraTreeKind 
  * largest scale roll, so every kind clears when this passes. Integer-only
  * and deterministic on server and client.
  */
-export const TREE_CLEARANCE_RADIUS_CELLS = 2;
+export const TREE_CLEARANCE_RADIUS_CELLS = 3;
 
 /** A neighbour may rise at most one band above the trunk base. Anything
  * higher juts into the crown: no room for a tree.

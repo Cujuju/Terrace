@@ -1,10 +1,15 @@
 import { Quaternion, Vector3, type Bone } from 'three';
 import type { NodeMaterial } from 'three/webgpu';
 import type { ClientPluginCtx } from '../../../client/src/plugins/types.ts';
-import type { RigAsset } from '../../../client/src/render/rigAsset.ts';
+import { assertAssetFits, type RigAsset } from '../../../client/src/render/rigAsset.ts';
 import { bakeRig, instantiateRig, type RigBlueprint, type RigInstance } from '../../../client/src/render/rigSkin.ts';
 import { toNodeMaterial } from '../../../client/src/render/nodeMaterialFrom.ts';
 import apacheUrl from '../../../client/src/assets/apache/apache.glb?url';
+import {
+  APACHE_AUTHORED_LENGTH_WORLD_UNITS,
+  APACHE_AUTHORED_ROTOR_RADIUS_WORLD_UNITS,
+  APACHE_DRAW_SCALE,
+} from '../protocol.ts';
 
 export interface ApacheModel {
   readonly rig: RigInstance;
@@ -17,6 +22,11 @@ let asset: RigAsset | null = null;
 
 export async function preloadApache(ctx: ClientPluginCtx): Promise<void> {
   asset = await ctx.loadRigAsset(apacheUrl, 'sky-environment');
+  // The server sizes the flight corridor from these extents, so the GLB must not outgrow them.
+  assertAssetFits(asset, {
+    x: APACHE_AUTHORED_LENGTH_WORLD_UNITS,
+    z: APACHE_AUTHORED_ROTOR_RADIUS_WORLD_UNITS * 2,
+  });
 }
 
 export function releaseApache(): void {
@@ -51,6 +61,7 @@ export function createApache(ctx: ClientPluginCtx): ApacheModel {
   const mainAxis = new Vector3(0, 1, 0), tailAxis = new Vector3(0, 0, 1);
   const spin = new Quaternion();
   rig.root.name = 'apache:visitor';
+  rig.root.scale.setScalar(APACHE_DRAW_SCALE);
   rig.root.rotation.order = 'YZX';
   rig.root.visible = false;
   ctx.layer.add(rig.root);

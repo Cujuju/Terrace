@@ -1,3 +1,4 @@
+import { scaleToRealSize } from '@terrace/shared';
 import { hashStructureCell, type StructureTier } from '../protocol.ts';
 
 export const SKIFF_MIN_TIER: StructureTier = 1;
@@ -12,7 +13,9 @@ export const SKIFF_ORBIT_RADIUS_MAX_WORLD_UNITS = 0.28;
 export const SKIFF_HULL_AUTHORED_LENGTH_WORLD_UNITS = 0.36;
 export const SKIFF_HULL_AUTHORED_BEAM_WORLD_UNITS = 0.14;
 
-export const SKIFF_MODEL_SCALE = 1.6;
+export const SKIFF_REAL_LENGTH_METRES = 4;
+
+export const SKIFF_MODEL_SCALE = scaleToRealSize(SKIFF_HULL_AUTHORED_LENGTH_WORLD_UNITS, SKIFF_REAL_LENGTH_METRES);
 
 export const SKIFF_HULL_LENGTH_WORLD_UNITS =
   SKIFF_HULL_AUTHORED_LENGTH_WORLD_UNITS * SKIFF_MODEL_SCALE;
