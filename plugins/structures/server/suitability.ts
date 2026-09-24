@@ -56,10 +56,13 @@ export function hasClearFootprint(
   tier: StructureTier = CAMP_TIER,
 ): boolean {
   const band = drawnBandOfSample(world.heightAt(x, y));
+  const anyReserved = hasReservedStructureCells();
   for (const [dx, dy] of FOOTPRINT_OFFSETS_BY_TIER[tier]!) {
     const nx = x + dx;
     const ny = y + dy;
     if (nx < 0 || ny < 0 || nx >= world.worldSize || ny >= world.worldSize) return false;
+    // A multi-cell building may not reach onto ground a sibling reserved, such as a temple.
+    if (anyReserved && isReservedStructureCell(structureKey(nx, ny))) return false;
     const neighborHeight = world.heightAt(nx, ny);
     if (isWater(neighborHeight)) return false;
     if (drawnBandOfSample(neighborHeight) !== band) return false;

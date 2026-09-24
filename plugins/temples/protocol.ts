@@ -18,9 +18,19 @@ export interface TempleRefusal {
   readonly reason: number;
 }
 
-export const TEMPLE_FOOTPRINT_SPAN_WORLD_UNITS = 2;
+import { CELL_WORLD_SIZE, cellsAcross, drawnCells, worldUnitsAcross } from '@terrace/shared';
 
-import { CELL_WORLD_SIZE, cellsAcross } from '@terrace/shared';
+/** The temple GLB is authored on this base span; the procedural fallback is built on the drawn span. */
+export const TEMPLE_AUTHORED_SPAN_WORLD_UNITS = 2;
+
+export const TEMPLE_REAL_SPAN_METRES = 25;
+
+// Whole cells, so the survey square and the door cell land on the grid.
+export const TEMPLE_FOOTPRINT_SPAN_CELLS = Math.round(drawnCells(TEMPLE_REAL_SPAN_METRES));
+
+export const TEMPLE_FOOTPRINT_SPAN_WORLD_UNITS = worldUnitsAcross(TEMPLE_FOOTPRINT_SPAN_CELLS);
+
+export const TEMPLE_DRAW_SCALE = TEMPLE_FOOTPRINT_SPAN_WORLD_UNITS / TEMPLE_AUTHORED_SPAN_WORLD_UNITS;
 
 export const TEMPLE_FRONT_APRON_WORLD_UNITS = TEMPLE_FOOTPRINT_SPAN_WORLD_UNITS / 4;
 
@@ -36,9 +46,8 @@ export interface TempleCell {
   readonly y: number;
 }
 
-export const TEMPLE_DOOR_OFFSET_CELLS = cellsAcross(
-  TEMPLE_FOOTPRINT_SPAN_WORLD_UNITS / 2 + TEMPLE_FRONT_APRON_WORLD_UNITS,
-);
+// The door is the first surveyed cell past the stair apron's foot.
+export const TEMPLE_DOOR_OFFSET_CELLS = TEMPLE_SURVEY_RADIUS_CELLS;
 
 export function templeDoorCell(temple: TempleCell): { x: number; y: number } {
   return { x: temple.x + TEMPLE_DOOR_OFFSET_CELLS, y: temple.y };

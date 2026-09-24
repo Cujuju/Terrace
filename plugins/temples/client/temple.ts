@@ -9,6 +9,7 @@ import {
 } from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
+  TEMPLE_DRAW_SCALE,
   TEMPLE_FOOTPRINT_SPAN_WORLD_UNITS,
   TEMPLE_FRONT_APRON_WORLD_UNITS,
 } from '../protocol.ts';
@@ -209,7 +210,9 @@ const GHOST_ILLEGAL_COLOR = 0xd9634a;
 export function createTempleModels(kit?: import('../../../client/src/render/buildingAssetKit.ts').BuildingAssetKit): TempleModels {
   const authored = kit?.parts('temple')[0];
   const geometry = authored === undefined ? buildTempleGeometry()
-    : authored.geometry.applyMatrix4(authored.localMatrices[0]);
+    : authored.geometry
+      .applyMatrix4(authored.localMatrices[0])
+      .scale(TEMPLE_DRAW_SCALE, TEMPLE_DRAW_SCALE, TEMPLE_DRAW_SCALE);
 
   const stone = authored?.material ?? new MeshLambertMaterial({ vertexColors: true, flatShading: true });
   const ghostMaterial = new MeshLambertMaterial({
