@@ -17,7 +17,7 @@ import {
   type Occupant,
   advanceStillness,
 } from '@terrace/shared';
-import { WILDLIFE_SIZE_MODEL_SCALE, type WildlifeHabitatSpecies } from '../protocol.ts';
+import { drawnLengthWorldUnits, realLengthMetres, type WildlifeHabitatSpecies } from '../protocol.ts';
 import { type HabitatWorld, canTraverse, isValidCellFor, walkerProfileOf } from './census.ts';
 import { erodedSamplerFor, isHullPoseValid } from './hull.ts';
 import { type WildlifeEntity, despawnWithCredit, livingEntities } from './population.ts';
@@ -72,7 +72,7 @@ export function schoolLoosenessOf(entity: WildlifeEntity): number {
 }
 
 export function bodyLengthCellsOf(entity: WildlifeEntity): number {
-  return profileOf(entity.species).bodyLengthCells * WILDLIFE_SIZE_MODEL_SCALE[entity.size];
+  return cellsAcross(drawnLengthWorldUnits(realLengthMetres(entity.species, entity.id), entity.size));
 }
 
 export function personalSpaceCellsOf(entity: WildlifeEntity): number {

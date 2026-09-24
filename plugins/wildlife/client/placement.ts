@@ -16,7 +16,7 @@ import { SHARK_ENVELOPE } from './species/shark.ts';
 import { EEL_ENVELOPE } from './species/eel.ts';
 import { ANGELFISH_ENVELOPE } from './species/angelfish.ts';
 import { GRAZER_ENVELOPE, GRAZER_STRIDE_WORLD_UNITS } from './species/grazer.ts';
-import { modelScaleFor, speciesModelScale } from './modelScale.ts';
+import { modelScaleFor, walkerModelScale } from './modelScale.ts';
 import { followGroundY } from '../../../client/src/plugins/kit/groundFollow.ts';
 import { WOLF_ENVELOPE, WOLF_STRIDE_WORLD_UNITS } from './species/wolf.ts';
 import { IBEX_ENVELOPE, IBEX_STRIDE_WORLD_UNITS } from './species/ibex.ts';
@@ -24,7 +24,7 @@ import { BISON_ENVELOPE, BISON_STRIDE_WORLD_UNITS } from './species/bison.ts';
 import { TWO_PI } from './species/speciesModel.ts';
 import { DEEPSEA_ENVELOPE } from './species/deepsea.ts';
 import { WHALE_ENVELOPE } from './whaleSpecies.ts';
-import { BIRD_ENVELOPE } from './models.ts';
+import { BIRD_ENVELOPE } from './species/bird.ts';
 
 const WATER_MARGIN_WORLD_UNITS = 0.12;
 
@@ -226,6 +226,7 @@ export function creatureWorldY(
   species: WildlifeSpecies,
   terrainY: number | null,
   sizeClass: WildlifeSizeClass,
+  variantSeed: number,
   previousY: number | null = null,
   dt = 0,
 ): number {
@@ -236,7 +237,7 @@ export function creatureWorldY(
   const profile = SWIM_PROFILES[species];
   return profile === null
     ? followGroundY(previousY, surfaceY, dt)
-    : swimmerFrameY(previousY, surfaceY, profile, modelScaleFor(species, sizeClass), dt);
+    : swimmerFrameY(previousY, surfaceY, profile, modelScaleFor(species, sizeClass, variantSeed), dt);
 }
 
 export const WALKER_FOOTPRINT_HALF_EXTENT_BY_SPECIES: Readonly<
@@ -245,10 +246,10 @@ export const WALKER_FOOTPRINT_HALF_EXTENT_BY_SPECIES: Readonly<
   fish: null,
   whale: null,
   deepsea: null,
-  grazer: GRAZER_ENVELOPE.bodyHalfLength,
-  wolf: WOLF_ENVELOPE.bodyHalfLength,
-  ibex: IBEX_ENVELOPE.bodyHalfLength,
-  bison: BISON_ENVELOPE.bodyHalfLength,
+  grazer: GRAZER_ENVELOPE.bodyHalfLength * walkerModelScale('grazer'),
+  wolf: WOLF_ENVELOPE.bodyHalfLength * walkerModelScale('wolf'),
+  ibex: IBEX_ENVELOPE.bodyHalfLength * walkerModelScale('ibex'),
+  bison: BISON_ENVELOPE.bodyHalfLength * walkerModelScale('bison'),
   ray: null,
   shark: null,
   eel: null,
@@ -261,10 +262,10 @@ export const WALKER_STRIDE_WORLD_UNITS_BY_SPECIES: Readonly<Record<WildlifeSpeci
     fish: null,
     whale: null,
     deepsea: null,
-    grazer: GRAZER_STRIDE_WORLD_UNITS,
-    wolf: WOLF_STRIDE_WORLD_UNITS,
-    ibex: IBEX_STRIDE_WORLD_UNITS,
-    bison: BISON_STRIDE_WORLD_UNITS,
+    grazer: GRAZER_STRIDE_WORLD_UNITS * walkerModelScale('grazer'),
+    wolf: WOLF_STRIDE_WORLD_UNITS * walkerModelScale('wolf'),
+    ibex: IBEX_STRIDE_WORLD_UNITS * walkerModelScale('ibex'),
+    bison: BISON_STRIDE_WORLD_UNITS * walkerModelScale('bison'),
     ray: null,
     shark: null,
     eel: null,
@@ -277,7 +278,7 @@ export function walkerStrideRadians(species: WildlifeSpecies, distanceWorldUnits
   if (stride === null) {
     throw new Error(`walkerStrideRadians: "${species}" is not a walker and has no stride`);
   }
-  return (distanceWorldUnits / (stride * speciesModelScale(species))) * TWO_PI;
+  return (distanceWorldUnits / stride) * TWO_PI;
 }
 
 export const WALKER_FOOTPRINT_HALF_EXTENT_CELLS_BY_SPECIES: Readonly<

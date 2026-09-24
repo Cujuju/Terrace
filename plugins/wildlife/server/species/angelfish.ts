@@ -1,5 +1,6 @@
 import { cellsAcross, cellsOverArea } from '@terrace/shared';
 import {
+  mediumBodyLengthCells,
   AQUATIC_MAX_GRADIENT_PER_CELL,
   FISH_SCHOOLING_PROBABILITY_BY_SIZE,
   FISH_SIZE_WEIGHTS,
@@ -10,14 +11,18 @@ import {
   type SpeciesProfile,
 } from './profile.ts';
 
+const ANGELFISH_BEAM_OF_LENGTH = 0.17 / 0.6;
+
+export const ANGELFISH_BODY_LENGTH_CELLS = mediumBodyLengthCells('angelfish');
+
 export const ANGELFISH_PROFILE: SpeciesProfile = {
   species: 'angelfish',
   habitat: 'shallow',
   minWaterDepthBands: NO_MIN_WATER_DEPTH,
   cruiseSpeedCellsPerSecond: cellsAcross(1.6),
   turnNoiseRadiansPerSecond: 1.0,
-  bodyLengthCells: cellsAcross(0.6),
-  hullBeamCells: cellsAcross(0.17),
+  bodyLengthCells: ANGELFISH_BODY_LENGTH_CELLS,
+  hullBeamCells: ANGELFISH_BODY_LENGTH_CELLS * ANGELFISH_BEAM_OF_LENGTH,
   habitatCellsPerIndividual: cellsOverArea(800),
   groupSize: 3,
   sizeWeights: FISH_SIZE_WEIGHTS,

@@ -184,7 +184,7 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
               entity.y,
               entity.heading,
               swimProfile,
-              modelScaleFor(entity.species, sizeClass),
+              modelScaleFor(entity.species, sizeClass, id),
             );
     if (kind !== 'flyer' && terrainY === null) continue;
     // The full path spends the whole hold interval at once: smoothers get the elapsed
@@ -195,13 +195,13 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
       kind === 'walker' || entity.climbHeight !== null
         // Continuous climb progress joins drawn support at both ends.
         ? followClimbGroundY(view.climbGround, ctx, entity, previousDrawnY, terrainY!, sinceFull)
-        : creatureWorldY(entity.species, terrainY, sizeClass, previousDrawnY, sinceFull);
+        : creatureWorldY(entity.species, terrainY, sizeClass, id, previousDrawnY, sinceFull);
     if (drawnY === null) continue;
     // Progress is recorded only past the last bail, so a frame that draws nothing
     // neither consumes the hold interval nor claims a gait it never captured.
     view.lodGait = gait;
     view.sinceFullSeconds = 0;
-    const modelScale = modelScaleFor(entity.species, sizeClass);
+    const modelScale = modelScaleFor(entity.species, sizeClass, id);
     advanceClimbRiserShift(view.riserShift, ctx, entity, drawnY, sinceFull,
       entity.species === 'ibex' ? cellsAcross(IBEX_ENVELOPE.climbReach * modelScale) : undefined);
     const drawnX = (entity.x + view.riserShift.x) * CELL_WORLD_SIZE;

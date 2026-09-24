@@ -1,6 +1,10 @@
 import { cellsAcross, cellsOverArea } from '@terrace/shared';
-import { WILDLIFE_HABITAT_SPECIES, type WildlifeHabitatSpecies } from '../protocol.ts';
 import {
+  WILDLIFE_HABITAT_SPECIES,
+  type WildlifeHabitatSpecies,
+} from '../protocol.ts';
+import {
+  mediumBodyLengthCells,
   AQUATIC_MAX_GRADIENT_PER_CELL,
   FISH_SCHOOLING_PROBABILITY_BY_SIZE,
   FISH_SIZE_WEIGHTS,
@@ -40,6 +44,20 @@ export const FISH_SCHOOLS_ON_FRESH_SHELF = 1;
 export const WHALE_MIN_WATER_DEPTH_BANDS = 15;
 export const DEEPSEA_MIN_WATER_DEPTH_BANDS = 20;
 
+const FISH_BEAM_OF_LENGTH = 0.16 / 0.7;
+
+export const FISH_BODY_LENGTH_CELLS = mediumBodyLengthCells('fish');
+
+const WHALE_BEAM_OF_LENGTH = 1.0 / 5;
+
+export const WHALE_BODY_LENGTH_CELLS = mediumBodyLengthCells('whale');
+
+const DEEPSEA_BEAM_OF_LENGTH = 0.55 / 1.2;
+
+export const DEEPSEA_BODY_LENGTH_CELLS = mediumBodyLengthCells('deepsea');
+
+export const GRAZER_BODY_LENGTH_CELLS = mediumBodyLengthCells('grazer');
+
 export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesProfile>> = {
   fish: {
     species: 'fish',
@@ -47,8 +65,8 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesPr
     minWaterDepthBands: NO_MIN_WATER_DEPTH,
     cruiseSpeedCellsPerSecond: cellsAcross(3),
     turnNoiseRadiansPerSecond: 1.4,
-    bodyLengthCells: cellsAcross(0.7),
-    hullBeamCells: cellsAcross(0.16),
+    bodyLengthCells: FISH_BODY_LENGTH_CELLS,
+    hullBeamCells: FISH_BODY_LENGTH_CELLS * FISH_BEAM_OF_LENGTH,
     habitatCellsPerIndividual: cellsOverArea(400),
     groupSize: 5,
     sizeWeights: FISH_SIZE_WEIGHTS,
@@ -66,8 +84,8 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesPr
     minWaterDepthBands: WHALE_MIN_WATER_DEPTH_BANDS,
     cruiseSpeedCellsPerSecond: cellsAcross(0.8),
     turnNoiseRadiansPerSecond: 0.25,
-    bodyLengthCells: cellsAcross(5),
-    hullBeamCells: cellsAcross(1.0),
+    bodyLengthCells: WHALE_BODY_LENGTH_CELLS,
+    hullBeamCells: WHALE_BODY_LENGTH_CELLS * WHALE_BEAM_OF_LENGTH,
     habitatCellsPerIndividual: cellsOverArea(2000),
     groupSize: WHALE_POD_SIZE,
     sizeWeights: WHALE_SIZE_WEIGHTS,
@@ -85,8 +103,8 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesPr
     minWaterDepthBands: DEEPSEA_MIN_WATER_DEPTH_BANDS,
     cruiseSpeedCellsPerSecond: cellsAcross(1.2),
     turnNoiseRadiansPerSecond: 0.9,
-    bodyLengthCells: cellsAcross(1.2),
-    hullBeamCells: cellsAcross(0.55),
+    bodyLengthCells: DEEPSEA_BODY_LENGTH_CELLS,
+    hullBeamCells: DEEPSEA_BODY_LENGTH_CELLS * DEEPSEA_BEAM_OF_LENGTH,
     habitatCellsPerIndividual: cellsOverArea(1500),
     groupSize: 1,
     sizeWeights: SINGLE_SIZE_WEIGHTS,
@@ -104,7 +122,7 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesPr
     minWaterDepthBands: NO_MIN_WATER_DEPTH,
     cruiseSpeedCellsPerSecond: cellsAcross(0.8),
     turnNoiseRadiansPerSecond: 1.1,
-    bodyLengthCells: cellsAcross(1.1),
+    bodyLengthCells: GRAZER_BODY_LENGTH_CELLS,
     habitatCellsPerIndividual: cellsOverArea(100),
     groupSize: 3,
     sizeWeights: SINGLE_SIZE_WEIGHTS,

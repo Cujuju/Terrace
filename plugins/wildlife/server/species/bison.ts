@@ -1,5 +1,6 @@
 import { LAND_WALKER_MAX_GRADIENT_PER_CELL, cellsAcross, cellsOverArea } from '@terrace/shared';
 import {
+  mediumBodyLengthCells,
   NO_MIN_WATER_DEPTH,
   GRASSLAND_SPAWN_HEIGHTS,
   GRAZER_SPAWN_OPEN_DIRECTIONS,
@@ -18,13 +19,15 @@ export const HERD_SCHOOLING_PROBABILITY_BY_SIZE: SchoolingProbabilities = {
 
 const BISON_IDLE_BOUTS: IdleBouts = { onsetPerSecond: 0.05, endPerSecond: 0.1 };
 
+export const BISON_BODY_LENGTH_CELLS = mediumBodyLengthCells('bison');
+
 export const BISON_PROFILE: SpeciesProfile = {
   species: 'bison',
   habitat: 'land',
   minWaterDepthBands: NO_MIN_WATER_DEPTH,
   cruiseSpeedCellsPerSecond: cellsAcross(0.6),
   turnNoiseRadiansPerSecond: 0.5,
-  bodyLengthCells: cellsAcross(1.6),
+  bodyLengthCells: BISON_BODY_LENGTH_CELLS,
   habitatCellsPerIndividual: cellsOverArea(600),
   groupSize: 6,
   sizeWeights: SINGLE_SIZE_WEIGHTS,

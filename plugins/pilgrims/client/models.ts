@@ -13,6 +13,7 @@ import {
   type Object3D,
 } from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { PEEP_HEIGHT_METRES, PEEP_HEIGHT_WORLD_UNITS, scaleToRealSize } from '@terrace/shared';
 import { MOVER_GAITS, moverGaitIndex, type MoverGait } from '../../../client/src/plugins/kit/moverGait.ts';
 import { applyMoverBodyTilt } from '../../../client/src/plugins/kit/moverBodyTilt.ts';
 import { bakeRig, instantiateRig, type RigBlueprint } from '../../../client/src/render/rigSkin.ts';
@@ -28,9 +29,9 @@ import {
 
 const PILGRIM_AUTHORED_HEIGHT = 0.62;
 
-export const PILGRIM_MODEL_SCALE = 0.85;
+export const PILGRIM_MODEL_SCALE = scaleToRealSize(PILGRIM_AUTHORED_HEIGHT, PEEP_HEIGHT_METRES);
 
-export const PILGRIM_HEIGHT = PILGRIM_AUTHORED_HEIGHT * PILGRIM_MODEL_SCALE;
+export const PILGRIM_HEIGHT = PEEP_HEIGHT_WORLD_UNITS;
 
 export const STRIDE_HZ = 1.6;
 

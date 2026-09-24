@@ -1,10 +1,11 @@
-import { YETI_VARIANTS, type YetiVariant } from '../protocol.ts';
+import {
+  YETI_AMBLE_SPEED_WORLD_UNITS_PER_SECOND,
+  YETI_TOTAL_HEIGHT,
+  YETI_VARIANTS,
+  type YetiVariant,
+} from '../protocol.ts';
 
-export const PEEP_HEIGHT_WORLD_UNITS = 0.527;
-
-export const YETI_HEIGHT_IN_PEEPS = 2;
-
-export const YETI_TOTAL_HEIGHT = PEEP_HEIGHT_WORLD_UNITS * YETI_HEIGHT_IN_PEEPS;
+export { YETI_HEIGHT_IN_PEEPS, YETI_TOTAL_HEIGHT } from '../protocol.ts';
 
 export interface YetiPoint {
   readonly forward: number;
@@ -1084,7 +1085,7 @@ function solveBounds(body: YetiBody): { apex: number; reach: number } {
   return { apex, reach };
 }
 
-export const YETI_AMBLE_SPEED_CELLS_PER_SECOND = 0.08110465116279071;
+export const YETI_AMBLE_SPEED_CELLS_PER_SECOND = YETI_AMBLE_SPEED_WORLD_UNITS_PER_SECOND;
 
 const BOB_OF_HEIGHT = 0.00872;
 export const YETI_BOB_CELLS = BOB_OF_HEIGHT * YETI_TOTAL_HEIGHT;

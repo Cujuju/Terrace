@@ -13,7 +13,7 @@ import {
   cellsAcross,
   type TraversalProfile,
 } from '@terrace/shared';
-import { MONSTER_KINDS, type MonsterKind } from '../protocol.ts';
+import { MONSTER_KINDS, YETI_AMBLE_SPEED_WORLD_UNITS_PER_SECOND, type MonsterKind } from '../protocol.ts';
 import {
   DEEP_WATER_BANDS_BELOW_SEA,
   HABITAT_REGIMES,
@@ -81,7 +81,7 @@ export const KRAKEN_MIN_LAIR_FITTING_CELLS = Math.ceil(KRAKEN_FOOTPRINT_CELLS **
 
 export const YETI_CLIMB_FALL_CHANCE = 0.05;
 
-export const YETI_FOOTPRINT_CELLS = cellsAcross(1.022681578153609);
+export const YETI_FOOTPRINT_CELLS = cellsAcross(0.7277145954603479);
 
 export const LAIR_BODY_WIDTHS_ACROSS = 4.5;
 
@@ -103,7 +103,7 @@ export const YETI_LAIR_COLLAPSE_SNOW_CELLS = Math.floor(
 
 export const YETI_RESPAWN_COOLDOWN_SECONDS = 600;
 
-export const YETI_AMBLE_SPEED_CELLS_PER_SECOND = cellsAcross(0.08110465116279071);
+export const YETI_AMBLE_SPEED_CELLS_PER_SECOND = cellsAcross(YETI_AMBLE_SPEED_WORLD_UNITS_PER_SECOND);
 
 export const YETI_TURN_NOISE_RADIANS_PER_SECOND = 0.35;
 

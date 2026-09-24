@@ -1,5 +1,6 @@
 import { cellsAcross, cellsOverArea } from '@terrace/shared';
 import {
+  mediumBodyLengthCells,
   AQUATIC_MAX_GRADIENT_PER_CELL,
   NO_MIN_WATER_DEPTH,
   NO_SPAWN_GROUND_RULE,
@@ -13,14 +14,18 @@ import {
 
 const EEL_IDLE_BOUTS: IdleBouts = { onsetPerSecond: 0.04, endPerSecond: 0.10 };
 
+const EEL_BEAM_OF_LENGTH = 0.15 / 1.2;
+
+export const EEL_BODY_LENGTH_CELLS = mediumBodyLengthCells('eel');
+
 export const EEL_PROFILE: SpeciesProfile = {
   species: 'eel',
   habitat: 'shallow',
   minWaterDepthBands: NO_MIN_WATER_DEPTH,
   cruiseSpeedCellsPerSecond: cellsAcross(0.9),
   turnNoiseRadiansPerSecond: 0.5,
-  bodyLengthCells: cellsAcross(1.2),
-  hullBeamCells: cellsAcross(0.15),
+  bodyLengthCells: EEL_BODY_LENGTH_CELLS,
+  hullBeamCells: EEL_BODY_LENGTH_CELLS * EEL_BEAM_OF_LENGTH,
   habitatCellsPerIndividual: cellsOverArea(1500),
   groupSize: 1,
   sizeWeights: SINGLE_SIZE_WEIGHTS,
