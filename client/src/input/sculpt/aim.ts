@@ -27,10 +27,11 @@ export const pointerRay = (s: StrokeState): PointerRay | null => {
 
 const MIN_DRAG_PLANE_DESCENT = 0.05;
 
-export const dragPlaneCell = (
+/** Where the pointer ray meets the held band's tread plane, or null off the ray. */
+const dragPlanePoint = (
   s: StrokeState,
   band: number,
-): { x: number; y: number } | null => {
+): { x: number; y: number; worldX: number; worldY: number; worldZ: number } | null => {
   const size = s.options.worldSize();
   const ray = pointerRay(s);
   if (size <= 0 || ray === null) return null;
@@ -42,7 +43,35 @@ export const dragPlaneCell = (
 
   const worldX = origin.x + direction.x * distance;
   const worldZ = origin.z + direction.z * distance;
-  return worldPointToCell(worldX, worldZ, size);
+  const cell = worldPointToCell(worldX, worldZ, size);
+  return cell === null ? null : { x: cell.x, y: cell.y, worldX, worldY: planeY, worldZ };
+};
+
+export const dragPlaneCell = (
+  s: StrokeState,
+  band: number,
+): { x: number; y: number } | null => {
+  const point = dragPlanePoint(s, band);
+  return point === null ? null : { x: point.x, y: point.y };
+};
+
+/** A held drag's aim: the plane point its legs land on, so the overlays draw where the stroke writes. */
+export const dragAim = (s: StrokeState): TerrainRayPick | null => {
+  if (s.strokeGrab === null) return null;
+  const point = dragPlanePoint(s, s.strokeGrab);
+  if (point === null) return null;
+  const hover = hoverTarget(s);
+  return {
+    spanIndex: hover?.spanIndex ?? 0,
+    x: point.x,
+    y: point.y,
+    surfaceY: point.worldY,
+    face: 'tread',
+    hitX: point.worldX,
+    hitY: point.worldY,
+    hitZ: point.worldZ,
+    band: s.strokeGrab,
+  };
 };
 
 export const repick = (s: StrokeState): TerrainRayPick | null => {

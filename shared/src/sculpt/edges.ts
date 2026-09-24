@@ -15,7 +15,7 @@ import type { SculptOperation } from './options.ts';
 // its in-band height encodes its distance to the nearest band edge.
 
 /** Tools whose writes re-encode the cells around their rings. */
-export const EDGE_AWARE_TOOLS: readonly SculptOperation[] = ['stamp', 'drag'];
+export const EDGE_AWARE_TOOLS: readonly SculptOperation[] = ['drag'];
 
 /** Height units per cell of edge distance: a band's midpoint is one cell from its edges. */
 export const EDGE_UNITS_PER_CELL = DRAWN_GROUND_BAND_BIAS;
@@ -94,6 +94,14 @@ const UNREACHED_QUARTERS = 0x7fffffff;
 function ceilingOf(map: Heightmap, shape: EdgeShape, i: number): number | null {
   const k = shape.spanOf(map, i);
   return k === null ? null : graspedCeiling(map, i, k);
+}
+
+/** Bands apart that a written cell and an unmoved neighbour still share one edge. */
+const ADJACENT_BAND_STEP = 1;
+
+function writtenBandAt(map: Heightmap, shape: EdgeShape, x: number, y: number): number | null {
+  const ceiling = ceilingOf(map, shape, cellIndex(map, x, y));
+  return ceiling === null ? null : drawnBandOfSample(ceiling);
 }
 
 /** Top-band cache markers: a layered column asks its spans; off the map there is no neighbour. */
@@ -289,6 +297,14 @@ export function writeWithEdges(
         // The inner cell sits higher on a raise, lower on a lower.
         const innerHigher = selfInner ? lower : upper;
         const innerMoved = selfInner ? selfMoved : moved[ng] === 1;
+        // An unmoved cell more than a band from what the stroke wrote is another layer's ground.
+        if (!selfMoved && innerMoved && !selfInner) {
+          const [ox, oy] = NEIGHBOUR_OFFSETS[n]!;
+          const writtenBand = writtenBandAt(map, shape, x + ox, y + oy);
+          if (writtenBand === null || writtenBand - band > ADJACENT_BAND_STEP || band - writtenBand > ADJACENT_BAND_STEP) {
+            continue;
+          }
+        }
         if (!(straddles && innerHigher === shape.raising && innerMoved)) {
           if (lower) otherLower = true;
           else otherUpper = true;

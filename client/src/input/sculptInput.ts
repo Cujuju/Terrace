@@ -1,7 +1,7 @@
 import { resolveSculptPress } from '../state/controlPrefs.ts';
 import { effectiveSculptMode } from '../state/hudState.ts';
 import type { TerrainRayPick } from '../terrain/picking.ts';
-import { hoverTarget } from './sculpt/aim.ts';
+import { dragAim, hoverTarget } from './sculpt/aim.ts';
 import { clearRefused, refusedIsShowing } from './sculpt/cues.ts';
 import { takeHold } from './sculpt/drag.ts';
 import { emitIntent } from './sculpt/emit.ts';
@@ -95,6 +95,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
 
   return {
     hoverTarget: (): TerrainRayPick | null => hoverTarget(s),
+    dragAim: (): TerrainRayPick | null => dragAim(s),
     heldBand: (): number | null => s.strokeGrab,
     carveHeldBand: (): number | null => s.strokeCarveBand,
     releaseStroke: (): void => releaseRefusedStroke(s),

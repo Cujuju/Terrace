@@ -2,7 +2,6 @@ import {
   BAND_HEIGHT,
   DEFAULT_SCULPT_AMOUNT,
   MAX_BRUSH_RADIUS,
-  sculptSweepRadius,
   applySculpt,
   createHeightmap,
   drawnBandOfSample,
@@ -57,7 +56,7 @@ export interface Mark {
 }
 
 const SIMULATION_SPAN_CELLS =
-  2 * (sculptSweepRadius(MAX_BRUSH_RADIUS, 'soft', 'stamp', 'clicked') + FOOTPRINT_LATTICE_MARGIN_CELLS + 1);
+  2 * (MAX_BRUSH_RADIUS + FOOTPRINT_LATTICE_MARGIN_CELLS + 1);
 
 // Mid-terrain simulation ground: raise and lower simulate the same
 // footprint here, so the outline never changes size with sculpt direction.

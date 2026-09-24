@@ -102,12 +102,7 @@ export function applyLevelFillBrush(
 
   const raising = amount > 0;
 
-  if (anchor === 'clicked') {
-    pushFootprintOneBand(map, cx, cy, radius, amount, changed, spanBand);
-    return;
-  }
-
-  if (anchor === 'band') {
+  if (anchor !== 'free') {
     const targetHeight = anchoredTargetHeight(map, cx, cy, raising, targetBand, spanBand);
     fillTowardTarget(
       map, cx, cy, radius, amount, changed, raising, targetHeight, true, spanBand, spreadable,
@@ -134,15 +129,6 @@ export function applyLevelFillBrush(
 
   const targetHeight = clampHeight(bandLevelHeight(extremeBand + (raising ? 1 : -1)));
   fillTowardTarget(map, cx, cy, radius, amount, changed, raising, targetHeight, false, spanBand);
-}
-
-export function sculptSweepRadius(
-  radius: number,
-  profile: SculptProfile,
-  tool: SculptTool,
-  anchor: SculptAnchor,
-): number {
-  return tool === 'stamp' && anchor === 'clicked' ? radius + stampSkirtReachCells(radius, profile) : radius;
 }
 
 /** How far past its core a clicked stamp hangs lower treads: soft's apron, stepped's rings. */
@@ -205,74 +191,6 @@ export function stampEdgeShape(
     keepsPriorEdges: true,
     spanOf: (map, i) => graspedSpanIndex(map, i, spanBand),
   };
-}
-
-/** A skirt only exists under a clicked stamp, which is an anchored stroke. */
-const SKIRT_IS_ANCHORED = true;
-
-export function applyStampSkirt(
-  map: Heightmap,
-  cx: number,
-  cy: number,
-  radius: number,
-  profile: SculptProfile,
-  amount: number,
-  coreTarget: number,
-  spanBand: number | null,
-  changed: Set<number>,
-): void {
-  if (amount === 0) return;
-  const raising = amount > 0;
-  const reach = stampSkirtReachCells(radius, profile);
-  const coreBand = drawnBandOfSample(coreTarget);
-  forEachFootprintCell(map, cx, cy, sculptSweepRadius(radius, profile, 'stamp', 'clicked'), (i) => {
-    const x = cellX(map.size, i);
-    const y = cellY(map.size, i);
-    const dx = x - cx;
-    const dy = y - cy;
-    if (isFootprintOffset(radius, dx, dy)) return;
-    let dist = reach;
-    for (let d = 1; d < reach; d++) {
-      if (isFootprintOffset(radius + d, dx, dy)) {
-        dist = d;
-        break;
-      }
-    }
-    const drop = stampSkirtBandDrop(dist, profile);
-    const target = clampHeight(bandLevelHeight(coreBand + (raising ? -drop : drop)));
-    const k = graspedSpanIndex(map, i, spanBand);
-    if (k === null) return;
-    const before = graspedCeiling(map, i, k);
-    if (hasReachedBand(before, target, raising)) return;
-    const moved = before + pressDelta(amount, before, SKIRT_IS_ANCHORED);
-    const h = clampHeight(raising ? (moved > target ? target : moved) : (moved < target ? target : moved));
-    if (h !== before) {
-      writeGraspedCeiling(map, i, k, h);
-      changed.add(i);
-    }
-  });
-}
-
-/** A clicked stamp moves every cell under the disc one band, so its step rings the whole circle on any ground. */
-function pushFootprintOneBand(
-  map: Heightmap,
-  cx: number,
-  cy: number,
-  radius: number,
-  amount: number,
-  changed: Set<number>,
-  spanBand: number | null,
-): void {
-  forEachFootprintCell(map, cx, cy, radius, (i) => {
-    const k = graspedSpanIndex(map, i, spanBand);
-    if (k === null) return;
-    const h = graspedCeiling(map, i, k);
-    const next = clampHeight(h + pressDelta(amount, h, true));
-    if (next !== h) {
-      writeGraspedCeiling(map, i, k, next);
-      changed.add(i);
-    }
-  });
 }
 
 function fillTowardTarget(

@@ -53,6 +53,8 @@ export interface SculptInputOptions {
 
 export interface SculptInput {
   hoverTarget(): TerrainRayPick | null;
+  /** A held drag's plane point as a pick, or null without a held drag on the ray. */
+  dragAim(): TerrainRayPick | null;
   heldBand(): number | null;
   carveHeldBand(): number | null;
   releaseStroke(): void;
