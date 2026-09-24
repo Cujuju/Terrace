@@ -2,15 +2,15 @@
   "asset": "Ricks \u2014 Black Vault",
   "selected_concept": "B",
   "date": "2026-09-23",
-  "original_low_bounds_delta": 0.0,
+  "original_low_bounds_delta": 2.9802322387695312e-08,
   "runtime": [
     {
       "building": "ricks",
       "quality": "original",
       "source": ".census\\ricks\\ricks-ktx2.glb",
       "runtime": "plugins\\structures\\client\\assets\\authored\\original\\ricks.glb",
-      "bytes": 4962868,
-      "sha256": "eae7af96db178ef48f3d17d6cb8eeab95570b4894732ac21021dd539c287b2ef",
+      "bytes": 5541488,
+      "sha256": "3e6ea91e5d3f7cf42ac367ce343b911c3d8f32ecec730a5b42b750a75dd17f6e",
       "texture_resolution": 2048,
       "mip_levels": 12,
       "uastc_rgb": true,
@@ -21,8 +21,8 @@
       "quality": "low",
       "source": ".census\\ricks\\low\\ricks-ktx2.glb",
       "runtime": "plugins\\structures\\client\\assets\\authored\\low\\ricks.glb",
-      "bytes": 1749312,
-      "sha256": "6007e7a19a3135cf5390f01ca4d3dccce3593e614be96474d7af941ca4e5e6ee",
+      "bytes": 1793596,
+      "sha256": "91529ee39741846ac1332bc6478dac211b1106479fdb0996ee2a18b8390d3b93",
       "texture_resolution": 1024,
       "mip_levels": 11,
       "uastc_rgb": true,
@@ -32,8 +32,8 @@
   "geometry_uv_compression_mips_passed": true,
   "emission_visible_with_no_external_light": true,
   "app_started": false,
-  "client_build": "passed",
-  "structures_typecheck": "passed",
+  "client_build": "passed at initial integration",
+  "structures_typecheck": "passed after concrete/entrance revision",
   "existing_structures_tests": {
     "passed": 195,
     "failed": 2,
@@ -45,19 +45,22 @@
     "Cosmetic top-tier inland variant using 24 of 256 hash buckets after the unchanged Durands buckets."
   ],
   "appearance_revision": {
-    "brick_width_factor": 0.7,
-    "brick_height_factor": 0.7,
+    "wall_material": "Weathered cast concrete, no brick courses",
     "weathering": [
-      "mottling",
-      "chipped mortar",
-      "block variation",
+      "aggregate",
+      "pitting",
+      "edge wear",
+      "hairline cracks",
       "runoff stains",
       "ground grime"
     ],
+    "geometry": [
+      "Projecting beveled lip below clerestory",
+      "Folded coated-steel wall straps",
+      "Wider splayed entrance columns and steel jambs"
+    ],
+    "biohazard_sign": "Same wall location",
     "stairs": "Dark risers, brighter tread noses and shaded tread backs",
-    "emissive_atlas_unchanged": {
-      "original": true,
-      "low": true
-    }
+    "emission": "Strength 1.6 retained; atlas repacked for revised geometry; darkness controls passed"
   }
 }

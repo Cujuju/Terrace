@@ -20,24 +20,21 @@ for entry in integration:
 delivery={'asset':'Ricks — Black Vault','selected_concept':'B','date':'2026-09-23',
           'original_low_bounds_delta':delta,'runtime':integration,
           'geometry_uv_compression_mips_passed':True,'emission_visible_with_no_external_light':True,
-          'app_started':False,'client_build':'passed','structures_typecheck':'passed',
+          'app_started':False,'client_build':'passed at initial integration','structures_typecheck':'passed after concrete/entrance revision',
           'existing_structures_tests':{'passed':195,'failed':2,'cause':'Unchanged assertions require <=6 tiers; existing protocol has 11.'},
           'workspace_typecheck':'Existing Buffer/Uint8Array type errors in client/test/rigAsset.test.ts; no diagnostics in modified sources.',
           'assumptions':['Rear elevation extrapolated from the selected front-right concept.','Cosmetic top-tier inland variant using 24 of 256 hash buckets after the unchanged Durands buckets.']}
-baseline=json.loads((root/'emission-before-weathering.json').read_text(encoding='utf-8-sig'))
-emission_unchanged={}
-for quality,folder in (('original',root),('low',root/'low')):
-    emission_unchanged[quality]=hashlib.sha256((folder/'ricks-emissive.png').read_bytes()).hexdigest()==baseline[quality].lower()
-assert all(emission_unchanged.values())
-delivery['appearance_revision']={'brick_width_factor':.70,'brick_height_factor':.70,
-    'weathering':['mottling','chipped mortar','block variation','runoff stains','ground grime'],
+delivery['appearance_revision']={'wall_material':'Weathered cast concrete, no brick courses',
+    'weathering':['aggregate','pitting','edge wear','hairline cracks','runoff stains','ground grime'],
+    'geometry':['Projecting beveled lip below clerestory','Folded coated-steel wall straps','Wider splayed entrance columns and steel jambs'],
+    'biohazard_sign':'Same wall location',
     'stairs':'Dark risers, brighter tread noses and shaded tread backs',
-    'emissive_atlas_unchanged':emission_unchanged}
+    'emission':'Strength 1.6 retained; atlas repacked for revised geometry; darkness controls passed'}
 (root/'delivery-verification.json').write_text(json.dumps(delivery,indent=2),encoding='utf-8')
 shots=[('Selected concept B',root/'ricks-concept.png','Generated reference selected by the owner.'),
        ('Finished model · Original',root/'ricks-day.png','Actual exported GLB in Blender, 2048 textures.'),
-       ('Before masonry revision',root/'ricks-before-weathering.png','Previous block size and stair treatment, preserved for comparison.'),
-       ('Weathering and stair detail',root/'ricks-closeup.png','Blocks are 30% smaller; darker risers and lighter tread edges separate each step.'),
+       ('Before concrete and entrance revision',root/'ricks-before-concrete.png','Previous brick walls, narrow columns and masonry straps, preserved for comparison.'),
+       ('Concrete, lip and entrance detail',root/'ricks-closeup.png','Weathered concrete, projecting window lip, steel straps and heavier entrance columns.'),
        ('Original · night',root/'ricks-night.png','Emissive green glass, amber fixtures and red beacon.'),
        ('Original · zero external light',root/'ricks-unlit.png','World and sun energy are zero. Bloom is off.'),
        ('Finished model · Low',root/'low'/'ricks-day.png','Same silhouette and placement, 1024 textures.'),
@@ -53,11 +50,11 @@ for quality in ('original','low'):
 page='''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Ricks · Black Vault</title><style>
 *{box-sizing:border-box}body{margin:0;background:#151b17;color:#f0eee4;font:16px/1.5 system-ui,sans-serif}header,main,footer{max-width:1560px;margin:auto;padding:28px}h1{font-size:42px;margin:0}header p,figcaption p,footer{color:#bdc7b7}main{padding-top:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px}figure{margin:0;background:#232b23;border:1px solid #46523e;border-radius:10px;overflow:hidden}figcaption{padding:18px}h2{font-size:20px;margin:0}p{margin:7px 0}img{display:block;width:100%;aspect-ratio:4/3;object-fit:contain;background:#080b09}table{border-collapse:collapse;margin-top:20px}td,th{border-bottom:1px solid #4a5445;padding:8px 24px 8px 0;text-align:left}footer{font-size:14px;padding-top:8px}@media(max-width:760px){main{grid-template-columns:1fr}h1{font-size:34px}}
 </style><header><h1>Ricks · Black Vault</h1><p>Selected concept B, rebuilt as an original game asset. Green glass, amber fixtures and red beacon remain visible in darkness.</p><table><tr><th>Variant</th><th>Triangles</th><th>Atlas size</th><th>Estimated GPU allocation*</th></tr>'''+''.join(rows)+'''</table></header><main>'''+''.join(cards)+'''</main><footer>
-<p>Revised masonry: block width and height reduced by 30%, weathered faces and joints, and shaded stair risers and tread edges. Emissive maps are byte-identical to the previous version.</p>
+<p>Revised to match concept B: weathered cast concrete replaces brick, a projecting beveled lip fronts the small windows, folded dark steel straps reinforce the walls, and heavier concrete columns flank the entrance. The biohazard sign stays in its original wall location. Shaded steps and emissive lights are retained.</p>
 <p>One mesh, material and primitive per variant. Full-mip UASTC KTX2 textures: base colour and emission in sRGB; normal and metallic/roughness in linear space.</p>
 <p>These are Blender renders of the delivered GLBs, not captures from the running game. Both variants are integrated with the existing quality selector. No new scene lights were added. Blender can show local illumination from emissive surfaces; Terrace uses self-lit materials.</p>
 <p>Assumption: rear details extend the selected front-right design. Assumption: Ricks is a rare top-tier inland variant (24/256 cell-hash buckets), preserving Durand’s and coastal selections. No weapon gameplay was added.</p>
-<p>Asset audits, darkness checks, client build and structures typecheck passed. Existing structures tests: 195 pass; two unchanged assertions require at most six tiers although the existing game has eleven. Workspace typecheck reports existing Buffer type errors in client tests.</p>
+<p>Current asset audits, darkness checks and structures typecheck passed. The client build passed at initial integration. Initial integration tests: 195 pass; two unchanged assertions require at most six tiers although the existing game has eleven. Workspace typecheck reports existing Buffer type errors in client tests.</p>
 <p>*Calculated for BC7 or ASTC 4×4 with full mipmaps, including geometry; not measured GPU residency. Artifact publishing was unavailable; this page is the local fallback.</p></footer></html>'''
 (root/'review.html').write_text(page,encoding='utf-8')
 assert (root/'review.html').stat().st_size<16*1024*1024

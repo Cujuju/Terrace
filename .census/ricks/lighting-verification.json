@@ -4,19 +4,19 @@
       "external_world_strength": 0.65,
       "external_sun_strength": 2.0,
       "emission_strength": 1.600000023841858,
-      "bright_pixels": 1458879
+      "bright_pixels": 1459232
     },
     "night": {
       "external_world_strength": 0.015,
       "external_sun_strength": 0.035,
       "emission_strength": 1.600000023841858,
-      "bright_pixels": 54375
+      "bright_pixels": 51871
     },
     "unlit": {
       "external_world_strength": 0.0,
       "external_sun_strength": 0.0,
       "emission_strength": 1.600000023841858,
-      "bright_pixels": 53723
+      "bright_pixels": 51259
     },
     "emission-off": {
       "external_world_strength": 0.0,
@@ -30,19 +30,19 @@
       "external_world_strength": 0.65,
       "external_sun_strength": 2.0,
       "emission_strength": 1.600000023841858,
-      "bright_pixels": 1458528
+      "bright_pixels": 1458641
     },
     "night": {
       "external_world_strength": 0.015,
       "external_sun_strength": 0.035,
       "emission_strength": 1.600000023841858,
-      "bright_pixels": 54412
+      "bright_pixels": 51892
     },
     "unlit": {
       "external_world_strength": 0.0,
       "external_sun_strength": 0.0,
       "emission_strength": 1.600000023841858,
-      "bright_pixels": 53744
+      "bright_pixels": 51270
     },
     "emission-off": {
       "external_world_strength": 0.0,

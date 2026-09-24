@@ -8,13 +8,13 @@ Original: `E:\Development\Projects\Terrace\.census\ricks\ricks.blend`, `E:\Devel
 
 Low: `E:\Development\Projects\Terrace\.census\ricks\low\ricks.blend`, `E:\Development\Projects\Terrace\.census\ricks\low\ricks.glb`, `E:\Development\Projects\Terrace\.census\ricks\low\ricks-ktx2.glb`.
 
-Each has one mesh, one material, one primitive and four maps: basecolor, normal, metallicRoughness and emissive. Original: 7,224 triangles and 2048 atlases. Low: 4,880 triangles and 1024 atlases. Packed PNG sources and separate UASTC KTX2 runtime copies are retained, with standalone maps and full mip chains. Basecolor/emission are sRGB; normal/MR are linear. Metalness is zero. No scene lights are exported.
+Each has one mesh, one material, one primitive and four maps: basecolor, normal, metallicRoughness and emissive. Original: 7,688 triangles and 2048 atlases. Low: 5,152 triangles and 1024 atlases. Packed PNG sources and separate UASTC KTX2 runtime copies are retained, with standalone maps and full mip chains. Basecolor/emission are sRGB; normal/MR are linear. Metalness is zero, including the opaque paint coating on the steel straps. No scene lights are exported.
 
-Both variants have the same envelope and placement: entrance glTF +Z, ground at Y=0, approximately X 0.860 × Y 0.386 × Z 0.726 world units. The existing runtime fitting code uses their shared measured radius, approximately 0.504242 units.
+Both variants have the same envelope and placement: entrance glTF +Z, ground at Y=0, approximately X 0.860 × Y 0.376 × Z 0.709 world units. The existing runtime fitting code uses their shared measured radius, approximately 0.490837 units.
 
 ## Fidelity and lighting
 
-Owner-requested appearance revision: masonry width and height are 70% of the initial block dimensions. Chipped mortar, block variation, mottling, runoff stains and ground grime weather the masonry. Stair risers are darker, tread noses lighter, and tread backs shaded to make all five steps readable. Geometry and emissive regions are retained.
+Owner-requested concrete and entrance revision supersedes the earlier smaller-brick treatment. Walls now use weathered cast concrete with fine aggregate, pitting, runoff, edge wear and sparse hairline cracks, without brick courses. A projecting beveled lip sits below and in front of the small windows. Wall straps are folded dark coated steel; the entrance has wider splayed concrete columns and steel inner jambs. The biohazard plaque stays in the same wall location. Darker stair risers and lighter tread noses remain. Light intensity and colors are retained; the emissive atlas is repacked for the new geometry. The concrete recreates the concept's appearance procedurally rather than projecting the reference image onto the mesh.
 
 Preserved features: sloped chamfered bunker, three octagonal roof drums, green clerestory belt, framed roof vents, recessed double door, five steps, raised Ricks lettering, raised gold biohazard emblem, amber markers and red beacon. Lettering uses installed Windows Segoe fonts, converted to geometry; font binaries are not redistributed. All geometry and procedural maps are original. No concept pixels are sampled for textures.
 
@@ -34,7 +34,7 @@ The existing preview page supports `?ricks=1&quality=original` and `?ricks=1&qua
 
 Geometry, UV overlap/padding/density, packed images, UASTC validation, all metalness mips, matching bounds, and byte-identical geometry between PNG and KTX2 GLBs passed. Runtime files match the delivery by SHA-256. Reports and manifest are beside the models.
 
-Client build and structures typecheck passed. Existing structures tests: 195 passed, two failed on unchanged <=6-tier assertions; the existing protocol already has eleven tiers. Workspace typecheck reports existing Buffer/Uint8Array incompatibilities in `E:\Development\Projects\Terrace\client\test\rigAsset.test.ts`. No diagnostics occur in changed source files. No tests were added or changed.
+The structures typecheck passed after the concrete/entrance revision. The client build passed at initial integration. Initial integration tests: 195 passed, two failed on unchanged <=6-tier assertions; the existing protocol already has eleven tiers. Workspace typecheck reports existing Buffer/Uint8Array incompatibilities in `E:\Development\Projects\Terrace\client\test\rigAsset.test.ts`. No diagnostics occur in changed source files. No tests were added or changed.
 
 ## Rebuild
 
@@ -42,7 +42,7 @@ Use installed Blender 5.2, KTX-Software, Python and Windows Segoe fonts:
 
 ```powershell
 python 'E:\Development\Projects\Terrace\.census\building-kit\run_delivery.py' ricks
-python 'E:\Development\Projects\Terrace\.census\building-kit\integrate_assets.py'
+python 'E:\Development\Projects\Terrace\.census\building-kit\integrate_assets.py' ricks
 & 'E:\Program Files\Blender Foundation\Blender 5.2\blender.exe' --background --factory-startup --threads 8 --python-exit-code 1 --python 'E:\Development\Projects\Terrace\.census\building-kit\render_ricks_lighting.py'
 python 'E:\Development\Projects\Terrace\.census\ricks\build_review.py'
 ```

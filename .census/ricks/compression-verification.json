@@ -1,48 +1,48 @@
 {
   "original": {
     "basecolor": {
-      "mean_absolute_error_8bit": 0.15639068186283112,
-      "root_mean_square_error_8bit": 0.4518662989139557
+      "mean_absolute_error_8bit": 0.17984160780906677,
+      "root_mean_square_error_8bit": 0.48170551657676697
     },
     "normal": {
-      "mean_absolute_error_8bit": 0.048616014420986176,
-      "root_mean_square_error_8bit": 0.29084211587905884,
-      "mean_normal_angle_degrees": 0.04792964458465576
+      "mean_absolute_error_8bit": 0.0975111797451973,
+      "root_mean_square_error_8bit": 0.3811303973197937,
+      "mean_normal_angle_degrees": 0.11023137718439102
     },
     "metallicRoughness": {
-      "mean_absolute_error_8bit": 0.016205787658691406,
-      "root_mean_square_error_8bit": 0.13231371343135834,
+      "mean_absolute_error_8bit": 0.024948516860604286,
+      "root_mean_square_error_8bit": 0.16388195753097534,
       "metalness_range": [
         0.0,
         0.0
       ]
     },
     "emissive": {
-      "mean_absolute_error_8bit": 0.016698041930794716,
-      "root_mean_square_error_8bit": 0.17125660181045532
+      "mean_absolute_error_8bit": 0.015827737748622894,
+      "root_mean_square_error_8bit": 0.16699433326721191
     }
   },
   "low": {
     "basecolor": {
-      "mean_absolute_error_8bit": 0.24932260811328888,
-      "root_mean_square_error_8bit": 0.6559789776802063
+      "mean_absolute_error_8bit": 0.25652188062667847,
+      "root_mean_square_error_8bit": 0.6622130870819092
     },
     "normal": {
-      "mean_absolute_error_8bit": 0.03308327868580818,
-      "root_mean_square_error_8bit": 0.2012690305709839,
-      "mean_normal_angle_degrees": 0.03991790488362312
+      "mean_absolute_error_8bit": 0.028406459838151932,
+      "root_mean_square_error_8bit": 0.17233583331108093,
+      "mean_normal_angle_degrees": 0.03529156371951103
     },
     "metallicRoughness": {
-      "mean_absolute_error_8bit": 0.017783481627702713,
-      "root_mean_square_error_8bit": 0.13857555389404297,
+      "mean_absolute_error_8bit": 0.021992364898324013,
+      "root_mean_square_error_8bit": 0.1586546003818512,
       "metalness_range": [
         0.0,
         0.0
       ]
     },
     "emissive": {
-      "mean_absolute_error_8bit": 0.03244590759277344,
-      "root_mean_square_error_8bit": 0.3304256200790405
+      "mean_absolute_error_8bit": 0.030648868530988693,
+      "root_mean_square_error_8bit": 0.32452109456062317
     }
   }
 }

@@ -1,10 +1,10 @@
 {
-  "glb_sha256": "45835c0b34a039e620d9603f06809921ed6f284e0e3f2954926f80a433829517",
+  "glb_sha256": "9dbf6f73dd94cfb49aa091363cbeb9e01dda8cf1f2498e767c19d4ae7aae4f00",
   "mesh_count": 1,
   "primitive_count": 1,
   "material_count": 1,
-  "triangles": 7224,
-  "exported_vertices": 16679,
+  "triangles": 7688,
+  "exported_vertices": 17800,
   "nodes": [
     {
       "mesh": 0,
@@ -19,20 +19,20 @@
   ],
   "dimensions_gltf_y_up": [
     0.8600000739097595,
-    0.38566359877586365,
-    0.7264037132263184
+    0.3762499988079071,
+    0.7086730897426605
   ],
-  "uv_islands": 4269,
+  "uv_islands": 4475,
   "uv_min_max": [
     0.0029296875,
-    0.9969426393508911
+    0.9970536828041077
   ],
   "uv_overlap_pairs": [],
-  "uv_candidate_pairs_checked": 3040,
-  "minimum_island_bounds_gap_pixels": 12.000244140625,
+  "uv_candidate_pairs_checked": 3262,
+  "minimum_island_bounds_gap_pixels": 12.00091552734375,
   "texel_density_min_max": [
-    572.7242556527424,
-    573.2182498256051
+    564.3998817040606,
+    565.0692299840581
   ],
   "zero_area_triangles": 0,
   "normal_length_error_max": 1.1855133408289475e-07,
@@ -76,18 +76,18 @@
   },
   "roughness_range": [
     0.2980392277240753,
-    0.988235354423523
+    0.9568628072738647
   ],
   "metalness_range": [
     0.0,
     0.0
   ],
-  "normal_map_length_error_max": 0.004732370376586914,
+  "normal_map_length_error_max": 0.004618525505065918,
   "blend": {
     "mesh_count": 1,
     "material_count": 1,
-    "vertices": 6028,
-    "triangles": 7224,
+    "vertices": 6288,
+    "triangles": 7688,
     "uv_layers": [
       "UVMap"
     ],
@@ -101,12 +101,12 @@
     "min": [
       -0.43000003695487976,
       0.0,
-      -0.3390448987483978
+      -0.33076924085617065
     ],
     "max": [
       0.43000003695487976,
-      0.38566359877586365,
-      0.38735881447792053
+      0.3762499988079071,
+      0.37790384888648987
     ]
   },
   "emissive_material": {
