@@ -1,5 +1,23 @@
 # Flipper & Shrimp — C + A reconstruction
 
+## Current revision: faces and slide cleanup
+
+The current deliverables are in [revision-2](E:/Development/Projects/Terrace/.census/flipper-shrimp-ca/revision-2/). The root-level files below are retained as the first version for comparison.
+
+- [Updated editable Blender scene](E:/Development/Projects/Terrace/.census/flipper-shrimp-ca/revision-2/flipper-shrimp-ca.blend)
+- [Updated detailed GLB](E:/Development/Projects/Terrace/.census/flipper-shrimp-ca/revision-2/flipper-shrimp-ca.glb)
+- [Updated lighter GLB](E:/Development/Projects/Terrace/.census/flipper-shrimp-ca/revision-2/flipper-shrimp-ca-light.glb)
+- [Updated faces](E:/Development/Projects/Terrace/.census/flipper-shrimp-ca/revision-2/mascots-closeup.png)
+- [Slide clearance close-up](E:/Development/Projects/Terrace/.census/flipper-shrimp-ca/revision-2/slides-closeup.png)
+
+Both faces use rounded upper and lower jaw surfaces, recessed mouth interiors, inset eyes and eyelids fitted to the head surface. Their head/body junctions are unified and smoothed. The broad separate lip pieces and flat mouth plates are removed.
+
+The slide trough normals now face outward. Intersecting flat water strips are removed, and water sheen is part of the slide texture. The entry hoops are open arches. The right scallop canopy is moved clear of the coral flume, and both lower bends move inward to clear the lounge decks. Waterfall sheets also sit clear of the stone tiers.
+
+Both GLBs were re-imported and rendered successfully. Each slide has 882 of 882 upward-facing trough polygons, zero vertices inside the lounge decks, and no separate water overlay. The detailed export has 156,730 triangles; the lighter export has 73,640. Both contain 37 material primitives and 25 embedded images. Additional geometry is concentrated in the unified mascot sculpts. Runtime performance remains unmeasured.
+
+The commands below now build and verify `revision-2`.
+
 Editable Blender asset and reproducible build, authored against the owner-supplied C + A reference. This is a separate replacement candidate; the existing asset and game are preserved.
 
 The rooftop dolphin and shrimp are retained. The duplicate slide heads are omitted under the owner's explicit fidelity tradeoff. The paired blue/coral sweeping slides, raised pier, lighthouse, central cascade, scallop canopy, equal lounge areas, nautical signs and warm lanterns are retained.
