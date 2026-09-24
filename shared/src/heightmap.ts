@@ -14,7 +14,7 @@ export {
 } from './grid.ts';
 
 import { spanIndexCoveringBand } from './columns.ts';
-import { cellIndex, type Heightmap } from './grid.ts';
+import { cellIndex, cellX, cellY, type Heightmap } from './grid.ts';
 import { diffOf, type CellDiff } from './sculpt/diff.ts';
 import { canSpreadBandTo, graspedCeiling, layerSpanIndex } from './sculpt/grasp.ts';
 import { anchoredTargetHeight, forEachFootprintCell } from './sculpt/footprint.ts';
@@ -220,6 +220,9 @@ export function applySculpt(
   const skirtCoreTarget = skirted
     ? anchoredTargetHeight(map, cx, cy, strokeAmount > 0, targetBand, spanBand)
     : 0;
+  // Settle's relaxation grades only what its deposit adds, so it needs the ground before it.
+  const settles = tool === LIBRARY_SCULPT_TOOL && !anchoredSmooth;
+  const beforeDeposit = settles ? footprintHeights(map, cx, cy, radius) : null;
   // Smooth never deposits: relaxation alone melts roughness within anchor bounds.
   if (deposits) {
     const levels = profile !== 'soft' || skirted;
@@ -304,8 +307,41 @@ export function applySculpt(
       smoothFullSteps,
       smoothCooldown,
       smoothUnbiased,
+      beforeDeposit === null ? null : depositedFrom(map, beforeDeposit, changed),
     );
   }
 
   return diffOf(map, changed);
+}
+
+interface FootprintHeights {
+  readonly x0: number;
+  readonly y0: number;
+  readonly width: number;
+  readonly heights: Int16Array;
+}
+
+/** Heights of the square the brush can write, before it writes. */
+function footprintHeights(map: Heightmap, cx: number, cy: number, radius: number): FootprintHeights {
+  const x0 = Math.max(0, cx - radius);
+  const y0 = Math.max(0, cy - radius);
+  const x1 = Math.min(map.size - 1, cx + radius);
+  const y1 = Math.min(map.size - 1, cy + radius);
+  const width = x1 - x0 + 1;
+  const heights = new Int16Array(width * (y1 - y0 + 1));
+  for (let y = y0; y <= y1; y++) heights.set(map.cells.subarray(y * map.size + x0, y * map.size + x1 + 1), (y - y0) * width);
+  return { x0, y0, width, heights };
+}
+
+/** Each deposited cell's height before the deposit. */
+function depositedFrom(map: Heightmap, before: FootprintHeights, changed: ReadonlySet<number>): Map<number, number> {
+  const deposited = new Map<number, number>();
+  const rows = before.heights.length / before.width;
+  for (const i of changed) {
+    const gx = cellX(map.size, i) - before.x0;
+    const gy = cellY(map.size, i) - before.y0;
+    if (gx < 0 || gy < 0 || gx >= before.width || gy >= rows) continue;
+    deposited.set(i, before.heights[gy * before.width + gx]!);
+  }
+  return deposited;
 }

@@ -14,7 +14,9 @@ import {
   LIBRARY_SCULPT_TOOL,
   MAX_BRUSH_RADIUS,
   MAX_HEIGHT,
+  MAX_STEP,
   readSpans,
+  RELAX_SLACK,
   sculptReachCells,
   setColumn,
   smooth,
@@ -247,18 +249,40 @@ describe('relaxation conserves height exactly (issue #108)', () => {
     }
   });
 
-  it('settle keeps the unbounded cascade its plugin terraforms were tuned against', () => {
-    const map = genesisTerraces(TERRACE_SIZE);
-    const radius = 4;
-    const diff = applySculpt(map, TERRACE_CENTRE, TERRACE_CENTRE, radius, DEFAULT_SCULPT_AMOUNT, {
-      tool: LIBRARY_SCULPT_TOOL,
-      profile: 'soft',
-      spill: 'banded',
-    });
-    const beyond = diff.filter((cell) =>
-      Math.abs(cell.x - TERRACE_CENTRE) > sculptReachCells(radius, 'hard', 'smooth', 'clicked') ||
-      Math.abs(cell.y - TERRACE_CENTRE) > sculptReachCells(radius, 'hard', 'smooth', 'clicked'));
-    expect(beyond.length).toBeGreaterThan(0);
+  it('settle grades only what its stroke added: terraces it did not raise keep their steps', () => {
+    const rest = MAX_STEP + RELAX_SLACK;
+    for (const amount of [DEFAULT_SCULPT_AMOUNT, -DEFAULT_SCULPT_AMOUNT, 4 * DEFAULT_SCULPT_AMOUNT]) {
+      const map = genesisTerraces(TERRACE_SIZE);
+      const before = Int16Array.from(map.cells);
+      const radius = 4;
+      const diff = applySculpt(map, TERRACE_CENTRE, TERRACE_CENTRE, radius, amount, {
+        tool: LIBRARY_SCULPT_TOOL,
+        profile: 'soft',
+      });
+      expect(diff.length).toBeGreaterThan(0);
+
+      // Every pair is at rest, or no steeper than it stood before the stroke.
+      let steepPairsKept = 0;
+      for (let y = 0; y < TERRACE_SIZE; y++) {
+        for (let x = 0; x < TERRACE_SIZE; x++) {
+          const i = cellIndex(map, x, y);
+          for (const j of [x + 1 < TERRACE_SIZE ? i + 1 : -1, y + 1 < TERRACE_SIZE ? i + TERRACE_SIZE : -1]) {
+            if (j < 0) continue;
+            const now = Math.abs(map.cells[i]! - map.cells[j]!);
+            const was = Math.abs(before[i]! - before[j]!);
+            expect(now).toBeLessThanOrEqual(Math.max(rest, was + RELAX_SLACK));
+            if (was > rest && now === was) steepPairsKept++;
+          }
+        }
+      }
+      expect(steepPairsKept).toBeGreaterThan(0);
+
+      // Material slumps at most its own height over MAX_STEP past the footprint.
+      const reach = radius + Math.ceil(Math.abs(amount) / MAX_STEP);
+      for (const cell of diff) {
+        expect(Math.max(Math.abs(cell.x - TERRACE_CENTRE), Math.abs(cell.y - TERRACE_CENTRE))).toBeLessThanOrEqual(reach);
+      }
+    }
   });
 
   it('the relaxation pass conserves height exactly on the FREE path', () => {

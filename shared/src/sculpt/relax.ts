@@ -46,6 +46,21 @@ function movePair(
   return true;
 }
 
+/**
+ * Settle grades only what its stroke added: a pair already past rest before the stroke
+ * keeps that steepness; every other pair relaxes to MAX_STEP.
+ */
+export interface StrokeBaseline {
+  /** Pre-stroke heights of the cells the deposit wrote. */
+  readonly deposited: ReadonlyMap<number, number>;
+  /** Pre-stroke heights of cells the relaxation has since moved. */
+  readonly relaxed: Map<number, number>;
+}
+
+function heightBefore(stroke: StrokeBaseline, cells: Int16Array, base: number, i: number): number {
+  return stroke.deposited.get(i) ?? stroke.relaxed.get(i) ?? cells[i - base]!;
+}
+
 function relaxPair(
   cells: Int16Array,
   base: number,
@@ -55,21 +70,31 @@ function relaxPair(
   inChanged: Uint32Array,
   boundsOf: SpillBoundsOf | null,
   layer: LayerView | null,
+  stroke: StrokeBaseline | null,
 ): boolean {
   if (layer !== null && (layer.excluded[i - base] === 1 || layer.excluded[j - base] === 1)) return false;
-  const spanCaps = layer === null ? null : layer.spanCaps;
   const beforeI = cells[i - base];
   const beforeJ = cells[j - base];
   const d = beforeI - beforeJ;
+  if (d <= MAX_STEP + RELAX_SLACK && d >= -(MAX_STEP + RELAX_SLACK)) return false;
+  let upper = MAX_STEP;
+  let lower = -MAX_STEP;
+  if (stroke !== null) {
+    // Only steepness already past rest is kept; a resting pair (slack included) relaxes as usual.
+    const was = heightBefore(stroke, cells, base, i) - heightBefore(stroke, cells, base, j);
+    if (was > MAX_STEP + RELAX_SLACK) upper = was;
+    if (was < -(MAX_STEP + RELAX_SLACK)) lower = was;
+  }
+  const spanCaps = layer === null ? null : layer.spanCaps;
   let moved = false;
-  if (d > MAX_STEP + RELAX_SLACK) {
-    moved = movePair(cells, base, i, j, d - MAX_STEP, boundsOf, spanCaps);
-  } else if (d < -(MAX_STEP + RELAX_SLACK)) {
-    moved = movePair(cells, base, j, i, -d - MAX_STEP, boundsOf, spanCaps);
+  if (d > upper + RELAX_SLACK) {
+    moved = movePair(cells, base, i, j, d - upper, boundsOf, spanCaps);
+  } else if (d < lower - RELAX_SLACK) {
+    moved = movePair(cells, base, j, i, lower - d, boundsOf, spanCaps);
   }
   if (moved) {
-    if (cells[i - base] !== beforeI) noteChanged(changed, inChanged, i);
-    if (cells[j - base] !== beforeJ) noteChanged(changed, inChanged, j);
+    if (cells[i - base] !== beforeI) noteChanged(changed, inChanged, i, beforeI, stroke);
+    if (cells[j - base] !== beforeJ) noteChanged(changed, inChanged, j, beforeJ, stroke);
   }
   return moved;
 }
@@ -86,13 +111,20 @@ function setBit(bits: Uint32Array, i: number): void {
   bits[i >>> WORD_SHIFT] |= 1 << (i & BIT_MASK);
 }
 
-// inChanged mirrors changed, so a repeat move skips the Set.
-function noteChanged(changed: Set<number>, inChanged: Uint32Array, i: number): void {
+// inChanged mirrors changed, so a repeat move skips the Set. A first move records the height it left.
+function noteChanged(
+  changed: Set<number>,
+  inChanged: Uint32Array,
+  i: number,
+  before: number,
+  stroke: StrokeBaseline | null,
+): void {
   const word = i >>> WORD_SHIFT;
   const bit = 1 << (i & BIT_MASK);
   if ((inChanged[word]! & bit) !== 0) return;
   inChanged[word] = inChanged[word]! | bit;
   changed.add(i);
+  if (stroke !== null && !stroke.deposited.has(i)) stroke.relaxed.set(i, before);
 }
 
 /** Radial rim shaping for the player melt: full across the footprint. */
@@ -320,8 +352,11 @@ export function smooth(
   fullSteps = false,
   cooldown = false,
   unbiased = false,
+  strokeFrom: ReadonlyMap<number, number> | null = null,
 ): number {
   const seed = bboxSeed ?? changed;
+  const stroke: StrokeBaseline | null =
+    strokeFrom === null ? null : { deposited: strokeFrom, relaxed: new Map() };
   if (seed.size === 0) return 0;
 
   const { size } = map;
@@ -439,8 +474,8 @@ export function smooth(
   let scanning = true;
   // A moved pair (a, b) makes owners a-1, a, a-size, b-1, b, b-size due: those at or before i next pass, the rest this pass.
   const visitOwner = (i: number, x: number, y: number): boolean => {
-    const movedAcross = x < maxX && relaxPair(cells, viewBase, i, i + 1, changed, inChanged, boundsOf, layer);
-    const movedDown = y < maxY && relaxPair(cells, viewBase, i, i + size, changed, inChanged, boundsOf, layer);
+    const movedAcross = x < maxX && relaxPair(cells, viewBase, i, i + 1, changed, inChanged, boundsOf, layer, stroke);
+    const movedDown = y < maxY && relaxPair(cells, viewBase, i, i + size, changed, inChanged, boundsOf, layer, stroke);
     if (!movedAcross && !movedDown) return false;
     if (i > 0) dueNextPass(i - 1);
     dueNextPass(i);
