@@ -228,8 +228,8 @@ export function applySculpt(
   if (deposits) {
     const levels = profile !== 'soft' || skirted;
     const deposit = (): void => {
-      // Radius names the flat under every profile: the disc levels to the
-      // anchor, and a skirt hangs outside that edge.
+      // Radius names the disc under every profile: a clicked disc moves every
+      // cell one band, and a skirt hangs outside that edge.
       if (levels) {
         applyLevelFillBrush(map, cx, cy, radius, strokeAmount, changed, anchor, targetBand, spanBand);
       } else {

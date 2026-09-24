@@ -102,7 +102,12 @@ export function applyLevelFillBrush(
 
   const raising = amount > 0;
 
-  if (anchor !== 'free') {
+  if (anchor === 'clicked') {
+    pushFootprintOneBand(map, cx, cy, radius, amount, changed, spanBand);
+    return;
+  }
+
+  if (anchor === 'band') {
     const targetHeight = anchoredTargetHeight(map, cx, cy, raising, targetBand, spanBand);
     fillTowardTarget(
       map, cx, cy, radius, amount, changed, raising, targetHeight, true, spanBand, spreadable,
@@ -243,6 +248,28 @@ export function applyStampSkirt(
     const h = clampHeight(raising ? (moved > target ? target : moved) : (moved < target ? target : moved));
     if (h !== before) {
       writeGraspedCeiling(map, i, k, h);
+      changed.add(i);
+    }
+  });
+}
+
+/** A clicked stamp moves every cell under the disc one band, so its step rings the whole circle on any ground. */
+function pushFootprintOneBand(
+  map: Heightmap,
+  cx: number,
+  cy: number,
+  radius: number,
+  amount: number,
+  changed: Set<number>,
+  spanBand: number | null,
+): void {
+  forEachFootprintCell(map, cx, cy, radius, (i) => {
+    const k = graspedSpanIndex(map, i, spanBand);
+    if (k === null) return;
+    const h = graspedCeiling(map, i, k);
+    const next = clampHeight(h + pressDelta(amount, h, true));
+    if (next !== h) {
+      writeGraspedCeiling(map, i, k, next);
       changed.add(i);
     }
   });

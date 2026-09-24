@@ -102,6 +102,9 @@ export const SMOOTH_PASS_LIMIT = SMOOTH_SPREAD_CELLS * SMOOTH_PASSES_PER_SPREAD_
 /** Jacobi passes of Laplacian smoothing per smooth stroke. Bounds reach. */
 export const SMOOTH_LAPLACIAN_PASSES = 3;
 
+/** Drawn bands apart that two surfaces still share a layer; farther is another layer's cliff, roof or floor. */
+export const SMOOTH_LAYER_BAND_REACH = 1;
+
 export const CONTOUR_CELL_CENTRE_GUARD = 1 / 8;
 
 export const MAX_RELIEF_WORLD_UNITS = 16;

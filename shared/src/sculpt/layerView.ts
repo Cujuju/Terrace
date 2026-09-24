@@ -1,5 +1,5 @@
 import { MAX_HEIGHT } from '../constants.ts';
-import { bandLevelHeight } from '../bands.ts';
+import { bandFloorHeight } from '../bands.ts';
 import {
   highestCeilingUnderSpan,
   moveSpanCeiling,
@@ -52,7 +52,8 @@ export function buildLayerView(
     heights[i - base] = span.ceiling;
     const isTop = k === spanCount(map, x, y) - 1;
     spanCaps.set(i, {
-      lo: bandLevelHeight(span.floorBand),
+      // An edge-encoded ceiling may sit anywhere its floor band draws, midpoint or not.
+      lo: bandFloorHeight(span.floorBand),
       hi: isTop ? MAX_HEIGHT : highestCeilingUnderSpan(spanAt(map, x, y, k + 1)),
     });
   }

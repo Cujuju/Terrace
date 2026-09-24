@@ -1,4 +1,11 @@
-import { BAND_HEIGHT, MAX_STEP, RELAX_SLACK, SMOOTH_LAPLACIAN_PASSES, SMOOTH_PASS_LIMIT } from '../constants.ts';
+import {
+  BAND_HEIGHT,
+  MAX_STEP,
+  RELAX_SLACK,
+  SMOOTH_LAPLACIAN_PASSES,
+  SMOOTH_LAYER_BAND_REACH,
+  SMOOTH_PASS_LIMIT,
+} from '../constants.ts';
 import { drawnBandOfSample } from '../bands.ts';
 import { anyColumnLayered, bandFloorHeight } from '../columns.ts';
 import { cellX, cellY, type Heightmap } from '../grid.ts';
@@ -202,11 +209,16 @@ function laplacianCell(
   const excluded = layer === null ? null : layer.excluded;
   if (excluded !== null && excluded[k] === 1) return false;
   const here = cells[k];
-  // Bilateral gating: neighbours past one band sit out, so terraces blend
-  // along themselves instead of dragging across cliffs. The divisor
-  // renormalizes over whoever votes.
-  const votes = (n: number): boolean =>
-    (excluded === null || excluded[n] !== 1) && (!bilateral || Math.abs(cells[n] - here) <= BAND_HEIGHT);
+  const hereBand = drawnBandOfSample(here);
+  // Only the cell's own layer votes; bilateral narrows it to one band of raw
+  // height. The divisor renormalizes over whoever votes.
+  const votes = (n: number): boolean => {
+    if (excluded !== null && excluded[n] === 1) return false;
+    const h = cells[n];
+    const bandStep = drawnBandOfSample(h) - hereBand;
+    if (bandStep > SMOOTH_LAYER_BAND_REACH || bandStep < -SMOOTH_LAYER_BAND_REACH) return false;
+    return !bilateral || Math.abs(h - here) <= BAND_HEIGHT;
+  };
   let avg: number;
   if (kernel === 'gauss') {
     // 3x3 binomial: centre 4, cardinals 2, diagonals 1, divisor 16.
