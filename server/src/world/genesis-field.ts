@@ -130,12 +130,21 @@ export interface GenesisFieldShape {
 
 interface Octave {
   readonly spacing: number;
+  /** log2(spacing) when a power of two, else -1. */
+  readonly shift: number;
   readonly salt: number;
   readonly seed: number;
   readonly offsetX: number;
   readonly offsetY: number;
   readonly fade: Int32Array;
+  /** Gradient offsets (index * 2) per lattice point over [latticeMin, latticeMin + latticeCols)². */
+  readonly gradients: Int8Array;
+  readonly latticeMin: number;
+  readonly latticeCols: number;
 }
+
+/** Warped samples stray this far outside the world, plus a cell for rounding. */
+const WARP_MARGIN_CELLS = COARSE_WARP_REACH_CELLS + FINE_WARP_REACH_CELLS + 1;
 
 function hash(seed: number, salt: number, i: number, j: number): number {
   let h =
@@ -163,21 +172,31 @@ function fadeTable(spacing: number): Int32Array {
   return table;
 }
 
-function octave(spacing: number, seed: number, salt: number): Octave {
+function octave(spacing: number, seed: number, salt: number, size: number): Octave {
   if (spacing > MAX_SPACING_CELLS) throw new Error(`lattice spacing ${spacing} exceeds ${MAX_SPACING_CELLS}`);
-  return {
-    spacing,
-    salt,
-    seed,
-    // Each octave's lattice sits at its own offset, so no two share grid lines.
-    offsetX: hash(seed, salt, 0, 1) % spacing,
-    offsetY: hash(seed, salt, 1, 0) % spacing,
-    fade: fadeTable(spacing),
-  };
+  // Each octave's lattice sits at its own offset, so no two share grid lines.
+  const offsetX = hash(seed, salt, 0, 1) % spacing;
+  const offsetY = hash(seed, salt, 1, 0) % spacing;
+  const latticeMin = Math.floor((Math.min(offsetX, offsetY) - WARP_MARGIN_CELLS) / spacing);
+  const latticeMax = Math.floor((size + Math.max(offsetX, offsetY) + WARP_MARGIN_CELLS) / spacing) + 1;
+  const latticeCols = latticeMax - latticeMin + 1;
+  const gradients = new Int8Array(latticeCols * latticeCols);
+  for (let j = 0; j < latticeCols; j++) {
+    for (let i = 0; i < latticeCols; i++) {
+      gradients[j * latticeCols + i] = (hash(seed, salt, latticeMin + i, latticeMin + j) & GRADIENT_MASK) * 2;
+    }
+  }
+  const shift = (spacing & (spacing - 1)) === 0 ? 31 - Math.clz32(spacing) : -1;
+  return { spacing, shift, salt, seed, offsetX, offsetY, fade: fadeTable(spacing), gradients, latticeMin, latticeCols };
 }
 
 function corner(o: Octave, i: number, j: number, dx: number, dy: number): number {
-  const g = (hash(o.seed, o.salt, i, j) & GRADIENT_MASK) * 2;
+  const li = i - o.latticeMin;
+  const lj = j - o.latticeMin;
+  const g =
+    li >= 0 && lj >= 0 && li < o.latticeCols && lj < o.latticeCols
+      ? o.gradients[lj * o.latticeCols + li]!
+      : (hash(o.seed, o.salt, i, j) & GRADIENT_MASK) * 2;
   return GRADIENTS[g]! * dx + GRADIENTS[g + 1]! * dy;
 }
 
@@ -186,14 +205,33 @@ function noise(o: Octave, x: number, y: number): number {
   const s = o.spacing;
   const px = x + o.offsetX;
   const py = y + o.offsetY;
-  const i = Math.floor(px / s);
-  const j = Math.floor(py / s);
+  const i = o.shift >= 0 ? px >> o.shift : Math.floor(px / s);
+  const j = o.shift >= 0 ? py >> o.shift : Math.floor(py / s);
   const fx = px - i * s;
   const fy = py - j * s;
-  const d00 = corner(o, i, j, fx, fy);
-  const d10 = corner(o, i + 1, j, fx - s, fy);
-  const d01 = corner(o, i, j + 1, fx, fy - s);
-  const d11 = corner(o, i + 1, j + 1, fx - s, fy - s);
+  const li = i - o.latticeMin;
+  const lj = j - o.latticeMin;
+  const cols = o.latticeCols;
+  let d00: number;
+  let d10: number;
+  let d01: number;
+  let d11: number;
+  if (li >= 0 && lj >= 0 && li + 1 < cols && lj + 1 < cols) {
+    const at = lj * cols + li;
+    const g00 = o.gradients[at]!;
+    const g10 = o.gradients[at + 1]!;
+    const g01 = o.gradients[at + cols]!;
+    const g11 = o.gradients[at + cols + 1]!;
+    d00 = GRADIENTS[g00]! * fx + GRADIENTS[g00 + 1]! * fy;
+    d10 = GRADIENTS[g10]! * (fx - s) + GRADIENTS[g10 + 1]! * fy;
+    d01 = GRADIENTS[g01]! * fx + GRADIENTS[g01 + 1]! * (fy - s);
+    d11 = GRADIENTS[g11]! * (fx - s) + GRADIENTS[g11 + 1]! * (fy - s);
+  } else {
+    d00 = corner(o, i, j, fx, fy);
+    d10 = corner(o, i + 1, j, fx - s, fy);
+    d01 = corner(o, i, j + 1, fx, fy - s);
+    d11 = corner(o, i + 1, j + 1, fx - s, fy - s);
+  }
   const u = o.fade[fx]!;
   const v = o.fade[fy]!;
   const top = d00 * FADE_ONE + (d10 - d00) * u;
@@ -317,33 +355,41 @@ function seaFloor(depth: number): number {
   return shelfEdge - Math.floor(((depth - SHELF_WIDTH) * (shelfEdge - abyss)) / SLOPE_WIDTH);
 }
 
-const NEIGHBOURS_BACK: readonly (readonly [number, number, number])[] = [
-  [-1, 0, SIDE_FIXED], [0, -1, SIDE_FIXED], [-1, -1, DIAGONAL_FIXED], [1, -1, DIAGONAL_FIXED],
-];
-const NEIGHBOURS_ALL: readonly (readonly [number, number])[] = [
-  [1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, 1], [1, -1], [-1, -1],
-];
+/** Flood neighbours in a fixed order: it breaks ties between equal levels. */
+const FLOOD_DX = [1, -1, 0, 0, 1, -1, 1, -1];
+const FLOOD_DY = [0, 0, 1, -1, 1, 1, -1, -1];
 
 /** Forward then backward raster pass: the exact chamfer envelope. `grow` spreads maxima, else minima. */
 function chamfer(a: Int32Array, size: number, perCell: number, grow: boolean): void {
-  for (let pass = 0; pass < 2; pass++) {
-    const sign = pass === 0 ? 1 : -1;
-    for (let k = 0; k < size * size; k++) {
-      const i = pass === 0 ? k : size * size - 1 - k;
-      const x = i % size;
-      const y = (i - x) / size;
-      let v = a[i]!;
-      for (const [bx, by, length] of NEIGHBOURS_BACK) {
-        const nx = x + sign * bx;
-        const ny = y + sign * by;
-        if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
-        const step = Math.floor((perCell * length) / SIDE_FIXED);
-        const n = a[ny * size + nx]!;
-        if (grow) {
-          if (n - step > v) v = n - step;
-        } else if (n + step < v) v = n + step;
+  const side = Math.floor((perCell * SIDE_FIXED) / SIDE_FIXED);
+  const diagonal = Math.floor((perCell * DIAGONAL_FIXED) / SIDE_FIXED);
+  // Growing is shrinking the negated field.
+  const sign = grow ? -1 : 1;
+  const last = size - 1;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const i = y * size + x;
+      let v = sign * a[i]!;
+      if (x > 0 && sign * a[i - 1]! + side < v) v = sign * a[i - 1]! + side;
+      if (y > 0) {
+        if (sign * a[i - size]! + side < v) v = sign * a[i - size]! + side;
+        if (x > 0 && sign * a[i - size - 1]! + diagonal < v) v = sign * a[i - size - 1]! + diagonal;
+        if (x < last && sign * a[i - size + 1]! + diagonal < v) v = sign * a[i - size + 1]! + diagonal;
       }
-      a[i] = v;
+      a[i] = sign * v;
+    }
+  }
+  for (let y = last; y >= 0; y--) {
+    for (let x = last; x >= 0; x--) {
+      const i = y * size + x;
+      let v = sign * a[i]!;
+      if (x < last && sign * a[i + 1]! + side < v) v = sign * a[i + 1]! + side;
+      if (y < last) {
+        if (sign * a[i + size]! + side < v) v = sign * a[i + size]! + side;
+        if (x < last && sign * a[i + size + 1]! + diagonal < v) v = sign * a[i + size + 1]! + diagonal;
+        if (x > 0 && sign * a[i + size - 1]! + diagonal < v) v = sign * a[i + size - 1]! + diagonal;
+      }
+      a[i] = sign * v;
     }
   }
 }
@@ -359,19 +405,17 @@ function carveValleys(e: Int32Array, size: number): void {
   const drain = new Int32Array(count).fill(-1);
   const queued = new Uint8Array(count);
   let lowest = buckets.length;
-  const push = (i: number): void => {
-    const b = level[i]! + offset;
-    link[i] = buckets[b]!;
-    buckets[b] = i;
-    if (b < lowest) lowest = b;
-  };
+  const last = size - 1;
 
-  for (let i = 0; i < count; i++) {
-    const x = i % size;
-    const y = (i - x) / size;
-    if (e[i]! <= 0 || x === 0 || y === 0 || x === size - 1 || y === size - 1) {
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const i = y * size + x;
+      if (e[i]! > 0 && x !== 0 && y !== 0 && x !== last && y !== last) continue;
       queued[i] = 1;
-      push(i);
+      const b = level[i]! + offset;
+      link[i] = buckets[b]!;
+      buckets[b] = i;
+      if (b < lowest) lowest = b;
     }
   }
   for (let popped = 0; popped < count; popped++) {
@@ -379,18 +423,22 @@ function carveValleys(e: Int32Array, size: number): void {
     const i = buckets[lowest]!;
     buckets[lowest] = link[i]!;
     order[popped] = i;
-    const x = i % size;
-    const y = (i - x) / size;
-    for (const [dx, dy] of NEIGHBOURS_ALL) {
-      const nx = x + dx;
-      const ny = y + dy;
-      if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
+    const y = (i / size) | 0;
+    const x = i - y * size;
+    const here = level[i]!;
+    for (let n = 0; n < FLOOD_DX.length; n++) {
+      const nx = x + FLOOD_DX[n]!;
+      const ny = y + FLOOD_DY[n]!;
+      if (nx < 0 || ny < 0 || nx > last || ny > last) continue;
       const j = ny * size + nx;
       if (queued[j] === 1) continue;
       queued[j] = 1;
-      if (level[j]! < level[i]!) level[j] = level[i]!;
+      if (level[j]! < here) level[j] = here;
       drain[j] = i;
-      push(j);
+      const b = level[j]! + offset;
+      link[j] = buckets[b]!;
+      buckets[b] = j;
+      if (b < lowest) lowest = b;
     }
   }
 
@@ -436,7 +484,7 @@ export const GENESIS_FIELD_SUB_BAND = SUB_BAND;
 export function drawGenesisField(size: number, shape: GenesisFieldShape): GenesisField {
   const { seed, relief } = shape;
   let salt = 0;
-  const next = (spacing: number): Octave => octave(spacing, seed, ++salt);
+  const next = (spacing: number): Octave => octave(spacing, seed, ++salt, size);
   const continents = CONTINENT_SPACINGS.map(next);
   const coarseWarp = [next(COARSE_WARP_SPACING), next(COARSE_WARP_SPACING)];
   const fineWarp = [next(FINE_WARP_SPACING), next(FINE_WARP_SPACING)];
