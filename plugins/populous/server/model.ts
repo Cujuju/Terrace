@@ -21,6 +21,7 @@ export interface PopulousContext {
     cells: ReadonlyMap<number, PopulousCellRecord>,
     x: number,
     y: number,
+    tier: number,
   ): boolean;
 }
 
@@ -120,8 +121,8 @@ export function stepPopulous(
     undecided.delete(key);
 
     if (
-      ctx.hasBuildingWithinSeparation(nextLive, x, y) ||
-      ctx.hasBuildingWithinSeparation(undecided, x, y)
+      ctx.hasBuildingWithinSeparation(nextLive, x, y, record.tier) ||
+      ctx.hasBuildingWithinSeparation(undecided, x, y, record.tier)
     ) {
       died.push({ x, y });
       continue;

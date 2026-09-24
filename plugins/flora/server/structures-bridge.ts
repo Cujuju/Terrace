@@ -4,6 +4,7 @@ import type { SiblingModule, WorldApi } from '../../../server/src/plugins/types.
 export interface BridgedStructureCell {
   readonly x: number;
   readonly y: number;
+  readonly footprintRadiusCells: number;
 }
 
 export interface StructuresApi {

@@ -1,5 +1,9 @@
 import { drawnBandOfSample, isWater } from '@terrace/shared';
-import { STRUCTURE_SURVEY_RADIUS_CELLS, structureKey } from '../protocol.ts';
+import {
+  STRUCTURE_FOOTPRINT_RADIUS_CELLS,
+  structureKey,
+  type StructureTier,
+} from '../protocol.ts';
 import { hasReservedStructureCells, isReservedStructureCell } from './reservations.ts';
 
 export const FLATNESS_NEIGHBOR_OFFSETS: ReadonlyArray<readonly [number, number]> = [
@@ -28,23 +32,31 @@ export function isFlatEnough(world: StructuresWorld, x: number, y: number): bool
   return true;
 }
 
-export const FOOTPRINT_CHECK_RADIUS_CELLS = STRUCTURE_SURVEY_RADIUS_CELLS;
+/** A new settlement is a camp, so the cell scan surveys the camp's footprint. */
+export const CAMP_TIER: StructureTier = 0;
 
-export const FOOTPRINT_NEIGHBOR_OFFSETS: ReadonlyArray<readonly [number, number]> =
-  (() => {
-    const offsets: Array<readonly [number, number]> = [];
-    for (let dy = -FOOTPRINT_CHECK_RADIUS_CELLS; dy <= FOOTPRINT_CHECK_RADIUS_CELLS; dy++) {
-      for (let dx = -FOOTPRINT_CHECK_RADIUS_CELLS; dx <= FOOTPRINT_CHECK_RADIUS_CELLS; dx++) {
-        if (dx === 0 && dy === 0) continue;
-        offsets.push([dx, dy] as const);
-      }
+function squareOffsets(radius: number): ReadonlyArray<readonly [number, number]> {
+  const offsets: Array<readonly [number, number]> = [];
+  for (let dy = -radius; dy <= radius; dy++) {
+    for (let dx = -radius; dx <= radius; dx++) {
+      if (dx === 0 && dy === 0) continue;
+      offsets.push([dx, dy] as const);
     }
-    return offsets;
-  })();
+  }
+  return offsets;
+}
 
-export function hasClearFootprint(world: StructuresWorld, x: number, y: number): boolean {
+const FOOTPRINT_OFFSETS_BY_TIER: ReadonlyArray<ReadonlyArray<readonly [number, number]>> =
+  STRUCTURE_FOOTPRINT_RADIUS_CELLS.map(squareOffsets);
+
+export function hasClearFootprint(
+  world: StructuresWorld,
+  x: number,
+  y: number,
+  tier: StructureTier = CAMP_TIER,
+): boolean {
   const band = drawnBandOfSample(world.heightAt(x, y));
-  for (const [dx, dy] of FOOTPRINT_NEIGHBOR_OFFSETS) {
+  for (const [dx, dy] of FOOTPRINT_OFFSETS_BY_TIER[tier]!) {
     const nx = x + dx;
     const ny = y + dy;
     if (nx < 0 || ny < 0 || nx >= world.worldSize || ny >= world.worldSize) return false;
@@ -55,11 +67,16 @@ export function hasClearFootprint(world: StructuresWorld, x: number, y: number):
   return true;
 }
 
-export function isBuildableCell(world: StructuresWorld, x: number, y: number): boolean {
+export function isBuildableCell(
+  world: StructuresWorld,
+  x: number,
+  y: number,
+  tier: StructureTier = CAMP_TIER,
+): boolean {
   if (!Number.isInteger(x) || !Number.isInteger(y)) return false;
   if (x < 0 || y < 0 || x >= world.worldSize || y >= world.worldSize) return false;
   if (!world.isCellUnlocked(x, y)) return false;
   if (isWater(world.heightAt(x, y))) return false;
   if (hasReservedStructureCells() && isReservedStructureCell(structureKey(x, y))) return false;
-  return isFlatEnough(world, x, y) && hasClearFootprint(world, x, y);
+  return isFlatEnough(world, x, y) && hasClearFootprint(world, x, y, tier);
 }

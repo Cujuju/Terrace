@@ -49,6 +49,7 @@ export interface GrowthContext {
     cells: ReadonlyMap<number, BoardCellRecord>,
     x: number,
     y: number,
+    tier: number,
   ): boolean;
 }
 

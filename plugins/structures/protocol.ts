@@ -160,21 +160,39 @@ import {
   cellsAcross,
 } from '@terrace/shared';
 
-export const STRUCTURE_SURVEY_RADIUS_CELLS = Math.ceil(
-  cellsAcross(STRUCTURE_FOOTPRINT_SPAN_WORLD_UNITS / 2),
+// Legacy procedural models (the fallback when the GLB kit fails) are sized to this span.
+export const STRUCTURE_LEGACY_SURVEYED_GROUND_RADIUS =
+  (Math.ceil(cellsAcross(STRUCTURE_FOOTPRINT_SPAN_WORLD_UNITS / 2)) + 0.5) * CELL_WORLD_SIZE;
+
+// Radius, in cells, of the flat dry ground under each tier's widest drawn model.
+// client/buildingScale.ts refuses to load a model that outgrows its tier's entry.
+export const STRUCTURE_FOOTPRINT_RADIUS_CELLS: readonly number[] = [2, 2, 2, 4, 5, 4, 3, 2, 3, 4, 5];
+
+if (STRUCTURE_FOOTPRINT_RADIUS_CELLS.length !== STRUCTURE_TIER_COUNT) {
+  throw new RangeError('STRUCTURE_FOOTPRINT_RADIUS_CELLS needs one radius per structure tier');
+}
+
+// A lot never shrinks on upgrade: it covers its own footprint and every lower tier's.
+export const STRUCTURE_LOT_RADIUS_CELLS: readonly number[] = STRUCTURE_FOOTPRINT_RADIUS_CELLS.map(
+  (_, tier) => Math.max(...STRUCTURE_FOOTPRINT_RADIUS_CELLS.slice(0, tier + 1)),
 );
 
-export const STRUCTURE_SURVEYED_GROUND_RADIUS =
-  (STRUCTURE_SURVEY_RADIUS_CELLS + 0.5) * CELL_WORLD_SIZE;
+export const MAX_STRUCTURE_LOT_RADIUS_CELLS = Math.max(...STRUCTURE_LOT_RADIUS_CELLS);
 
-export const STRUCTURE_SEPARATION_WORLD_UNITS = STRUCTURE_SURVEYED_GROUND_RADIUS * 2;
+/** The half cell each lot's edge cell adds, on both lots, keeps one cell between neighbours. */
+const LOT_EDGE_CELLS = 1;
 
-export const STRUCTURE_SEPARATION_CELLS_SQUARED =
-  cellsAcross(STRUCTURE_SEPARATION_WORLD_UNITS) ** 2;
+export function lotSeparationCells(tierA: StructureTier, tierB: StructureTier): number {
+  return STRUCTURE_LOT_RADIUS_CELLS[tierA]! + STRUCTURE_LOT_RADIUS_CELLS[tierB]! + LOT_EDGE_CELLS;
+}
 
-export const STRUCTURE_SEPARATION_CELLS = Math.ceil(
-  cellsAcross(STRUCTURE_SEPARATION_WORLD_UNITS),
-);
+export function structureFootprintRadiusCells(tier: StructureTier): number {
+  return STRUCTURE_FOOTPRINT_RADIUS_CELLS[tier]!;
+}
+
+export function structureLotRadiusCells(tier: StructureTier): number {
+  return STRUCTURE_LOT_RADIUS_CELLS[tier]!;
+}
 
 export const SETTLER_RACES = ['rudy', 'uno'] as const;
 

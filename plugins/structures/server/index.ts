@@ -15,6 +15,7 @@ import {
   cellOfKey,
   packCells,
   packStructureCells,
+  structureFootprintRadiusCells,
   structureKey,
   type StructureCell,
 } from '../protocol.ts';
@@ -251,8 +252,8 @@ function advanceGrowthModel(world: WorldApi): void {
   const ctx: GrowthContext = {
     isBuildable: (x: number, y: number) => isBuildableCell(world, x, y),
     maxTier: MAX_STRUCTURE_TIER,
-    hasBuildingWithinSeparation: (cells, x: number, y: number) =>
-      hasBuildingWithinSeparation(cells, world, x, y),
+    hasBuildingWithinSeparation: (cells, x: number, y: number, tier: number) =>
+      hasBuildingWithinSeparation(cells, world, x, y, tier),
   };
   const outcome = model.step(world, live, ctx);
 
@@ -516,13 +517,21 @@ export function canFoundStructure(world: StructuresWorld, x: number, y: number):
 
 export interface StandingStructure extends StructureCell {
   readonly age: number;
+  /** Cells from the anchor to the edge of the drawn building, in a square. */
+  readonly footprintRadiusCells: number;
 }
 
 export function standingStructures(): StandingStructure[] {
   const cells: StandingStructure[] = [];
   for (const [key, record] of live) {
     const cell = cellOfKey(key);
-    cells.push({ x: cell.x, y: cell.y, tier: record.tier, age: record.age });
+    cells.push({
+      x: cell.x,
+      y: cell.y,
+      tier: record.tier,
+      age: record.age,
+      footprintRadiusCells: structureFootprintRadiusCells(record.tier),
+    });
   }
   return cells;
 }

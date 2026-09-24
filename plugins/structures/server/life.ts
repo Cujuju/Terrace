@@ -11,10 +11,7 @@ import {
   wrappedNeighborIndex,
   type LandmassLabels,
 } from './topology.ts';
-import {
-  hasBuildingWithinSeparation,
-  livingCellsWithinSeparation,
-} from './clearance.ts';
+import { hasBuildingWithinSeparation, surveyUpgradeLot } from './clearance.ts';
 import type { StructuresRng } from './rng.ts';
 
 export const CA_GENERATION_INTERVAL_SECONDS = 15;
@@ -162,20 +159,24 @@ export class GenerationSurvey {
     this.board = null;
   }
 
-  private clearKeepClearSquare(
+  /** Claims the lot an upgrade needs, absorbing what it may; false when the upgrade must wait. */
+  private claimUpgradeLot(
     world: StructuresWorld,
     live: ReadonlyMap<number, LiveCellRecord>,
     x: number,
     y: number,
-  ): void {
-    for (const key of livingCellsWithinSeparation(live, world, x, y)) {
+    currentTier: number,
+    nextTier: number,
+  ): boolean {
+    if (!isBuildableCell(world, x, y, nextTier)) return false;
+    const onBoard = surveyUpgradeLot(live, world, x, y, currentTier, nextTier);
+    const staged = surveyUpgradeLot(this.staged, world, x, y, currentTier, nextTier);
+    if (onBoard.blocked || staged.blocked) return false;
+    for (const key of [...onBoard.absorbed, ...staged.absorbed]) {
       this.staged.delete(key);
       this.demolishedThisSweep.add(key);
     }
-    for (const key of livingCellsWithinSeparation(this.staged, world, x, y)) {
-      this.staged.delete(key);
-      this.demolishedThisSweep.add(key);
-    }
+    return true;
   }
 
   private scanChunk(
@@ -224,15 +225,8 @@ export class GenerationSurvey {
           const age = current.age + 1;
           const liveNeighbors = liveMooreNeighbors(live, world.worldSize, x, y);
           let tier = maybeAdvanceTier(age, current.tier, liveNeighbors, isBlessedStructureCell(key));
-          if (
-            current.tier === 0 &&
-            tier > current.tier &&
-            (hasBuildingWithinSeparation(live, world, x, y) ||
-              hasBuildingWithinSeparation(this.staged, world, x, y))
-          ) {
+          if (tier > current.tier && !this.claimUpgradeLot(world, live, x, y, current.tier, tier)) {
             tier = current.tier;
-          } else if (current.tier === 0 && tier > current.tier) {
-            this.clearKeepClearSquare(world, live, x, y);
           }
           this.staged.set(key, { age, tier });
         } else {
@@ -306,7 +300,7 @@ export class GenerationSurvey {
     for (const [key, record] of live) {
       if (board.has(key) || this.staged.has(key)) continue;
       const cell = cellOfKey(key);
-      if (hasBuildingWithinSeparation(this.staged, world, cell.x, cell.y)) {
+      if (hasBuildingWithinSeparation(this.staged, world, cell.x, cell.y, record.tier)) {
         carriedOntoClaimedGround.push(key);
         continue;
       }

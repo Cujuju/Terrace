@@ -21,7 +21,7 @@ import {
   MAX_STRUCTURE_TIER,
   STRUCTURES_CAP,
   STRUCTURE_FOOTPRINT_SPAN_WORLD_UNITS,
-  STRUCTURE_SURVEYED_GROUND_RADIUS,
+  STRUCTURE_LEGACY_SURVEYED_GROUND_RADIUS,
   STRUCTURE_SCALE_MAX,
   STRUCTURE_TIER_COUNT,
   STRUCTURE_TIERS,
@@ -33,6 +33,7 @@ import { isRicksCell } from './ricks.ts';
 import { isFlipperShrimpCell } from './flipperShrimp.ts';
 import { drawnBandAtY } from '../../../client/src/terrain/capEmission.ts';
 import { FISHING_HUT_BUILDERS, FISHING_HUT_NAMES, fishingHutVariantIndex } from './fishingHuts.ts';
+import { COASTAL_HUT_MAX_TIER, coastalHutTierScales } from './buildingScale.ts';
 import {
   fitToRadius,
   mergeParts,
@@ -1197,7 +1198,7 @@ interface SiteVariantSet {
   pick(cellX: number, cellY: number): number;
 }
 
-const SITE_TOP_TIER_VARIANTS: Readonly<Partial<Record<SiteKind, SiteVariantSet>>> = {
+const SITE_LOW_TIER_VARIANTS: Readonly<Partial<Record<SiteKind, SiteVariantSet>>> = {
   coastal: { builders: FISHING_HUT_BUILDERS, pick: fishingHutVariantIndex },
 };
 
@@ -1863,7 +1864,7 @@ export function createStructureModels(kit?: BuildingAssetKit): StructureModels {
 
   const durands = kit === undefined ? buildDurandsParts() : null;
   const durandsParts = kit?.parts('durands') ?? mergeSharedSurface(
-    fitToRadius(durands!.parts, STRUCTURE_SURVEYED_GROUND_RADIUS / STRUCTURE_SCALE_MAX),
+    fitToRadius(durands!.parts, STRUCTURE_LEGACY_SURVEYED_GROUND_RADIUS / STRUCTURE_SCALE_MAX),
   );
   function specialBuildingMeshes(parts: readonly StructurePart[], id: string): InstancedMesh[] {
     return parts.map((part, partIndex) => {
@@ -1887,11 +1888,15 @@ export function createStructureModels(kit?: BuildingAssetKit): StructureModels {
 
   const siteVariantParts: Partial<Record<SiteKind, StructurePart[][]>> = {};
   const siteVariantMeshes: Partial<Record<SiteKind, InstancedMesh[][]>> = {};
-  for (const siteKind of Object.keys(SITE_TOP_TIER_VARIANTS) as SiteKind[]) {
+  const siteVariantTierScales: Partial<Record<SiteKind, number[]>> = {};
+  for (const siteKind of Object.keys(SITE_LOW_TIER_VARIANTS) as SiteKind[]) {
     const built = kit === undefined
-      ? SITE_TOP_TIER_VARIANTS[siteKind]!.builders.map((build) => build())
+      ? SITE_LOW_TIER_VARIANTS[siteKind]!.builders.map((build) => build())
       : FISHING_HUT_NAMES.map((id) => kit.parts(id));
     siteVariantParts[siteKind] = built;
+    siteVariantTierScales[siteKind] = coastalHutTierScales(
+      built.map((parts, variant) => ({ id: FISHING_HUT_NAMES[variant]!, parts })),
+    );
     siteVariantMeshes[siteKind] = built.map((parts, variant) =>
       parts.map((part, partIndex) => {
         geometries.push(part.geometry);
@@ -1957,7 +1962,7 @@ export function createStructureModels(kit?: BuildingAssetKit): StructureModels {
       const ricksCounts = ricksMeshes.map(() => 0);
       const flipperShrimpCounts = flipperShrimpMeshes.map(() => 0);
       const siteVariantCounts: Partial<Record<SiteKind, number[][]>> = {};
-      for (const siteKind of Object.keys(SITE_TOP_TIER_VARIANTS) as SiteKind[]) {
+      for (const siteKind of Object.keys(SITE_LOW_TIER_VARIANTS) as SiteKind[]) {
         siteVariantCounts[siteKind] = siteVariantParts[siteKind]!.map((parts) => parts.map(() => 0));
       }
 
@@ -1976,10 +1981,12 @@ export function createStructureModels(kit?: BuildingAssetKit): StructureModels {
           continue;
         }
 
-        const variantSet = SITE_TOP_TIER_VARIANTS[placement.site];
-        if (placement.tier === MAX_STRUCTURE_TIER && variantSet !== undefined) {
+        const variantSet = SITE_LOW_TIER_VARIANTS[placement.site];
+        if (placement.tier <= COASTAL_HUT_MAX_TIER && variantSet !== undefined) {
           const built = siteVariantParts[placement.site]!;
           const variant = Math.min(Math.max(variantSet.pick(placement.cellX, placement.cellY), 0), built.length - 1);
+          buildingScale.setScalar(placement.scale * siteVariantTierScales[placement.site]![placement.tier]!);
+          buildingMatrix.compose(buildingPosition, buildingRotation, buildingScale);
           writeInstances(
             built[variant],
             siteVariantMeshes[placement.site]![variant],
@@ -2009,7 +2016,7 @@ export function createStructureModels(kit?: BuildingAssetKit): StructureModels {
       finalizeMeshes(durandsMeshes, durandsCounts);
       finalizeMeshes(ricksMeshes, ricksCounts);
       finalizeMeshes(flipperShrimpMeshes, flipperShrimpCounts);
-      for (const siteKind of Object.keys(SITE_TOP_TIER_VARIANTS) as SiteKind[]) {
+      for (const siteKind of Object.keys(SITE_LOW_TIER_VARIANTS) as SiteKind[]) {
         const meshes = siteVariantMeshes[siteKind]!;
         const counts = siteVariantCounts[siteKind]!;
         for (let variant = 0; variant < meshes.length; variant++) finalizeMeshes(meshes[variant], counts[variant]);

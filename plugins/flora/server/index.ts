@@ -55,7 +55,7 @@ import { StumpField } from './stumps.ts';
 import { ScorchField, type ScorchRemaining } from './scorch.ts';
 import { FLORA_SLICE_VERSION, loadForestSlice, saveForest } from './persistence.ts';
 import { StabilityMap } from './stability.ts';
-import { bridgedStructures, loadStructuresBridge } from './structures-bridge.ts';
+import { bridgedStructures, loadStructuresBridge, type BridgedStructureCell } from './structures-bridge.ts';
 import { parseStructuresOccupation } from './structures-event.ts';
 import {
   parseStormDamage,
@@ -99,10 +99,20 @@ const STRUCTURE_SNAPSHOT_UNSET = -1;
 let structureSnapshotTick = STRUCTURE_SNAPSHOT_UNSET;
 const structureSnapshot = new Set<number>();
 
+function forEachFootprintCell(cell: BridgedStructureCell, visit: (x: number, y: number) => void): void {
+  // A sibling from before multi-cell buildings reports no radius: its building is its anchor cell.
+  const radius = Number.isInteger(cell.footprintRadiusCells) ? Math.max(0, cell.footprintRadiusCells) : 0;
+  for (let dy = -radius; dy <= radius; dy++) {
+    for (let dx = -radius; dx <= radius; dx++) visit(cell.x + dx, cell.y + dy);
+  }
+}
+
 function structureOccupiedCells(): ReadonlySet<number> {
   if (structureSnapshotTick !== simTick) {
     structureSnapshot.clear();
-    for (const cell of bridgedStructures()) structureSnapshot.add(grassKey(cell.x, cell.y));
+    for (const cell of bridgedStructures()) {
+      forEachFootprintCell(cell, (x, y) => structureSnapshot.add(grassKey(x, y)));
+    }
     structureSnapshotTick = simTick;
   }
   return structureSnapshot;
@@ -452,7 +462,9 @@ function chunksPerTick(world: WorldApi, dt: number): number {
 
 function occupiedCells(): OccupancyPredicate {
   const occupied = new Set<number>();
-  for (const cell of bridgedStructures()) occupied.add(treeKey(cell.x, cell.y));
+  for (const cell of bridgedStructures()) {
+    forEachFootprintCell(cell, (x, y) => occupied.add(treeKey(x, y)));
+  }
   for (const cell of stumpField.cells()) occupied.add(treeKey(cell.x, cell.y));
   return (x: number, y: number): boolean => occupied.has(treeKey(x, y));
 }
