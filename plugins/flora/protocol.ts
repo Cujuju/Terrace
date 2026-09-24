@@ -777,9 +777,6 @@ export function parseStumpChangesPayload(
   return { left, rotted };
 }
 
-export const FLORA_STUMP_SCALE_MIN = 0.85;
-export const FLORA_STUMP_SCALE_MAX = 1.15;
-
 export interface StumpVariation {
   readonly scale: number;
   readonly yaw: number;
@@ -792,13 +789,10 @@ export function stumpVariation(x: number, y: number): StumpVariation {
   hash = Math.imul(hash ^ (hash >>> 16), 0x9e3779b1);
   hash = (hash ^ (hash >>> 15)) >>> 0;
 
-  const scaleRoll = (hash >>> 8) & 0xff;
   const yawRoll = (hash >>> 16) & (YAW_DIVISOR - 1);
   return {
-    scale:
-      FLORA_STUMP_SCALE_MIN + (scaleRoll / 0xff) * (FLORA_STUMP_SCALE_MAX - FLORA_STUMP_SCALE_MIN),
+    // A stump stands where its tree fell, so it keeps that tree's size roll.
+    scale: treeVariation(x, y).scale,
     yaw: (yawRoll / YAW_DIVISOR) * TWO_PI,
   };
 }
-
-export const STUMP_MAX_REACH_CELLS = 0.5;

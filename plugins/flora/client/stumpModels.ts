@@ -11,7 +11,7 @@ import {
 } from 'three';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
 import { weldFlatShaded } from '../../../client/src/render/weld.ts';
-import { FLORA_STUMP_CAP, FLORA_STUMP_SCALE_MAX, STUMP_MAX_REACH_CELLS, stumpKey, type StumpCell } from '../protocol.ts';
+import { FLORA_STUMP_CAP, FLORA_TREE_SCALE_MAX, stumpKey, type StumpCell } from '../protocol.ts';
 import {
   MATRIX_FLOATS_PER_INSTANCE,
   clearPlacementExtent,
@@ -126,11 +126,12 @@ function buildStump(): StumpGeometries {
   };
 }
 
+// The felled tree's trunk held this ground, so a stump may reach as far and no farther.
 function assertStumpFitsCell(horizontalReachInCells: number): void {
-  const worstInCells = horizontalReachInCells * FLORA_STUMP_SCALE_MAX;
-  if (worstInCells > STUMP_MAX_REACH_CELLS) {
+  const trunkReachInCells = TRUNK_BOTTOM_RADIUS / CELL_WORLD_SIZE;
+  if (horizontalReachInCells > trunkReachInCells) {
     throw new RangeError(
-      `a stump reaches ${worstInCells.toFixed(3)} cells from its centre, past the ${STUMP_MAX_REACH_CELLS} its cell guarantees`,
+      `a stump reaches ${horizontalReachInCells.toFixed(3)} cells from its centre, past its trunk's ${trunkReachInCells.toFixed(3)}`,
     );
   }
 }
@@ -172,7 +173,7 @@ export function createStumpModels(): StumpModels {
 
   const extent = createPlacementExtent();
   const reaches: readonly InstanceReach[] = [built.bark, built.core].map(
-    (geometry): InstanceReach => scaledReach(geometryReach(geometry), FLORA_STUMP_SCALE_MAX),
+    (geometry): InstanceReach => scaledReach(geometryReach(geometry), FLORA_TREE_SCALE_MAX),
   );
 
   const slotOfCell = new Map<number, number>();
