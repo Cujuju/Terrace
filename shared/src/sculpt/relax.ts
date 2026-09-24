@@ -52,6 +52,7 @@ function relaxPair(
   i: number,
   j: number,
   changed: Set<number>,
+  inChanged: Uint32Array,
   boundsOf: SpillBoundsOf | null,
   layer: LayerView | null,
 ): boolean {
@@ -67,42 +68,31 @@ function relaxPair(
     moved = movePair(cells, base, j, i, -d - MAX_STEP, boundsOf, spanCaps);
   }
   if (moved) {
-    if (cells[i - base] !== beforeI) changed.add(i);
-    if (cells[j - base] !== beforeJ) changed.add(j);
+    if (cells[i - base] !== beforeI) noteChanged(changed, inChanged, i);
+    if (cells[j - base] !== beforeJ) noteChanged(changed, inChanged, j);
   }
   return moved;
 }
 
-function heapPush(heap: number[], value: number): void {
-  let at = heap.length;
-  heap.push(value);
-  while (at > 0) {
-    const up = (at - 1) >> 1;
-    if (heap[up] <= value) break;
-    heap[at] = heap[up];
-    at = up;
-  }
-  heap[at] = value;
+// Bitsets over cell indices: word i >>> WORD_SHIFT, bit i & BIT_MASK.
+const WORD_SHIFT = 5;
+const BIT_MASK = 31;
+
+function createBitset(indexCount: number): Uint32Array {
+  return new Uint32Array((indexCount >>> WORD_SHIFT) + 1);
 }
 
-function heapPop(heap: number[]): number {
-  const top = heap[0];
-  const last = heap.pop() as number;
-  const count = heap.length;
-  if (count > 0) {
-    let at = 0;
-    for (;;) {
-      const left = 2 * at + 1;
-      if (left >= count) break;
-      const right = left + 1;
-      const child = right < count && heap[right] < heap[left] ? right : left;
-      if (heap[child] >= last) break;
-      heap[at] = heap[child];
-      at = child;
-    }
-    heap[at] = last;
-  }
-  return top;
+function setBit(bits: Uint32Array, i: number): void {
+  bits[i >>> WORD_SHIFT] |= 1 << (i & BIT_MASK);
+}
+
+// inChanged mirrors changed, so a repeat move skips the Set.
+function noteChanged(changed: Set<number>, inChanged: Uint32Array, i: number): void {
+  const word = i >>> WORD_SHIFT;
+  const bit = 1 << (i & BIT_MASK);
+  if ((inChanged[word]! & bit) !== 0) return;
+  inChanged[word] = inChanged[word]! | bit;
+  changed.add(i);
 }
 
 /** Radial rim shaping for the player melt: full across the footprint. */
@@ -422,43 +412,54 @@ export function smooth(
   let adjustingPasses = 0;
   const passLimit = laplacePct === null ? SMOOTH_PASS_LIMIT : SMOOTH_LAPLACIAN_PASSES;
 
+  const inChanged = createBitset(size * size);
+  for (const i of changed) setBit(inChanged, i);
+
+  // Owner i + size can lie past the last row.
+  const dueIndexCount = size * size + size;
   // Owners are visited in full-scan order; a pair whose cells are unchanged since its last visit cannot move, so skipping it keeps results identical.
-  const due: number[] = [];
-  let carried: number[] = [];
+  let dueNow = createBitset(dueIndexCount);
+  let dueNext = createBitset(dueIndexCount);
+  let nowFirstWord = dueNow.length;
+  let nowLastWord = -1;
+  let nextFirstWord = dueNext.length;
+  let nextLastWord = -1;
+  const dueThisPass = (owner: number): void => {
+    setBit(dueNow, owner);
+    const word = owner >>> WORD_SHIFT;
+    if (word < nowFirstWord) nowFirstWord = word;
+    if (word > nowLastWord) nowLastWord = word;
+  };
+  const dueNextPass = (owner: number): void => {
+    setBit(dueNext, owner);
+    const word = owner >>> WORD_SHIFT;
+    if (word < nextFirstWord) nextFirstWord = word;
+    if (word > nextLastWord) nextLastWord = word;
+  };
   let scanning = true;
-  const schedule = (owner: number, current: number): void => {
-    if (owner < 0) return;
-    if (owner > current) {
-      if (!scanning) heapPush(due, owner);
-    } else {
-      carried.push(owner);
-    }
-  };
-  const scheduleAround = (a: number, b: number, current: number): void => {
-    schedule(a - 1, current);
-    schedule(a, current);
-    schedule(a - size, current);
-    schedule(b - 1, current);
-    schedule(b, current);
-    schedule(b - size, current);
-  };
+  // A moved pair (a, b) makes owners a-1, a, a-size, b-1, b, b-size due: those at or before i next pass, the rest this pass.
   const visitOwner = (i: number, x: number, y: number): boolean => {
-    let moved = false;
-    if (x < maxX && relaxPair(cells, viewBase, i, i + 1, changed, boundsOf, layer)) {
-      moved = true;
-      scheduleAround(i, i + 1, i);
+    const movedAcross = x < maxX && relaxPair(cells, viewBase, i, i + 1, changed, inChanged, boundsOf, layer);
+    const movedDown = y < maxY && relaxPair(cells, viewBase, i, i + size, changed, inChanged, boundsOf, layer);
+    if (!movedAcross && !movedDown) return false;
+    if (i > 0) dueNextPass(i - 1);
+    dueNextPass(i);
+    if (i >= size) dueNextPass(i - size);
+    if (movedAcross && i + 1 >= size) dueNextPass(i + 1 - size);
+    if (!scanning) {
+      if (movedAcross) dueThisPass(i + 1);
+      if (movedDown) {
+        dueThisPass(i + size - 1);
+        dueThisPass(i + size);
+      }
     }
-    if (y < maxY && relaxPair(cells, viewBase, i, i + size, changed, boundsOf, layer)) {
-      moved = true;
-      scheduleAround(i, i + size, i);
-    }
-    return moved;
+    return true;
   };
   const dueRow = (y: number, fromX: number, toX: number): void => {
-    for (let x = fromX; x <= toX; x++) heapPush(due, y * size + x);
+    for (let x = fromX; x <= toX; x++) dueThisPass(y * size + x);
   };
   const dueColumn = (x: number, fromY: number, toY: number): void => {
-    for (let y = fromY; y <= toY; y++) heapPush(due, y * size + x);
+    for (let y = fromY; y <= toY; y++) dueThisPass(y * size + x);
   };
 
   for (let pass = 0; pass < passLimit; pass++) {
@@ -478,11 +479,20 @@ export function smooth(
     let changedThisPass = false;
 
     if (laplacePct === null) {
-      const previous = carried;
-      carried = [];
       scanning = pass === 0 || viewChanged;
       viewChanged = false;
+      // Last pass's carry becomes this pass's due set; the spent set is already clear.
+      const spent = dueNow;
+      dueNow = dueNext;
+      dueNext = spent;
+      nowFirstWord = nextFirstWord;
+      nowLastWord = nextLastWord;
+      nextFirstWord = dueNext.length;
+      nextLastWord = -1;
       if (scanning) {
+        if (nowLastWord >= nowFirstWord) dueNow.fill(0, nowFirstWord, nowLastWord + 1);
+        nowFirstWord = dueNow.length;
+        nowLastWord = -1;
         for (let y = minY; y <= maxY; y++) {
           const row = y * size;
           for (let x = minX; x <= maxX; x++) {
@@ -490,8 +500,6 @@ export function smooth(
           }
         }
       } else {
-        due.length = 0;
-        for (const owner of previous) heapPush(due, owner);
         if (minY < heldMinY) dueRow(minY, minX, maxX);
         if (maxY > heldMaxY) {
           dueRow(maxY, minX, maxX);
@@ -502,15 +510,17 @@ export function smooth(
           dueColumn(maxX, minY, maxY);
           dueColumn(heldMaxX, minY, maxY);
         }
-        let last = -1;
-        while (due.length > 0) {
-          const i = heapPop(due);
-          if (i === last) continue;
-          last = i;
-          const x = cellX(size, i);
-          const y = cellY(size, i);
-          if (x < minX || x > maxX || y < minY || y > maxY) continue;
-          if (visitOwner(i, x, y)) changedThisPass = true;
+        // Owners made due this pass lie ahead of the walk and bits behind it are clear, so walking words visits owners in ascending order.
+        for (let word = nowFirstWord; word <= nowLastWord; word++) {
+          for (let bits = dueNow[word]!; bits !== 0; bits = dueNow[word]!) {
+            const lowest = bits & -bits;
+            dueNow[word] = bits ^ lowest;
+            const i = (word << WORD_SHIFT) + (BIT_MASK - Math.clz32(lowest));
+            const x = cellX(size, i);
+            const y = cellY(size, i);
+            if (x < minX || x > maxX || y < minY || y > maxY) continue;
+            if (visitOwner(i, x, y)) changedThisPass = true;
+          }
         }
       }
     } else {
