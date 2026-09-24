@@ -156,8 +156,9 @@ obj=bpy.data.objects.new(BUILDING,mesh); bpy.context.collection.objects.link(obj
 bpy.context.view_layer.objects.active=obj; obj.select_set(True)
 # Recalculate solid-piece winding before UV projection.
 import bmesh
-bm=bmesh.new(); bm.from_mesh(mesh); bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces)) if BUILDING in NEW+['temple','timber-house','durands','ricks'] else bm.normal_update(); bm.to_mesh(mesh); bm.free(); mesh.update()
+bm=bmesh.new(); bm.from_mesh(mesh); bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces)) if BUILDING in NEW+['temple','timber-house','durands','ricks','flipper-shrimp'] else bm.normal_update(); bm.to_mesh(mesh); bm.free(); mesh.update()
 # Tags remain aligned because no face topology operation changes face order.
+for face,tag in zip(mesh.polygons,tags): face.use_smooth=tag.get('smooth',False)
 charts=[]
 for face,tag in zip(mesh.polygons,tags):
     points=np.array([mesh.vertices[v].co[:] for v in face.vertices])

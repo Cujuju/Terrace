@@ -1,0 +1,11 @@
+Use your image generation tool to create ONE image and save it as variant-a.png in the current directory. Reply with the saved path only.
+
+The two attached images are style references: a saloon and a research building from the same game. Match their footprint, detail density, exaggerated proportions, camera (elevated 3/4 isometric view, neutral grey background, single building centered), and polished stylized game-art look.
+
+Create a compact, stylized 3D aquatic clubhouse matching the reference saloon and research building in footprint, detail density, exaggerated proportions, and polished game-art style.
+This is the shared home of Flipper, a playful dolphin, and Shrimp, a cheerful shrimp. Both are the same size and equally important. Give them equally scaled seating, platforms, and attractions - never miniature shrimp amenities.
+Build a colorful seaside funhouse around a central turquoise pool, with two curved water slides, bubbling jets, stepping stones, and shallow channels connecting the shared spaces. Combine weathered wood, pale stone, nautical railings, porthole windows, and aqua glass. Accent with shells, coral, ropes, buoys, and a few tropical plants.
+Above the entrance, place a large, readable sign: "FLIPPER & SHRIMP'S PLACE", flanked by equally sized dolphin and shrimp mascots. Add two smaller signs: "NO FISHING" and "WATER WIGGLERS WELCOME."
+Balance dolphin-inspired waves and curved ramps with shrimp-inspired shell canopies and bubbly fountains. Keep the layout unified, playful, and absurd, with the building as the focal point.
+
+Variant direction: Symmetric composition: entrance facade faces the viewer, the pool sits in an open courtyard behind a two-story U-shaped building, the two slides mirror each other left (dolphin side) and right (shrimp side).

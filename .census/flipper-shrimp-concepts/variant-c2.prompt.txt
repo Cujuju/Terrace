@@ -1,0 +1,7 @@
+Use your image generation tool to create ONE image and save it as variant-c2.png in the current directory. Reply with the saved path only.
+
+Attached image 1 (variant-c.png) is the BASE design: a pier clubhouse on stilts with a lighthouse, "FLIPPER & SHRIMP'S PLACE" sign with dolphin and shrimp mascots on top, "NO FISHING" and "WATER WIGGLERS WELCOME." signs, lounges, pool, buoys and ropes. Keep everything about it the same: layout, camera angle, footprint, lighthouse, pier, signs, mascots, materials, colors, lighting, grey background, and stylized game-art look.
+
+Attached image 2 (variant-a.png) is the reference for ONE change only: the water slides. Replace the two slides in the base design with slides in the style of image 2: each slide launches out of the open mouth of a large sculpted character head: a smiling blue dolphin head for the left slide and a smiling orange shrimp head with long antennae for the right slide. Both heads and slides are the same size. The slides are long, glossy, sweeping curved open flumes (blue on the dolphin side, orange-coral on the shrimp side) with water running down and splashing into the pool. Mount the heads on the upper pier deck where the current slides start.
+
+Do not change anything else.

@@ -1,0 +1,128 @@
+{
+  "glb_sha256": "17dfab40c2e0299e1a3fbbf87772c08650f9b906169c922dce78e343d09734b2",
+  "mesh_count": 1,
+  "primitive_count": 1,
+  "material_count": 1,
+  "triangles": 6092,
+  "exported_vertices": 13556,
+  "nodes": [
+    {
+      "mesh": 0,
+      "name": "flipper-shrimp"
+    },
+    {
+      "children": [
+        0
+      ],
+      "name": "RootNode"
+    }
+  ],
+  "dimensions_gltf_y_up": [
+    0.8600000143051147,
+    0.5955191254615784,
+    0.7542038559913635
+  ],
+  "uv_islands": 3551,
+  "uv_min_max": [
+    0.005859375,
+    0.9940201640129089
+  ],
+  "uv_overlap_pairs": [],
+  "uv_candidate_pairs_checked": 2637,
+  "minimum_island_bounds_gap_pixels": 12.00006103515625,
+  "texel_density_min_max": [
+    134.99046928513712,
+    135.05494298604427
+  ],
+  "zero_area_triangles": 0,
+  "normal_length_error_max": 1.2606243116053406e-07,
+  "tangent_normal_dot_max": 0.0001286745558681801,
+  "compression_extensions": [
+    "KHR_materials_emissive_strength"
+  ],
+  "textures": {
+    "flipper-shrimp-emissive": {
+      "format": "image/png",
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "matches_external_bytes": true
+    },
+    "flipper-shrimp-normal": {
+      "format": "image/png",
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "matches_external_bytes": true
+    },
+    "flipper-shrimp-basecolor": {
+      "format": "image/png",
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "matches_external_bytes": true
+    },
+    "flipper-shrimp-metallicRoughness": {
+      "format": "image/png",
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "matches_external_bytes": true
+    }
+  },
+  "roughness_range": [
+    0.12156863510608673,
+    0.9686275124549866
+  ],
+  "metalness_range": [
+    0.0,
+    0.0
+  ],
+  "normal_map_length_error_max": 0.005169391632080078,
+  "blend": {
+    "mesh_count": 1,
+    "material_count": 1,
+    "vertices": 3731,
+    "triangles": 6092,
+    "uv_layers": [
+      "UVMap"
+    ],
+    "images_packed": true,
+    "objects": [
+      "flipper-shrimp",
+      "RootNode"
+    ]
+  },
+  "bounds_gltf_y_up": {
+    "min": [
+      -0.42601099610328674,
+      0.0,
+      -0.3779284954071045
+    ],
+    "max": [
+      0.433989018201828,
+      0.5955191254615784,
+      0.37627536058425903
+    ]
+  },
+  "emissive_material": {
+    "emissiveFactor": [
+      1,
+      1,
+      1
+    ],
+    "emissiveTexture": {
+      "index": 0
+    },
+    "extensions": {
+      "KHR_materials_emissive_strength": {
+        "emissiveStrength": 2
+      }
+    }
+  },
+  "passed": true
+}
