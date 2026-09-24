@@ -6,13 +6,16 @@ export interface BuildingAssetKit {
   dispose(): void;
 }
 
-export async function loadBuildingAssetKit(urls: Readonly<Record<string, string>>): Promise<BuildingAssetKit> {
+export async function loadBuildingAssetKit(
+  urls: Readonly<Record<string, string>>,
+  multipartIds: readonly string[] = [],
+): Promise<BuildingAssetKit> {
   const assets = new Map<string, RigAsset>();
   const results = await Promise.allSettled(Object.entries(urls).map(async ([id, url]) => {
     const asset = await loadRigAsset(url, null);
     assets.set(id, asset);
     const parts = flattenAssetParts(asset);
-    if (parts.length !== 1 || parts[0].localMatrices.length !== 1) {
+    if (!multipartIds.includes(id) && (parts.length !== 1 || parts[0].localMatrices.length !== 1)) {
       throw new Error(`building ${id}: expected one mesh and material`);
     }
   }));

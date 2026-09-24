@@ -1,5 +1,7 @@
 # Flipper & Shrimp — C + A reconstruction
 
+Revision 4 is now wired into the game's existing coastal clubhouse slot: Low uses the unchanged 42,507-triangle export and Original uses the unchanged 90,294-triangle export. Both preserve all 37 material parts and 38 PNG images. Runtime copies and measured fitting radius are refreshed by `python E:\Development\Projects\Terrace\.census\building-kit\integrate_assets.py flipper-shrimp`. The standalone delivery notes below describe the authoring stages before this integration; frame cost remains unmeasured.
+
 ## Current revision: simplified slides, UV ropes and shells
 
 Current files are in [revision-4](E:/Development/Projects/Terrace/.census/flipper-shrimp-ca/revision-4/). Revision 3 remains available for comparison.

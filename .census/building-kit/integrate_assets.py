@@ -1,6 +1,6 @@
 """Verify and copy the authored KTX2 GLBs into Vite's production asset tree."""
 from pathlib import Path
-import hashlib, json, math, shutil, struct, subprocess, sys
+import hashlib, json, math, re, shutil, struct, subprocess, sys
 
 ROOT = Path(__file__).resolve().parents[2]
 NAMES = ['camp', 'hut', 'prehistoric-granary', 'roman-granary', 'longhouse',
@@ -31,6 +31,37 @@ url_rows = {'low': [], 'original': []}
 for name in NAMES:
     if selected and name not in selected: continue
     for quality, size in [('original', 2048), ('low', 1024)]:
+        if name == 'flipper-shrimp':
+            folder = ROOT/'.census'/'flipper-shrimp-ca'/'revision-4'
+            source = folder/('flipper-shrimp-ca-light.glb' if quality == 'low' else 'flipper-shrimp-ca.glb')
+            doc, blob = glb(source)
+            assert len(doc['meshes']) == 1 and len(doc['materials']) == 37
+            assert doc['nodes'] == [{'mesh': 0, 'name': 'Flipper and Shrimp C+A'}]
+            assert len(doc['images']) == 38 and all(i['mimeType'] == 'image/png' for i in doc['images'])
+            triangles = 0
+            for primitive in doc['meshes'][0]['primitives']:
+                assert primitive.get('mode', 4) == 4
+                triangles += doc['accessors'][primitive['indices']]['count']//3
+                position = doc['accessors'][primitive['attributes']['POSITION']]
+                pv = doc['bufferViews'][position['bufferView']]
+                assert position['componentType'] == 5126 and position['type'] == 'VEC3'
+                start = pv.get('byteOffset', 0)+position.get('byteOffset', 0)
+                stride = pv.get('byteStride', 12)
+                radius = max(math.hypot(*struct.unpack_from('<fff', blob, start+i*stride)[::2]) for i in range(position['count']))
+                radii[name] = max(radius, radii.get(name, 0))
+            assert triangles == (42507 if quality == 'low' else 90294)
+            symbol = name.replace('-', '_')+'_'+quality
+            imports.append(f"import {symbol} from './assets/authored/{quality}/{name}.glb?url';")
+            url_rows[quality].append(f"    '{name}': {symbol},")
+            dest = ROOT/'plugins'/'structures'/'client'/'assets'/'authored'/quality/(name+'.glb')
+            shutil.copyfile(source, dest)
+            assert source.read_bytes() == dest.read_bytes()
+            reports.append({'building': name, 'quality': quality, 'source': str(source.relative_to(ROOT)),
+                            'runtime': str(dest.relative_to(ROOT)), 'bytes': dest.stat().st_size,
+                            'sha256': hashlib.sha256(dest.read_bytes()).hexdigest(), 'triangles': triangles,
+                            'material_primitives': len(doc['meshes'][0]['primitives']), 'embedded_png_images': 38,
+                            'geometry_preserved': True, 'textures_preserved': True})
+            continue
         folder = ROOT/'.census'/name
         if quality == 'low': folder /= 'low'
         source = folder/(name+'-ktx2.glb')
@@ -89,7 +120,14 @@ for name in NAMES:
                         'uastc_rgb': True, 'geometry_preserved': True})
     print('Verified and copied', name, flush=True)
 (ROOT/'.census'/'building-kit'/'integration-verification.json').write_text(json.dumps(reports, indent=2)+'\n')
-if selected: sys.exit(0)  # Targeted asset refresh must not overwrite another task's registry edits.
+if selected:
+    # Refresh only this replacement's radius without overwriting another task's registry edits.
+    if 'flipper-shrimp' in radii:
+        path = ROOT/'plugins'/'structures'/'client'/'authoredRadii.ts'
+        text, count = re.subn(r'("flipper-shrimp": )[^,]+', lambda m: m[1]+str(radii['flipper-shrimp']), path.read_text())
+        assert count == 1
+        path.write_text(text)
+    sys.exit(0)
 client = ROOT/'plugins'/'structures'/'client'
 (client/'authoredRadii.ts').write_text('export const AUTHORED_RADII: Readonly<Record<string, number>> = '+json.dumps(radii, indent=2)+';\n')
 (client/'authoredUrls.ts').write_text('\n'.join(imports)+"\n\nexport const AUTHORED_URLS = {\n"+

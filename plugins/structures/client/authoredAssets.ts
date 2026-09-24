@@ -6,7 +6,7 @@ import { FISHING_HUT_NAMES } from './fishingHuts.ts';
 import { AUTHORED_URLS } from './authoredUrls.ts';
 
 export async function preloadAuthoredStructures(quality: BuildingQuality): Promise<BuildingAssetKit> {
-  const kit = await loadBuildingAssetKit(AUTHORED_URLS[quality]);
+  const kit = await loadBuildingAssetKit(AUTHORED_URLS[quality], ['flipper-shrimp']);
   return {
     parts(id) {
       const parts = kit.parts(id);
