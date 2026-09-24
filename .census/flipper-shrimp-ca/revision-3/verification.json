@@ -1,0 +1,139 @@
+{
+  "revision": 3,
+  "revision_changes": [
+    "Shallow carved dolphin and shrimp with painted eyes, closed smiles and shell divisions.",
+    "Clear slide entrances with no arches; supports terminate below the actual trough floor.",
+    "Lantern and lighthouse emission strength 6, retained in glTF materials.",
+    "Mottled mineral stone color, pitted normal maps and variable roughness.",
+    "Clustered barnacle color, shell normal relief and roughness on lower pier posts."
+  ],
+  "blender_version": "5.2.1 LTS",
+  "authoring_objects": 1459,
+  "evaluated_triangles": 113948,
+  "materials": 34,
+  "authoring_dimensions": [
+    11.0600004196167,
+    10.053999900817871,
+    9.870442390441895
+  ],
+  "mascot_design": {
+    "design": "Shallow bevelled relief with painted eyes and closed smiles",
+    "body_depths": [
+      0.28,
+      0.27
+    ],
+    "facial_geometry_objects": 0,
+    "face_maps": 2
+  },
+  "reference": "Owner-selected C plus A; owner supplied reference image",
+  "differences": [
+    "Duplicate dolphin and shrimp slide heads omitted with owner authorization.",
+    "Water is a static textured surface in this asset; no animation or simulation."
+  ],
+  "surface_strategy": "Reusable original image base-color and tangent-space normal maps for wood, decking, plaster, roof shingles, stone, rope, caustics and waterfall streaks. No concept-image projection.",
+  "runtime_status": "Standalone asset, not integrated into the game. Runtime frame cost unmeasured.",
+  "gltf_footprint": 0.86,
+  "gltf_bytes": 17304020,
+  "lighter_export_triangles": 53412,
+  "lighter_export_bytes": 15350268,
+  "export_verified": {
+    "triangles": 113948,
+    "mesh_count": 1,
+    "material_primitives": 34,
+    "embedded_images": 32,
+    "alpha_materials": [
+      "Foam ripples - texture not tubes",
+      "Draped rope net - alpha texture",
+      "Painted nautical lettering atlas"
+    ],
+    "self_contained": true,
+    "roundtrip_render": "export-roundtrip.png",
+    "mascot_closeup": "mascots-closeup.png",
+    "slide_closeup": "slides-closeup.png",
+    "slide_surfaces": [
+      {
+        "name": "Blue sweeping flume",
+        "upward_faces": 882,
+        "faces": 882,
+        "vertices_inside_lounge_deck": 0
+      },
+      {
+        "name": "Coral sweeping flume",
+        "upward_faces": 882,
+        "faces": 882,
+        "vertices_inside_lounge_deck": 0
+      }
+    ],
+    "separate_slide_water_overlays": 0,
+    "vertex_colour_materials": [],
+    "emissive_materials": [
+      {
+        "name": "Lamp",
+        "factor": [
+          1,
+          0.6399999856948853,
+          0.20000000298023224
+        ],
+        "strength": 6
+      },
+      {
+        "name": "Foam",
+        "factor": [
+          0.0829999995678663,
+          0.09700000430643563,
+          0.09400000116229057
+        ],
+        "strength": 1
+      }
+    ],
+    "lantern_emission_strengths": {
+      "Amber lantern": 6.0,
+      "Amber lantern.001": 6.0,
+      "Amber lantern.002": 6.0,
+      "Amber lantern.003": 6.0,
+      "Amber lantern.004": 6.0,
+      "Amber lantern.005": 6.0,
+      "Amber lantern.006": 6.0,
+      "Amber lantern.007": 6.0,
+      "Amber lantern.008": 6.0,
+      "Amber lantern.009": 6.0,
+      "Amber lantern.010": 6.0,
+      "Amber lantern.011": 6.0,
+      "Amber lantern.012": 6.0,
+      "Amber lantern.013": 6.0,
+      "Lighthouse glowing lantern": 6.0,
+      "Amber lantern.014": 6.0,
+      "Amber lantern.015": 6.0,
+      "Amber lantern.016": 6.0
+    },
+    "surface_image_maps": {
+      "Limestone": [
+        "Limestone-color",
+        "Limestone-normal",
+        "Limestone-roughness"
+      ],
+      "Warm stone": [
+        "Warm stone-color",
+        "Warm stone-normal",
+        "Warm stone-roughness"
+      ],
+      "Barnacled timber": [
+        "Barnacled timber-color",
+        "Barnacled timber-normal",
+        "Barnacled timber-roughness"
+      ],
+      "Dolphin painted relief": [
+        "Dolphin painted relief"
+      ],
+      "Shrimp painted relief": [
+        "Shrimp painted relief"
+      ]
+    }
+  },
+  "lighter_export_verified": {
+    "triangles": 53412,
+    "mesh_count": 1,
+    "roundtrip_render": "lighter-export-roundtrip.png",
+    "footprint": 0.86
+  }
+}

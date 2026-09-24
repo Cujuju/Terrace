@@ -1,6 +1,24 @@
 # Flipper & Shrimp — C + A reconstruction
 
-## Current revision: faces and slide cleanup
+## Current revision: shallow relief, clear slides, coastal textures
+
+The current deliverables are in [revision-3](E:/Development/Projects/Terrace/.census/flipper-shrimp-ca/revision-3/). Earlier versions remain available for comparison.
+
+- [Editable Blender scene](E:/Development/Projects/Terrace/.census/flipper-shrimp-ca/revision-3/flipper-shrimp-ca.blend)
+- [Detailed GLB](E:/Development/Projects/Terrace/.census/flipper-shrimp-ca/revision-3/flipper-shrimp-ca.glb)
+- [Lighter GLB](E:/Development/Projects/Terrace/.census/flipper-shrimp-ca/revision-3/flipper-shrimp-ca-light.glb)
+
+The dolphin and shrimp are shallow bevelled relief ornaments. The dolphin has a tapered beak, dorsal fin, raised flipper and broad flukes; the shrimp has a curled shell, rostrum, antennae, walking legs and fan tail. Eyes, closed smiles, belly paint and shell divisions are image textures. There are no separate eye spheres or open mouth meshes. The reproducible artwork is in `painted_reliefs.py`.
+
+The slides retain continuous U-shaped troughs and textured sheen. Entrance arches are removed and support posts terminate below the sampled trough centreline. Rock uses mineral mottling, flecks, pitted normal maps and roughness maps with varied UV offsets. Lower pier posts use clustered barnacle color, normal and roughness maps on simple cylindrical sleeves. Lanterns and the lighthouse use emissive materials with strength 6; the audit records the exported emission and renders the re-imported asset under dim studio lighting.
+
+Build and verification commands below now produce `revision-3`. The detailed inspection results are in that folder's `verification.json`. Water remains static and the asset is not integrated into the game.
+
+Current geometry is 113,948 triangles in the detailed asset and 53,412 in the lighter export. Both retain the same painted faces, rock and barnacle maps, and emission. The brick and barnacle appearance should be preserved in later optimization. Measured costs in the detailed source: slides with rolled rims 11,240; shell ornaments/canopy 10,674; pier posts/caps/rope collars 14,760; stone blocks 8,096; barnacle sleeves 1,408. Further savings can come from fewer curve segments and bevels, normal-mapped shell ribs, simpler small trim, and removing hidden stone faces. A 25–35k presentation asset is an unverified target, not a delivered count.
+
+Both exported meshes were re-imported and rendered. They contain 34 material primitives and 32 embedded images. Each slide has 882/882 upward-facing trough polygons, no separate water overlays and zero trough vertices inside the lounge decks. All 17 small lanterns and the lighthouse use the same emissive material; the GLB retains its `KHR_materials_emissive_strength` value of 6. Triangle count alone does not measure runtime cost: texture memory and material batches still require in-game measurement.
+
+## Previous revision: faces and slide cleanup
 
 The current deliverables are in [revision-2](E:/Development/Projects/Terrace/.census/flipper-shrimp-ca/revision-2/). The root-level files below are retained as the first version for comparison.
 
@@ -16,7 +34,7 @@ The slide trough normals now face outward. Intersecting flat water strips are re
 
 Both GLBs were re-imported and rendered successfully. Each slide has 882 of 882 upward-facing trough polygons, zero vertices inside the lounge decks, and no separate water overlay. The detailed export has 156,730 triangles; the lighter export has 73,640. Both contain 37 material primitives and 25 embedded images. Additional geometry is concentrated in the unified mascot sculpts. Runtime performance remains unmeasured.
 
-The commands below now build and verify `revision-2`.
+This revision is retained for comparison; the commands below build the current revision.
 
 Editable Blender asset and reproducible build, authored against the owner-supplied C + A reference. This is a separate replacement candidate; the existing asset and game are preserved.
 

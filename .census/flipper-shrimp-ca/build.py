@@ -9,13 +9,14 @@ import json
 import random
 import bmesh
 import shutil
+import importlib.util
 from pathlib import Path
 import numpy as np
 from mathutils import Vector
 from mathutils.bvhtree import BVHTree
 
 SOURCE_ROOT = Path(__file__).resolve().parent
-ROOT = SOURCE_ROOT / 'revision-2'
+ROOT = SOURCE_ROOT / 'revision-3'
 ROOT.mkdir(exist_ok=True)
 TEX = ROOT / 'textures'
 TEX.mkdir(exist_ok=True)
@@ -74,6 +75,16 @@ def image_array(name, rgb, noncolor=False, alpha=None):
     return im
 
 
+def value_noise(u,v,frequency,seed):
+    rng=np.random.default_rng(seed)
+    grid=rng.random((frequency,frequency))
+    xx=u*frequency;yy=v*frequency
+    ix=np.floor(xx).astype(int);iy=np.floor(yy).astype(int)
+    fx=xx-ix;fy=yy-iy;fx=fx*fx*(3-2*fx);fy=fy*fy*(3-2*fy)
+    return ((1-fy)*((1-fx)*grid[iy%frequency,ix%frequency]+fx*grid[iy%frequency,(ix+1)%frequency])+
+            fy*((1-fx)*grid[(iy+1)%frequency,ix%frequency]+fx*grid[(iy+1)%frequency,(ix+1)%frequency]))
+
+
 def surface(name, color, rough=.45, metal=0, emission=0, pattern=None):
     mat = bpy.data.materials.new(name)
     mat.diffuse_color = (*color, 1)
@@ -86,7 +97,7 @@ def surface(name, color, rough=.45, metal=0, emission=0, pattern=None):
         bs.inputs['Emission Color'].default_value = (*color, 1)
         bs.inputs['Emission Strength'].default_value = emission
     if pattern:
-        n = 512 if pattern != 'water' else 1024
+        n = 1024 if pattern in ('water','stone','barnacles') else 512
         v, u = np.mgrid[0:n, 0:n] / n
         grain = (np.sin(TAU*(u*38 + .19*np.sin(TAU*v*2)+.06*np.sin(TAU*v*7))) +
                  .4*np.sin(TAU*(u*87+.09*np.sin(TAU*v*3))))
@@ -105,8 +116,38 @@ def surface(name, color, rough=.45, metal=0, emission=0, pattern=None):
                 worn = np.clip(grain-.5, 0, 1)*.06
                 rgb -= worn[..., None]*np.array([.1, .14, .17])
         elif pattern == 'stone':
-            h = .5+.11*noise+.07*np.sin(TAU*(u*4+v*3))*np.cos(TAU*v*7)
-            rgb *= (.84+.28*h+.025*noise)[..., None]
+            broad=value_noise(u,v,5,81);mid=value_noise(u,v,19,82)
+            fine=value_noise(u,v,91,83);grit=value_noise(u,v,251,84)
+            vein=np.exp(-((value_noise(u+.13*mid,v,9,85)-.49)/.025)**2)
+            pits=np.clip((.31-fine)*7,0,1)
+            h=.35+.27*mid+.09*fine+.035*grit-.10*pits+.025*vein
+            rgb *= (.65+.40*broad+.21*mid+.10*(fine-.5))[...,None]
+            rgb += vein[...,None]*np.array([.10,.085,.060])
+            rgb -= pits[...,None]*np.array([.12,.115,.10])
+            fleck=np.clip((grit-.72)*4,0,1)
+            rgb += fleck[...,None]*.16
+        elif pattern == 'barnacles':
+            # Tileable circumference, vertically placed above the waterline.
+            wet=np.clip((.8-v)*1.4,0,.65)
+            h=.30+.025*grain+.035*value_noise(u,v,31,731)
+            rgb *= (.83+.10*grain)[...,None]
+            rgb=rgb*(1-wet[...,None]) + np.array([.13,.23,.18])*wet[...,None]
+            rng=np.random.default_rng(247)
+            for _ in range(195):
+                cx=float(rng.uniform(0,1));cy=float(rng.beta(1.4,2.3)*.91)
+                radius=float(rng.uniform(.011,.039))
+                dx=np.mod(u-cx+.5,1)-.5;dy=(v-cy)*1.28
+                r=np.sqrt(dx*dx+dy*dy)/radius;a=np.arctan2(dy,dx)
+                rim=1+.06*np.sin(a*6+cx*40)
+                mask=np.clip((rim-r)*130,0,1)
+                hole=np.clip((.29-r)*75,0,1)
+                ridges=.045*np.cos(a*12)
+                shell_height=.23*np.clip(1-r,0,1)+.085*np.exp(-((r-.48)/.15)**2)+ridges*.13
+                h=np.maximum(h,h+mask*(shell_height-.21*hole))
+                shade=.67+.22*(1-r)+.10*np.cos(a*12)+.12*np.cos(a-2.0)
+                shell=np.stack((shade*.98,shade*.91,shade*.73),axis=-1)
+                shell=shell*(1-hole[...,None])+np.array([.11,.13,.105])*hole[...,None]
+                rgb=rgb*(1-mask[...,None])+shell*mask[...,None]
         elif pattern == 'slide':
             # Water sheen is part of the flume material, with no intersecting overlay.
             wet=np.exp(-((u-.5)/.16)**4)
@@ -155,19 +196,26 @@ def surface(name, color, rough=.45, metal=0, emission=0, pattern=None):
         node = mat.node_tree.nodes.new('ShaderNodeTexImage'); node.image = base
         mat.node_tree.links.new(node.outputs['Color'], bs.inputs['Base Color'])
         gy, gx = np.gradient(h)
-        normal = np.stack((-gx*3, -gy*3, np.ones_like(h)), axis=-1)
+        strength=32 if pattern=='stone' else 22 if pattern=='barnacles' else 3
+        normal = np.stack((-gx*strength, -gy*strength, np.ones_like(h)), axis=-1)
         normal /= np.linalg.norm(normal, axis=-1)[..., None]
         nim = image_array(name+'-normal', normal*.5+.5, True)
         nn = mat.node_tree.nodes.new('ShaderNodeTexImage'); nn.image = nim
         nm = mat.node_tree.nodes.new('ShaderNodeNormalMap')
         mat.node_tree.links.new(nn.outputs['Color'], nm.inputs['Color'])
         mat.node_tree.links.new(nm.outputs['Normal'], bs.inputs['Normal'])
+        if pattern in ('stone','barnacles'):
+            roughness=np.clip(rough+.20*(.5-h),.45,.94)
+            rim=image_array(name+'-roughness',np.repeat(roughness[...,None],3,axis=-1),True)
+            rn=mat.node_tree.nodes.new('ShaderNodeTexImage');rn.image=rim
+            mat.node_tree.links.new(rn.outputs['Color'],bs.inputs['Roughness'])
     return mat
 
 
 M = {}
 for key, color, rough, metal, emiss, pat in [
     ('Timber',(.44,.29,.16),.58,0,0,'wood'),
+    ('Barnacled timber',(.44,.29,.16),.76,0,0,'barnacles'),
     ('Deck',(.58,.40,.24),.54,0,0,'planks'),
     ('Ivory planks',(.84,.77,.63),.60,0,0,'whitewood'),
     ('Limestone',(.57,.54,.45),.73,0,0,'stone'),
@@ -192,7 +240,7 @@ for key, color, rough, metal, emiss, pat in [
     ('Tongue',(.84,.18,.18),.40,0,0,None),
     ('Brass',(.61,.37,.10),.28,.65,0,None),
     ('Iron',(.075,.085,.072),.44,.55,0,None),
-    ('Lamp', (1.,.58,.12),.24,0,3,None),
+    ('Lamp', (1.,.64,.20),.24,0,6,None),
     ('Glass',(.07,.43,.51),.16,.32,0,None),
     ('Leaf',(.20,.35,.065),.62,0,0,None),
     ('Leaf light',(.32,.46,.085),.61,0,0,None),
@@ -375,7 +423,17 @@ def post(x,y,bottom,top,r=.13,wrap=True):
         # One collar, texture conveys the individual rope strands.
         cylinder('Rope lashing',(x,y,top-.23),r*1.16,.20,'Rope',12)
     if bottom<.3:
-        cylinder('Algae tide mark',(x,y,.18),r*1.025,.36,'Algae',12)
+        # Replace the old flat-green collar with a single texture-bearing sleeve.
+        # Duplicated seam vertices keep the final cylinder face from stretching UVs.
+        verts=[];uv=[];segments=16
+        shift=(x*1.731+y*.793)%1
+        for z in (.015,.89):
+            for i in range(segments+1):
+                a=TAU*i/segments
+                verts.append((x+r*1.012*math.cos(a),y+r*1.012*math.sin(a),z))
+                uv.append((i/segments+shift,(z-.015)/.875))
+        faces=[(i,i+1,i+segments+2,i+segments+1) for i in range(segments)]
+        mesh('Barnacle encrusted pier base',verts,faces,'Barnacled timber',True,uv)
     return ob
 
 
@@ -412,6 +470,10 @@ def rock(loc,size,mat='Limestone'):
     ob=box('Rounded stone block',loc,size,mat,min(size)*.18)
     ob.modifiers[0].segments=1
     ob.rotation_euler=(random.uniform(-.08,.08),random.uniform(-.08,.08),random.uniform(-.12,.12))
+    # Individual stone UV offsets and scale prevent identical flecks on every block.
+    offset=((loc[0]*1.731+loc[2]*.912)%1,(loc[1]*1.129+loc[2]*.717)%1)
+    for loop in ob.data.uv_layers.active.data:
+        loop.uv=(loop.uv.x*3.4+offset[0],loop.uv.y*3.4+offset[1])
     return ob
 
 
@@ -626,8 +688,9 @@ for s in (-1,1):
 print('Architecture complete',flush=True)
 
 
+# The relief module replaces all volumetric mascot faces and eye geometry.
 def fin(name,outline,front,thickness,mat):
-    # Lenticular fin with a raised centre: 2D outline, actual volume, tapered rim.
+    # Small lenticular ornament still used by the lighthouse seabird.
     n=len(outline);cx=sum(p[0] for p in outline)/n;cz=sum(p[1] for p in outline)/n
     verts=[(x,front,z) for x,z in outline]+[(cx,front-thickness,cz),(cx,front+thickness*.55,cz)]
     faces=[]
@@ -637,223 +700,10 @@ def fin(name,outline,front,thickness,mat):
     return ob
 
 
-def eye(x,y,z,r=.15,look=1):
-    sphere('Inset ivory eye',(x,y,z),(r,r*.24,r*1.12),'Belly',24,16)
-    sphere('Inset turquoise iris',(x+look*r*.19,y-r*.19,z),(r*.68,r*.17,r*.79),'Iris',24,16)
-    sphere('Inset dark pupil',(x+look*r*.23,y-r*.32,z),(r*.44,r*.10,r*.59),'Eye',24,16)
-    sphere('Eye catchlight',(x+look*r*.12-r*.13,y-r*.41,z+r*.29),(r*.19,r*.045,r*.21),'White',12,8)
-    sphere('Eye secondary glint',(x+look*r*.26,y-r*.415,z-r*.22),(r*.067,r*.025,r*.08),'White',8,6)
-
-
-def sculpt_head(name,origin,forward,stations,upper,lower):
-    """Continuous rounded upper/lower jaw lofts with an inset, three-dimensional mouth.
-
-    Stations: forward distance, half depth, upper height, lower height, centre Z, gape.
-    No flat mouth plate or detached oval lip. The mouth rim is the head's own edge.
-    """
-    values=np.array(stations,dtype=float)
-    padded=np.vstack((2*values[0]-values[1],values,2*values[-1]-values[-2]))
-    rows=[]
-    for t in np.linspace(0,len(values)-1,56):
-        i=min(int(t),len(values)-2);f=t-i
-        a,b,c,d=padded[i:i+4]
-        row=.5*(2*b+(-a+c)*f+(2*a-5*b+4*c-d)*f*f+(-a+3*b-3*c+d)*f**3)
-        row[1:4]=np.maximum(row[1:4],.008);row[5]=max(0,float(row[5]))
-        rows.append(row)
-    ox,oy,oz=origin;n=25
-    for is_upper,material in ((True,upper),(False,lower)):
-        verts=[]
-        for xx,depth,up,down,zc,gape in rows:
-            for k in range(n):
-                angle=PI*k/(n-1)+(0 if is_upper else PI)
-                h=up if is_upper else down
-                verts.append((ox+forward*xx,oy+depth*math.cos(angle),oz+zc+h*math.sin(angle)+(gape/2 if is_upper else -gape/2)))
-        faces=[(j*n+k,j*n+k+1,(j+1)*n+k+1,(j+1)*n+k) for j in range(len(rows)-1) for k in range(n-1)]
-        faces += [(j*n,(j+1)*n,(j+1)*n+n-1,j*n+n-1) for j in range(len(rows)-1)]
-        faces += [tuple(reversed(range(n))),tuple(range((len(rows)-1)*n,len(rows)*n))]
-        if forward<0: faces=[tuple(reversed(f)) for f in faces]
-        mesh(name+(' sculpted upper head' if is_upper else ' integrated lower jaw'),verts,faces,material,True)
-    # Curved inset side walls and internal palate give the opening depth from oblique views.
-    open_rows=[r for r in rows if r[5]>.003]
-    for side in (-1,1):
-        rim=[(ox+forward*r[0],oy+side*r[1],oz+r[4]+r[5]/2) for r in open_rows]
-        rim += [(ox+forward*r[0],oy+side*r[1],oz+r[4]-r[5]/2) for r in reversed(open_rows)]
-        center=Vector((sum(p[0] for p in rim)/len(rim),oy,sum(p[2] for p in rim)/len(rim)))
-        inner=[(center.x+(p[0]-center.x)*.78,p[1]-side*.075,center.z+(p[2]-center.z)*.78) for p in rim]
-        verts=rim+inner+[tuple(center)];count=len(rim)
-        faces=[(k,(k+1)%count,(k+1)%count+count,k+count) for k in range(count)]
-        faces += [(count+k,count+(k+1)%count,2*count) for k in range(count)]
-        ob=mesh(name+' recessed mouth cavity',verts,faces,'Mouth',True)
-    for sign in (-1,1):
-        verts=[]
-        for xx,depth,up,down,zc,gape in open_rows:
-            verts.extend([(ox+forward*xx,oy-depth,oz+zc+sign*gape/2),(ox+forward*xx,oy+depth,oz+zc+sign*gape/2)])
-        mesh(name+' inner palate',verts,[(j*2,j*2+1,j*2+3,j*2+2) for j in range(len(open_rows)-1)],'Mouth',True)
-    # A small inset tongue, safely behind the lower rim.
-    mid=max(open_rows,key=lambda r:r[5])
-    sphere(name+' inset tongue',(ox+forward*mid[0],oy-mid[1]*.58,oz+mid[4]-mid[5]*.39),(.12,.075,.020),'Tongue',20,10)
-    def skin_y(x,z):
-        t=(x-ox)*forward
-        values=np.array(rows)
-        depth=float(np.interp(t,values[:,0],values[:,1]))
-        height=float(np.interp(t,values[:,0],values[:,2]))
-        center=oz+float(np.interp(t,values[:,0],values[:,4]+values[:,5]*.5))
-        return oy-depth*math.sqrt(max(.05,1-((z-center)/height)**2))
-    return skin_y
-
-
-def seated_eye(skin,x,z,r,look,material):
-    y=skin(x,z)-.009
-    eye(x,y,z,r,look)
-    rim=[]
-    for a in np.linspace(.02,PI-.02,22):
-        xx=x+r*1.05*math.cos(a);zz=z+r*1.18*math.sin(a)
-        rim.append((xx,skin(xx,zz)-.011,zz))
-    tube(material+' fitted upper eyelid',rim,.018,material,7)
-
-
-def fuse_skin(label,names):
-    """Unify face and body into a smooth sculpt while retaining surface colours."""
-    bpy.ops.object.select_all(action='DESELECT')
-    parts=[bpy.data.objects[n] for n in names]
-    for part in parts: part.select_set(True)
-    bpy.context.view_layer.objects.active=parts[0]
-    bpy.ops.object.join()
-    ob=bpy.context.object;ob.name=label
-    bm=bmesh.new();bm.from_mesh(ob.data)
-    bmesh.ops.remove_doubles(bm,verts=list(bm.verts),dist=1e-6)
-    bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces))
-    bm.to_mesh(ob.data);bm.free()
-    source=BVHTree.FromPolygons([v.co.copy() for v in ob.data.vertices],[list(p.vertices) for p in ob.data.polygons])
-    colours=[p.material_index for p in ob.data.polygons]
-    mod=ob.modifiers.new('Unified sculpt skin','REMESH');enum_set(mod,'mode','VOXEL')
-    mod.voxel_size=.020;mod.use_smooth_shade=True
-    bpy.ops.object.modifier_apply(modifier=mod.name)
-    mod=ob.modifiers.new('Relax sculpt junctions','SMOOTH');mod.factor=.62;mod.iterations=6
-    bpy.ops.object.modifier_apply(modifier=mod.name)
-    mod=ob.modifiers.new('Sculpt surface economy','DECIMATE');mod.ratio=.40
-    bpy.ops.object.modifier_apply(modifier=mod.name)
-    ob.data.update()
-    palette=[]
-    for material in ob.data.materials:
-        bs=next(n for n in material.node_tree.nodes if n.type=='BSDF_PRINCIPLED')
-        palette.append(tuple(bs.inputs['Base Color'].default_value))
-    rgba=np.zeros((len(ob.data.vertices),4),dtype=np.float32)
-    for v in ob.data.vertices:
-        nearest=source.find_nearest(v.co)
-        rgba[v.index]=palette[colours[nearest[2]]] if nearest[2] is not None else palette[0]
-    # Vertex interpolation softens the colour boundary instead of assigning
-    # a ragged white/coral boundary to individual remeshed triangles.
-    edges=np.array([tuple(e.vertices) for e in ob.data.edges],dtype=np.int32)
-    for _ in range(4):
-        total=rgba.copy();count=np.ones((len(rgba),1),dtype=np.float32)
-        np.add.at(total,edges[:,0],rgba[edges[:,1]]);np.add.at(total,edges[:,1],rgba[edges[:,0]])
-        np.add.at(count,edges[:,0],1);np.add.at(count,edges[:,1],1)
-        rgba=rgba*.35+(total/count)*.65
-    colour=ob.data.color_attributes.new(name='SculptColor',type='FLOAT_COLOR',domain='POINT')
-    colour.data.foreach_set('color',rgba.ravel())
-    material=surface(label+' colour',(1,1,1),.28)
-    bs=next(n for n in material.node_tree.nodes if n.type=='BSDF_PRINCIPLED')
-    node=material.node_tree.nodes.new('ShaderNodeVertexColor');node.layer_name='SculptColor'
-    material.node_tree.links.new(node.outputs['Color'],bs.inputs['Base Color'])
-    ob.data.materials.clear();ob.data.materials.append(material)
-    for face in ob.data.polygons: face.material_index=0;face.use_smooth=True
-    ob.select_set(False)
-
-
-# Dolphin: curved continuous body, pale ventral strip, melon, expressive beak.
-controls=[(-2.30,.98,6.41),(-2.71,1.02,6.76),(-2.94,1.03,7.30),(-2.88,1.03,7.87),(-2.64,1.04,8.40),(-2.34,1.03,8.63)]
-points=path(controls,36)
-widths=np.interp(np.linspace(0,1,36),[0,.14,.35,.57,.8,1],[.08,.19,.39,.50,.49,.19])
-verts=[];uv=[];ns=28
-for j,p in enumerate(points):
-    d=(points[min(j+1,35)]-points[max(0,j-1)]).normalized()
-    u=Vector((d.z,0,-d.x)).normalized();v=Vector((0,-1,0))
-    for k in range(ns):
-        a=TAU*k/ns
-        verts.append(p+float(widths[j])*(u*math.cos(a)+v*math.sin(a)*.78))
-        uv.append((k/ns,j/35))
-faces=[(j*ns+k,j*ns+(k+1)%ns,(j+1)*ns+(k+1)%ns,(j+1)*ns+k) for j in range(35) for k in range(ns)]
-faces += [tuple(reversed(range(ns))),tuple(range(35*ns,36*ns))]
-dolphin=mesh('Dolphin continuous curved body',verts,faces,'Dolphin',True,uv)
-dolphin.data.materials.append(M['Belly'])
-for f in dolphin.data.polygons:
-    k=f.index%ns
-    if 1<=k<=5: f.material_index=1
-dolphin_skin=sculpt_head('Dolphin',(-2.56,.96,8.42),1,[
-    (-.40,.04,.10,.09,-.11,0),(-.24,.29,.34,.20,-.01,0),
-    (-.03,.40,.43,.22,.025,0),(.16,.37,.41,.17,.005,.025),
-    (.35,.27,.16,.12,-.055,.25),(.61,.19,.10,.08,-.015,.18),
-    (.76,.12,.075,.04,.005,.055),
-    (.83,.025,.025,.02,.005,0)],'Dolphin','Belly')
-seated_eye(dolphin_skin,-2.37,8.66,.143,1,'Dolphin')
-fuse_skin('Dolphin unified sculpt',[
-    'Dolphin continuous curved body','Dolphin sculpted upper head','Dolphin integrated lower jaw'])
-# Dorsal fin on the left silhouette, one forward pectoral and a rear fin.
-fin('Dolphin dorsal fin',[(-3.17,7.92),(-3.51,8.02),(-3.61,8.37),(-3.34,8.30),(-2.98,8.14)],1.04,.10,'Dolphin')
-fin('Dolphin near pectoral flipper',[(-2.75,7.88),(-2.97,7.85),(-3.30,7.43),(-3.19,7.38),(-2.87,7.56),(-2.67,7.77)],.60,.10,'Dolphin')
-fin('Dolphin far pectoral flipper',[(-2.53,7.82),(-2.35,7.62),(-2.21,7.31),(-2.43,7.39),(-2.64,7.64)],1.19,.07,'Dolphin')
-fin('Dolphin left tail fluke',[(-2.32,6.51),(-2.59,6.56),(-2.94,6.39),(-2.85,6.20),(-2.54,6.19),(-2.27,6.38)],.95,.09,'Dolphin')
-fin('Dolphin right tail fluke',[(-2.31,6.48),(-2.12,6.65),(-1.91,6.62),(-1.91,6.45),(-2.11,6.23),(-2.30,6.32)],.95,.09,'Dolphin')
-# Small blowhole is pigment-like geometry sitting flush on the melon.
-sphere('Dolphin blowhole',(-2.58,1.00,8.877),(.037,.058,.008),'Teal',16,8)
-
-# Shrimp, equally tall and substantial. Six overlapping curled abdominal plates.
-shrimp_path=path([(2.78,1.02,8.00),(3.06,1.04,7.64),(3.12,1.04,7.17),(2.94,1.04,6.77),(2.59,1.03,6.55),(2.19,1.03,6.64)],48)
-verts=[];uv=[];ns=28
-for j,p in enumerate(shrimp_path):
-    d=(shrimp_path[min(j+1,47)]-shrimp_path[max(j-1,0)]).normalized()
-    u=Vector((d.z,0,-d.x)).normalized();v=Vector((0,-1,0))
-    r=float(np.interp(j/47,[0,.2,.4,.6,.8,1],[.36,.36,.32,.27,.19,.095]))
-    # A small lip and recessed seam articulate the six plates without separate beads.
-    phase=j%8
-    r*=1.04 if phase in (0,1) else .94 if phase==7 else 1.0
-    for k in range(ns):
-        a=TAU*k/ns
-        verts.append(p+r*(u*math.cos(a)+v*math.sin(a)*.82));uv.append((k/ns,j/47))
-faces=[(j*ns+k,j*ns+(k+1)%ns,(j+1)*ns+(k+1)%ns,(j+1)*ns+k) for j in range(47) for k in range(ns)]
-faces += [tuple(reversed(range(ns))),tuple(range(47*ns,48*ns))]
-abdomen=mesh('Shrimp continuous six-segment abdomen',verts,faces,'Coral',True,uv)
-abdomen.data.materials.append(M['Peach']);abdomen.data.materials.append(M['Shell'])
-for face in abdomen.data.polygons:
-    j=face.index//ns;k=face.index%ns
-    face.material_index=1 if j%8==0 or k<6 else 0
-sphere('Shrimp thorax',(2.73,1.03,8.08),(.43,.34,.61),'Coral',28,18)
-shrimp_skin=sculpt_head('Shrimp',(2.62,.97,8.40),-1,[
-    (-.34,.065,.13,.12,-.08,0),(-.16,.27,.34,.24,.035,0),
-    (0,.365,.39,.25,.035,0),(.17,.34,.34,.17,-.005,.035),
-    (.32,.275,.19,.11,-.09,.25),(.49,.16,.115,.07,-.11,.16),
-    (.58,.025,.025,.025,-.08,0)],'Coral','Peach')
-# Rostrum projecting left with small dorsal points gives a shrimp silhouette.
-fin('Shrimp swept rostrum',[(2.54,8.78),(2.26,8.91),(2.03,8.93),(2.20,8.81),(2.45,8.73)],.94,.07,'Coral')
-seated_eye(shrimp_skin,2.47,8.64,.146,-1,'Coral')
-fuse_skin('Shrimp unified sculpt',[
-    'Shrimp continuous six-segment abdomen','Shrimp thorax',
-    'Shrimp sculpted upper head','Shrimp integrated lower jaw'])
-for k in range(3):
-    ctr=[(2.39+k*.045,.91+k*.075,8.82),(2.22-k*.15,.88,9.24+k*.14),(1.74-k*.17,.89,9.52+k*.08),(1.20-k*.18,.9,9.43-k*.04)]
-    tube('Shrimp long arching antenna',path(ctr,32),[.029*(1-.8*i/31) for i in range(32)],'Coral',6)
-for k in range(2):
-    tube('Shrimp short antennule',path([(2.21,.77,8.76),(1.95,.73,8.96+k*.13),(1.63,.76,9.02+k*.14)],20),[.018*(1-.70*i/19) for i in range(20)],'Peach',5)
-for k in range(4):
-    zz=8.15-k*.20
-    tube('Shrimp near walking leg',path([(2.59,.76,zz),(2.30,.61,zz-.15),(2.15,.56,zz-.37),(2.02,.57,zz-.40)],16),[.027*(1-.4*i/15) for i in range(16)],'Shell',6)
-# Two modest chelipeds, not lobster-sized fists.
-for side in (-1,1):
-    start=(2.60+side*.24,.96,8.18)
-    elbow=(2.66+side*.58,.83,8.08)
-    hand=(2.67+side*.70,.77,8.55)
-    tube('Shrimp waving cheliped',path([start,elbow,hand],20),.045,'Coral',7)
-    sphere('Shrimp pincer palm',hand,(.10,.08,.18),'Peach',16,10)
-    hx,hy,hz=hand
-    for s in (-1,1):
-        tube('Shrimp small pincer',path([(hx+s*.065,hy,hz+.07),(hx+s*.115,hy,hz+.24),(hx+s*.05,hy,hz+.37)],15),[.065*(1-.82*i/14) for i in range(15)],'Coral',7)
-for k in range(3):
-    ob=sphere('Shrimp tail fan petal',(2.02-k*.11,1.00,6.64+(k-1)*.18),(.29,.09,.16),'Coral' if k%2 else 'Peach',18,12)
-    ob.rotation_euler.y=(k-1)*.5
-
-print('Character sculpts complete',flush=True)
-
+_spec=importlib.util.spec_from_file_location('painted_reliefs',SOURCE_ROOT/'painted_reliefs.py')
+_reliefs=importlib.util.module_from_spec(_spec);_spec.loader.exec_module(_reliefs)
+mascot_report=_reliefs.create_reliefs(mesh,bevel,tube,path,surface,image_array)
+print('Painted shallow relief mascots complete',flush=True)
 # --- Mirrored S-shaped open flumes. The owner allowed removal of duplicate heads. ---
 for side,mat in ((-1,'Blue flume glaze'),(1,'Coral flume glaze')):
     controls=[(side*2.64,.69,3.60),(side*2.23,.18,3.31),(side*1.84,-.48,2.74),
@@ -874,10 +724,11 @@ for side,mat in ((-1,'Blue flume glaze'),(1,'Coral flume glaze')):
         tube('Smooth rolled slide lip',[verts[j*ns+k] for j in range(64)],.032,'Belly' if side<0 else 'Shell',7)
     # Sheen is baked into the glaze texture; no second surface can cross the trough.
     splash(side*1.10,-2.44,1.085,.41)
-    # Launch arch replaces a character head with a small shell/wave portal.
-    tube('Open flume launch arch',[(side*2.64+.46*math.cos(a),.77,3.61+.46*math.sin(a)) for a in np.linspace(0,PI,24)],.075,'Timber',7)
-    for zz,yy,xx in ((2.0,-.7,2.0),(2.65,.1,2.25)):
-        beam('Slide support',(side*xx,yy,.16),(side*xx,yy,zz),.09,'Timber')
+    # Open landing: no arch or vertical member cuts through the trough entrance.
+    # Supports meet the underside of the actual centreline, never pierce its floor.
+    for j in (19,39):
+        p=pts[j]
+        beam('Slide support below trough',(p.x,p.y,.16),(p.x,p.y,p.z-.085),.09,'Timber')
 
 
 def umbrella(x,y,z,r,accent):
@@ -1091,17 +942,19 @@ for ob in asset.objects:
     ev.to_mesh_clear()
 coords=np.array(all_coords)
 report={
-    'revision':2,
+    'revision':3,
     'revision_changes':[
-        'Unified rounded mascot heads and bodies, recessed mouths, fitted eyes and eyelids.',
-        'Interpolated vertex colour softens mascot skin boundaries without extra texture geometry.',
-        'Corrected upward flume normals; removed intersecting water strips; sheen is a texture.',
-        'Moved right shell canopy clear of the slide; opened launch arches; cleared waterfall sheets.',
+        'Shallow carved dolphin and shrimp with painted eyes, closed smiles and shell divisions.',
+        'Clear slide entrances with no arches; supports terminate below the actual trough floor.',
+        'Lantern and lighthouse emission strength 6, retained in glTF materials.',
+        'Mottled mineral stone color, pitted normal maps and variable roughness.',
+        'Clustered barnacle color, shell normal relief and roughness on lower pier posts.',
     ],
     'blender_version':bpy.app.version_string,
     'authoring_objects':objects,'evaluated_triangles':triangles,
     'materials':len({slot.material for ob in asset.objects for slot in ob.material_slots}),
     'authoring_dimensions':(coords.max(axis=0)-coords.min(axis=0)).tolist(),
+    'mascot_design':mascot_report,
     'reference':'Owner-selected C plus A; owner supplied reference image',
     'differences':['Duplicate dolphin and shrimp slide heads omitted with owner authorization.','Water is a static textured surface in this asset; no animation or simulation.'],
     'surface_strategy':'Reusable original image base-color and tangent-space normal maps for wood, decking, plaster, roof shingles, stone, rope, caustics and waterfall streaks. No concept-image projection.',
@@ -1113,39 +966,7 @@ print('SAVED',json.dumps(report),flush=True)
 bpy.ops.render.render(write_still=True)
 print('RENDERED',flush=True)
 
-# The glTF exporter handles image-based Principled materials, including normals.
-bpy.ops.object.select_all(action='DESELECT')
-for ob in asset.objects: ob.select_set(True)
-bpy.context.view_layer.objects.active=next(ob for ob in asset.objects if ob.type=='MESH')
-bpy.ops.object.convert(target='MESH')
-# Join by material at export so the hundreds of authoring parts are not scene nodes.
-bpy.ops.object.join()
-joined=bpy.context.object;joined.name='Flipper and Shrimp C+A'
-span=max(coords.max(axis=0)[:2]-coords.min(axis=0)[:2])
-scale=.86/span
-joined.scale=(scale,scale,scale)
-bpy.ops.object.transform_apply(location=False,rotation=False,scale=True)
-bpy.ops.export_scene.gltf(filepath=str(ROOT/'flipper-shrimp-ca.glb'),export_format='GLB',use_selection=True,export_apply=True)
-report['gltf_footprint']=.86
-report['gltf_bytes']=(ROOT/'flipper-shrimp-ca.glb').stat().st_size
-(ROOT/'verification.json').write_text(json.dumps(report,indent=2)+'\n')
-print('EXPORTED',report['gltf_bytes'],flush=True)
-
-# Remove coincident pole vertices, then make a separate lighter export.
-# The editable source and full-resolution GLB are retained.
-bm=bmesh.new();bm.from_mesh(joined.data)
-bmesh.ops.remove_doubles(bm,verts=list(bm.verts),dist=1e-7)
-bmesh.ops.dissolve_degenerate(bm,edges=list(bm.edges),dist=1e-8)
-bm.to_mesh(joined.data);bm.free()
-mod=joined.modifiers.new('Lighter presentation mesh','DECIMATE')
-mod.ratio=.48;mod.use_collapse_triangulate=True
-allowed={v.identifier for v in mod.bl_rna.properties['delimit'].enum_items}
-if 'MATERIAL' in allowed: mod.delimit={'MATERIAL'}
-bpy.context.view_layer.objects.active=joined
-bpy.ops.object.modifier_apply(modifier=mod.name)
-joined.data.calc_loop_triangles()
-report['lighter_export_triangles']=len(joined.data.loop_triangles)
-bpy.ops.export_scene.gltf(filepath=str(ROOT/'flipper-shrimp-ca-light.glb'),export_format='GLB',use_selection=True,export_apply=True)
-report['lighter_export_bytes']=(ROOT/'flipper-shrimp-ca-light.glb').stat().st_size
-(ROOT/'verification.json').write_text(json.dumps(report,indent=2)+'\n')
-print('LIGHTER EXPORT',report['lighter_export_triangles'],flush=True)
+# Keep export independently repeatable without regenerating or rendering the scene.
+_export_spec=importlib.util.spec_from_file_location('export_asset',SOURCE_ROOT/'export_asset.py')
+_export=importlib.util.module_from_spec(_export_spec);_export_spec.loader.exec_module(_export)
+_export.export_asset(ROOT)

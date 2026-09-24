@@ -3,10 +3,11 @@ import bpy
 import json
 import math
 import struct
+import sys
 from pathlib import Path
 from mathutils import Vector
 
-ROOT=Path(__file__).resolve().parent/'revision-2'
+ROOT=Path(__file__).resolve().parent/'revision-3'
 bpy.ops.wm.open_mainfile(filepath=str(ROOT/'flipper-shrimp-ca.blend'))
 scene=bpy.context.scene
 collection=next(c for c in scene.collection.children if c.name.startswith('CLUBHOUSE'))
@@ -18,12 +19,19 @@ camera.rotation_euler=(Vector((0,1,7.8))-camera.location).to_track_quat('-Z','Y'
 camera.data.ortho_scale=8.15
 scene.render.filepath=str(ROOT/'mascots-closeup.png')
 bpy.ops.render.render(write_still=True)
+camera.location=(5.7,-12,5.5)
+camera.rotation_euler=(Vector((2.45,-2.7,.80))-camera.location).to_track_quat('-Z','Y').to_euler()
+camera.data.ortho_scale=4.9
+scene.render.filepath=str(ROOT/'stone-and-barnacles.png')
+if '--reuse-static-renders' not in sys.argv or not (ROOT/'stone-and-barnacles.png').exists():
+    bpy.ops.render.render(write_still=True)
 scene.render.resolution_x=1400;scene.render.resolution_y=1050
 camera.location=(.8,-16,15)
 camera.rotation_euler=(Vector((0,-.80,2.4))-camera.location).to_track_quat('-Z','Y').to_euler()
 camera.data.ortho_scale=6.4
 scene.render.filepath=str(ROOT/'slides-closeup.png')
-bpy.ops.render.render(write_still=True)
+if '--reuse-static-renders' not in sys.argv or not (ROOT/'slides-closeup.png').exists():
+    bpy.ops.render.render(write_still=True)
 slide_checks=[]
 for item in collection.objects:
     if item.name in ('Blue sweeping flume','Coral sweeping flume'):
@@ -34,6 +42,15 @@ for item in collection.objects:
         evaluated.to_mesh_clear()
         slide_checks.append({'name':item.name,'upward_faces':sum(p.normal.z>0 for p in item.data.polygons),'faces':len(item.data.polygons),'vertices_inside_lounge_deck':intruding})
 overlay_count=sum(o.name.startswith('Slide running water') for o in collection.objects)
+lanterns=[o for o in collection.objects if o.name.startswith(('Amber lantern','Lighthouse glowing lantern'))]
+emission_source={}
+for lamp in lanterns:
+    bs=next(n for n in lamp.data.materials[0].node_tree.nodes if n.type=='BSDF_PRINCIPLED')
+    emission_source[lamp.name]=float(bs.inputs['Emission Strength'].default_value)
+surface_maps={}
+for name in ('Limestone','Warm stone','Barnacled timber','Dolphin painted relief','Shrimp painted relief'):
+    mat=bpy.data.materials[name]
+    surface_maps[name]=[n.image.name for n in mat.node_tree.nodes if n.type=='TEX_IMAGE' and n.image]
 camera.location=oldloc;camera.rotation_euler=oldrot;camera.data.ortho_scale=oldscale
 scene.render.resolution_x=1200;scene.render.resolution_y=1200
 
@@ -50,6 +67,9 @@ assert all('bufferView' in i for i in gltf['images'])
 alpha=[m['name'] for m in gltf['materials'] if m.get('alphaMode') in ('BLEND','MASK')]
 assert len(alpha)>=2, alpha
 coloured=[gltf['materials'][p['material']]['name'] for m in gltf['meshes'] for p in m['primitives'] if 'COLOR_0' in p['attributes']]
+emissive=[{'name':m['name'],'factor':m.get('emissiveFactor'),
+           'strength':m.get('extensions',{}).get('KHR_materials_emissive_strength',{}).get('emissiveStrength',1)}
+          for m in gltf['materials'] if any(m.get('emissiveFactor',[0,0,0]))]
 
 # This affects the disposable QA process only.
 for ob in list(collection.objects): bpy.data.objects.remove(ob,do_unlink=True)
@@ -75,6 +95,9 @@ report['export_verified']={
     'slide_closeup':'slides-closeup.png',
     'slide_surfaces':slide_checks,'separate_slide_water_overlays':overlay_count,
     'vertex_colour_materials':coloured,
+    'emissive_materials':emissive,
+    'lantern_emission_strengths':emission_source,
+    'surface_image_maps':surface_maps,
 }
 (ROOT/'verification.json').write_text(json.dumps(report,indent=2)+'\n')
 print(json.dumps(report['export_verified']),flush=True)
@@ -101,3 +124,11 @@ report['lighter_export_verified']={
 }
 (ROOT/'verification.json').write_text(json.dumps(report,indent=2)+'\n')
 print(json.dumps(report['lighter_export_verified']),flush=True)
+
+# Dim the studio on the re-imported GLB to make retained emission directly visible.
+for light in scene.objects:
+    if light.type=='LIGHT': light.data.energy*=.018
+bg=next(n for n in scene.world.node_tree.nodes if n.type=='BACKGROUND')
+bg.inputs['Strength'].default_value=.012
+scene.render.filepath=str(ROOT/'emission-check.png')
+bpy.ops.render.render(write_still=True)
