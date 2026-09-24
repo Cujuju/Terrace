@@ -7,6 +7,7 @@ import {
   type WorldListMessage,
   type WorldPluginListMessage,
   type WorldPluginReloadRequestMessage,
+  type WorldCreateRequestMessage,
 } from '@terrace/shared';
 import type { ServerConfig } from '../config.ts';
 import { MAX_WORLD_SIZE, MIN_WORLD_SIZE } from '../config.ts';
@@ -87,6 +88,29 @@ export class WorldAdminService {
       logError(`reloading plugin "${request.plugin}" failed`, error);
       return fail('reloadPlugin', 'failed');
     }
+  }
+
+  /** `worldCreate` with genesis on a worker thread: the reply comes when the world is on disk. */
+  async createInBackground(
+    clientId: string,
+    request: WorldCreateRequestMessage,
+  ): Promise<WorldAdminResultMessage> {
+    const refusal = this.gate.authorize(clientId, request.key);
+    if (refusal !== null) return fail('create', refusal);
+    const plan = this.planCreate(request.name, request.worldSize);
+    if ('refused' in plan) return fail('create', plan.refused);
+    let id: string | null;
+    try {
+      id = await this.deps.manager.createWorldInBackground(
+        plan.name,
+        plan.size,
+        request.difficulty ?? this.deps.config.difficulty,
+      );
+    } catch (error) {
+      logError(`creating world "${plan.name}" failed`, error);
+      return fail('create', 'failed');
+    }
+    return this.finishCreate(clientId, id, request.loadNow);
   }
 
   handle(clientId: string, request: WorldAdminRequestMessage): WorldAdminResultMessage {
@@ -217,19 +241,35 @@ export class WorldAdminService {
     difficulty: number | undefined,
     loadNow: boolean | undefined,
   ): WorldAdminResultMessage {
-    const { config, manager } = this.deps;
+    const plan = this.planCreate(name, worldSize);
+    if ('refused' in plan) return fail('create', plan.refused);
+    const id = this.deps.manager.createWorld(
+      plan.name,
+      plan.size,
+      difficulty ?? this.deps.config.difficulty,
+    );
+    return this.finishCreate(requesterId, id, loadNow);
+  }
 
-    const chosenName = name ?? generateWorldName();
-    const size = worldSize ?? config.worldSize;
+  private planCreate(
+    name: string | undefined,
+    worldSize: number | undefined,
+  ): { name: string; size: number } | { refused: WorldAdminRefusal } {
+    const size = worldSize ?? this.deps.config.worldSize;
     if (size < MIN_WORLD_SIZE || size > MAX_WORLD_SIZE || size % CHUNK_SIZE !== 0) {
-      return fail('create', 'invalidSize');
+      return { refused: 'invalidSize' };
     }
+    return { name: name ?? generateWorldName(), size };
+  }
 
-    const id = manager.createWorld(chosenName, size, difficulty ?? config.difficulty);
+  private finishCreate(
+    requesterId: string,
+    id: string | null,
+    loadNow: boolean | undefined,
+  ): WorldAdminResultMessage {
     if (id === null) return fail('create', 'nameInUse');
-
     if (loadNow === true) {
-      const outcome = manager.requestLoad(id, requesterId);
+      const outcome = this.deps.manager.requestLoad(id, requesterId);
       if (typeof outcome === 'string') {
         logInfo(`world "${id}" was created but could not be loaded (${outcome})`);
       }

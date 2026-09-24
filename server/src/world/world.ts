@@ -40,12 +40,8 @@ import {
 import { NULL_SINK, type MessageSink } from '../net/message-sink.ts';
 import type { Player } from '../player.ts';
 import {
-  FRESH_SEABED_HEIGHT,
-  buildFreshGenesisTerrain,
-  carveFallbackAbyss,
-  encodeGenesisEdges,
   drawGenesisSeed,
-  freshGenesisHeightAt,
+  generateFreshGenesisCells,
 } from './genesis.ts';
 import { applyInitialUnlock } from './initial-unlock.ts';
 import { chunkPayloadOf, collectUnlockedChunkPayloads } from './mask-filter.ts';
@@ -144,31 +140,18 @@ export class World {
     name: string = generateWorldName(),
     seed: number = drawGenesisSeed(),
   ): World {
+    return World.fromGenesis(generateFreshGenesisCells(size, seed), size, difficulty, name);
+  }
+
+  /** A fresh world around heights `generateFreshGenesisCells` produced, here or on a worker. */
+  static fromGenesis(
+    cells: Int16Array,
+    size: number,
+    difficulty: number = DEFAULT_WORLD_DIFFICULTY,
+    name: string = generateWorldName(),
+  ): World {
     const map = createHeightmap(size);
-    const terrain = buildFreshGenesisTerrain(size, seed);
-
-    let deepestHeight = MAX_HEIGHT;
-    for (let y = 0; y < size; y++) {
-      const row = y * size;
-      for (let x = 0; x < size; x++) {
-        const height = freshGenesisHeightAt(terrain, x, y);
-        map.cells[row + x] = height;
-        if (height < deepestHeight) deepestHeight = height;
-      }
-    }
-
-    if (deepestHeight > FRESH_SEABED_HEIGHT) {
-      deepestHeight = carveFallbackAbyss(map, size);
-    }
-
-    if (deepestHeight > FRESH_SEABED_HEIGHT) {
-      throw new Error(
-        `fresh genesis produced no water at or below FRESH_SEABED_HEIGHT ` +
-          `(deepest cell was ${deepestHeight}) — deep-water guarantee violated`,
-      );
-    }
-    encodeGenesisEdges(map, terrain);
-
+    map.cells.set(cells);
     const world = new World(
       map,
       createChunkMask(size),

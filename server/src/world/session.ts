@@ -8,6 +8,8 @@ import type { InstalledPlugins } from '../plugins/installed.ts';
 import { resolveDeclaredSettings } from '../plugins/settings.ts';
 import type { LoadedPlugin } from '../plugins/types.ts';
 import { archFixtureRequested, carveArchFixture } from './arch-fixture.ts';
+import { drawGenesisSeed } from './genesis.ts';
+import { generateFreshGenesisCellsOffThread } from './genesis-thread.ts';
 import { RollbackService } from './rollback.ts';
 import { World } from './world.ts';
 
@@ -181,29 +183,49 @@ export function createWorldFile(
 ): void {
   const store = deps.registry.createStore(id, deps.config.snapshotRetention);
   try {
-    const world = World.createFresh(worldSize, difficulty, name);
-    if (archFixtureRequested()) {
-      const layered = carveArchFixture(world.map);
-      logInfo(
-        `arch fixture: carved into world "${id}" — ${layered} layered column(s)` +
-          (layered === 0 ? ' (nothing opened under the mound; this is a bug)' : ''),
-      );
-    }
-    world.anchorClockToRealTime();
-    store.saveSnapshot({
-      worldSize: world.size,
-      name: world.name,
-      cells: world.heightsForPersistence(),
-      columnSpans: world.spansForPersistence(),
-      mask: world.mask,
-      pluginSlices: {},
-      tokenMasks: world.tokenMasks(),
-      simMillis: world.simMillis,
-      genesisMillis: world.genesisMillis,
-      thumbnail: buildThumbnail(world.map.cells, world.size),
-    });
-    logInfo(`created world "${id}" ("${name}", ${worldSize}²)`);
+    saveFreshWorld(store, id, World.createFresh(worldSize, difficulty, name));
   } finally {
     store.close();
   }
+}
+
+/** As `createWorldFile`, with genesis on a worker thread. The store exists first, so the id is taken. */
+export async function createWorldFileInBackground(
+  deps: SessionDeps,
+  id: string,
+  name: string,
+  worldSize: number,
+  difficulty: number,
+): Promise<void> {
+  const store = deps.registry.createStore(id, deps.config.snapshotRetention);
+  try {
+    const cells = await generateFreshGenesisCellsOffThread(worldSize, drawGenesisSeed());
+    saveFreshWorld(store, id, World.fromGenesis(cells, worldSize, difficulty, name));
+  } finally {
+    store.close();
+  }
+}
+
+function saveFreshWorld(store: SnapshotStore, id: string, world: World): void {
+  if (archFixtureRequested()) {
+    const layered = carveArchFixture(world.map);
+    logInfo(
+      `arch fixture: carved into world "${id}" — ${layered} layered column(s)` +
+        (layered === 0 ? ' (nothing opened under the mound; this is a bug)' : ''),
+    );
+  }
+  world.anchorClockToRealTime();
+  store.saveSnapshot({
+    worldSize: world.size,
+    name: world.name,
+    cells: world.heightsForPersistence(),
+    columnSpans: world.spansForPersistence(),
+    mask: world.mask,
+    pluginSlices: {},
+    tokenMasks: world.tokenMasks(),
+    simMillis: world.simMillis,
+    genesisMillis: world.genesisMillis,
+    thumbnail: buildThumbnail(world.map.cells, world.size),
+  });
+  logInfo(`created world "${id}" ("${world.name}", ${world.size}²)`);
 }

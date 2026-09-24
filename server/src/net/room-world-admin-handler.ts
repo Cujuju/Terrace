@@ -81,6 +81,13 @@ export function answerWorldAdminMessage(
       });
   }
 
+  if (request.type === 'worldCreate') {
+    return admin.createInBackground(client.sessionId, request).then((created) => {
+      client.send('worldAdminResult', created);
+      if (created.ok) client.send('worldListing', admin.listing());
+    });
+  }
+
   const result = admin.handle(client.sessionId, request);
   client.send('worldAdminResult', result);
   if (

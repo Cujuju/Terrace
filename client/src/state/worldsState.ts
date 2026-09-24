@@ -11,7 +11,12 @@ import type {
 
 export type WorldFeedback =
   | { kind: 'idle' }
-  | { kind: 'working' }
+  | {
+      kind: 'working';
+      /** Set for a create: genesis runs for seconds, so the panel says so. */
+      action?: WorldAdminAction;
+      startedAtMs?: number;
+    }
   | { kind: 'listed' }
   | {
       kind: 'done';

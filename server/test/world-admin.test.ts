@@ -268,3 +268,29 @@ describe('the protocol validator', () => {
       .toBeNull();
   });
 });
+
+describe('creating a world in the background', () => {
+  it('writes a loadable world and reports it once genesis finishes', async () => {
+    const result = await admin.createInBackground(CLIENT, {
+      type: 'worldCreate',
+      key: KEY,
+      name: 'Quiet Harbour',
+    });
+    expect(result.ok).toBe(true);
+    expect(registry.has(result.id as string)).toBe(true);
+    expect(admin.handle(CLIENT, { type: 'worldLoad', key: KEY, id: result.id as string }).ok).toBe(true);
+  });
+
+  it('refuses a wrong key or an invalid size before generating anything', async () => {
+    const badKey = await admin.createInBackground(CLIENT, { type: 'worldCreate', key: 'wrong', name: 'Nope' });
+    expect(badKey.refused).toBe('badKey');
+    const badSize = await admin.createInBackground(CLIENT, {
+      type: 'worldCreate',
+      key: KEY,
+      name: 'Nope',
+      worldSize: WORLD_SIZE + 1,
+    });
+    expect(badSize.refused).toBe('invalidSize');
+    expect(registry.has('nope')).toBe(false);
+  });
+});

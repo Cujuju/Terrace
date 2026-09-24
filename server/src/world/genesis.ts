@@ -9,6 +9,7 @@ import {
   SEA_LEVEL,
   WORLD_UNIT_CELLS,
   cellsOverArea,
+  createHeightmap,
   createSeededRng,
   drawnBandOfSample,
   encodeLevelEdges,
@@ -877,6 +878,35 @@ export function encodeGenesisEdges(map: Heightmap, terrain: FreshGenesisTerrain)
     level[i] = drawnBandOfSample(map.cells[i]!) * GENESIS_FIELD_SUB_BAND + fraction[i]!;
   }
   encodeLevelEdges(map, level, GENESIS_FIELD_SUB_BAND);
+}
+
+/** Every cell's height for a fresh world: genesis, the deep-water guarantee, then edge encoding. */
+export function generateFreshGenesisCells(size: number, seed: number): Int16Array {
+  const map = createHeightmap(size);
+  const terrain = buildFreshGenesisTerrain(size, seed);
+
+  let deepestHeight = MAX_HEIGHT;
+  for (let y = 0; y < size; y++) {
+    const row = y * size;
+    for (let x = 0; x < size; x++) {
+      const height = freshGenesisHeightAt(terrain, x, y);
+      map.cells[row + x] = height;
+      if (height < deepestHeight) deepestHeight = height;
+    }
+  }
+
+  if (deepestHeight > FRESH_SEABED_HEIGHT) {
+    deepestHeight = carveFallbackAbyss(map, size);
+  }
+
+  if (deepestHeight > FRESH_SEABED_HEIGHT) {
+    throw new Error(
+      `fresh genesis produced no water at or below FRESH_SEABED_HEIGHT ` +
+        `(deepest cell was ${deepestHeight}) — deep-water guarantee violated`,
+    );
+  }
+  encodeGenesisEdges(map, terrain);
+  return map.cells;
 }
 
 export function carveFallbackAbyss(map: Heightmap, size: number): number {

@@ -1,4 +1,4 @@
-import { For, Show, createSignal, type JSX } from 'solid-js';
+import { For, Show, createSignal, onCleanup, type JSX } from 'solid-js';
 import {
   slugifyWorldName,
   type WorldAdminRefusal,
@@ -51,6 +51,8 @@ function formatWhen(epochMs: number | null | undefined, nowMs: number): string {
   return `${Math.round(elapsed / MS_PER_DAY)}d ago`;
 }
 
+const MS_PER_SECOND = 1000;
+
 export function WorldManager(props: { actions: WorldActions }): JSX.Element {
   const [armedArchiveId, setArmedArchiveId] = createSignal<string | null>(null);
   const [armedRestart, setArmedRestart] = createSignal(false);
@@ -64,8 +66,26 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
   const [listedAtMs, setListedAtMs] = createSignal(Date.now());
 
   const send = (message: WorldAdminRequestMessage): void => {
-    setWorldFeedback({ kind: 'working' });
+    setWorldFeedback(
+      message.type === 'worldCreate'
+        ? { kind: 'working', action: 'create', startedAtMs: Date.now() }
+        : { kind: 'working' },
+    );
     props.actions.send(message);
+  };
+
+  const [nowMs, setNowMs] = createSignal(Date.now());
+  const clock = setInterval(() => setNowMs(Date.now()), MS_PER_SECOND);
+  onCleanup(() => clearInterval(clock));
+  const creating = (): boolean => {
+    const feedback = worldFeedback();
+    return feedback.kind === 'working' && feedback.action === 'create';
+  };
+  const workingText = (): string => {
+    const feedback = worldFeedback();
+    if (feedback.kind !== 'working' || feedback.startedAtMs === undefined) return 'Working…';
+    const seconds = Math.max(0, Math.floor((nowMs() - feedback.startedAtMs) / MS_PER_SECOND));
+    return `Generating the world… ${String(seconds)}s`;
   };
 
   const requestList = (): void => {
@@ -125,6 +145,13 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
             List
           </button>
         </form>
+
+        <Show when={worldFeedback().kind === 'working'}>
+          <div class="restore-key-row" role="status">
+            <span class="status-dot status-connecting" />
+            <span class="status-label">{workingText()}</span>
+          </div>
+        </Show>
 
         <Show when={worldFeedback().kind === 'refused'}>
           {
@@ -522,7 +549,7 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
               value={newName()}
               onInput={(event) => setNewName(event.currentTarget.value)}
             />
-            <button type="submit" class="chart-button">
+            <button type="submit" class="chart-button" disabled={creating()}>
               Create
             </button>
           </form>

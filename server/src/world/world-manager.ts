@@ -12,6 +12,7 @@ import { applyInitialUnlockForToken } from './initial-unlock.ts';
 import {
   closeSession,
   createWorldFile,
+  createWorldFileInBackground,
   openSession,
   releaseSession,
   snapshotIfDirty,
@@ -148,6 +149,18 @@ export class WorldManager {
     const id = this.deps.registry.uniqueIdFor(name);
     if (id === null) return null;
     createWorldFile(this.deps, id, name, worldSize, difficulty);
+    return id;
+  }
+
+  /** As `createWorld`, with genesis off the main thread so play goes on meanwhile. */
+  async createWorldInBackground(
+    name: string,
+    worldSize: number,
+    difficulty: number,
+  ): Promise<string | null> {
+    const id = this.deps.registry.uniqueIdFor(name);
+    if (id === null) return null;
+    await createWorldFileInBackground(this.deps, id, name, worldSize, difficulty);
     return id;
   }
 
