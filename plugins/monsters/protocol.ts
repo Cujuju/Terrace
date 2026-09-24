@@ -10,6 +10,15 @@ export const YETI_VARIANTS = ['silverback', 'ram', 'ibex', 'fanged'] as const;
 
 export type YetiVariant = (typeof YETI_VARIANTS)[number];
 
+export const YETI_HEIGHT_IN_PEEPS = 2;
+
+export const YETI_TOTAL_HEIGHT = PEEP_HEIGHT_WORLD_UNITS * YETI_HEIGHT_IN_PEEPS;
+
+// Speed is a length per second, so it scales with him: the amble covers the same heights per second at any size.
+export const YETI_AMBLE_HEIGHTS_PER_SECOND = 0.07694938440492477;
+
+export const YETI_AMBLE_SPEED_WORLD_UNITS_PER_SECOND = YETI_AMBLE_HEIGHTS_PER_SECOND * YETI_TOTAL_HEIGHT;
+
 export const DEFAULT_YETI_VARIANT: YetiVariant = YETI_VARIANTS[0];
 
 export function isYetiVariant(value: unknown): value is YetiVariant {
@@ -26,7 +35,7 @@ export {
   roundBroadcastCell,
   roundBroadcastPosition,
 } from '@terrace/shared';
-import { isFiniteNumber, parseClimbPath, type ClimbPath } from '@terrace/shared';
+import { PEEP_HEIGHT_WORLD_UNITS, isFiniteNumber, parseClimbPath, type ClimbPath } from '@terrace/shared';
 
 export interface MonsterState {
   readonly id: number;

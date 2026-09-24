@@ -1,11 +1,13 @@
 import {
+  cellsAcross,
   isWalkableCell as sharedIsWalkableCell,
   withClearance,
   type TerrainSampler,
   type TraversalProfile,
 } from '@terrace/shared';
 import {
-  WILDLIFE_SIZE_MODEL_SCALE,
+  drawnLengthWorldUnits,
+  speciesRealLengthMetres,
   type WildlifeHabitatSpecies,
   type WildlifeSizeClass,
 } from '../protocol.ts';
@@ -22,16 +24,16 @@ export function hullHalfLengthCellsOf(
   species: WildlifeHabitatSpecies,
   size: WildlifeSizeClass,
 ): number {
-  return (profileOf(species).bodyLengthCells * WILDLIFE_SIZE_MODEL_SCALE[size]) / 2;
+  return cellsAcross(drawnLengthWorldUnits(speciesRealLengthMetres(species), size)) / 2;
 }
 
 export function hullHalfBeamCellsOf(
   species: WildlifeHabitatSpecies,
   size: WildlifeSizeClass,
 ): number {
-  const beam = profileOf(species).hullBeamCells;
-  if (beam === undefined) return 0;
-  return (beam * WILDLIFE_SIZE_MODEL_SCALE[size]) / 2;
+  const profile = profileOf(species);
+  if (profile.hullBeamCells === undefined) return 0;
+  return hullHalfLengthCellsOf(species, size) * (profile.hullBeamCells / profile.bodyLengthCells);
 }
 
 export function hasHull(species: WildlifeHabitatSpecies): boolean {

@@ -1,5 +1,6 @@
 import { cellsAcross, cellsOverArea } from '@terrace/shared';
 import {
+  mediumBodyLengthCells,
   AQUATIC_MAX_GRADIENT_PER_CELL,
   NO_MIN_WATER_DEPTH,
   NO_SPAWN_GROUND_RULE,
@@ -18,14 +19,18 @@ const SHARK_PREY: Predation = {
   alarmRadiusCells: SHARK_ALARM_RADIUS_CELLS,
 };
 
+const SHARK_BEAM_OF_LENGTH = 0.84 / 1.5;
+
+export const SHARK_BODY_LENGTH_CELLS = mediumBodyLengthCells('shark');
+
 export const SHARK_PROFILE: SpeciesProfile = {
   species: 'shark',
   habitat: 'shallow',
   minWaterDepthBands: NO_MIN_WATER_DEPTH,
   cruiseSpeedCellsPerSecond: cellsAcross(1.8),
   turnNoiseRadiansPerSecond: 0.6,
-  bodyLengthCells: cellsAcross(1.5),
-  hullBeamCells: cellsAcross(0.84),
+  bodyLengthCells: SHARK_BODY_LENGTH_CELLS,
+  hullBeamCells: SHARK_BODY_LENGTH_CELLS * SHARK_BEAM_OF_LENGTH,
   habitatCellsPerIndividual: cellsOverArea(2500),
   groupSize: 1,
   sizeWeights: SINGLE_SIZE_WEIGHTS,

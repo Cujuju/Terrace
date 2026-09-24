@@ -19,12 +19,25 @@ import {
   type MoverGait,
 } from '../../../client/src/plugins/kit/moverGait.ts';
 import { applyMoverBodyTilt } from '../../../client/src/plugins/kit/moverBodyTilt.ts';
-import { WHALE_SPECIES, type WhaleSpecies } from './whaleSpecies.ts';
 import { buildHumpback } from './species/humpback.ts';
 import { buildBlueWhale } from './species/blueWhale.ts';
 import { buildSpermWhale } from './species/spermWhale.ts';
-import { type WildlifeSizeClass, type WildlifeSpecies } from '../protocol.ts';
+import {
+  WHALE_BODIES,
+  whaleBodyOf,
+  type WhaleBody,
+  type WildlifeSizeClass,
+  type WildlifeSpecies,
+} from '../protocol.ts';
 import { modelScaleFor } from './modelScale.ts';
+import {
+  BIRD_BODY_LENGTH,
+  BIRD_BODY_WIDTH,
+  BIRD_ENVELOPE,
+  BIRD_TAIL_LENGTH,
+  BIRD_TAIL_RADIUS,
+  BIRD_TAIL_X,
+} from './species/bird.ts';
 import type { SpeciesModelBuilder, SpeciesModelPool } from './species/speciesModel.ts';
 import { buildFish } from './species/fish.ts';
 import { buildGrazer } from './species/grazer.ts';
@@ -42,11 +55,6 @@ const SPHERE_RINGS = 4;
 const CONE_SEGMENTS = 4;
 
 const BIRD_COLOR = 0x2e3646;
-
-export const BIRD_ENVELOPE = {
-  crownY: 0.09,
-  bellyY: -0.09,
-} as const;
 
 const BIRD_WING_FLAP_HZ = 5.5;
 
@@ -111,9 +119,9 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
   }
 
   const birdMaterial = lambert(BIRD_COLOR);
-  const birdBody = ellipsoid(0.6, BIRD_ENVELOPE.crownY - BIRD_ENVELOPE.bellyY, 0.18);
+  const birdBody = ellipsoid(BIRD_BODY_LENGTH, BIRD_ENVELOPE.crownY - BIRD_ENVELOPE.bellyY, BIRD_BODY_WIDTH);
   const birdWing = keepGeometry(new BoxGeometry(0.32, 0.03, BIRD_WING_LENGTH));
-  const birdTail = keepGeometry(new ConeGeometry(0.13, 0.26, CONE_SEGMENTS));
+  const birdTail = keepGeometry(new ConeGeometry(BIRD_TAIL_RADIUS, BIRD_TAIL_LENGTH, CONE_SEGMENTS));
   birdTail.rotateZ(Math.PI / 2);
 
   function part(
@@ -218,7 +226,7 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
   const birdRig = (() => {
     const { root, rig } = rigged();
     rig.add(part(birdBody, birdMaterial, 0, 0, 0));
-    rig.add(part(birdTail, birdMaterial, -0.38, 0, 0));
+    rig.add(part(birdTail, birdMaterial, BIRD_TAIL_X, 0, 0));
 
     function wing(sign: number): Group {
       const pivot = new Group();
@@ -241,14 +249,14 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
   const eelDrawable = speciesDrawable(buildEel);
   const angelfishDrawable = speciesDrawable(buildAngelfish);
 
-  const whaleBuilders: Readonly<Record<WhaleSpecies, SpeciesModelBuilder>> = {
+  const whaleBuilders: Readonly<Record<WhaleBody, SpeciesModelBuilder>> = {
     humpback: buildHumpback,
     blue: buildBlueWhale,
     sperm: buildSpermWhale,
   };
-  const whaleDrawables: readonly SpeciesDrawable[] = WHALE_SPECIES.map(
-    (body): SpeciesDrawable => speciesDrawable(whaleBuilders[body]),
-  );
+  const whaleDrawables = Object.fromEntries(
+    WHALE_BODIES.map((body) => [body, speciesDrawable(whaleBuilders[body])]),
+  ) as Record<WhaleBody, SpeciesDrawable>;
 
   const deepseaDrawable = speciesDrawable(buildDeepsea);
 
@@ -273,7 +281,7 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
       case 'fish':
         return fishDrawable;
       case 'whale':
-        return whaleDrawables[Math.abs(Math.trunc(variantSeed)) % whaleDrawables.length]!;
+        return whaleDrawables[whaleBodyOf(variantSeed)];
       case 'deepsea':
         return deepseaDrawable;
       case 'grazer':
@@ -318,7 +326,7 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
         y,
         z,
         yaw,
-        modelScaleFor(species, sizeClass),
+        modelScaleFor(species, sizeClass, variantSeed),
         holdPose ?? false,
       );
     },
