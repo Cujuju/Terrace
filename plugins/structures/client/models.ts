@@ -30,6 +30,8 @@ import {
 } from '../protocol.ts';
 import { isDurandsCell } from './durands.ts';
 import { isRicksCell } from './ricks.ts';
+import { isFlipperShrimpCell } from './flipperShrimp.ts';
+import { drawnBandAtY } from '../../../client/src/terrain/capEmission.ts';
 import { FISHING_HUT_BUILDERS, FISHING_HUT_NAMES, fishingHutVariantIndex } from './fishingHuts.ts';
 import {
   fitToRadius,
@@ -1863,26 +1865,25 @@ export function createStructureModels(kit?: BuildingAssetKit): StructureModels {
   const durandsParts = kit?.parts('durands') ?? mergeSharedSurface(
     fitToRadius(durands!.parts, STRUCTURE_SURVEYED_GROUND_RADIUS / STRUCTURE_SCALE_MAX),
   );
-  const durandsMeshes: InstancedMesh[] = durandsParts.map((part, partIndex) => {
-    geometries.push(part.geometry);
-    materials.push(part.material);
-    const mesh = new InstancedMesh(part.geometry, part.material, STRUCTURES_CAP * part.localMatrices.length);
-    mesh.name = `structures:durands:part${String(partIndex)}`;
-    mesh.count = 0;
-    root.add(mesh);
-    return mesh;
-  });
+  function specialBuildingMeshes(parts: readonly StructurePart[], id: string): InstancedMesh[] {
+    return parts.map((part, partIndex) => {
+      geometries.push(part.geometry);
+      materials.push(part.material);
+      const mesh = new InstancedMesh(part.geometry, part.material, STRUCTURES_CAP * part.localMatrices.length);
+      mesh.name = `structures:${id}:part${String(partIndex)}`;
+      mesh.count = 0;
+      root.add(mesh);
+      return mesh;
+    });
+  }
+
+  const durandsMeshes = specialBuildingMeshes(durandsParts, 'durands');
 
   const ricksParts = kit?.parts('ricks') ?? [];
-  const ricksMeshes = ricksParts.map((part, partIndex) => {
-    geometries.push(part.geometry);
-    materials.push(part.material);
-    const mesh = new InstancedMesh(part.geometry, part.material, STRUCTURES_CAP * part.localMatrices.length);
-    mesh.name = `structures:ricks:part${String(partIndex)}`;
-    mesh.count = 0;
-    root.add(mesh);
-    return mesh;
-  });
+  const ricksMeshes = specialBuildingMeshes(ricksParts, 'ricks');
+
+  const flipperShrimpParts = kit?.parts('flipper-shrimp') ?? [];
+  const flipperShrimpMeshes = specialBuildingMeshes(flipperShrimpParts, 'flipper-shrimp');
 
   const siteVariantParts: Partial<Record<SiteKind, StructurePart[][]>> = {};
   const siteVariantMeshes: Partial<Record<SiteKind, InstancedMesh[][]>> = {};
@@ -1954,6 +1955,7 @@ export function createStructureModels(kit?: BuildingAssetKit): StructureModels {
       const counts = meshesByTier.map((parts) => parts.map(() => 0));
       const durandsCounts = durandsMeshes.map(() => 0);
       const ricksCounts = ricksMeshes.map(() => 0);
+      const flipperShrimpCounts = flipperShrimpMeshes.map(() => 0);
       const siteVariantCounts: Partial<Record<SiteKind, number[][]>> = {};
       for (const siteKind of Object.keys(SITE_TOP_TIER_VARIANTS) as SiteKind[]) {
         siteVariantCounts[siteKind] = siteVariantParts[siteKind]!.map((parts) => parts.map(() => 0));
@@ -1964,6 +1966,15 @@ export function createStructureModels(kit?: BuildingAssetKit): StructureModels {
         buildingRotation.setFromAxisAngle(Y_AXIS, placement.yaw);
         buildingScale.setScalar(placement.scale);
         buildingMatrix.compose(buildingPosition, buildingRotation, buildingScale);
+
+        // Checked before the coastal fishing huts: the clubhouse is a waterfront building.
+        if (
+          flipperShrimpParts.length > 0 &&
+          isFlipperShrimpCell(placement.tier, placement.cellX, placement.cellY, drawnBandAtY(placement.groundY))
+        ) {
+          writeInstances(flipperShrimpParts, flipperShrimpMeshes, flipperShrimpCounts, null);
+          continue;
+        }
 
         const variantSet = SITE_TOP_TIER_VARIANTS[placement.site];
         if (placement.tier === MAX_STRUCTURE_TIER && variantSet !== undefined) {
@@ -1997,6 +2008,7 @@ export function createStructureModels(kit?: BuildingAssetKit): StructureModels {
       for (let tier = 0; tier < meshesByTier.length; tier++) finalizeMeshes(meshesByTier[tier], counts[tier]);
       finalizeMeshes(durandsMeshes, durandsCounts);
       finalizeMeshes(ricksMeshes, ricksCounts);
+      finalizeMeshes(flipperShrimpMeshes, flipperShrimpCounts);
       for (const siteKind of Object.keys(SITE_TOP_TIER_VARIANTS) as SiteKind[]) {
         const meshes = siteVariantMeshes[siteKind]!;
         const counts = siteVariantCounts[siteKind]!;
@@ -2032,6 +2044,7 @@ export function createStructureModels(kit?: BuildingAssetKit): StructureModels {
       for (const parts of meshesByTier) for (const mesh of parts) mesh.dispose();
       for (const mesh of durandsMeshes) mesh.dispose();
       for (const mesh of ricksMeshes) mesh.dispose();
+      for (const mesh of flipperShrimpMeshes) mesh.dispose();
       for (const variants of Object.values(siteVariantMeshes)) {
         for (const meshes of variants!) for (const mesh of meshes) mesh.dispose();
       }

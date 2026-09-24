@@ -574,5 +574,29 @@
     "mip_levels": 11,
     "uastc_rgb": true,
     "geometry_preserved": true
+  },
+  {
+    "building": "flipper-shrimp",
+    "quality": "original",
+    "source": ".census\\flipper-shrimp\\flipper-shrimp-ktx2.glb",
+    "runtime": "plugins\\structures\\client\\assets\\authored\\original\\flipper-shrimp.glb",
+    "bytes": 6414172,
+    "sha256": "d9bf8aa4945eaeee20c9aca9c8862fe4a94258a0848523de4bb4681d1972de46",
+    "texture_resolution": 2048,
+    "mip_levels": 12,
+    "uastc_rgb": true,
+    "geometry_preserved": true
+  },
+  {
+    "building": "flipper-shrimp",
+    "quality": "low",
+    "source": ".census\\flipper-shrimp\\low\\flipper-shrimp-ktx2.glb",
+    "runtime": "plugins\\structures\\client\\assets\\authored\\low\\flipper-shrimp.glb",
+    "bytes": 2217244,
+    "sha256": "da814e210cf9a148d076e930a51822a177e1f0913e28a2a5816725a95ec75794",
+    "texture_resolution": 1024,
+    "mip_levels": 11,
+    "uastc_rgb": true,
+    "geometry_preserved": true
   }
 ]

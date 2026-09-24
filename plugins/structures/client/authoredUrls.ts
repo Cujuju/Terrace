@@ -24,6 +24,8 @@ import durands_original from './assets/authored/original/durands.glb?url';
 import durands_low from './assets/authored/low/durands.glb?url';
 import ricks_original from './assets/authored/original/ricks.glb?url';
 import ricks_low from './assets/authored/low/ricks.glb?url';
+import flipper_shrimp_original from './assets/authored/original/flipper-shrimp.glb?url';
+import flipper_shrimp_low from './assets/authored/low/flipper-shrimp.glb?url';
 import reed_cone_original from './assets/authored/original/reed-cone.glb?url';
 import reed_cone_low from './assets/authored/low/reed-cone.glb?url';
 import lashed_a_frame_original from './assets/authored/original/lashed-a-frame.glb?url';
@@ -60,6 +62,7 @@ export const AUTHORED_URLS = {
     'industrial-pump-house': industrial_pump_house_low,
     'durands': durands_low,
     'ricks': ricks_low,
+    'flipper-shrimp': flipper_shrimp_low,
     'reed-cone': reed_cone_low,
     'lashed-a-frame': lashed_a_frame_low,
     'stilted-hut': stilted_hut_low,
@@ -85,6 +88,7 @@ export const AUTHORED_URLS = {
     'industrial-pump-house': industrial_pump_house_original,
     'durands': durands_original,
     'ricks': ricks_original,
+    'flipper-shrimp': flipper_shrimp_original,
     'reed-cone': reed_cone_original,
     'lashed-a-frame': lashed_a_frame_original,
     'stilted-hut': stilted_hut_original,

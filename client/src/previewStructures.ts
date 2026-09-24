@@ -31,6 +31,7 @@ import {
 import { FISHING_HUT_BUILDERS, fishingHutVariantIndex } from '../../plugins/structures/client/fishingHuts.ts';
 import { isDurandsCell } from '../../plugins/structures/client/durands.ts';
 import { isRicksCell } from '../../plugins/structures/client/ricks.ts';
+import { isFlipperShrimpCell } from '../../plugins/structures/client/flipperShrimp.ts';
 import { preloadAuthoredStructures } from '../../plugins/structures/client/authoredAssets.ts';
 
 const SKY_COLOR = 0x9fc7e8;
@@ -82,6 +83,17 @@ function findRicksCell(): { x: number; y: number } {
     }
   }
   throw new Error('preview: no Ricks cell in the search window');
+}
+
+/** Band 0: the preview stands the building on ground Y 0. */
+function findFlipperShrimpCell(): { x: number; y: number } {
+  const SCAN_EDGE = 64;
+  for (let y = 0; y < SCAN_EDGE; y++) {
+    for (let x = 0; x < SCAN_EDGE; x++) {
+      if (isFlipperShrimpCell(MAX_STRUCTURE_TIER, x, y, 0)) return { x, y };
+    }
+  }
+  throw new Error("preview: no Flipper & Shrimp's Place cell in the search window");
 }
 
 function buildScene(unlit: boolean): { scene: Scene; camera: PerspectiveCamera; renderer: WebGPURenderer } {
@@ -144,6 +156,7 @@ async function main(): Promise<void> {
   const query = readQuery();
   const durandsRequested = query.get('durands') === '1';
   const ricksRequested = query.get('ricks') === '1';
+  const flipperRequested = query.get('flipper') === '1';
   const quality = query.get('quality') === 'original' ? 'original' : 'low';
   const hutParam = query.get('hut');
   const hutRequested = hutParam !== null && Number.isInteger(Number(hutParam));
@@ -153,7 +166,7 @@ async function main(): Promise<void> {
   const flashOn = query.get('flash') !== 'off';
   const bulbPhaseParam = query.get('bulbphase');
   const requestedTier = Number(query.get('tier') ?? '0');
-  const tier = durandsRequested || hutRequested || ricksRequested
+  const tier = durandsRequested || hutRequested || ricksRequested || flipperRequested
     ? MAX_STRUCTURE_TIER
     : Math.min(Math.max(requestedTier, 0), STRUCTURE_TIER_COUNT - 1);
 
@@ -161,11 +174,13 @@ async function main(): Promise<void> {
   await renderer.init();
   installRigTextureTranscoder(renderer);
 
-  const kit = ricksRequested ? await preloadAuthoredStructures(quality) : undefined;
+  const kit = ricksRequested || flipperRequested ? await preloadAuthoredStructures(quality) : undefined;
   const models = createStructureModels(kit);
   scene.add(models.root);
 
-  const cell = ricksRequested
+  const cell = flipperRequested
+    ? findFlipperShrimpCell()
+    : ricksRequested
     ? findRicksCell()
     : hutRequested
       ? findCoastalCell(hutVariant)
@@ -229,6 +244,7 @@ async function main(): Promise<void> {
       (window as unknown as { __previewStats: unknown }).__previewStats = {
         tiers: placements.map((placed) => placed.tier),
         ricks: ricksRequested,
+        flipper: flipperRequested,
         quality: kit === undefined ? 'legacy' : quality,
         unlit: query.get('unlit') === '1',
         race,
