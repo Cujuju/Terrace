@@ -30,6 +30,7 @@ Dated decision records, one file per arc, split from `docs/DESIGN.md` on 2026-09
 - [genesis](genesis.md)
   - Decisions made 2026-08-25/26 (archipelago genesis, and MIN_WORLD_SIZE, #181)
   - Decisions made 2026-09-23 (structured terrain: continents, ranges, valleys; field-encoded edges)
+  - Decisions made 2026-09-24 (worlds start at rest; continuous heights)
 - [intent-pipeline](intent-pipeline.md)
   - Decisions made 2026-08-18 (issue #19) — the intent pipeline splits verdict from effect
 - [kraken](kraken.md)
@@ -67,6 +68,7 @@ Dated decision records, one file per arc, split from `docs/DESIGN.md` on 2026-09
   - Decisions made 2026-09-22 (plugins held while a snapshot's terrain builds)
 - [relaxation](relaxation.md)
   - Decisions made 2026-08-29 (relaxation conserves height; the steepest legal slope is MAX_STEP + 1, #108)
+  - Decisions made 2026-09-24 (settle grades only what its stroke added)
 - [restart-and-persistence](restart-and-persistence.md)
   - Decisions made 2026-08-25 (restart is one button; a slice carries its version)
 - [rivers-and-water](rivers-and-water.md)

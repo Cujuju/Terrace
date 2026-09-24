@@ -21,19 +21,22 @@ The land, basin, island and trench passes keep their rules.
   Relief is drawn 40–100%, square-rooted.
 - Valleys: priority-flood drainage; a cell draining half a neighbourhood or
   more sinks one band per doubling; walls one band per `RAMP_CELLS_PER_BAND`.
-- No slope steeper than half a band per cell: the narrowest terrace the edge
-  encoding draws exactly.
+- At rest (2026-09-24): heights are continuous (band floor plus the field's
+  fraction), and no pair outside a trench is steeper than settle's rest,
+  `MAX_STEP + RELAX_SLACK` (5) per cell. The seabed rises before land lowers,
+  so a steep drop never sinks a coast. Coasts rise over `NOISE_ONE / 2`;
+  ranges use lattices twice as wide. Trenches are cut after rest and keep
+  sheer walls.
 - Starter land: the continental value is raised around the starter square's
   highest point until twice `GENESIS_MIN_STARTER_LAND_CELLS` sit halfway up the
   coast rise. The island pass remains as a backstop.
 - Basin drop is sized from the highest ground within its radius plus the
   top-up rounds, not from the global ceiling (which swallowed 448-cell worlds).
-- Edges are encoded from the continuous field (`encodeLevelEdges`), not the
-  band layout: within 1/8 cell of the field's contours on slopes up to half a
-  band per cell. `encodeSmoothedEdges` remains for saved worlds.
-- Cost at 2048 cells: about 3.5 s (was 0.7 s). At 4096: about 15 s. The field
-  itself is about a third faster since (lattice gradient tables, row-loop
-  chamfers); output is bit-identical.
+- Band edges follow the continuous heights directly; genesis encodes nothing.
+  `encodeLevelEdges` is removed. `encodeSmoothedEdges` remains for saved worlds.
+- Effect: wider beaches and shallow shelves, terraces at least 3 cells wide,
+  peaks about 210–380 (was about 530).
+- Cost at 2048 cells: about 2.7 s (was 0.7 s before the structured field).
 - A world created from the panel generates on a worker thread
   (`server/src/world/genesis-thread.ts`); the server keeps ticking and the
   panel shows a pulsing "Generating the world… Ns". Boot's first world and

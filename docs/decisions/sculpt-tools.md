@@ -80,10 +80,9 @@ Plan: `docs/plans/edge-aware-brushes.md`.
 - `applyBrush` (settle) and relax do not encode: `applyBrush` keeps its
   footprint-only contract; encoding in relax broke its invariants (#108,
   gradient limit).
-- Genesis encodes edges from its continuous field (`encodeLevelEdges`;
-  `genesis.md`, 2026-09-23). Saved worlds use the band layout
-  (`encodeSmoothedEdges`: 3×3 binomial coverage, half level, at least half a
-  cell per side).
+- Genesis heights are continuous, so its edges need no encoding (`genesis.md`,
+  2026-09-24). Saved worlds use the band layout (`encodeSmoothedEdges`: 3×3
+  binomial coverage, half level, at least half a cell per side).
 - Worlds saved before this are migrated once by
   `server/scripts/encode-world-edges.ts`, run with the server stopped. Each
   world gets a new restore point; nothing is deleted. The game has no

@@ -13,7 +13,7 @@ flattened mounds and stranded the clicked cell as a spire).
 - A pair is relaxed only when it differs by more than `MAX_STEP + RELAX_SLACK` (4 + 1). An even split of an excess of 1 moves nobody, so the slack keeps every counted move a real move and the sweep terminating.
 - **The steepest legal slope is therefore `MAX_STEP + 1` = 5 per cell.** A pair one unit over `MAX_STEP` is at rest. Every reader of the gradient invariant allows it: `expectGradientLimitHolds`, mudslides' `MUDSLIDE_MAX_DROP_OVER_SPAN` (`(MAX_STEP + RELAX_SLACK) × span`). The walker rule stays at `MAX_STEP / 2`, tie broken downward.
 - `SMOOTH_PASS_LIMIT` = 2560 passes. A sweep that hits it leaves the gradient invariant locally violated, deterministically on both replicas, and `smooth` returns its pass count so a caller can tell. Walls of 593 units and up do not converge inside the cap; the worst player-constructible stroke converges in about 118 passes. The next stroke over that ground resumes the cascade.
-- Saved worlds are never migrated. Over-steep legacy terrain re-grades one stroke at a time as relaxation reaches it.
+- Saved worlds are never migrated. Player smooth re-grades over-steep terrain it reaches; settle does not (below).
 
 ## Player smooth (Laplacian, 2026-09-16)
 
@@ -54,4 +54,5 @@ flattened mounds and stranded the clicked cell as a spire).
 ## Library settle (plugins)
 
 - `settle` deposits, then relaxes with the unbounded sweep. Cones, craters, surges and slides depend on it.
+- Settle grades only what its stroke added (2026-09-24): a pair already steeper than rest before the stroke keeps that steepness; every other pair relaxes to `MAX_STEP`. Pre-stroke heights: a footprint snapshot for deposited cells, first-move values for the rest. One settle on a played 512 world moved 239,656 cells in 26 s before, about 400 cells in 30 ms after.
 - Plugin constants derived against the closed pass: volcanoes `CONE_GROWTH_BANDS_PER_ERUPTION` = `CONE_PEAK_BANDS_PER_ERUPTION × CONE_BRUSH_BANDS_PER_PEAK_BAND` (one band of peak per eruption); mudslides `MUDSLIDE_MAX_DROP_OVER_SPAN` = `(MAX_STEP + RELAX_SLACK) × MUDSLIDE_SLOPE_SPAN_CELLS`. `GENESIS_CONE_BANDS` and `VENT_SUMMIT_WORLD_UNITS` are nominal: exact on flat ground, less on genesis terraces.
