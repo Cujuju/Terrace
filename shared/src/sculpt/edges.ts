@@ -15,7 +15,7 @@ import type { SculptOperation } from './options.ts';
 // its in-band height encodes its distance to the nearest band edge.
 
 /** Tools whose writes re-encode the cells around their rings. */
-export const EDGE_AWARE_TOOLS: readonly SculptOperation[] = ['drag'];
+export const EDGE_AWARE_TOOLS: readonly SculptOperation[] = ['stamp', 'drag'];
 
 /** Height units per cell of edge distance: a band's midpoint is one cell from its edges. */
 export const EDGE_UNITS_PER_CELL = DRAWN_GROUND_BAND_BIAS;

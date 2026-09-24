@@ -26,7 +26,7 @@ import {
 import { writeWithEdges } from './sculpt/edges.ts';
 import { applyDragRegion, dragEdgeShape } from './sculpt/drag.ts';
 import { applyCarve } from './sculpt/carve.ts';
-import { applyPinch } from './sculpt/pinch.ts';
+import { applyMound, moundEdgeShape } from './sculpt/mound.ts';
 import { applyClay } from './sculpt/clay.ts';
 export { carveAdmittedCells } from './sculpt/carve.ts';
 import { smooth } from './sculpt/relax.ts';
@@ -202,9 +202,14 @@ export function applySculpt(
   }
 
   if (tool === 'stamp' && anchor === 'clicked') {
-    const pinched = new Set<number>();
-    if (amount !== 0) applyPinch(map, cx, cy, radius, amount > 0, profile, spanBand, pinched);
-    return diffOf(map, pinched);
+    const built = new Set<number>();
+    if (amount !== 0) {
+      const raising = amount > 0;
+      writeWithEdges(map, moundEdgeShape(cx, cy, radius, profile, raising, spanBand), built, () =>
+        applyMound(map, cx, cy, radius, raising, profile, spanBand, built),
+      );
+    }
+    return diffOf(map, built);
   }
 
   if (anchor === 'band' && (targetBand === null || !canSpreadBandTo(map, cx, cy, targetBand))) {

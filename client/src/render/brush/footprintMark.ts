@@ -72,7 +72,7 @@ function discMark(radius: number): Mark {
 }
 
 export function oneClickMark(radius: number, tool: SculptTool, profile: SculptProfile): Mark {
-  // A stamp lifts its whole disc and stretches the ground past it: the outline is the disc.
+  // A stamp's disc is its mound's top; the flanks spread past it by profile. The outline is the disc.
   if (tool === 'stamp') return discMark(radius);
   const keys = new Set<string>();
   const cells: (readonly [number, number])[] = [];
