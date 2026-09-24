@@ -288,30 +288,6 @@
     "geometry_preserved": true
   },
   {
-    "building": "ricks",
-    "quality": "original",
-    "source": ".census\\ricks\\ricks-ktx2.glb",
-    "runtime": "plugins\\structures\\client\\assets\\authored\\original\\ricks.glb",
-    "bytes": 4311948,
-    "sha256": "ce97788a2f04dc2bd3b4741311266ca54f89a92e3de649f8cf3996a3e696ac0b",
-    "texture_resolution": 2048,
-    "mip_levels": 12,
-    "uastc_rgb": true,
-    "geometry_preserved": true
-  },
-  {
-    "building": "ricks",
-    "quality": "low",
-    "source": ".census\\ricks\\low\\ricks-ktx2.glb",
-    "runtime": "plugins\\structures\\client\\assets\\authored\\low\\ricks.glb",
-    "bytes": 1623964,
-    "sha256": "dc7dd4965043e10715b30ac885a2cb1f7d526a4daff8cb4810c7bf9742021dbd",
-    "texture_resolution": 1024,
-    "mip_levels": 11,
-    "uastc_rgb": true,
-    "geometry_preserved": true
-  },
-  {
     "building": "reed-cone",
     "quality": "original",
     "source": ".census\\reed-cone\\reed-cone-ktx2.glb",
@@ -570,6 +546,30 @@
     "runtime": "plugins\\temples\\client\\assets\\authored\\low\\temple.glb",
     "bytes": 1621044,
     "sha256": "9b421d5f2240c81b37da724062e36e11c2b9d2e1808c865778d9c52dfffce706",
+    "texture_resolution": 1024,
+    "mip_levels": 11,
+    "uastc_rgb": true,
+    "geometry_preserved": true
+  },
+  {
+    "building": "ricks",
+    "quality": "original",
+    "source": ".census\\ricks\\ricks-ktx2.glb",
+    "runtime": "plugins\\structures\\client\\assets\\authored\\original\\ricks.glb",
+    "bytes": 5506840,
+    "sha256": "a02e4712f03ec6c755b8134587330ec18f1cd5b3aa04567e4b2aa94677c98645",
+    "texture_resolution": 2048,
+    "mip_levels": 12,
+    "uastc_rgb": true,
+    "geometry_preserved": true
+  },
+  {
+    "building": "ricks",
+    "quality": "low",
+    "source": ".census\\ricks\\low\\ricks-ktx2.glb",
+    "runtime": "plugins\\structures\\client\\assets\\authored\\low\\ricks.glb",
+    "bytes": 1811444,
+    "sha256": "6a0447ac7462aa11e546494eb462c524a699f70841b94aff9b57f39983a78d80",
     "texture_resolution": 1024,
     "mip_levels": 11,
     "uastc_rgb": true,

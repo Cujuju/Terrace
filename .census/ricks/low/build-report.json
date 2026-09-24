@@ -2,21 +2,21 @@
   "profile": "low",
   "meshes": 1,
   "materials": 1,
-  "vertices": 3988,
-  "triangles": 4880,
-  "polygons": 2795,
-  "parts": 271,
-  "islands": 2795,
+  "vertices": 4152,
+  "triangles": 5152,
+  "polygons": 2929,
+  "parts": 285,
+  "islands": 2929,
   "texture_size": [
     1024,
     1024
   ],
   "gap_pixels": 12,
-  "density_pixels_per_game_unit": 172.3027353755444,
+  "density_pixels_per_game_unit": 164.7365842584977,
   "dimensions": [
     0.8600000739097595,
-    0.7264037132263184,
-    0.38566359877586365
+    0.7086731195449829,
+    0.3762499988079071
   ],
   "origin": [
     0.0,
@@ -115,14 +115,19 @@
       0.37
     ],
     "concrete": [
-      0.43,
-      0.425,
-      0.39
+      0.48,
+      0.465,
+      0.425
     ],
     "coping": [
-      0.51,
-      0.5,
-      0.455
+      0.54,
+      0.52,
+      0.475
+    ],
+    "steel": [
+      0.205,
+      0.215,
+      0.205
     ],
     "graphite": [
       0.19,
@@ -173,10 +178,15 @@
       0.886,
       0.667,
       0.125
+    ],
+    "steps": [
+      0.52,
+      0.51,
+      0.47
     ]
   },
   "geometry_source": "Original Black Vault geometry authored after owner-selected Ricks concept B; no third-party mesh.",
-  "texture_source": "Original procedural concrete, graphite, green glass and emissive paint; newly typeset Ricks lettering and biohazard glyph. No generated concept pixels used.",
+  "texture_source": "Original procedural weathered cast concrete matched to concept B: aggregate, pitting, runoff, edge wear and sparse hairline cracks; no brick grid. Dark coated-steel wall straps. Shaded steps, green glass and emissive fixtures. No concept pixels used.",
   "image_generator": "Built-in image generator; exact backend model unverified",
   "placement": {
     "front_gltf": "+Z",

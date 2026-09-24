@@ -3,16 +3,25 @@ import math
 import bpy
 import numpy as np
 
+def weather_noise(a,b,frequency,seed=0):
+    a=a*frequency; b=b*frequency
+    ax=np.floor(a); by=np.floor(b); u=a-ax; v=b-by
+    u=u*u*(3-2*u); v=v*v*(3-2*v)
+    def sample(x,y):
+        value=np.sin(x*127.1+y*311.7+seed*74.7)*43758.5453
+        return value-np.floor(value)
+    return (sample(ax,by)*(1-u)+sample(ax+1,by)*u)*(1-v)+(sample(ax,by+1)*(1-u)+sample(ax+1,by+1)*u)*v
+
 
 def build(low, g):
     box, beam, solid = g['box'], g['beam'], g['solid']
     palette = g['PALETTE']
-    palette.update(concrete=(.43, .425, .39), coping=(.51, .50, .455),
+    palette.update(concrete=(.48, .465, .425), coping=(.54, .52, .475), steel=(.205,.215,.205),
                    graphite=(.19, .195, .185), trim=(.245, .25, .235),
                    recess=(.075, .083, .073), green=(.40, .62, .105),
                    amber=(1., .65, .10), red=(.96, .035, .018),
                    stripe=(.78, .55, .08), plaque=(.185, .188, .173),
-                   lettering=(.87,.835,.733), gold=(.886,.667,.125))
+                   lettering=(.87,.835,.733), gold=(.886,.667,.125), steps=(.52,.51,.47))
 
     def octagon(w, d, corner, z):
         return [(-w+corner, -d, z), (w-corner, -d, z), (w, -d+corner, z),
@@ -61,13 +70,13 @@ def build(low, g):
         x=(vv[:,0]-(lo[0]+hi[0])/2)*scale+cx
         zz=(vv[:,1]-(lo[1]+hi[1])/2)*scale+z
         yy=np.full(len(vv),y)-vv[:,2]*scale
-        if sloped: yy=-4.01+(zz-.18)*(.74/2.32)-.075-vv[:,2]*scale
+        if sloped: yy=-4.01+(zz-.18)*(.35/2.32)-.075-vv[:,2]*scale
         solid(np.column_stack((x,yy,zz)),[tuple(p.vertices) for p in ob.data.polygons],kind,label='Raised '+text+' lettering')
         mesh=ob.data; bpy.data.objects.remove(ob,do_unlink=True); bpy.data.meshes.remove(mesh)
 
     oct_slab(4.9, 4.0, .65, 0, .18, 'graphite', 'Grounded octagonal footing')
     # Front shell is split around the recessed doorway.
-    bottom, top = octagon(4.84, 3.94, .64, .18), octagon(4.04, 3.20, .52, 2.50)
+    bottom, top = octagon(4.84, 3.94, .64, .18), octagon(4.43, 3.59, .56, 2.50)
     for i in range(8):
         j = (i+1)%8
         spans = [(0, 1)] if i else [(0, .325), (.675, 1)]
@@ -80,6 +89,22 @@ def build(low, g):
             solid([a,b,c,d,a+inner,b+inner,c+inner,d+inner],
                   [(0,1,2,3),(7,6,5,4),(0,4,5,1),(3,2,6,7),(0,3,7,4),(1,5,6,2)], 'concrete', label='Sloped concrete wall')
     oct_slab(4.055,3.215,.52,2.46,.12,'graphite','Clerestory lower sill',caps=False)
+    # The rising wall turns into a broad horizontal shoulder before the glazing.
+    lip_bottom=octagon(4.45,3.61,.57,2.44)
+    lip_top=octagon(4.43,3.59,.56,2.55)
+    lip_inner=octagon(4.025,3.185,.52,2.55)
+    for i in range(8):
+        j=(i+1)%8
+        for left,right in ([(0,.31),(.69,1)] if i==0 else [(0,1)]):
+            a=np.array(lip_bottom[i])*(1-left)+np.array(lip_bottom[j])*left
+            b=np.array(lip_bottom[i])*(1-right)+np.array(lip_bottom[j])*right
+            c=np.array(lip_top[i])*(1-right)+np.array(lip_top[j])*right
+            d=np.array(lip_top[i])*(1-left)+np.array(lip_top[j])*left
+            inner_left=np.array(lip_inner[i])*(1-left)+np.array(lip_inner[j])*left
+            inner_right=np.array(lip_inner[i])*(1-right)+np.array(lip_inner[j])*right
+            solid([a,b,c,d,inner_left-[0,0,.11],inner_right-[0,0,.11],inner_right,inner_left],
+                  [(0,1,2,3),(7,6,5,4),(0,4,5,1),(3,2,6,7),(0,3,7,4),(1,5,6,2)],
+                  'coping',label='Broad level concrete shoulder before recessed windows')
     oct_slab(4.025,3.185,.52,2.57,.38,'green','Continuous green window band',caps=False)
     ring(4.07,3.23,.53,2.55,.075,.11,'trim','Window lower frame')
     ring(4.07,3.23,.53,2.90,.07,.11,'trim','Window upper frame')
@@ -96,22 +121,26 @@ def build(low, g):
     ring(4.02,3.18,.51,3.20,.035,.055,'trim','Fine roof perimeter seam')
 
     def buttress(x, y, axis=0):
-        profile=[(-.25,0),(.25,0),(.24,.30),(.04,1.04),(-.18,2.72),(-.30,3.13),(-.57,3.13),(-.43,2.62),(-.24,.98)]
+        profile=[(-.08,0),(.56,0),(.53,.36),(.38,.64),(.23,.73),(-.31,2.90),(-.39,3.18),(-.74,3.18),(-.63,2.58),(-.20,.60)]
         coords=[]
-        for offset in (-.20,.20):
+        for offset in (-.35,.35):
             for depth,z in profile:
                 coords.append((x+offset,y-depth,z) if axis==0 else (x+depth,y+offset,z))
         n=len(profile)
-        solid(coords,[tuple(reversed(range(n))),tuple(range(n,2*n))]+[(i,(i+1)%n,(i+1)%n+n,i+n) for i in range(n)],'coping',label='Stepped concrete buttress')
+        solid(coords,[tuple(reversed(range(n))),tuple(range(n,2*n))]+[(i,(i+1)%n,(i+1)%n+n,i+n) for i in range(n)],'coping',label='Heavy splayed concrete entrance column')
 
-    for x in (-1.56,1.56): buttress(x,-3.91)
+    for x in (-1.69,1.69): buttress(x,-3.91)
     for side in (-1,1):
-        # Long dark ribs follow the actual wall slope, with concrete shoulders.
+        # Folded painted-steel straps follow the wall and wrap over the new lip.
         for y in (-2.15,1.65):
-            a=(side*4.90,y,.18); b=(side*4.10,y,2.98)
-            beam(a,b,.36,.18,kind='coping',bevel=False,label='Side wall buttress')
-            beam((side*4.93,y,.24),(side*4.13,y,2.94),.21,.12,kind='graphite',bevel=False,label='Inset dark buttress face')
-        beam((side*4.17,-3.99,.20),(side*3.49,-3.33,2.97),.28,.25,kind='coping',bevel=False,label='Chamfer corner pilaster')
+            points=[(side*4.96,y,.08),(side*4.96,y,.37),(side*4.78,y,.62),
+                    (side*4.52,y,2.54),(side*4.13,y,2.64)]
+            g['sweep'](points,.48,.16,kind='steel',bevel=True,label='Folded steel wall strap')
+            for z,xx in ((.39,4.96),(2.45,4.54)):
+                beam((side*xx,y-.245,z),(side*xx,y+.245,z),.055,.20,kind='trim',bevel=False,label='Steel strap transverse seam')
+    # Slim steel ribs flank the wider concrete portal columns.
+    for side in (-1,1):
+        beam((side*1.27,-3.56,.56),(side*1.27,-3.24,2.97),.12,.13,kind='steel',bevel=True,label='Inner steel portal jamb')
 
     box((0,-3.125,1.73),(2.66,.20,2.64),'graphite',label='Recessed entrance back wall')
     door_profile=[(-1.07,.55),(1.07,.55),(1.07,1.82),(.87,2.08),(-.87,2.08),(-1.07,1.82)]
@@ -124,6 +153,7 @@ def build(low, g):
         if not low:
             for z in (.83,1.61): box((side*.85,-3.48,z),(.09,.055,.08),'trim',label='Door hinge')
     box((0,-3.255,2.63),(2.70,.25,.76),'trim',label='Ricks sign frame')
+    box((0,-3.34,3.055),(2.80,.34,.12),'steel',label='Heavy portal lintel cap')
     box((0,-3.398,2.63),(2.49,.05,.60),'plaque',label='Ricks nameplate')
     lettering('Ricks','C:/Windows/Fonts/seguisb.ttf',0,2.63,2.04,.45,-3.43,'lettering')
     box((0,-3.47,2.17),(.76,.13,.15),'trim',label='Amber lintel light frame')
@@ -133,12 +163,13 @@ def build(low, g):
         box((side*1.24,-3.47,1.13),(.070,.035,.29),'amber',label='Emissive amber entry light')
     for i in range(5):
         h=.11*(i+1)
-        box((0,-4.38+i*.19,h/2),(2.56,.38,h),'coping',label='Five entrance stair treads')
+        front=-4.57+i*.19
+        box((0,-4.38+i*.19,h/2),(2.56,.38,h),'steps',label='Five entrance stair treads',step_front=front,step_top=h)
     box((0,-3.47,.565),(2.14,.33,.045),'stripe',label='Hazard-striped threshold')
 
     def wall_panel(x,z,w,h,kind,label,**meta):
         offset=.05 if kind in ('plaque','amber') else .035
-        def point(xx,zz): return (xx,-4.01+(zz-.18)*(.74/2.32)-offset,zz)
+        def point(xx,zz): return (xx,-4.01+(zz-.18)*(.35/2.32)-offset,zz)
         front=[point(x-w/2,z-h/2),point(x+w/2,z-h/2),point(x+w/2,z+h/2),point(x-w/2,z+h/2)]
         back=[(xx,yy+.055,zz) for xx,yy,zz in front]
         solid(front+back,[(0,1,2,3),(7,6,5,4),(0,4,5,1),(3,2,6,7),(0,3,7,4),(1,5,6,2)],kind,label=label,**meta)
@@ -149,14 +180,14 @@ def build(low, g):
     for x in (-4.05,4.05):
         wall_panel(x,.33,.22,.23,'trim','Lower amber marker casing')
         wall_panel(x,.33,.145,.15,'amber','Emissive amber ground marker')
-    for x in (-1.56,1.56):
-        box((x,-4.20,.26),(.22,.10,.24),'trim',label='Buttress marker casing')
-        box((x,-4.26,.26),(.14,.025,.155),'amber',label='Emissive buttress marker')
+    for x in (-1.69,1.69):
+        box((x,-4.47,.26),(.22,.10,.24),'trim',label='Buttress marker casing')
+        box((x,-4.53,.26),(.14,.025,.155),'amber',label='Emissive buttress marker')
     wall_panel(-2.88,1.27,.60,.58,'recess','Front wall ventilation recess')
     for z in np.linspace(1.05,1.48,4 if low else 6): wall_panel(-2.88,float(z),.51,.042,'trim','Front vent louver')
     def side_panel(side,y,z,w,h,kind,label):
         offset=.055 if kind in ('amber','trim') else .025
-        coords=[(side*(4.84-(zz-.18)*(.80/2.32)+offset),yy,zz) for yy,zz in ((y-w/2,z-h/2),(y+w/2,z-h/2),(y+w/2,z+h/2),(y-w/2,z+h/2))]
+        coords=[(side*(4.84-(zz-.18)*(.41/2.32)+offset),yy,zz) for yy,zz in ((y-w/2,z-h/2),(y+w/2,z-h/2),(y+w/2,z+h/2),(y-w/2,z+h/2))]
         face=(0,1,2,3) if side==1 else (3,2,1,0)
         solid(coords,[face],kind,label=label)
     for side in (-1,1):
@@ -223,14 +254,52 @@ def build(low, g):
         if kind=='stripe':
             stripe=((x+y)*2.5)%1>.47
             return np.where(stripe[:,None],color,np.array(palette['graphite'])),height,np.full(count,.85)
+        if kind=='steps':
+            worn=weather_noise(x,y+z,5.1,7)
+            if ch['n'][2]>.8:
+                distance=y-ch['step_front']
+                nosing=np.exp(-(distance/.029)**2)
+                rear_dirt=np.exp(-((distance-.19)/.035)**2)
+                traffic=np.exp(-(x/.66)**2)
+                shade=1.01+.17*nosing-.12*rear_dirt+.055*traffic+.05*(worn-.5)
+            elif ch['n'][1]<-.8:
+                under_lip=np.exp(-((ch['step_top']-z)/.026)**2)
+                shade=.66-.13*under_lip+.06*(worn-.5)
+            else:
+                shade=.78+.04*(worn-.5)
+            return np.clip(color*np.broadcast_to(shade,(count,))[:,None],0,1),.0005*(worn-.5),np.full(count,.92)
         mult=1+.022*wave+.035*broad
         rough=np.full(count,.82 if kind in ('trim','graphite','recess') else .94)
         if kind in ('concrete','coping'):
             a=y if abs(ch['n'][0])>.6 else x
-            row=np.floor(z/.53); u=(a/1.02+(row%2)*.49)%1; v=(z/.53)%1
-            joint=np.maximum(np.exp(-(np.minimum(u,1-u)/.018)**2),np.exp(-(np.minimum(v,1-v)/.018)**2))
-            mult+=.017*np.sin(np.floor(a/1.02)*19+row*17)-.11*joint
-            height=.0007*wave-.0018*joint
+            b=y if ch['n'][2]>.8 else z
+            pores=weather_noise(a,b,43.0,3)
+            mottling=weather_noise(a,b,2.4,9)
+            aggregate=weather_noise(a,b,16.0,17)
+            streaks=np.maximum(0,.60-weather_noise(a,b*.10,5.5,4))
+            damp=.21*np.exp(-np.maximum(z,0)/.43)*(.55+.45*mottling)
+            chalk=np.maximum(0,mottling-.51)*.30
+            # Sparse irregular hairline cracks, not repeating masonry courses.
+            crack_line=np.sin(a*2.15+b*.41)+.30*np.sin(b*6.1+a*.73)
+            cracks=np.exp(-(crack_line/.018)**2)*np.clip((weather_noise(a,b,1.7,13)-.51)*5,0,1)
+            pits=np.clip((.32-pores)*4,0,1)
+            edge=np.full(count,100.)
+            points=np.asarray(ch['points'])/fit
+            for start,end in zip(points,np.roll(points,-1,axis=0)):
+                direction=end-start
+                t=np.clip(((p-start)@direction)/max(direction@direction,1e-12),0,1)
+                edge=np.minimum(edge,np.linalg.norm(p-start-t[:,None]*direction,axis=1))
+            wear=np.exp(-(edge/.027)**2)*(.35+.65*aggregate)
+            mult=1+.20*(mottling-.5)+.09*(aggregate-.5)+.06*(pores-.5)-.24*streaks-damp+chalk-.23*cracks-.12*pits+.15*wear
+            height=.0011*(aggregate-.5)-.0015*pits-.0016*cracks
+            rough=np.clip(.92+.035*pores+.03*pits,.89,1)
+        if kind=='steel':
+            a=y if abs(ch['n'][0])>.6 else x
+            dirt=weather_noise(a,z,7.0,5)
+            scuff=weather_noise(a,z,31.0,8)
+            mult=1+.09*(dirt-.5)+.05*(scuff-.5)
+            rough=.55+.10*dirt
+            height=.00015*(scuff-.5)
         if kind=='graphite' and ch['n'][2]>.9:
             u=(x/1.1)%1; v=(y/1.1)%1
             joint=np.maximum(np.exp(-(np.minimum(u,1-u)/.014)**2),np.exp(-(np.minimum(v,1-v)/.014)**2))
@@ -243,7 +312,7 @@ def build(low, g):
     g['custom_surface']=surface
     g['emissive_surface']=emission
     g['EMISSION_STRENGTH']=1.6
-    g['TEXTURE_PROVENANCE']='Original procedural concrete, graphite, green glass and emissive paint; newly typeset Ricks lettering and biohazard glyph. No generated concept pixels used.'
+    g['TEXTURE_PROVENANCE']='Original procedural weathered cast concrete matched to concept B: aggregate, pitting, runoff, edge wear and sparse hairline cracks; no brick grid. Dark coated-steel wall straps. Shaded steps, green glass and emissive fixtures. No concept pixels used.'
     placement={'front_gltf':'+Z','origin':'Footprint centered in X; construction origin at ground Y=0',
                'deliberate_difference':'Rear elevation extrapolated from front-right concept. Three octagonal drums, window belt, recessed doors, five stairs, concrete slope and plaque retained. Low omits collar fasteners and simplifies vent louvers; envelope identical.'}
     return 'Original Black Vault geometry authored after owner-selected Ricks concept B; no third-party mesh.',placement

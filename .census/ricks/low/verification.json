@@ -1,10 +1,10 @@
 {
-  "glb_sha256": "1a2481b4171b306ce2676caca3b05f5015aac5cb7a7463e91c53403b5c30112b",
+  "glb_sha256": "ae91579d8be73954106445369857f3eff4338b7bd23c13ee2ef15b6fb10bf462",
   "mesh_count": 1,
   "primitive_count": 1,
   "material_count": 1,
-  "triangles": 4880,
-  "exported_vertices": 10862,
+  "triangles": 5152,
+  "exported_vertices": 11512,
   "nodes": [
     {
       "mesh": 0,
@@ -19,24 +19,24 @@
   ],
   "dimensions_gltf_y_up": [
     0.8600000739097595,
-    0.38566359877586365,
-    0.7264037132263184
+    0.3762499988079071,
+    0.7086731195449829
   ],
-  "uv_islands": 2795,
+  "uv_islands": 2929,
   "uv_min_max": [
     0.005859375,
-    0.993986189365387
+    0.993851363658905
   ],
   "uv_overlap_pairs": [],
-  "uv_candidate_pairs_checked": 2136,
-  "minimum_island_bounds_gap_pixels": 12.00396728515625,
+  "uv_candidate_pairs_checked": 2258,
+  "minimum_island_bounds_gap_pixels": 12.000701904296875,
   "texel_density_min_max": [
-    172.25007851960333,
-    172.40787808277776
+    164.58183020879972,
+    164.81403091788832
   ],
   "zero_area_triangles": 0,
   "normal_length_error_max": 1.1648680264819689e-07,
-  "tangent_normal_dot_max": 0.00010467236859668105,
+  "tangent_normal_dot_max": 0.00010910215359771769,
   "compression_extensions": [
     "KHR_materials_emissive_strength"
   ],
@@ -76,18 +76,18 @@
   },
   "roughness_range": [
     0.2980392277240753,
-    0.9411765336990356
+    0.9568628072738647
   ],
   "metalness_range": [
     0.0,
     0.0
   ],
-  "normal_map_length_error_max": 0.001551985740661621,
+  "normal_map_length_error_max": 0.0018590688705444336,
   "blend": {
     "mesh_count": 1,
     "material_count": 1,
-    "vertices": 3988,
-    "triangles": 4880,
+    "vertices": 4152,
+    "triangles": 5152,
     "uv_layers": [
       "UVMap"
     ],
@@ -101,12 +101,12 @@
     "min": [
       -0.43000003695487976,
       0.0,
-      -0.3390448987483978
+      -0.33076927065849304
     ],
     "max": [
       0.43000003695487976,
-      0.38566359877586365,
-      0.38735881447792053
+      0.3762499988079071,
+      0.37790384888648987
     ]
   },
   "emissive_material": {

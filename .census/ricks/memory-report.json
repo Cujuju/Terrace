@@ -7,9 +7,9 @@
   },
   "variants": {
     "original": {
-      "triangles": 7224,
-      "exported_vertices": 16679,
-      "geometry_gpu_bytes": 843936,
+      "triangles": 7688,
+      "exported_vertices": 17827,
+      "geometry_gpu_bytes": 901824,
       "textures": [
         {
           "name": "ricks-emissive",
@@ -18,7 +18,7 @@
           "mip_levels": 12,
           "png_rgba8_gpu_bytes": 22369620,
           "bc7_astc_gpu_bytes": 5592432,
-          "ktx_file_bytes": 171898
+          "ktx_file_bytes": 164348
         },
         {
           "name": "ricks-normal",
@@ -27,7 +27,7 @@
           "mip_levels": 12,
           "png_rgba8_gpu_bytes": 22369620,
           "bc7_astc_gpu_bytes": 5592432,
-          "ktx_file_bytes": 635268
+          "ktx_file_bytes": 964944
         },
         {
           "name": "ricks-basecolor",
@@ -36,7 +36,7 @@
           "mip_levels": 12,
           "png_rgba8_gpu_bytes": 22369620,
           "bc7_astc_gpu_bytes": 5592432,
-          "ktx_file_bytes": 2440130
+          "ktx_file_bytes": 2687902
         },
         {
           "name": "ricks-metallicRoughness",
@@ -45,22 +45,22 @@
           "mip_levels": 12,
           "png_rgba8_gpu_bytes": 22369620,
           "bc7_astc_gpu_bytes": 5592432,
-          "ktx_file_bytes": 218252
+          "ktx_file_bytes": 785366
         }
       ],
-      "png_gpu_total_bytes": 90322416,
-      "ktx2_bc7_astc_gpu_total_bytes": 23213664,
-      "png_glb_file_bytes": 3102456,
-      "ktx2_glb_file_bytes": 4311948,
-      "png_glb_sha256": "e4779b57306be53ab572229ded65eb5ab57e2ffe875cec76938acf6af5836de2",
-      "ktx2_glb_sha256": "ce97788a2f04dc2bd3b4741311266ca54f89a92e3de649f8cf3996a3e696ac0b",
+      "png_gpu_total_bytes": 90380304,
+      "ktx2_bc7_astc_gpu_total_bytes": 23271552,
+      "png_glb_file_bytes": 4872720,
+      "ktx2_glb_file_bytes": 5506840,
+      "png_glb_sha256": "ae980387072f3d02fb73a04bcbbf160380a5f2a9287aed0f891b1db2c612b4b0",
+      "ktx2_glb_sha256": "a02e4712f03ec6c755b8134587330ec18f1cd5b3aa04567e4b2aa94677c98645",
       "geometry_unchanged": true,
       "ktx_validation_passed": true
     },
     "low": {
-      "triangles": 4880,
-      "exported_vertices": 10862,
-      "geometry_gpu_bytes": 550656,
+      "triangles": 5152,
+      "exported_vertices": 11512,
+      "geometry_gpu_bytes": 583488,
       "textures": [
         {
           "name": "ricks-emissive",
@@ -69,7 +69,7 @@
           "mip_levels": 11,
           "png_rgba8_gpu_bytes": 5592404,
           "bc7_astc_gpu_bytes": 1398128,
-          "ktx_file_bytes": 57994
+          "ktx_file_bytes": 54780
         },
         {
           "name": "ricks-normal",
@@ -78,7 +78,7 @@
           "mip_levels": 11,
           "png_rgba8_gpu_bytes": 5592404,
           "bc7_astc_gpu_bytes": 1398128,
-          "ktx_file_bytes": 159442
+          "ktx_file_bytes": 169966
         },
         {
           "name": "ricks-basecolor",
@@ -87,7 +87,7 @@
           "mip_levels": 11,
           "png_rgba8_gpu_bytes": 5592404,
           "bc7_astc_gpu_bytes": 1398128,
-          "ktx_file_bytes": 742567
+          "ktx_file_bytes": 769940
         },
         {
           "name": "ricks-metallicRoughness",
@@ -96,15 +96,15 @@
           "mip_levels": 11,
           "png_rgba8_gpu_bytes": 5592404,
           "bc7_astc_gpu_bytes": 1398128,
-          "ktx_file_bytes": 110857
+          "ktx_file_bytes": 230827
         }
       ],
-      "png_gpu_total_bytes": 22920272,
-      "ktx2_bc7_astc_gpu_total_bytes": 6143168,
-      "png_glb_file_bytes": 1297836,
-      "ktx2_glb_file_bytes": 1623964,
-      "png_glb_sha256": "1a2481b4171b306ce2676caca3b05f5015aac5cb7a7463e91c53403b5c30112b",
-      "ktx2_glb_sha256": "dc7dd4965043e10715b30ac885a2cb1f7d526a4daff8cb4810c7bf9742021dbd",
+      "png_gpu_total_bytes": 22953104,
+      "ktx2_bc7_astc_gpu_total_bytes": 6176000,
+      "png_glb_file_bytes": 1517024,
+      "ktx2_glb_file_bytes": 1811444,
+      "png_glb_sha256": "ae91579d8be73954106445369857f3eff4338b7bd23c13ee2ef15b6fb10bf462",
+      "ktx2_glb_sha256": "6a0447ac7462aa11e546494eb462c524a699f70841b94aff9b57f39983a78d80",
       "geometry_unchanged": true,
       "ktx_validation_passed": true
     }

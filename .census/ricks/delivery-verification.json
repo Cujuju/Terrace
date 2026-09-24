@@ -2,15 +2,15 @@
   "asset": "Ricks \u2014 Black Vault",
   "selected_concept": "B",
   "date": "2026-09-23",
-  "original_low_bounds_delta": 0.0,
+  "original_low_bounds_delta": 2.9802322387695312e-08,
   "runtime": [
     {
       "building": "ricks",
       "quality": "original",
       "source": ".census\\ricks\\ricks-ktx2.glb",
       "runtime": "plugins\\structures\\client\\assets\\authored\\original\\ricks.glb",
-      "bytes": 4311948,
-      "sha256": "ce97788a2f04dc2bd3b4741311266ca54f89a92e3de649f8cf3996a3e696ac0b",
+      "bytes": 5506840,
+      "sha256": "a02e4712f03ec6c755b8134587330ec18f1cd5b3aa04567e4b2aa94677c98645",
       "texture_resolution": 2048,
       "mip_levels": 12,
       "uastc_rgb": true,
@@ -21,8 +21,8 @@
       "quality": "low",
       "source": ".census\\ricks\\low\\ricks-ktx2.glb",
       "runtime": "plugins\\structures\\client\\assets\\authored\\low\\ricks.glb",
-      "bytes": 1623964,
-      "sha256": "dc7dd4965043e10715b30ac885a2cb1f7d526a4daff8cb4810c7bf9742021dbd",
+      "bytes": 1811444,
+      "sha256": "6a0447ac7462aa11e546494eb462c524a699f70841b94aff9b57f39983a78d80",
       "texture_resolution": 1024,
       "mip_levels": 11,
       "uastc_rgb": true,
@@ -32,8 +32,8 @@
   "geometry_uv_compression_mips_passed": true,
   "emission_visible_with_no_external_light": true,
   "app_started": false,
-  "client_build": "passed",
-  "structures_typecheck": "passed",
+  "client_build": "passed at initial integration",
+  "structures_typecheck": "passed after concrete/entrance revision",
   "existing_structures_tests": {
     "passed": 195,
     "failed": 2,
@@ -43,5 +43,24 @@
   "assumptions": [
     "Rear elevation extrapolated from the selected front-right concept.",
     "Cosmetic top-tier inland variant using 24 of 256 hash buckets after the unchanged Durands buckets."
-  ]
+  ],
+  "appearance_revision": {
+    "wall_material": "Weathered cast concrete, no brick courses",
+    "weathering": [
+      "aggregate",
+      "pitting",
+      "edge wear",
+      "hairline cracks",
+      "runoff stains",
+      "ground grime"
+    ],
+    "geometry": [
+      "Broad horizontal concrete shoulder below recessed clerestory",
+      "Folded coated-steel wall straps",
+      "Wider splayed entrance columns and steel jambs"
+    ],
+    "biohazard_sign": "Same wall location",
+    "stairs": "Dark risers, brighter tread noses and shaded tread backs",
+    "emission": "Strength 1.6 retained; atlas repacked for revised geometry; darkness controls passed"
+  }
 }
