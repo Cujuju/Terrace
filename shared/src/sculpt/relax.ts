@@ -155,7 +155,7 @@ function laplacianCell(
   pct: number,
   changed: Set<number>,
   boundsOf: SpillBoundsOf | null,
-  spanCaps: ReadonlyMap<number, SpillBand> | null,
+  layer: LayerView | null,
   falloff: SmoothFalloff | null = null,
   kernel: SmoothKernel = 'cross',
   bilateral = false,
@@ -166,11 +166,15 @@ function laplacianCell(
   // pass, then odd cells read the new evens. No snapshot copy is allocated.
   const i = y * size + x;
   const k = i - viewBase;
+  // A column without the grasped layer holds another layer's surface: it neither moves nor votes.
+  const excluded = layer === null ? null : layer.excluded;
+  if (excluded !== null && excluded[k] === 1) return false;
   const here = cells[k];
   // Bilateral gating: neighbours past one band sit out, so terraces blend
   // along themselves instead of dragging across cliffs. The divisor
   // renormalizes over whoever votes.
-  const votes = (h: number): boolean => !bilateral || Math.abs(h - here) <= BAND_HEIGHT;
+  const votes = (n: number): boolean =>
+    (excluded === null || excluded[n] !== 1) && (!bilateral || Math.abs(cells[n] - here) <= BAND_HEIGHT);
   let avg: number;
   if (kernel === 'gauss') {
     // 3x3 binomial: centre 4, cardinals 2, diagonals 1, divisor 16.
@@ -178,35 +182,35 @@ function laplacianCell(
     // remaining voters, keeping the average exact in integer math.
     let num = 4 * here;
     let den = 4;
-    if (x > 0 && votes(cells[k - 1])) {
+    if (x > 0 && votes(k - 1)) {
       num += 2 * cells[k - 1];
       den += 2;
     }
-    if (x < size - 1 && votes(cells[k + 1])) {
+    if (x < size - 1 && votes(k + 1)) {
       num += 2 * cells[k + 1];
       den += 2;
     }
-    if (y > 0 && votes(cells[k - size])) {
+    if (y > 0 && votes(k - size)) {
       num += 2 * cells[k - size];
       den += 2;
     }
-    if (y < size - 1 && votes(cells[k + size])) {
+    if (y < size - 1 && votes(k + size)) {
       num += 2 * cells[k + size];
       den += 2;
     }
-    if (x > 0 && y > 0 && votes(cells[k - size - 1])) {
+    if (x > 0 && y > 0 && votes(k - size - 1)) {
       num += cells[k - size - 1];
       den += 1;
     }
-    if (x < size - 1 && y > 0 && votes(cells[k - size + 1])) {
+    if (x < size - 1 && y > 0 && votes(k - size + 1)) {
       num += cells[k - size + 1];
       den += 1;
     }
-    if (x > 0 && y < size - 1 && votes(cells[k + size - 1])) {
+    if (x > 0 && y < size - 1 && votes(k + size - 1)) {
       num += cells[k + size - 1];
       den += 1;
     }
-    if (x < size - 1 && y < size - 1 && votes(cells[k + size + 1])) {
+    if (x < size - 1 && y < size - 1 && votes(k + size + 1)) {
       num += cells[k + size + 1];
       den += 1;
     }
@@ -217,32 +221,32 @@ function laplacianCell(
     // shrink and no drift. Lower median of an even voter count.
     medianScratch.length = 0;
     medianScratch.push(here);
-    if (x > 0 && votes(cells[k - 1])) medianScratch.push(cells[k - 1]);
-    if (x < size - 1 && votes(cells[k + 1])) medianScratch.push(cells[k + 1]);
-    if (y > 0 && votes(cells[k - size])) medianScratch.push(cells[k - size]);
-    if (y < size - 1 && votes(cells[k + size])) medianScratch.push(cells[k + size]);
-    if (x > 0 && y > 0 && votes(cells[k - size - 1])) medianScratch.push(cells[k - size - 1]);
-    if (x < size - 1 && y > 0 && votes(cells[k - size + 1])) medianScratch.push(cells[k - size + 1]);
-    if (x > 0 && y < size - 1 && votes(cells[k + size - 1])) medianScratch.push(cells[k + size - 1]);
-    if (x < size - 1 && y < size - 1 && votes(cells[k + size + 1])) medianScratch.push(cells[k + size + 1]);
+    if (x > 0 && votes(k - 1)) medianScratch.push(cells[k - 1]);
+    if (x < size - 1 && votes(k + 1)) medianScratch.push(cells[k + 1]);
+    if (y > 0 && votes(k - size)) medianScratch.push(cells[k - size]);
+    if (y < size - 1 && votes(k + size)) medianScratch.push(cells[k + size]);
+    if (x > 0 && y > 0 && votes(k - size - 1)) medianScratch.push(cells[k - size - 1]);
+    if (x < size - 1 && y > 0 && votes(k - size + 1)) medianScratch.push(cells[k - size + 1]);
+    if (x > 0 && y < size - 1 && votes(k + size - 1)) medianScratch.push(cells[k + size - 1]);
+    if (x < size - 1 && y < size - 1 && votes(k + size + 1)) medianScratch.push(cells[k + size + 1]);
     medianScratch.sort((a, b) => a - b);
     avg = medianScratch[(medianScratch.length - 1) >> 1];
   } else {
     let sum = 0;
     let count = 0;
-    if (x > 0 && votes(cells[k - 1])) {
+    if (x > 0 && votes(k - 1)) {
       sum += cells[k - 1];
       count++;
     }
-    if (x < size - 1 && votes(cells[k + 1])) {
+    if (x < size - 1 && votes(k + 1)) {
       sum += cells[k + 1];
       count++;
     }
-    if (y > 0 && votes(cells[k - size])) {
+    if (y > 0 && votes(k - size)) {
       sum += cells[k - size];
       count++;
     }
-    if (y < size - 1 && votes(cells[k + size])) {
+    if (y < size - 1 && votes(k + size)) {
       sum += cells[k + size];
       count++;
     }
@@ -262,7 +266,7 @@ function laplacianCell(
     if (next < band.lo) next = band.lo;
     if (next > band.hi) next = band.hi;
   }
-  const cap = spanCaps === null ? undefined : spanCaps.get(i);
+  const cap = layer === null ? undefined : layer.spanCaps.get(i);
   if (cap !== undefined) {
     if (next < cap.lo) next = cap.lo;
     if (next > cap.hi) next = cap.hi;
@@ -296,7 +300,7 @@ function laplacianPass(
     for (let y = minY; y <= maxY; y++) {
       const startX = minX + (((minX + y + parity) & 1) === 0 ? 0 : 1);
       for (let x = startX; x <= maxX; x += 2) {
-        if (laplacianCell(cells, viewBase, size, x, y, pct, changed, boundsOf, layer === null ? null : layer.spanCaps, falloff, kernel, bilateral, fullSteps, unbiased)) {
+        if (laplacianCell(cells, viewBase, size, x, y, pct, changed, boundsOf, layer, falloff, kernel, bilateral, fullSteps, unbiased)) {
           moved = true;
         }
       }
