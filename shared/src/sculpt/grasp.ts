@@ -3,6 +3,7 @@ import {
   bandFloorHeight,
   BEDROCK_FLOOR,
   canSpreadBandToSpan,
+  highestCeilingUnderSpan,
   moveSpanCeiling,
   spanAt,
   spanCount,
@@ -48,4 +49,15 @@ export function graspedCeiling(map: Heightmap, i: number, k: number): number {
 
 export function writeGraspedCeiling(map: Heightmap, i: number, k: number, ceiling: number): void {
   moveSpanCeiling(map, cellX(map.size, i), cellY(map.size, i), k, ceiling);
+}
+
+/** Where span `k`'s ceiling may move: under the span above it, and never below its own floor band. */
+export function graspedCeilingRange(map: Heightmap, i: number, k: number): { lo: number; hi: number } {
+  const x = cellX(map.size, i);
+  const y = cellY(map.size, i);
+  const top = spanCount(map, x, y) - 1;
+  return {
+    lo: k === 0 ? BEDROCK_FLOOR : bandFloorHeight(spanAt(map, x, y, k).floorBand),
+    hi: k === top ? MAX_HEIGHT : highestCeilingUnderSpan(spanAt(map, x, y, k + 1)),
+  };
 }

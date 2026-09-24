@@ -1,8 +1,6 @@
-import { MAX_HEIGHT, MAX_STEP } from '../constants.ts';
-import { bandFloorHeight } from '../bands.ts';
-import { BEDROCK_FLOOR, highestCeilingUnderSpan, spanAt, spanCount } from '../columns.ts';
-import { cellIndex, cellX, cellY, inBounds, type Heightmap } from '../grid.ts';
-import { graspedCeiling, graspedSpanIndex, writeGraspedCeiling } from './grasp.ts';
+import { MAX_STEP } from '../constants.ts';
+import { cellIndex, inBounds, type Heightmap } from '../grid.ts';
+import { graspedCeiling, graspedCeilingRange, graspedSpanIndex, writeGraspedCeiling } from './grasp.ts';
 import { footprintRadiusSquared, forEachFootprintOffset } from './footprint.ts';
 import type { SculptProfile } from './options.ts';
 
@@ -15,17 +13,6 @@ export const PINCH_LIFT_PER_RADIUS_CELL: Readonly<Record<SculptProfile, number>>
 
 /** Every cell under the brush moves at least this much, so the pinch fills the footprint it shows. */
 const PINCH_MIN_UNITS = 1;
-
-/** The height `i`'s grasped span may reach: under the span above it, and never below its own floor band. */
-function spanRange(map: Heightmap, i: number, k: number): { lo: number; hi: number } {
-  const x = cellX(map.size, i);
-  const y = cellY(map.size, i);
-  const top = spanCount(map, x, y) - 1;
-  return {
-    lo: k === 0 ? BEDROCK_FLOOR : bandFloorHeight(spanAt(map, x, y, k).floorBand),
-    hi: k === top ? MAX_HEIGHT : highestCeilingUnderSpan(spanAt(map, x, y, k + 1)),
-  };
-}
 
 /**
  * A stamp pinches the ground like a sheet: the centre moves in proportion to the radius,
@@ -54,7 +41,7 @@ export function applyPinch(
     const fall = rimSquared - (dx * dx + dy * dy);
     const lift = Math.max(PINCH_MIN_UNITS, Math.trunc((peak * fall * fall) / denominator));
     const h = graspedCeiling(map, i, k);
-    const { lo, hi } = spanRange(map, i, k);
+    const { lo, hi } = graspedCeilingRange(map, i, k);
     let next = raising ? h + lift : h - lift;
     if (next > hi) next = hi;
     if (next < lo) next = lo;

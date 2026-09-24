@@ -27,6 +27,7 @@ import { writeWithEdges } from './sculpt/edges.ts';
 import { applyDragRegion, dragEdgeShape } from './sculpt/drag.ts';
 import { applyCarve } from './sculpt/carve.ts';
 import { applyPinch } from './sculpt/pinch.ts';
+import { applyClay } from './sculpt/clay.ts';
 export { carveAdmittedCells } from './sculpt/carve.ts';
 import { smooth } from './sculpt/relax.ts';
 import { smoothCascadeReachCells } from './sculpt/reach.ts';
@@ -190,6 +191,13 @@ export function applySculpt(
       });
     }
     return diffOf(map, dragChanged);
+  }
+
+  if (tool === 'smooth' && anchor !== 'free') {
+    const smoothed = new Set<number>();
+    // HUD way spreads bands apart; the other way draws them together.
+    if (amount !== 0) applyClay(map, cx, cy, radius, amount > 0, smoothLambda, spanBand, smoothed);
+    return diffOf(map, smoothed);
   }
 
   if (tool === 'stamp' && anchor === 'clicked') {
