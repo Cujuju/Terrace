@@ -2,6 +2,7 @@ import {
   WORLD_UNIT_CELLS,
   cellsAcross,
   cellsOverArea,
+  scaleToRealSize,
 } from '@terrace/shared';
 import { isFiniteNumber } from '@terrace/shared';
 
@@ -26,6 +27,13 @@ export const VILLAGE_MIN_TIER = 1;
 export const BOATS_PER_VILLAGE = 3;
 
 export const BOAT_REBUILD_SECONDS = 20;
+
+// The war boat GLB is authored at this hull length; the draw scale brings it to a longship's.
+export const BOAT_AUTHORED_HULL_LENGTH_WORLD_UNITS = 0.9;
+
+export const BOAT_REAL_LENGTH_METRES = 8;
+
+export const BOAT_DRAW_SCALE = scaleToRealSize(BOAT_AUTHORED_HULL_LENGTH_WORLD_UNITS, BOAT_REAL_LENGTH_METRES);
 
 export const BOAT_SPEED_CELLS_PER_SECOND = cellsAcross(0.9);
 

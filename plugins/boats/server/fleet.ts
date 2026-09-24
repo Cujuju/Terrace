@@ -64,6 +64,8 @@ import {
   type SquadronWaypoint,
 } from './squadrons.ts';
 import {
+  BOAT_AUTHORED_HULL_LENGTH_WORLD_UNITS,
+  BOAT_DRAW_SCALE,
   BOATS_PER_VILLAGE,
   BOAT_ENGAGEMENT_RANGE_CELLS,
   BOAT_REBUILD_SECONDS,
@@ -224,7 +226,7 @@ function nearestRouteIndex(
 
 const BOAT_LOOKAHEAD_SECONDS = 1;
 
-const BOAT_HULL_LENGTH_CELLS = cellsAcross(0.9);
+const BOAT_HULL_LENGTH_CELLS = cellsAcross(BOAT_AUTHORED_HULL_LENGTH_WORLD_UNITS * BOAT_DRAW_SCALE);
 
 const BOAT_TURN_RADIUS_HULL_LENGTHS = 2;
 
@@ -246,7 +248,7 @@ function strideFactorFor(misalignmentRadians: number): number {
   return STRIDE_FULL_FRACTION - dropSpan * ((misalignmentRadians - STRIDE_FULL_WAY_CONE_RADIANS) / coneSpan);
 }
 
-const BOAT_HULL_DEPTH = 0.2;
+const BOAT_HULL_DEPTH = 0.2 * BOAT_DRAW_SCALE;
 
 const BOAT_WATERLINE_BITE = 0.55;
 
@@ -256,7 +258,7 @@ export const BOAT_DRAFT_HEIGHT_UNITS = Math.floor(
 
 export const HULL_PROFILE = navigableWaterProfile(BOAT_DRAFT_HEIGHT_UNITS);
 
-const BOAT_HULL_BEAM = 0.34;
+const BOAT_HULL_BEAM = 0.34 * BOAT_DRAW_SCALE;
 
 export const BOAT_BEAM_CLEARANCE_CELLS = Math.ceil((BOAT_HULL_BEAM / 2) * WORLD_UNIT_CELLS);
 

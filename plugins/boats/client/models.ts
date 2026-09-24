@@ -22,7 +22,7 @@ import {
   type AssetFootprint,
   type RigAsset,
 } from '../../../client/src/render/rigAsset.ts';
-import { BOATS_PAYLOAD_CAP } from '../protocol.ts';
+import { BOATS_PAYLOAD_CAP, BOAT_DRAW_SCALE } from '../protocol.ts';
 import { createSailSlots } from './sailSlots.ts';
 
 const BOAT_DRAW_OBJECTS_MAX = 4;
@@ -101,6 +101,8 @@ const OAR_POSE_SLOTS = 128;
 
 const HULL_UNSCALED_REACH = 1;
 
+const BOAT_SCALE_VECTOR = new Vector3(BOAT_DRAW_SCALE, BOAT_DRAW_SCALE, BOAT_DRAW_SCALE);
+
 export const HULL_MESH_NAME = 'boats:hulls';
 export const SAIL_MESH_NAME = 'boats:sails';
 
@@ -178,8 +180,11 @@ export function installBoatKit(asset: RigAsset): void {
 
   disposeBoatKit();
   shape = {
-    waterlineLift: -waterline.y,
-    fireColumn: { bottomY: deckTop.y, height: fireTop.y - deckTop.y },
+    waterlineLift: -waterline.y * BOAT_DRAW_SCALE,
+    fireColumn: {
+      bottomY: deckTop.y * BOAT_DRAW_SCALE,
+      height: (fireTop.y - deckTop.y) * BOAT_DRAW_SCALE,
+    },
   };
   kit = {
     asset,
@@ -278,7 +283,8 @@ export function createBoatModels(): BoatModels {
     sailSphere === null
       ? 0
       : (sailSphere.center.length() + sailSphere.radius) *
-        Math.max(installed.sailScale.x, installed.sailScale.y, installed.sailScale.z);
+        Math.max(installed.sailScale.x, installed.sailScale.y, installed.sailScale.z) *
+        BOAT_DRAW_SCALE;
 
   const sailMatrix = new Matrix4();
   const boatMatrix = new Matrix4();
@@ -327,6 +333,7 @@ export function createBoatModels(): BoatModels {
             Math.sin(t * SWELL_HZ * TWO_PI) * SWELL_ROLL_RADIANS,
           );
           boatMatrix.makeRotationFromEuler(boatRotation);
+          boatMatrix.scale(BOAT_SCALE_VECTOR);
           boatMatrix.setPosition(x, y, z);
 
           const poseSlot = herd.poseSlotOf(oarPhase);
@@ -334,7 +341,7 @@ export function createBoatModels(): BoatModels {
             poseOars(herd.poseSlotPhase(poseSlot));
             herd.capturePose(poseSlot);
           }
-          herd.placeMatrix(poseSlot, boatMatrix, HULL_UNSCALED_REACH);
+          herd.placeMatrix(poseSlot, boatMatrix, HULL_UNSCALED_REACH * BOAT_DRAW_SCALE);
 
           sailMatrix.multiplyMatrices(boatMatrix, authoredSailMatrix);
           sails.setMatrixAt(slot, sailMatrix);
