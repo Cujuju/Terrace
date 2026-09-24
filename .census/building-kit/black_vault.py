@@ -70,13 +70,13 @@ def build(low, g):
         x=(vv[:,0]-(lo[0]+hi[0])/2)*scale+cx
         zz=(vv[:,1]-(lo[1]+hi[1])/2)*scale+z
         yy=np.full(len(vv),y)-vv[:,2]*scale
-        if sloped: yy=-4.01+(zz-.18)*(.74/2.32)-.075-vv[:,2]*scale
+        if sloped: yy=-4.01+(zz-.18)*(.35/2.32)-.075-vv[:,2]*scale
         solid(np.column_stack((x,yy,zz)),[tuple(p.vertices) for p in ob.data.polygons],kind,label='Raised '+text+' lettering')
         mesh=ob.data; bpy.data.objects.remove(ob,do_unlink=True); bpy.data.meshes.remove(mesh)
 
     oct_slab(4.9, 4.0, .65, 0, .18, 'graphite', 'Grounded octagonal footing')
     # Front shell is split around the recessed doorway.
-    bottom, top = octagon(4.84, 3.94, .64, .18), octagon(4.04, 3.20, .52, 2.50)
+    bottom, top = octagon(4.84, 3.94, .64, .18), octagon(4.43, 3.59, .56, 2.50)
     for i in range(8):
         j = (i+1)%8
         spans = [(0, 1)] if i else [(0, .325), (.675, 1)]
@@ -89,9 +89,10 @@ def build(low, g):
             solid([a,b,c,d,a+inner,b+inner,c+inner,d+inner],
                   [(0,1,2,3),(7,6,5,4),(0,4,5,1),(3,2,6,7),(0,3,7,4),(1,5,6,2)], 'concrete', label='Sloped concrete wall')
     oct_slab(4.055,3.215,.52,2.46,.12,'graphite','Clerestory lower sill',caps=False)
-    # A projecting bevel sits in front of the glazing, interrupted at the portal.
-    lip_bottom=octagon(4.25,3.40,.56,2.34)
-    lip_top=octagon(4.12,3.28,.54,2.56)
+    # The rising wall turns into a broad horizontal shoulder before the glazing.
+    lip_bottom=octagon(4.45,3.61,.57,2.44)
+    lip_top=octagon(4.43,3.59,.56,2.55)
+    lip_inner=octagon(4.025,3.185,.52,2.55)
     for i in range(8):
         j=(i+1)%8
         for left,right in ([(0,.31),(.69,1)] if i==0 else [(0,1)]):
@@ -99,10 +100,11 @@ def build(low, g):
             b=np.array(lip_bottom[i])*(1-right)+np.array(lip_bottom[j])*right
             c=np.array(lip_top[i])*(1-right)+np.array(lip_top[j])*right
             d=np.array(lip_top[i])*(1-left)+np.array(lip_top[j])*left
-            inset=-np.array([(a[0]+b[0])*.042,(a[1]+b[1])*.042,0])
-            solid([a,b,c,d,a+inset,b+inset,c+inset,d+inset],
+            inner_left=np.array(lip_inner[i])*(1-left)+np.array(lip_inner[j])*left
+            inner_right=np.array(lip_inner[i])*(1-right)+np.array(lip_inner[j])*right
+            solid([a,b,c,d,inner_left-[0,0,.11],inner_right-[0,0,.11],inner_right,inner_left],
                   [(0,1,2,3),(7,6,5,4),(0,4,5,1),(3,2,6,7),(0,3,7,4),(1,5,6,2)],
-                  'coping',label='Projecting beveled concrete window lip')
+                  'coping',label='Broad level concrete shoulder before recessed windows')
     oct_slab(4.025,3.185,.52,2.57,.38,'green','Continuous green window band',caps=False)
     ring(4.07,3.23,.53,2.55,.075,.11,'trim','Window lower frame')
     ring(4.07,3.23,.53,2.90,.07,.11,'trim','Window upper frame')
@@ -132,9 +134,9 @@ def build(low, g):
         # Folded painted-steel straps follow the wall and wrap over the new lip.
         for y in (-2.15,1.65):
             points=[(side*4.96,y,.08),(side*4.96,y,.37),(side*4.78,y,.62),
-                    (side*4.25,y,2.35),(side*4.13,y,2.55)]
+                    (side*4.52,y,2.54),(side*4.13,y,2.64)]
             g['sweep'](points,.48,.16,kind='steel',bevel=True,label='Folded steel wall strap')
-            for z,xx in ((.39,4.96),(2.31,4.27)):
+            for z,xx in ((.39,4.96),(2.45,4.54)):
                 beam((side*xx,y-.245,z),(side*xx,y+.245,z),.055,.20,kind='trim',bevel=False,label='Steel strap transverse seam')
     # Slim steel ribs flank the wider concrete portal columns.
     for side in (-1,1):
@@ -167,7 +169,7 @@ def build(low, g):
 
     def wall_panel(x,z,w,h,kind,label,**meta):
         offset=.05 if kind in ('plaque','amber') else .035
-        def point(xx,zz): return (xx,-4.01+(zz-.18)*(.74/2.32)-offset,zz)
+        def point(xx,zz): return (xx,-4.01+(zz-.18)*(.35/2.32)-offset,zz)
         front=[point(x-w/2,z-h/2),point(x+w/2,z-h/2),point(x+w/2,z+h/2),point(x-w/2,z+h/2)]
         back=[(xx,yy+.055,zz) for xx,yy,zz in front]
         solid(front+back,[(0,1,2,3),(7,6,5,4),(0,4,5,1),(3,2,6,7),(0,3,7,4),(1,5,6,2)],kind,label=label,**meta)
@@ -185,7 +187,7 @@ def build(low, g):
     for z in np.linspace(1.05,1.48,4 if low else 6): wall_panel(-2.88,float(z),.51,.042,'trim','Front vent louver')
     def side_panel(side,y,z,w,h,kind,label):
         offset=.055 if kind in ('amber','trim') else .025
-        coords=[(side*(4.84-(zz-.18)*(.80/2.32)+offset),yy,zz) for yy,zz in ((y-w/2,z-h/2),(y+w/2,z-h/2),(y+w/2,z+h/2),(y-w/2,z+h/2))]
+        coords=[(side*(4.84-(zz-.18)*(.41/2.32)+offset),yy,zz) for yy,zz in ((y-w/2,z-h/2),(y+w/2,z-h/2),(y+w/2,z+h/2),(y-w/2,z+h/2))]
         face=(0,1,2,3) if side==1 else (3,2,1,0)
         solid(coords,[face],kind,label=label)
     for side in (-1,1):
