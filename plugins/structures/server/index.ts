@@ -1,4 +1,4 @@
-import { CHUNK_SIZE, dayOfSimMillis, drawnBandOfSample, type CellDiff } from '@terrace/shared';
+import { CHUNK_SIZE, dayOfSimMillis, drawnBandOfSample, isWater, type CellDiff } from '@terrace/shared';
 import type {
   PersistenceSlice,
   SliceLoadOutcome,
@@ -10,6 +10,7 @@ import {
   STRUCTURES_ALL_MESSAGE,
   STRUCTURES_CHANGES_MESSAGE,
   STRUCTURES_CAP,
+  MAX_STRUCTURE_FOOTPRINT_RADIUS_CELLS,
   MAX_STRUCTURE_TIER,
   STRUCTURES_PLUGIN_NAME,
   cellOfKey,
@@ -346,20 +347,35 @@ let fuelWorld: WorldApi | null = null;
 function reactToTerrain(world: WorldApi, diff: readonly CellDiff[]): void {
   if (diff.length === 0) return;
 
-  // Own-cell scope is a known pre-existing limitation: a sculpt that touches
-  // only neighbouring cells never reaches this loop, even when it breaks the
-  // flatness a settlement was founded on.
+  // A building falls when an edit knocks any cell under it off its resting band or floods it.
+  const broken = new Set<number>();
+  for (const cell of diff) {
+    const height = world.heightAt(cell.x, cell.y);
+    const flooded = isWater(height);
+    const band = drawnBandOfSample(height);
+    for (let dy = -MAX_STRUCTURE_FOOTPRINT_RADIUS_CELLS; dy <= MAX_STRUCTURE_FOOTPRINT_RADIUS_CELLS; dy++) {
+      for (let dx = -MAX_STRUCTURE_FOOTPRINT_RADIUS_CELLS; dx <= MAX_STRUCTURE_FOOTPRINT_RADIUS_CELLS; dx++) {
+        const bx = cell.x + dx;
+        const by = cell.y + dy;
+        if (bx < 0 || by < 0 || bx >= world.worldSize || by >= world.worldSize) continue;
+        const key = structureKey(bx, by);
+        const record = live.get(key);
+        if (record === undefined || broken.has(key)) continue;
+        const radius = structureFootprintRadiusCells(record.tier);
+        if (Math.abs(dx) > radius || Math.abs(dy) > radius) continue;
+        const resting = supportBands.get(key);
+        if (!flooded && resting !== undefined && band === resting) continue;
+        broken.add(key);
+      }
+    }
+  }
 
   const demolished: Array<{ x: number; y: number }> = [];
-  for (const cell of diff) {
-    const key = structureKey(cell.x, cell.y);
-    if (!live.has(key)) continue;
-    const resting = supportBands.get(key);
-    if (resting !== undefined && drawnBandOfSample(world.heightAt(cell.x, cell.y)) === resting) continue;
+  for (const key of broken) {
     if (!live.delete(key)) continue;
     survey.evict(key);
     supportBands.delete(key);
-    demolished.push({ x: cell.x, y: cell.y });
+    demolished.push(cellOfKey(key));
   }
   broadcastChanges(world, [], [], demolished);
 

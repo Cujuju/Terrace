@@ -179,6 +179,8 @@ export const STRUCTURE_LOT_RADIUS_CELLS: readonly number[] = STRUCTURE_FOOTPRINT
 
 export const MAX_STRUCTURE_LOT_RADIUS_CELLS = Math.max(...STRUCTURE_LOT_RADIUS_CELLS);
 
+export const MAX_STRUCTURE_FOOTPRINT_RADIUS_CELLS = Math.max(...STRUCTURE_FOOTPRINT_RADIUS_CELLS);
+
 /** The half cell each lot's edge cell adds, on both lots, keeps one cell between neighbours. */
 const LOT_EDGE_CELLS = 1;
 
