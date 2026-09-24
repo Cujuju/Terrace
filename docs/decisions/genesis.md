@@ -31,7 +31,13 @@ The land, basin, island and trench passes keep their rules.
 - Edges are encoded from the continuous field (`encodeLevelEdges`), not the
   band layout: within 1/8 cell of the field's contours on slopes up to half a
   band per cell. `encodeSmoothedEdges` remains for saved worlds.
-- Cost at 2048 cells: about 3.5 s (was 0.7 s). At 4096: about 15 s.
+- Cost at 2048 cells: about 3.5 s (was 0.7 s). At 4096: about 15 s. The field
+  itself is about a third faster since (lattice gradient tables, row-loop
+  chamfers); output is bit-identical.
+- A world created from the panel generates on a worker thread
+  (`server/src/world/genesis-thread.ts`); the server keeps ticking and the
+  panel shows a pulsing "Generating the world… Ns". Boot's first world and
+  tests stay synchronous. No worker: generates on the main thread.
 - Tests: the two island-pass tests now test the starter rise;
   `shared/test/level-edges.test.ts` covers the field encoding.
 
