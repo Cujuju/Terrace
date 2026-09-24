@@ -12,6 +12,7 @@ export const AUTHORED_RADII: Readonly<Record<string, number>> = {
   "industrial-pump-house": 0.5698200874689118,
   "durands": 0.5641639431304942,
   "ricks": 0.4908365226187346,
+  "flipper-shrimp": 0.5141784541932741,
   "reed-cone": 0.4074725309920827,
   "lashed-a-frame": 0.41627066875956326,
   "stilted-hut": 0.4263424873294954,

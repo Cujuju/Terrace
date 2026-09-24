@@ -28,7 +28,7 @@ const CELLS_WRITTEN: Record<GoldenWorldName, number> = {
   arch: 982,
   terrace: 981,
   shoreline: 849,
-  played: 799,
+  played: 812,
 };
 
 /** `anchor: 'free'` and `spill: 'free'` are library paths; no intent can ask for them. */

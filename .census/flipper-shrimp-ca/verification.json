@@ -1,0 +1,42 @@
+{
+  "blender_version": "5.2.1 LTS",
+  "authoring_objects": 1507,
+  "evaluated_triangles": 127116,
+  "materials": 33,
+  "authoring_dimensions": [
+    11.0600004196167,
+    10.053999900817871,
+    9.870442390441895
+  ],
+  "reference": "Owner-selected C plus A; owner supplied reference image",
+  "differences": [
+    "Duplicate dolphin and shrimp slide heads omitted with owner authorization.",
+    "Water is a static textured surface in this asset; no animation or simulation."
+  ],
+  "surface_strategy": "Reusable original image base-color and tangent-space normal maps for wood, decking, plaster, roof shingles, stone, rope, caustics and waterfall streaks. No concept-image projection.",
+  "runtime_status": "Standalone asset, not integrated into the game. Runtime frame cost unmeasured.",
+  "gltf_footprint": 0.86,
+  "gltf_bytes": 7440704,
+  "lighter_export_triangles": 59248,
+  "lighter_export_bytes": 5632724,
+  "export_verified": {
+    "triangles": 127116,
+    "mesh_count": 1,
+    "material_primitives": 33,
+    "embedded_images": 21,
+    "alpha_materials": [
+      "Foam ripples - texture not tubes",
+      "Draped rope net - alpha texture",
+      "Painted nautical lettering atlas"
+    ],
+    "self_contained": true,
+    "roundtrip_render": "export-roundtrip.png",
+    "mascot_closeup": "mascots-closeup.png"
+  },
+  "lighter_export_verified": {
+    "triangles": 59248,
+    "mesh_count": 1,
+    "roundtrip_render": "lighter-export-roundtrip.png",
+    "footprint": 0.86
+  }
+}
