@@ -1,6 +1,7 @@
 import {
   BAND_HEIGHT,
-  EDGE_UNITS_PER_CELL,
+  MAX_STEP,
+  RELAX_SLACK,
   GRASSLAND_MIN_HEIGHT,
   LAND_RAMP_ANCHOR_SPACING,
   NEIGHBOURHOOD_CELLS,
@@ -60,7 +61,7 @@ const CONTINENT_SPACINGS = [NEIGHBOURHOOD_CELLS * 8, NEIGHBOURHOOD_CELLS * 4, NE
 /** Hills: two octaves, one neighbourhood and half of one. */
 const HILL_SPACINGS = [NEIGHBOURHOOD_CELLS, NEIGHBOURHOOD_CELLS / 2];
 /** Ranges: three ridged octaves. */
-const RANGE_SPACINGS = [NEIGHBOURHOOD_CELLS * 4, NEIGHBOURHOOD_CELLS * 2, NEIGHBOURHOOD_CELLS];
+const RANGE_SPACINGS = [NEIGHBOURHOOD_CELLS * 8, NEIGHBOURHOOD_CELLS * 4, NEIGHBOURHOOD_CELLS * 2];
 /** Which regions are plains, hills or ranges. */
 const REGION_SPACINGS = [NEIGHBOURHOOD_CELLS * 8, NEIGHBOURHOOD_CELLS * 6];
 
@@ -75,7 +76,7 @@ const SHELF_WIDTH = (NOISE_ONE * 5) / 32;
 const SLOPE_WIDTH = (NOISE_ONE * 45) / 64;
 
 /** Coasts climb from the beach to the grass line over this much continental value. */
-const COAST_RISE_WIDTH = NOISE_ONE / 4;
+const COAST_RISE_WIDTH = NOISE_ONE / 2;
 const COAST_BANDS = 1;
 const LOWLAND_BANDS = GRASSLAND_MIN_HEIGHT / BAND_HEIGHT - COAST_BANDS;
 /** Continental interiors keep rising gently: bands per NOISE_ONE of continental value. */
@@ -96,8 +97,8 @@ const RANGE_ONSET_GAIN = 3;
 const VALLEY_MIN_AREA_CELLS = (NEIGHBOURHOOD_CELLS * NEIGHBOURHOOD_CELLS) / 2;
 const VALLEY_MIN_AREA_LOG2 = 31 - Math.clz32(VALLEY_MIN_AREA_CELLS);
 
-/** No slope steeper than the narrowest terrace the edge encoding draws: BAND_HEIGHT / EDGE_UNITS_PER_CELL cells. */
-const MAX_SLOPE_PER_CELL = (SUB_BAND * EDGE_UNITS_PER_CELL) / BAND_HEIGHT;
+/** Genesis draws at rest: no pair steeper than the slope settle relaxes to (MAX_STEP + RELAX_SLACK). */
+const MAX_SLOPE_PER_CELL = ((MAX_STEP + RELAX_SLACK) * SUB_BAND) / BAND_HEIGHT;
 const VALLEY_WALL_PER_CELL = SUB_BAND / RAMP_CELLS_PER_BAND;
 /** Chamfer step lengths in 1/SIDE_FIXED: a side step is one, a diagonal sqrt(2). */
 const SIDE_FIXED = 256;
@@ -394,6 +395,62 @@ function chamfer(a: Int32Array, size: number, perCell: number, grow: boolean): v
   }
 }
 
+/** Lowers every cell to at most `perCell` above each side neighbour (diagonals by sqrt(2)). */
+export function limitSlope(a: Int32Array, size: number, perCell: number): void {
+  chamfer(a, size, perCell, false);
+}
+
+/** Raster passes before the seabed raise is taken as converged; winding sea paths need a few. */
+const SEABED_RAISE_SWEEPS = 4;
+
+/**
+ * Raises cells at or below `surface` to within `perCell` of their neighbours, capped at
+ * `surface`. Higher cells only lift: a steep drop raises seabed, never sinks coast.
+ */
+export function raiseSeabed(a: Int32Array, size: number, perCell: number, surface: number): void {
+  const side = perCell;
+  const diagonal = Math.floor((perCell * DIAGONAL_FIXED) / SIDE_FIXED);
+  const last = size - 1;
+  const sea = new Uint8Array(size * size);
+  for (let i = 0; i < sea.length; i++) sea[i] = a[i]! <= surface ? 1 : 0;
+  for (let sweep = 0; sweep < SEABED_RAISE_SWEEPS; sweep++) {
+    let raised = false;
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const i = y * size + x;
+        if (sea[i] === 0) continue;
+        let v = a[i]!;
+        if (x > 0 && a[i - 1]! - side > v) v = a[i - 1]! - side;
+        if (y > 0) {
+          if (a[i - size]! - side > v) v = a[i - size]! - side;
+          if (x > 0 && a[i - size - 1]! - diagonal > v) v = a[i - size - 1]! - diagonal;
+          if (x < last && a[i - size + 1]! - diagonal > v) v = a[i - size + 1]! - diagonal;
+        }
+        if (v > surface) v = surface;
+        if (v !== a[i]) raised = true;
+        a[i] = v;
+      }
+    }
+    for (let y = last; y >= 0; y--) {
+      for (let x = last; x >= 0; x--) {
+        const i = y * size + x;
+        if (sea[i] === 0) continue;
+        let v = a[i]!;
+        if (x < last && a[i + 1]! - side > v) v = a[i + 1]! - side;
+        if (y < last) {
+          if (a[i + size]! - side > v) v = a[i + size]! - side;
+          if (x < last && a[i + size + 1]! - diagonal > v) v = a[i + size + 1]! - diagonal;
+          if (x > 0 && a[i + size - 1]! - diagonal > v) v = a[i + size - 1]! - diagonal;
+        }
+        if (v > surface) v = surface;
+        if (v !== a[i]) raised = true;
+        a[i] = v;
+      }
+    }
+    if (!raised) return;
+  }
+}
+
 /** Cuts valleys along the drainage of the pit-filled field. Land stays land. */
 function carveValleys(e: Int32Array, size: number): void {
   const count = size * size;
@@ -557,6 +614,8 @@ export function drawGenesisField(size: number, shape: GenesisFieldShape): Genesi
   }
 
   carveValleys(e, size);
+  // Seabed up before land down, so a steep drop never drags a coast under.
+  raiseSeabed(e, size, MAX_SLOPE_PER_CELL, COAST_BANDS * SUB_BAND - 1);
   chamfer(e, size, MAX_SLOPE_PER_CELL, false);
 
   const bands = new Int16Array(count);

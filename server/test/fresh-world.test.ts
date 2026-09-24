@@ -2,6 +2,8 @@ import {
   BAND_HEIGHT,
   CHUNK_SIZE,
   MAX_HEIGHT,
+  MAX_STEP,
+  RELAX_SLACK,
   MIN_HEIGHT,
   NEIGHBOURHOOD_CELLS,
   SEA_LEVEL,
@@ -26,7 +28,9 @@ import {
   GENESIS_TRENCH_FLOOR_BANDS_BELOW_SEA,
   GENESIS_TRENCH_QUALIFYING_HEIGHT,
   buildFreshGenesisTerrain,
+  freshGenesisGroundAt,
   freshGenesisHeightAt,
+  restGenesisHeights,
   type FreshGenesisTerrain,
 } from '../src/world/genesis.ts';
 import { INITIAL_UNLOCK_CHUNK_SPAN, initialUnlockFootprint } from '../src/world/initial-unlock.ts';
@@ -126,6 +130,16 @@ function render(terrain: FreshGenesisTerrain, size: number): Int16Array {
   return heights;
 }
 
+/** The ground a fresh world rests on before its trenches are cut. */
+function restedGround(terrain: FreshGenesisTerrain, size: number): Int16Array {
+  const heights = new Int16Array(size * size);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) heights[y * size + x] = freshGenesisGroundAt(terrain, x, y);
+  }
+  restGenesisHeights(heights, size);
+  return heights;
+}
+
 describe('the depths genesis knows by name', () => {
   it('are band-aligned water inside the sculpt range, shelf above seabed', () => {
     expect(FRESH_SHELF_BANDS_BELOW_SEA).toBeLessThan(FRESH_SEABED_BANDS_BELOW_SEA);
@@ -144,21 +158,29 @@ describe('the depths genesis knows by name', () => {
 });
 
 describe('the whole field', () => {
-  it('keeps every height an integer inside [MIN_HEIGHT, MAX_HEIGHT], on the band genesis drew', () => {
+  it('keeps every height inside [MIN_HEIGHT, MAX_HEIGHT], and all ground outside the trenches at rest', () => {
+    const rest = MAX_STEP + RELAX_SLACK;
     for (const size of [28, 40, 64].map((span) => span * CHUNK_SIZE)) {
       for (const seed of SEEDS.slice(0, 5)) {
-        const world = World.createFresh(size, undefined, undefined, seed);
-        const drawn = render(buildFreshGenesisTerrain(size, seed), size);
+        const cells = World.createFresh(size, undefined, undefined, seed).map.cells;
+        const ground = restedGround(buildFreshGenesisTerrain(size, seed), size);
         let allValid = true;
-        let bandsMoved = 0;
-        for (let i = 0; i < world.map.cells.length; i++) {
-          const h = world.map.cells[i]!;
+        let raisedAboveGround = 0;
+        let steepOutsideTrenches = 0;
+        for (let i = 0; i < cells.length; i++) {
+          const h = cells[i]!;
           if (!Number.isInteger(h) || h < MIN_HEIGHT || h > MAX_HEIGHT) allValid = false;
-          if (drawnBandOfSample(h) !== drawnBandOfSample(drawn[i]!)) bandsMoved++;
+          if (h > ground[i]!) raisedAboveGround++;
+          const x = i % size;
+          for (const j of [x + 1 < size ? i + 1 : -1, i + size < cells.length ? i + size : -1]) {
+            if (j < 0 || h < ground[i]! || cells[j]! < ground[j]!) continue;
+            if (Math.abs(h - cells[j]!) > rest) steepOutsideTrenches++;
+          }
         }
         expect(allValid).toBe(true);
-        // Edge encoding moves heights within their bands; only a fallback abyss cell may differ.
-        expect(bandsMoved).toBeLessThanOrEqual(1);
+        // Trenches and the fallback abyss only deepen the rested ground.
+        expect(raisedAboveGround).toBe(0);
+        expect(steepOutsideTrenches).toBe(0);
       }
     }
   }, WORLD_GENERATION_TIMEOUT_MS);
@@ -341,7 +363,7 @@ describe('the trench pass', () => {
     expect(new Set(layouts).size).toBe(layouts.length);
   }, WORLD_GENERATION_TIMEOUT_MS);
 
-  it('cuts every trench floor at least to the reference band, on an exact band', () => {
+  it('cuts every trench floor at least to the reference band', () => {
     for (const size of TRENCH_SIZES) {
       for (const seed of SEEDS.slice(0, 8)) {
         const terrain = buildFreshGenesisTerrain(size, seed);
@@ -353,8 +375,6 @@ describe('the trench pass', () => {
             SEA_LEVEL - GENESIS_TRENCH_FLOOR_BANDS_BELOW_SEA * BAND_HEIGHT,
           );
           expect(floor).toBeLessThanOrEqual(GENESIS_TRENCH_QUALIFYING_HEIGHT);
-          // The floor keeps the band genesis cut; its height within it encodes the trench wall.
-          expect(drawnBandOfSample(floor)).toBe(drawnBandOfSample(freshGenesisHeightAt(terrain, anchor.x, anchor.y)));
         }
       }
     }
@@ -364,7 +384,7 @@ describe('the trench pass', () => {
     for (const size of TRENCH_SIZES) {
       for (const seed of SEEDS.slice(0, 5)) {
         const terrain = buildFreshGenesisTerrain(size, seed);
-        const before = render(untrenched(terrain), size);
+        const before = restedGround(terrain, size);
         const after = World.createFresh(size, undefined, undefined, seed).map.cells;
 
         let raised = 0;

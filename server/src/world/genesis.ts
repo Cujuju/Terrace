@@ -11,8 +11,7 @@ import {
   cellsOverArea,
   createHeightmap,
   createSeededRng,
-  drawnBandOfSample,
-  encodeLevelEdges,
+  RELAX_SLACK,
   type Heightmap,
 } from '@terrace/shared';
 import {
@@ -22,6 +21,8 @@ import {
   GENESIS_FIELD_SUB_BAND,
   GENESIS_PEAK_BANDS,
   drawGenesisField,
+  limitSlope,
+  raiseSeabed,
   heightAtBandsBelowSea,
   type GenesisStarterLand,
   type GenesisStarterRise,
@@ -752,7 +753,8 @@ export interface FreshGenesisTerrain {
   readonly trenches: readonly GenesisTrench[];
 }
 
-export function freshGenesisHeightAt(
+/** A cell's ground before rest and trenches: the field, lifted and dropped by the passes. */
+export function freshGenesisGroundAt(
   terrain: FreshGenesisTerrain,
   x: number,
   y: number,
@@ -761,7 +763,19 @@ export function freshGenesisHeightAt(
     clampNoiseBand(genesisNoiseRawBandAt(terrain.noise, x, y)) +
     islandLiftBandsAt(terrain.islands, x, y) -
     basinDropBandsAt(terrain.basins, x, y);
-  return deepenedByTrenches(terrain.trenches, x, y, clampHeight(bands * BAND_HEIGHT));
+  const whole = clampHeight(bands * BAND_HEIGHT);
+  // Genesis band k spans heights k * BAND_HEIGHT - (BAND_HEIGHT - 1) .. k * BAND_HEIGHT; the fraction places the cell.
+  const fraction = terrain.noise.fraction[y * terrain.noise.size + x]!;
+  return clampHeight(whole - (BAND_HEIGHT - 1) + Math.floor((fraction * BAND_HEIGHT) / GENESIS_FIELD_SUB_BAND));
+}
+
+/** A cell's height before rest: ground, then any trench cut. */
+export function freshGenesisHeightAt(
+  terrain: FreshGenesisTerrain,
+  x: number,
+  y: number,
+): number {
+  return deepenedByTrenches(terrain.trenches, x, y, freshGenesisGroundAt(terrain, x, y));
 }
 
 function renderStarterNeighbourhood(terrain: FreshGenesisTerrain, into: Int16Array): void {
@@ -867,29 +881,32 @@ function starterIslandLandCells(terrain: FreshGenesisTerrain, heights: Int16Arra
   return cells;
 }
 
-/**
- * Encodes every cell's edge distance from the continuous field genesis drew, so band
- * outlines follow its contours. Passes move whole bands; each cell keeps its fraction.
- */
-export function encodeGenesisEdges(map: Heightmap, terrain: FreshGenesisTerrain): void {
-  const { fraction } = terrain.noise;
-  const level = new Int32Array(map.cells.length);
-  for (let i = 0; i < level.length; i++) {
-    level[i] = drawnBandOfSample(map.cells[i]!) * GENESIS_FIELD_SUB_BAND + fraction[i]!;
-  }
-  encodeLevelEdges(map, level, GENESIS_FIELD_SUB_BAND);
+/** Settle's resting slope: a fresh world starts with nothing for a terraform to re-grade. */
+const GENESIS_REST_STEP = MAX_STEP + RELAX_SLACK;
+
+/** Brings every cell within the resting slope of its neighbours: seabed up first, then land down. */
+export function restGenesisHeights(cells: Int16Array, size: number): void {
+  const heights = Int32Array.from(cells);
+  raiseSeabed(heights, size, GENESIS_REST_STEP, SEA_LEVEL);
+  limitSlope(heights, size, GENESIS_REST_STEP);
+  cells.set(heights);
 }
 
-/** Every cell's height for a fresh world: genesis, the deep-water guarantee, then edge encoding. */
+/** Every cell's height for a fresh world: ground at rest, then trenches, then the deep-water guarantee. */
 export function generateFreshGenesisCells(size: number, seed: number): Int16Array {
   const map = createHeightmap(size);
   const terrain = buildFreshGenesisTerrain(size, seed);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) map.cells[y * size + x] = freshGenesisGroundAt(terrain, x, y);
+  }
+  // Trenches cut after rest: their walls stay sheer, as the ocean floor's only cliffs.
+  restGenesisHeights(map.cells, size);
 
   let deepestHeight = MAX_HEIGHT;
   for (let y = 0; y < size; y++) {
     const row = y * size;
     for (let x = 0; x < size; x++) {
-      const height = freshGenesisHeightAt(terrain, x, y);
+      const height = deepenedByTrenches(terrain.trenches, x, y, map.cells[row + x]!);
       map.cells[row + x] = height;
       if (height < deepestHeight) deepestHeight = height;
     }
@@ -905,7 +922,6 @@ export function generateFreshGenesisCells(size: number, seed: number): Int16Arra
         `(deepest cell was ${deepestHeight}) — deep-water guarantee violated`,
     );
   }
-  encodeGenesisEdges(map, terrain);
   return map.cells;
 }
 

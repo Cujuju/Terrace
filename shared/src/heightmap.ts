@@ -17,7 +17,7 @@ import { spanIndexCoveringBand } from './columns.ts';
 import { cellIndex, cellX, cellY, type Heightmap } from './grid.ts';
 import { diffOf, type CellDiff } from './sculpt/diff.ts';
 import { canSpreadBandTo, graspedCeiling, layerSpanIndex } from './sculpt/grasp.ts';
-import { anchoredTargetHeight, forEachFootprintCell } from './sculpt/footprint.ts';
+import { anchoredTargetHeight, assertBrushArgs, forEachFootprintCell } from './sculpt/footprint.ts';
 import {
   applyBrush,
   applyLevelFillBrush,
@@ -222,6 +222,7 @@ export function applySculpt(
     : 0;
   // Settle's relaxation grades only what its deposit adds, so it needs the ground before it.
   const settles = tool === LIBRARY_SCULPT_TOOL && !anchoredSmooth;
+  if (settles) assertBrushArgs(map, cx, cy, radius, strokeAmount);
   const beforeDeposit = settles ? footprintHeights(map, cx, cy, radius) : null;
   // Smooth never deposits: relaxation alone melts roughness within anchor bounds.
   if (deposits) {
