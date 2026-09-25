@@ -139,7 +139,7 @@ export function stepPopulous(
       emitted.push({ x, y });
     }
 
-    nextLive.set(key, { age: record.age + 1, tier, population });
+    nextLive.set(key, { ...record, age: record.age + 1, tier, population });
   }
 
   return { nextLive, born: [], upgraded, died, emitted };

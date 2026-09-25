@@ -15,5 +15,5 @@
     // incident this flag was added to catch.
     "erasableSyntaxOnly": true
   },
-  "include": ["protocol.ts", "server", "client", "test"]
+  "include": ["protocol.ts", "buildingKinds.ts", "settlementRules.ts", "server", "client", "test"]
 }

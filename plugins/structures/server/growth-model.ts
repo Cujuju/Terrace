@@ -34,10 +34,15 @@ export interface BoardCellRecord extends LiveCellRecord {
   readonly population?: number;
 }
 
+/** A growth model ranks by tier and may not know building kinds; structures fills them in. */
+export type GrowthCellRecord = Omit<BoardCellRecord, 'kind'> & { readonly kind?: number };
+
+export type GrowthCell = Omit<StructureCell, 'kind'> & { readonly kind?: number };
+
 export interface GrowthStepResult {
-  readonly nextLive: Map<number, BoardCellRecord>;
+  readonly nextLive: Map<number, GrowthCellRecord>;
   readonly born: StructureCell[];
-  readonly upgraded: StructureCell[];
+  readonly upgraded: GrowthCell[];
   readonly died: Array<{ x: number; y: number }>;
   readonly emitted: ReadonlyArray<{ x: number; y: number }>;
 }

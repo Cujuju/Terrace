@@ -17,8 +17,7 @@ import { WebGPURenderer } from 'three/webgpu';
 import { backgroundRadiance } from './render/skyEnvironment.ts';
 import { installRigTextureTranscoder } from './render/rigTextureTranscoder.ts';
 import {
-  MAX_STRUCTURE_TIER,
-  STRUCTURE_TIER_COUNT,
+  STRUCTURE_TIERS,
   settlementRace,
   type SettlerRace,
 } from '../../plugins/structures/protocol.ts';
@@ -28,11 +27,9 @@ import {
   DURANDS_SIGN_FLASH_PERIOD_SECONDS,
   type StructurePlacement,
 } from '../../plugins/structures/client/models.ts';
-import { FISHING_HUT_BUILDERS, fishingHutVariantIndex } from '../../plugins/structures/client/fishingHuts.ts';
-import { isDurandsCell } from '../../plugins/structures/client/durands.ts';
-import { isRicksCell } from '../../plugins/structures/client/ricks.ts';
-import { isFlipperShrimpCell } from '../../plugins/structures/client/flipperShrimp.ts';
+import { FISHING_HUT_NAMES } from '../../plugins/structures/client/fishingHuts.ts';
 import { preloadAuthoredStructures } from '../../plugins/structures/client/authoredAssets.ts';
+import { buildingKindOf, tierOfKind } from '../../plugins/structures/settlementRules.ts';
 
 const SKY_COLOR = 0x9fc7e8;
 const GROUND_BOUNCE_COLOR = 0x9a948a;
@@ -49,51 +46,32 @@ const GROUND_RADIUS = 3;
 const CAMERA_FRAMING_PADDING = 1.25;
 const SETTLE_FRAME_COUNT = 3;
 
+/** Only the GLB kit has these: the procedural fallback draws nothing for them. */
+const KIT_ONLY_BUILDINGS: ReadonlySet<string> = new Set(['ricks', 'flipper-shrimp']);
+
 function readQuery(): URLSearchParams {
   return new URLSearchParams(window.location.search);
 }
 
-function findTopTierCell(wantDurands: boolean): { x: number; y: number } {
-  const SCAN_EDGE = 64;
-  for (let y = 0; y < SCAN_EDGE; y++) {
-    for (let x = 0; x < SCAN_EDGE; x++) {
-      if (isDurandsCell(MAX_STRUCTURE_TIER, x, y) === wantDurands) return { x, y };
-    }
-  }
-  throw new Error(
-    `preview: found no ${wantDurands ? '' : 'non-'}Durand's cell in the first ${SCAN_EDGE}x${SCAN_EDGE} cells`,
-  );
+function clampIndex(value: string | null, length: number): number {
+  return Math.min(Math.max(Number(value ?? '0') || 0, 0), length - 1);
 }
 
-function findCoastalCell(variant: number): { x: number; y: number } {
-  const SCAN_EDGE = 64;
-  for (let y = 0; y < SCAN_EDGE; y++) {
-    for (let x = 0; x < SCAN_EDGE; x++) {
-      if (fishingHutVariantIndex(x, y) === variant) return { x, y };
-    }
-  }
-  throw new Error(`preview: no cell in the first ${SCAN_EDGE}x${SCAN_EDGE} rolls fishing hut ${variant}`);
+/** ?building=<id>; the older ?durands, ?ricks, ?flipper, ?hut=N and ?tier=N still name one. */
+function requestedBuilding(query: URLSearchParams): string {
+  const named = query.get('building');
+  if (named !== null) return named;
+  if (query.get('durands') === '1') return 'durands';
+  if (query.get('ricks') === '1') return 'ricks';
+  if (query.get('flipper') === '1') return 'flipper-shrimp';
+  if (query.get('hut') !== null) return FISHING_HUT_NAMES[clampIndex(query.get('hut'), FISHING_HUT_NAMES.length)]!;
+  return STRUCTURE_TIERS[clampIndex(query.get('tier'), STRUCTURE_TIERS.length)]!;
 }
 
-function findRicksCell(): { x: number; y: number } {
-  const SCAN_EDGE = 64;
-  for (let y = 0; y < SCAN_EDGE; y++) {
-    for (let x = 0; x < SCAN_EDGE; x++) {
-      if (isRicksCell(MAX_STRUCTURE_TIER, x, y)) return { x, y };
-    }
-  }
-  throw new Error('preview: no Ricks cell in the search window');
-}
-
-/** Band 0: the preview stands the building on ground Y 0. */
-function findFlipperShrimpCell(): { x: number; y: number } {
-  const SCAN_EDGE = 64;
-  for (let y = 0; y < SCAN_EDGE; y++) {
-    for (let x = 0; x < SCAN_EDGE; x++) {
-      if (isFlipperShrimpCell(MAX_STRUCTURE_TIER, x, y, 0)) return { x, y };
-    }
-  }
-  throw new Error("preview: no Flipper & Shrimp's Place cell in the search window");
+function kindOf(id: string): number {
+  const kind = buildingKindOf(id);
+  if (kind === null) throw new Error(`preview: ${id} is not a building in spawn-bands.json`);
+  return kind;
 }
 
 function buildScene(unlit: boolean): { scene: Scene; camera: PerspectiveCamera; renderer: WebGPURenderer } {
@@ -154,70 +132,54 @@ const BESIDE_SPACING_WORLD_UNITS = 1.2;
 
 async function main(): Promise<void> {
   const query = readQuery();
-  const durandsRequested = query.get('durands') === '1';
-  const ricksRequested = query.get('ricks') === '1';
-  const flipperRequested = query.get('flipper') === '1';
+  const building = requestedBuilding(query);
+  const kind = kindOf(building);
   const quality = query.get('quality') === 'original' ? 'original' : 'low';
-  const hutParam = query.get('hut');
-  const hutRequested = hutParam !== null && Number.isInteger(Number(hutParam));
-  const hutVariant = hutRequested
-    ? Math.min(Math.max(Number(hutParam), 0), FISHING_HUT_BUILDERS.length - 1)
-    : -1;
   const flashOn = query.get('flash') !== 'off';
   const bulbPhaseParam = query.get('bulbphase');
-  const requestedTier = Number(query.get('tier') ?? '0');
-  const tier = durandsRequested || hutRequested || ricksRequested || flipperRequested
-    ? MAX_STRUCTURE_TIER
-    : Math.min(Math.max(requestedTier, 0), STRUCTURE_TIER_COUNT - 1);
 
   const { scene, camera, renderer } = buildScene(query.get('unlit') === '1');
   await renderer.init();
   installRigTextureTranscoder(renderer);
 
-  const kit = ricksRequested || flipperRequested ? await preloadAuthoredStructures(quality) : undefined;
+  const useKit = KIT_ONLY_BUILDINGS.has(building) || query.get('quality') !== null;
+  const kit = useKit ? await preloadAuthoredStructures(quality) : undefined;
   const models = createStructureModels(kit);
   scene.add(models.root);
 
-  const cell = flipperRequested
-    ? findFlipperShrimpCell()
-    : ricksRequested
-    ? findRicksCell()
-    : hutRequested
-      ? findCoastalCell(hutVariant)
-      : tier === MAX_STRUCTURE_TIER
-        ? findTopTierCell(durandsRequested)
-        : { x: 0, y: 0 };
   const raceParam = query.get('race');
-  const race: SettlerRace =
-    raceParam === 'rudy' || raceParam === 'uno' ? raceParam : settlementRace(cell.x, cell.y);
+  const race: SettlerRace = raceParam === 'rudy' || raceParam === 'uno' ? raceParam : settlementRace(0, 0);
   const placement: StructurePlacement = {
-    x: cell.x,
-    z: cell.y,
-    cellX: cell.x,
-    cellY: cell.y,
+    x: 0,
+    z: 0,
+    cellX: 0,
+    cellY: 0,
     groundY: 0,
-    tier,
+    tier: tierOfKind(kind),
+    kind,
     scale: 1,
     yaw: 0,
     race,
-    site: hutRequested ? 'coastal' : 'inland',
+    site: 'inland',
   };
   const besideParam = query.get('beside');
   const placements: StructurePlacement[] = [placement];
-  if (besideParam !== null && Number.isInteger(Number(besideParam))) {
-    const besideTier = Math.min(Math.max(Number(besideParam), 0), STRUCTURE_TIER_COUNT - 1);
-    const besideCell = besideTier === MAX_STRUCTURE_TIER ? findTopTierCell(false) : { x: 0, y: 0 };
+  if (besideParam !== null) {
+    const besideKind = kindOf(
+      buildingKindOf(besideParam) === null
+        ? STRUCTURE_TIERS[clampIndex(besideParam, STRUCTURE_TIERS.length)]!
+        : besideParam,
+    );
     placements.push({
       ...placement,
       x: placement.x + BESIDE_SPACING_WORLD_UNITS,
-      cellX: besideCell.x,
-      cellY: besideCell.y,
-      tier: besideTier,
+      tier: tierOfKind(besideKind),
+      kind: besideKind,
     });
   }
   models.apply(placements);
 
-  if (durandsRequested) {
+  if (building === 'durands') {
     let dt: number;
     if (bulbPhaseParam === 'a' || bulbPhaseParam === 'b') {
       const marqueeQuarterPeriod = DURANDS_MARQUEE_BULB_PERIOD_SECONDS / 4;
@@ -243,8 +205,7 @@ async function main(): Promise<void> {
     } else {
       (window as unknown as { __previewStats: unknown }).__previewStats = {
         tiers: placements.map((placed) => placed.tier),
-        ricks: ricksRequested,
-        flipper: flipperRequested,
+        buildings: [building, ...(besideParam === null ? [] : [besideParam])],
         quality: kit === undefined ? 'legacy' : quality,
         unlit: query.get('unlit') === '1',
         race,

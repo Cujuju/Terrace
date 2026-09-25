@@ -18,7 +18,6 @@ import {
 } from 'three';
 import type { BuildingAssetKit } from '../../../client/src/render/buildingAssetKit.ts';
 import {
-  MAX_STRUCTURE_TIER,
   STRUCTURES_CAP,
   STRUCTURE_FOOTPRINT_SPAN_WORLD_UNITS,
   STRUCTURE_LEGACY_SURVEYED_GROUND_RADIUS,
@@ -28,12 +27,9 @@ import {
   type SettlerRace,
   type StructureTier,
 } from '../protocol.ts';
-import { isDurandsCell } from './durands.ts';
-import { isRicksCell } from './ricks.ts';
-import { isFlipperShrimpCell } from './flipperShrimp.ts';
-import { drawnBandAtY } from '../../../client/src/terrain/capEmission.ts';
-import { FISHING_HUT_BUILDERS, FISHING_HUT_NAMES, fishingHutVariantIndex } from './fishingHuts.ts';
-import { COASTAL_HUT_MAX_TIER, coastalHutTierScales } from './buildingScale.ts';
+import { FISHING_HUT_BUILDERS, FISHING_HUT_NAMES } from './fishingHuts.ts';
+import { BUILDING_KIND_COUNT, buildingIdOf, tierOfKind } from '../settlementRules.ts';
+import { baseModelOf } from '../buildingKinds.ts';
 import {
   fitToRadius,
   mergeParts,
@@ -1193,15 +1189,6 @@ function buildTierParts(): StructurePart[][] {
   return tiers;
 }
 
-interface SiteVariantSet {
-  readonly builders: ReadonlyArray<() => StructurePart[]>;
-  pick(cellX: number, cellY: number): number;
-}
-
-const SITE_LOW_TIER_VARIANTS: Readonly<Partial<Record<SiteKind, SiteVariantSet>>> = {
-  coastal: { builders: FISHING_HUT_BUILDERS, pick: fishingHutVariantIndex },
-};
-
 const DURANDS_SIGN_CANVAS_WIDTH = 512;
 const DURANDS_SIGN_CANVAS_HEIGHT = 128;
 
@@ -1794,6 +1781,8 @@ export interface StructurePlacement {
   readonly cellY: number;
   readonly groundY: number;
   readonly tier: StructureTier;
+  /** Building kind, as the server chose it. */
+  readonly kind: number;
   readonly scale: number;
   readonly yaw: number;
   readonly race: SettlerRace;
@@ -1827,22 +1816,44 @@ function uploadInstancePrefix(
   attribute.needsUpdate = true;
 }
 
+// Landmarks keep their own paint; every other building takes its settlers' race tint.
+const UNTINTED_BUILDINGS: ReadonlySet<string> = new Set(['durands', 'ricks', 'flipper-shrimp']);
+
+// Only when the GLB kit fails to load: the procedural stand-in for each ladder tier.
+const FALLBACK_LADDER_PARTS = [0, 1, 1, 2, 3, 2, 4, 5, 5, 4, 5];
+
+function cloneParts(parts: readonly StructurePart[]): StructurePart[] {
+  return parts.map((part) => ({
+    geometry: part.geometry.clone(),
+    material: part.material.clone(),
+    localMatrices: part.localMatrices.map((matrix) => matrix.clone()),
+  }));
+}
+
 export function createStructureModels(kit?: BuildingAssetKit): StructureModels {
   const legacyParts = kit === undefined ? buildTierParts().map((parts) => mergeParts(parts)) : null;
-  const fallbackTiers = [0, 1, 1, 2, 3, 2, 4, 5, 5, 4, 5];
-  const tierParts = kit === undefined
-    ? fallbackTiers.map((tier) => legacyParts![tier].map((part) => ({
-      geometry: part.geometry.clone(), material: part.material.clone(),
-      localMatrices: part.localMatrices.map((matrix) => matrix.clone()),
-    })))
-    : STRUCTURE_TIERS.map((id) => kit.parts(id));
+  const durands = kit === undefined ? buildDurandsParts() : null;
+
+  function fallbackParts(id: string, tier: number): StructurePart[] {
+    const hut = FISHING_HUT_NAMES.indexOf(baseModelOf(id));
+    if (hut >= 0) return FISHING_HUT_BUILDERS[hut]!();
+    if (id === 'durands') {
+      return mergeSharedSurface(fitToRadius(durands!.parts, STRUCTURE_LEGACY_SURVEYED_GROUND_RADIUS / STRUCTURE_SCALE_MAX));
+    }
+    if (id === 'ricks' || id === 'flipper-shrimp') return [];
+    const ladder = FALLBACK_LADDER_PARTS[Math.min(tier, FALLBACK_LADDER_PARTS.length - 1)]!;
+    return cloneParts(legacyParts![ladder]!);
+  }
+
+  const kindParts: StructurePart[][] = [];
+  for (let kind = 0; kind < BUILDING_KIND_COUNT; kind++) {
+    const id = buildingIdOf(kind);
+    kindParts.push(kit === undefined ? fallbackParts(id, tierOfKind(kind)) : kit.parts(id));
+  }
   if (legacyParts !== null) {
     for (const parts of legacyParts) for (const part of parts) {
       part.geometry.dispose(); part.material.dispose();
     }
-  }
-  if (tierParts.length !== STRUCTURE_TIER_COUNT) {
-    throw new Error(`structures: built ${tierParts.length} tier models, expected ${STRUCTURE_TIER_COUNT}`);
   }
 
   const geometries: BufferGeometry[] = [];
@@ -1850,65 +1861,18 @@ export function createStructureModels(kit?: BuildingAssetKit): StructureModels {
   const root = new Group();
   root.name = 'structures:buildings';
 
-  const meshesByTier: InstancedMesh[][] = tierParts.map((parts, tier) =>
+  const kindMeshes: InstancedMesh[][] = kindParts.map((parts, kind) =>
     parts.map((part, partIndex) => {
       geometries.push(part.geometry);
       materials.push(part.material);
       const mesh = new InstancedMesh(part.geometry, part.material, STRUCTURES_CAP * part.localMatrices.length);
-      mesh.name = `structures:tier${String(tier)}:part${String(partIndex)}`;
+      mesh.name = `structures:${buildingIdOf(kind)}:part${String(partIndex)}`;
       mesh.count = 0;
       root.add(mesh);
       return mesh;
     }),
   );
-
-  const durands = kit === undefined ? buildDurandsParts() : null;
-  const durandsParts = kit?.parts('durands') ?? mergeSharedSurface(
-    fitToRadius(durands!.parts, STRUCTURE_LEGACY_SURVEYED_GROUND_RADIUS / STRUCTURE_SCALE_MAX),
-  );
-  function specialBuildingMeshes(parts: readonly StructurePart[], id: string): InstancedMesh[] {
-    return parts.map((part, partIndex) => {
-      geometries.push(part.geometry);
-      materials.push(part.material);
-      const mesh = new InstancedMesh(part.geometry, part.material, STRUCTURES_CAP * part.localMatrices.length);
-      mesh.name = `structures:${id}:part${String(partIndex)}`;
-      mesh.count = 0;
-      root.add(mesh);
-      return mesh;
-    });
-  }
-
-  const durandsMeshes = specialBuildingMeshes(durandsParts, 'durands');
-
-  const ricksParts = kit?.parts('ricks') ?? [];
-  const ricksMeshes = specialBuildingMeshes(ricksParts, 'ricks');
-
-  const flipperShrimpParts = kit?.parts('flipper-shrimp') ?? [];
-  const flipperShrimpMeshes = specialBuildingMeshes(flipperShrimpParts, 'flipper-shrimp');
-
-  const siteVariantParts: Partial<Record<SiteKind, StructurePart[][]>> = {};
-  const siteVariantMeshes: Partial<Record<SiteKind, InstancedMesh[][]>> = {};
-  const siteVariantTierScales: Partial<Record<SiteKind, number[]>> = {};
-  for (const siteKind of Object.keys(SITE_LOW_TIER_VARIANTS) as SiteKind[]) {
-    const built = kit === undefined
-      ? SITE_LOW_TIER_VARIANTS[siteKind]!.builders.map((build) => build())
-      : FISHING_HUT_NAMES.map((id) => kit.parts(id));
-    siteVariantParts[siteKind] = built;
-    siteVariantTierScales[siteKind] = coastalHutTierScales(
-      built.map((parts, variant) => ({ id: FISHING_HUT_NAMES[variant]!, parts })),
-    );
-    siteVariantMeshes[siteKind] = built.map((parts, variant) =>
-      parts.map((part, partIndex) => {
-        geometries.push(part.geometry);
-        materials.push(part.material);
-        const mesh = new InstancedMesh(part.geometry, part.material, STRUCTURES_CAP * part.localMatrices.length);
-        mesh.name = `structures:${siteKind}${String(variant)}:part${String(partIndex)}`;
-        mesh.count = 0;
-        root.add(mesh);
-        return mesh;
-      }),
-    );
-  }
+  const kindTinted: boolean[] = kindParts.map((_, kind) => !UNTINTED_BUILDINGS.has(buildingIdOf(kind)));
 
   const buildingPosition = new Vector3();
   const buildingRotation = new Quaternion();
@@ -1957,70 +1921,24 @@ export function createStructureModels(kit?: BuildingAssetKit): StructureModels {
     root,
 
     apply(placements: readonly StructurePlacement[]): void {
-      const counts = meshesByTier.map((parts) => parts.map(() => 0));
-      const durandsCounts = durandsMeshes.map(() => 0);
-      const ricksCounts = ricksMeshes.map(() => 0);
-      const flipperShrimpCounts = flipperShrimpMeshes.map(() => 0);
-      const siteVariantCounts: Partial<Record<SiteKind, number[][]>> = {};
-      for (const siteKind of Object.keys(SITE_LOW_TIER_VARIANTS) as SiteKind[]) {
-        siteVariantCounts[siteKind] = siteVariantParts[siteKind]!.map((parts) => parts.map(() => 0));
-      }
+      const counts = kindMeshes.map((meshes) => meshes.map(() => 0));
 
       for (const placement of placements) {
+        const parts = kindParts[placement.kind];
+        if (parts === undefined) continue;
         buildingPosition.set(placement.x, placement.groundY, placement.z);
         buildingRotation.setFromAxisAngle(Y_AXIS, placement.yaw);
         buildingScale.setScalar(placement.scale);
         buildingMatrix.compose(buildingPosition, buildingRotation, buildingScale);
-
-        // Checked before the coastal fishing huts: the clubhouse is a waterfront building.
-        if (
-          flipperShrimpParts.length > 0 &&
-          isFlipperShrimpCell(placement.tier, placement.cellX, placement.cellY, drawnBandAtY(placement.groundY))
-        ) {
-          writeInstances(flipperShrimpParts, flipperShrimpMeshes, flipperShrimpCounts, null);
-          continue;
-        }
-
-        const variantSet = SITE_LOW_TIER_VARIANTS[placement.site];
-        if (placement.tier <= COASTAL_HUT_MAX_TIER && variantSet !== undefined) {
-          const built = siteVariantParts[placement.site]!;
-          const variant = Math.min(Math.max(variantSet.pick(placement.cellX, placement.cellY), 0), built.length - 1);
-          buildingScale.setScalar(placement.scale * siteVariantTierScales[placement.site]![placement.tier]!);
-          buildingMatrix.compose(buildingPosition, buildingRotation, buildingScale);
-          writeInstances(
-            built[variant],
-            siteVariantMeshes[placement.site]![variant],
-            siteVariantCounts[placement.site]![variant],
-            raceTints[placement.race],
-          );
-          continue;
-        }
-
-        if (isDurandsCell(placement.tier, placement.cellX, placement.cellY)) {
-          writeInstances(durandsParts, durandsMeshes, durandsCounts, null);
-          continue;
-        }
-
-        if (ricksParts.length > 0 && isRicksCell(placement.tier, placement.cellX, placement.cellY)) {
-          writeInstances(ricksParts, ricksMeshes, ricksCounts, null);
-          continue;
-        }
-
-        const parts = tierParts[placement.tier];
-        const meshes = meshesByTier[placement.tier];
-        if (parts === undefined || meshes === undefined) continue;
-        writeInstances(parts, meshes, counts[placement.tier], raceTints[placement.race]);
+        writeInstances(
+          parts,
+          kindMeshes[placement.kind]!,
+          counts[placement.kind]!,
+          kindTinted[placement.kind] ? raceTints[placement.race] : null,
+        );
       }
 
-      for (let tier = 0; tier < meshesByTier.length; tier++) finalizeMeshes(meshesByTier[tier], counts[tier]);
-      finalizeMeshes(durandsMeshes, durandsCounts);
-      finalizeMeshes(ricksMeshes, ricksCounts);
-      finalizeMeshes(flipperShrimpMeshes, flipperShrimpCounts);
-      for (const siteKind of Object.keys(SITE_LOW_TIER_VARIANTS) as SiteKind[]) {
-        const meshes = siteVariantMeshes[siteKind]!;
-        const counts = siteVariantCounts[siteKind]!;
-        for (let variant = 0; variant < meshes.length; variant++) finalizeMeshes(meshes[variant], counts[variant]);
-      }
+      for (let kind = 0; kind < kindMeshes.length; kind++) finalizeMeshes(kindMeshes[kind]!, counts[kind]!);
     },
 
     animate(dt: number): void {
@@ -2048,13 +1966,7 @@ export function createStructureModels(kit?: BuildingAssetKit): StructureModels {
     },
 
     dispose(): void {
-      for (const parts of meshesByTier) for (const mesh of parts) mesh.dispose();
-      for (const mesh of durandsMeshes) mesh.dispose();
-      for (const mesh of ricksMeshes) mesh.dispose();
-      for (const mesh of flipperShrimpMeshes) mesh.dispose();
-      for (const variants of Object.values(siteVariantMeshes)) {
-        for (const meshes of variants!) for (const mesh of meshes) mesh.dispose();
-      }
+      for (const meshes of kindMeshes) for (const mesh of meshes) mesh.dispose();
       for (const geometry of geometries) geometry.dispose();
       for (const material of materials) material.dispose();
       root.clear();

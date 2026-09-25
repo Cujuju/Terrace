@@ -11,7 +11,6 @@ import {
   type BufferGeometry,
   type Material,
 } from 'three';
-import { hashStructureCell } from '../protocol.ts';
 import {
   FULL_TURN_RADIANS,
   X_AXIS,
@@ -671,16 +670,3 @@ export const FISHING_HUT_NAMES: readonly string[] = [
   'net-draped-cone',
   'smoke-pit-hut',
 ];
-
-const FISHING_HUT_ROLL_SALT = 0x9e3779b1;
-
-function fishingHutRollHash(x: number, y: number): number {
-  let h = (hashStructureCell(x, y) ^ FISHING_HUT_ROLL_SALT) >>> 0;
-  h = Math.imul(h ^ (h >>> 16), 0x7feb352d);
-  h = Math.imul(h ^ (h >>> 15), 0x846ca68b);
-  return (h ^ (h >>> 16)) >>> 0;
-}
-
-export function fishingHutVariantIndex(x: number, y: number): number {
-  return fishingHutRollHash(x, y) % FISHING_HUT_BUILDERS.length;
-}

@@ -1,22 +1,22 @@
-import { MAX_STRUCTURE_TIER } from '../protocol.ts';
-
 export const CA_GENERATIONS_PER_TIER = 3;
 
 export const STRUCTURE_UPGRADE_MIN_NEIGHBORS = 3;
 
-function ageThresholdFor(nextTier: number): number {
-  return nextTier * CA_GENERATIONS_PER_TIER;
+function ageThresholdFor(nextStep: number): number {
+  return nextStep * CA_GENERATIONS_PER_TIER;
 }
 
-export function maybeAdvanceTier(
+/**
+ * Is a settlement at `step` of its category chain old enough to take the next step? The first
+ * step out of camp also needs neighbours, unless the settlement is blessed.
+ */
+export function isReadyToUpgrade(
   age: number,
-  tier: number,
+  step: number,
   neighborCount: number,
   blessed = false,
-): number {
-  if (tier >= MAX_STRUCTURE_TIER) return tier;
-  if (age < ageThresholdFor(tier + 1)) return tier;
-  if (tier >= 1) return tier + 1;
-  if (!blessed && neighborCount < STRUCTURE_UPGRADE_MIN_NEIGHBORS) return tier;
-  return tier + 1;
+): boolean {
+  if (age < ageThresholdFor(step + 1)) return false;
+  if (step >= 1) return true;
+  return blessed || neighborCount >= STRUCTURE_UPGRADE_MIN_NEIGHBORS;
 }

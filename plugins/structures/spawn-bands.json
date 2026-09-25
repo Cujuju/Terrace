@@ -1,0 +1,81 @@
+{
+  "_readme": [
+    "Owner-authored settlement rules. Server and client both read this file; restart the server and reload the client after editing.",
+    "Bands count up from the shore: band 0 is the first dry band, band 63 the highest.",
+    "buildings: every building the game can draw. tier ranks model complexity (0 straw and hide ... 10 landmark); other plugins read it (boats need tier 1, skiffs, wind damage).",
+    "categories: checked in this order; the first whose site and bands match a settlement's anchor cell owns it.",
+    "  site: coastal (sea within 4 world units), inland (no sea there), or any.",
+    "  chain: the upgrade path. A building upgrades into the entry after it; the last entry does not upgrade.",
+    "  landmarks: rare buildings that may replace a settlement that has finished its chain.",
+    "landmarks: the bands each landmark may stand on, and the closest two of the same kind may stand, in world units."
+  ],
+  "buildings": {
+    "camp": { "tier": 0 },
+    "windbreak-dome": { "tier": 0 },
+    "reed-cone": { "tier": 0 },
+    "hut": { "tier": 1 },
+    "lashed-a-frame": { "tier": 1 },
+    "lashed-a-frame-plain": { "tier": 1 },
+    "twin-hut-yard": { "tier": 2 },
+    "twin-hut-yard-plain": { "tier": 2 },
+    "upturned-hull": { "tier": 2 },
+    "net-draped-cone": { "tier": 2 },
+    "prehistoric-granary": { "tier": 3 },
+    "stilted-hut": { "tier": 3 },
+    "stilted-hut-plain": { "tier": 3 },
+    "drying-rack-long-hut": { "tier": 3 },
+    "roman-granary": { "tier": 4 },
+    "turf-roof-on-stone": { "tier": 4 },
+    "turf-roof-on-stone-plain": { "tier": 4 },
+    "smoke-pit-hut": { "tier": 4 },
+    "smoke-pit-hut-plain": { "tier": 4 },
+    "timber-house": { "tier": 5 },
+    "stone-cottage": { "tier": 6 },
+    "watchtower": { "tier": 7 },
+    "medieval-dovecote": { "tier": 7 },
+    "renaissance-workshop": { "tier": 8 },
+    "longhouse": { "tier": 8 },
+    "industrial-pump-house": { "tier": 9 },
+    "durands": { "tier": 10 },
+    "ricks": { "tier": 10 },
+    "flipper-shrimp": { "tier": 10 }
+  },
+  "categories": {
+    "beachfront": {
+      "site": "coastal",
+      "bands": [0, 9],
+      "chain": ["reed-cone", "upturned-hull", "net-draped-cone", "stilted-hut", "drying-rack-long-hut", "smoke-pit-hut"],
+      "landmarks": ["flipper-shrimp", "industrial-pump-house"]
+    },
+    "shoreline-huts": {
+      "site": "inland",
+      "bands": [0, 4],
+      "chain": ["windbreak-dome", "reed-cone", "lashed-a-frame", "twin-hut-yard"],
+      "landmarks": []
+    },
+    "lowland": {
+      "site": "any",
+      "bands": [5, 23],
+      "chain": ["camp", "hut", "twin-hut-yard-plain", "prehistoric-granary", "roman-granary", "timber-house", "renaissance-workshop"],
+      "landmarks": ["industrial-pump-house", "durands", "ricks"]
+    },
+    "forest": {
+      "site": "any",
+      "bands": [24, 34],
+      "chain": ["camp", "lashed-a-frame-plain", "prehistoric-granary", "timber-house", "stone-cottage", "watchtower", "medieval-dovecote"],
+      "landmarks": ["industrial-pump-house", "durands", "ricks"]
+    },
+    "mountain": {
+      "site": "any",
+      "bands": [35, 63],
+      "chain": ["windbreak-dome", "turf-roof-on-stone-plain", "stone-cottage", "watchtower", "longhouse"],
+      "landmarks": ["industrial-pump-house", "ricks"]
+    }
+  },
+  "landmarks": {
+    "industrial-pump-house": { "bands": [5, 63], "spacingWorldUnits": 50 },
+    "durands": { "bands": [5, 30], "spacingWorldUnits": 50 },
+    "ricks": { "bands": [15, 63], "spacingWorldUnits": 50 },
+    "flipper-shrimp": { "bands": [0, 1], "spacingWorldUnits": 50 }
+  }
+}

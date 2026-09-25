@@ -1,8 +1,25 @@
 import { CHUNK_SIZE, isSettlingDay } from '@terrace/shared';
-import { STRUCTURES_CAP, cellOfKey, structureKey, type StructureCell } from '../protocol.ts';
+import {
+  STRUCTURES_CAP,
+  cellOfKey,
+  footprintRadiusOfKind,
+  hashStructureCell,
+  structureKey,
+  type StructureCell,
+} from '../protocol.ts';
+import {
+  bandAt,
+  categoryAt,
+  chainStepOf,
+  isLandmarkKind,
+  landmarksFor,
+  nextKindInChain,
+  tierOfKind,
+  type CategoryRule,
+} from '../settlementRules.ts';
 import { isBlessedStructureCell } from './blessings.ts';
-import { maybeAdvanceTier } from './tiers.ts';
-import { isBuildableCell, type StructuresWorld } from './suitability.ts';
+import { isReadyToUpgrade } from './tiers.ts';
+import { foundingKindAt, isBuildableCell, type StructuresWorld } from './suitability.ts';
 import { hasNearbyFarmland } from './farmland.ts';
 import {
   IncrementalLandmassLabeller,
@@ -45,6 +62,8 @@ export const CA_STIR_MAX_ANCHOR_ATTEMPTS = 8;
 export interface LiveCellRecord {
   readonly age: number;
   readonly tier: number;
+  /** Building kind (index into spawn-bands.json's buildings). */
+  readonly kind: number;
 }
 
 const MOORE_OFFSETS: ReadonlyArray<readonly [number, number]> = [
@@ -159,24 +178,86 @@ export class GenerationSurvey {
     this.board = null;
   }
 
-  /** Claims the lot an upgrade needs, absorbing what it may; false when the upgrade must wait. */
+  /**
+   * Claims the ground an upgrade needs, absorbing what it may. False when the new building
+   * would not fit (off band, water, reserved) or a peer stands in its way.
+   */
   private claimUpgradeLot(
     world: StructuresWorld,
     live: ReadonlyMap<number, LiveCellRecord>,
     x: number,
     y: number,
     currentTier: number,
-    nextTier: number,
+    nextKind: number,
   ): boolean {
-    if (!isBuildableCell(world, x, y, nextTier)) return false;
-    const onBoard = surveyUpgradeLot(live, world, x, y, currentTier, nextTier);
-    const staged = surveyUpgradeLot(this.staged, world, x, y, currentTier, nextTier);
+    if (!isBuildableCell(world, x, y, footprintRadiusOfKind(nextKind))) return false;
+    const onBoard = surveyUpgradeLot(live, world, x, y, currentTier, nextKind);
+    const staged = surveyUpgradeLot(this.staged, world, x, y, currentTier, nextKind);
     if (onBoard.blocked || staged.blocked) return false;
     for (const key of [...onBoard.absorbed, ...staged.absorbed]) {
       this.staged.delete(key);
       this.demolishedThisSweep.add(key);
     }
     return true;
+  }
+
+  private hasLandmarkWithin(
+    live: ReadonlyMap<number, LiveCellRecord>,
+    x: number,
+    y: number,
+    kind: number,
+    spacingCells: number,
+  ): boolean {
+    for (const board of [live, this.staged]) {
+      for (const [key, record] of board) {
+        if (record.kind !== kind) continue;
+        const cell = cellOfKey(key);
+        const dx = cell.x - x;
+        const dy = cell.y - y;
+        if (dx * dx + dy * dy < spacingCells * spacingCells) return true;
+      }
+    }
+    return false;
+  }
+
+  /** A landmark this finished settlement may become: allowed on its band, none of its kind nearby. */
+  private landmarkFor(
+    world: StructuresWorld,
+    live: ReadonlyMap<number, LiveCellRecord>,
+    x: number,
+    y: number,
+    category: CategoryRule,
+    current: LiveCellRecord,
+  ): number | null {
+    if (isLandmarkKind(current.kind)) return null;
+    const eligible = landmarksFor(category, bandAt(world, x, y));
+    if (eligible.length === 0) return null;
+    const start = hashStructureCell(x, y) % eligible.length;
+    for (let i = 0; i < eligible.length; i++) {
+      const rule = eligible[(start + i) % eligible.length]!;
+      if (!this.hasLandmarkWithin(live, x, y, rule.kind, rule.spacingCells)) return rule.kind;
+    }
+    return null;
+  }
+
+  private upgradeOf(
+    world: StructuresWorld,
+    live: ReadonlyMap<number, LiveCellRecord>,
+    x: number,
+    y: number,
+    key: number,
+    current: LiveCellRecord,
+    age: number,
+  ): LiveCellRecord | null {
+    const category = categoryAt(world, x, y);
+    if (category === null) return null;
+    const neighbours = liveMooreNeighbors(live, world.worldSize, x, y);
+    if (!isReadyToUpgrade(age, chainStepOf(category, current.kind), neighbours, isBlessedStructureCell(key))) {
+      return null;
+    }
+    const next = nextKindInChain(category, current.kind) ?? this.landmarkFor(world, live, x, y, category, current);
+    if (next === null || !this.claimUpgradeLot(world, live, x, y, current.tier, next)) return null;
+    return { age, tier: tierOfKind(next), kind: next };
   }
 
   private scanChunk(
@@ -223,15 +304,13 @@ export class GenerationSurvey {
 
         if (current !== undefined) {
           const age = current.age + 1;
-          const liveNeighbors = liveMooreNeighbors(live, world.worldSize, x, y);
-          let tier = maybeAdvanceTier(age, current.tier, liveNeighbors, isBlessedStructureCell(key));
-          if (tier > current.tier && !this.claimUpgradeLot(world, live, x, y, current.tier, tier)) {
-            tier = current.tier;
-          }
-          this.staged.set(key, { age, tier });
+          const upgraded = this.upgradeOf(world, live, x, y, key, current, age);
+          this.staged.set(key, upgraded ?? { age, tier: current.tier, kind: current.kind });
         } else {
           if (this.staged.size >= STRUCTURES_CAP) continue;
-          this.staged.set(key, { age: 0, tier: 0 });
+          const kind = foundingKindAt(world, x, y);
+          if (kind === null) continue;
+          this.staged.set(key, { age: 0, tier: tierOfKind(kind), kind });
         }
       }
     }
@@ -300,7 +379,7 @@ export class GenerationSurvey {
     for (const [key, record] of live) {
       if (board.has(key) || this.staged.has(key)) continue;
       const cell = cellOfKey(key);
-      if (hasBuildingWithinSeparation(this.staged, world, cell.x, cell.y, record.tier)) {
+      if (hasBuildingWithinSeparation(this.staged, world, cell.x, cell.y, footprintRadiusOfKind(record.kind))) {
         carriedOntoClaimedGround.push(key);
         continue;
       }
@@ -321,9 +400,9 @@ export class GenerationSurvey {
       const previous = board.get(key);
       const cell = cellOfKey(key);
       if (previous === undefined) {
-        born.push({ x: cell.x, y: cell.y, tier: record.tier });
+        born.push({ x: cell.x, y: cell.y, tier: record.tier, kind: record.kind });
       } else if (previous.tier !== record.tier) {
-        upgraded.push({ x: cell.x, y: cell.y, tier: record.tier });
+        upgraded.push({ x: cell.x, y: cell.y, tier: record.tier, kind: record.kind });
       }
     }
     for (const key of board.keys()) {
@@ -416,7 +495,9 @@ export function placePatternAt(
     const y = anchorY + dy;
     if (live.has(structureKey(x, y)) || !isBuildableCell(world, x, y)) return null;
     if (hasBuildingWithinSeparation(live, world, x, y)) return null;
-    placed.push({ x, y, tier: 0 });
+    const kind = foundingKindAt(world, x, y);
+    if (kind === null) return null;
+    placed.push({ x, y, tier: tierOfKind(kind), kind });
   }
   return placed;
 }
@@ -487,7 +568,7 @@ export function attemptSeed(
       const placed = placePatternAt(world, claimed, anchorX, anchorY, patternCells);
       if (placed === null) continue;
 
-      for (const cell of placed) claimed.set(structureKey(cell.x, cell.y), { age: 0, tier: 0 });
+      for (const cell of placed) claimed.set(structureKey(cell.x, cell.y), { age: 0, tier: cell.tier, kind: cell.kind });
       planted.push(...placed);
       usedChunks.add(chunkIdx);
       break;
@@ -510,7 +591,7 @@ export function attemptStir(
   const sortedKeys = Array.from(live.keys()).sort((a, b) => a - b);
   const startIndex = Math.floor(rng.next() * sortedKeys.length);
 
-  let candidates: Array<readonly [number, number]> = [];
+  let candidates: Array<readonly [number, number, number]> = [];
   const anchorAttempts = Math.min(CA_STIR_MAX_ANCHOR_ATTEMPTS, sortedKeys.length);
   for (let attempt = 0; attempt < anchorAttempts; attempt++) {
     const anchor = cellOfKey(sortedKeys[(startIndex + attempt) % sortedKeys.length]);
@@ -522,7 +603,9 @@ export function attemptStir(
       if (live.has(structureKey(nx, ny))) continue;
       if (!isBuildableCell(world, nx, ny)) continue;
       if (hasBuildingWithinSeparation(live, world, nx, ny)) continue;
-      candidates.push([nx, ny]);
+      const kind = foundingKindAt(world, nx, ny);
+      if (kind === null) continue;
+      candidates.push([nx, ny, kind]);
     }
     if (candidates.length > 0) break;
   }
@@ -535,9 +618,9 @@ export function attemptStir(
   const sparks: StructureCell[] = [];
   for (let i = 0; i < sparkCount; i++) {
     const pickIndex = Math.floor(rng.next() * pool.length);
-    const [x, y] = pool[pickIndex];
+    const [x, y, kind] = pool[pickIndex];
     pool.splice(pickIndex, 1);
-    sparks.push({ x, y, tier: 0 });
+    sparks.push({ x, y, tier: tierOfKind(kind), kind });
   }
   return sparks;
 }

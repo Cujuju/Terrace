@@ -10,16 +10,26 @@ import {
   STRUCTURES_ALL_MESSAGE,
   STRUCTURES_CHANGES_MESSAGE,
   STRUCTURES_CAP,
-  MAX_STRUCTURE_FOOTPRINT_RADIUS_CELLS,
+  MAX_FOOTPRINT_RADIUS_CELLS,
   MAX_STRUCTURE_TIER,
   STRUCTURES_PLUGIN_NAME,
   cellOfKey,
   packCells,
   packStructureCells,
-  structureFootprintRadiusCells,
+  footprintRadiusOfKind,
   structureKey,
   type StructureCell,
 } from '../protocol.ts';
+import {
+  SETTLEMENT_RULES,
+  buildingIdOf,
+  categoryAt,
+  kindForTier,
+  tierOfKind,
+} from '../settlementRules.ts';
+
+/** Drawn when neither a saved kind nor a category exists: the first category's founding building. */
+const SETTLEMENT_FALLBACK_KIND = SETTLEMENT_RULES.categories[0]!.chain[0]!;
 import {
   CA_GENERATION_INTERVAL_SECONDS,
   shouldSeed,
@@ -44,9 +54,9 @@ import {
 } from './growth-model.ts';
 import { resetBlessings } from './blessings.ts';
 import { resetReservations } from './reservations.ts';
-import { STRUCTURES_SLICE_VERSION, loadStructures, saveStructures } from './persistence.ts';
+import { STRUCTURES_SLICE_VERSION, UNRESOLVED_KIND, loadStructures, saveStructures } from './persistence.ts';
 import { STRUCTURES_RNG_DEFAULT_SEED, createStructuresRng, type StructuresRng } from './rng.ts';
-import { isBuildableCell, type StructuresWorld } from './suitability.ts';
+import { foundingKindAt, isBuildableCell, type StructuresWorld } from './suitability.ts';
 import { hasBuildingWithinSeparation } from './clearance.ts';
 import { closeFireBridge, loadFireBridge, registerStructuresFuel } from './fire-bridge.ts';
 import {
@@ -111,11 +121,22 @@ let pendingFounded: StructureCell[] = [];
 let restoredLive: Map<number, BoardCellRecord> = new Map();
 let restoredGeneration = 0;
 
+/**
+ * The building for a settlement known by tier alone (an old save, a growth model's ranking):
+ * its category's step for that tier, else the known kind.
+ */
+function kindForSettlement(world: StructuresWorld, x: number, y: number, tier: number, known: number | undefined): number {
+  if (known !== undefined && tierOfKind(known) === tier) return known;
+  const category = categoryAt(world, x, y);
+  if (category !== null) return kindForTier(category, tier);
+  return known ?? SETTLEMENT_FALLBACK_KIND;
+}
+
 function liveCells(): StructureCell[] {
   const cells: StructureCell[] = [];
   for (const [key, record] of live) {
     const cell = cellOfKey(key);
-    cells.push({ x: cell.x, y: cell.y, tier: record.tier });
+    cells.push({ x: cell.x, y: cell.y, tier: record.tier, kind: record.kind });
   }
   return cells;
 }
@@ -140,11 +161,8 @@ function broadcastAll(world: WorldApi): void {
   lastKeepaliveSeconds = simSeconds;
 }
 
-interface TaggedStructureChange {
-  readonly kind: 'founded' | 'upgraded' | 'demolished';
-  readonly x: number;
-  readonly y: number;
-  readonly tier: number;
+interface TaggedStructureChange extends StructureCell {
+  readonly change: 'founded' | 'upgraded' | 'demolished';
 }
 
 function broadcastChanges(
@@ -156,18 +174,18 @@ function broadcastChanges(
   if (founded.length === 0 && upgraded.length === 0 && demolished.length === 0) return;
 
   const tagged: TaggedStructureChange[] = [
-    ...founded.map((c): TaggedStructureChange => ({ kind: 'founded', x: c.x, y: c.y, tier: c.tier })),
-    ...upgraded.map((c): TaggedStructureChange => ({ kind: 'upgraded', x: c.x, y: c.y, tier: c.tier })),
-    ...demolished.map((c): TaggedStructureChange => ({ kind: 'demolished', x: c.x, y: c.y, tier: 0 })),
+    ...founded.map((c): TaggedStructureChange => ({ ...c, change: 'founded' })),
+    ...upgraded.map((c): TaggedStructureChange => ({ ...c, change: 'upgraded' })),
+    ...demolished.map((c): TaggedStructureChange => ({ x: c.x, y: c.y, tier: 0, kind: 0, change: 'demolished' })),
   ];
   world.broadcastVisible(
     STRUCTURES_CHANGES_MESSAGE,
     tagged,
     structurePosition,
     (visible) => ({
-      founded: packStructureCells(visible.filter((c) => c.kind === 'founded')),
-      upgraded: packStructureCells(visible.filter((c) => c.kind === 'upgraded')),
-      demolished: packCells(visible.filter((c) => c.kind === 'demolished')),
+      founded: packStructureCells(visible.filter((c) => c.change === 'founded')),
+      upgraded: packStructureCells(visible.filter((c) => c.change === 'upgraded')),
+      demolished: packCells(visible.filter((c) => c.change === 'demolished')),
     }),
     STRUCTURES_SKIP_EMPTY,
   );
@@ -207,7 +225,7 @@ function advanceLife(world: WorldApi, dt: number): void {
         lastSeedDay = today;
         const placement = attemptSeed(world, live, rng);
         if (placement !== null) {
-          for (const cell of placement) live.set(structureKey(cell.x, cell.y), { age: 0, tier: 0 });
+          for (const cell of placement) live.set(structureKey(cell.x, cell.y), { age: 0, tier: cell.tier, kind: cell.kind });
           seeded = placement;
         }
       }
@@ -216,7 +234,7 @@ function advanceLife(world: WorldApi, dt: number): void {
       if (rng.next() < CA_STIR_PROBABILITY_PER_GENERATION) {
         const sparks = attemptStir(world, live, rng);
         if (sparks !== null) {
-          for (const cell of sparks) live.set(structureKey(cell.x, cell.y), { age: 0, tier: 0 });
+          for (const cell of sparks) live.set(structureKey(cell.x, cell.y), { age: 0, tier: cell.tier, kind: cell.kind });
           stirred = sparks;
         }
       }
@@ -254,19 +272,37 @@ function advanceGrowthModel(world: WorldApi): void {
     isBuildable: (x: number, y: number) => isBuildableCell(world, x, y),
     maxTier: MAX_STRUCTURE_TIER,
     hasBuildingWithinSeparation: (cells, x: number, y: number, tier: number) =>
-      hasBuildingWithinSeparation(cells, world, x, y, tier),
+      hasBuildingWithinSeparation(
+        cells,
+        world,
+        x,
+        y,
+        footprintRadiusOfKind(kindForSettlement(world, x, y, tier, cells.get(structureKey(x, y))?.kind)),
+      ),
   };
   const outcome = model.step(world, live, ctx);
 
-  live = outcome.nextLive;
+  // A growth model ranks settlements by tier; the building drawn for each comes from its category.
+  const nextLive = new Map<number, BoardCellRecord>();
+  for (const [key, record] of outcome.nextLive) {
+    const cell = cellOfKey(key);
+    nextLive.set(key, { ...record, kind: kindForSettlement(world, cell.x, cell.y, record.tier, record.kind) });
+  }
+  const upgradedWithKinds: StructureCell[] = outcome.upgraded.map((cell) => ({
+    ...cell,
+    kind: nextLive.get(structureKey(cell.x, cell.y))?.kind ??
+      kindForSettlement(world, cell.x, cell.y, cell.tier, cell.kind),
+  }));
+
+  live = nextLive;
   generation++;
   syncSupportBands(world);
-  broadcastChanges(world, outcome.born, outcome.upgraded, outcome.died);
+  broadcastChanges(world, outcome.born, upgradedWithKinds, outcome.died);
   if (outcome.born.length > 0 || outcome.upgraded.length > 0 || outcome.died.length > 0) {
     world.emitEvent('changes', {
       cause: 'generation',
       seeded: outcome.born,
-      upgraded: outcome.upgraded,
+      upgraded: upgradedWithKinds,
       died: outcome.died,
     });
   }
@@ -353,15 +389,15 @@ function reactToTerrain(world: WorldApi, diff: readonly CellDiff[]): void {
     const height = world.heightAt(cell.x, cell.y);
     const flooded = isWater(height);
     const band = drawnBandOfSample(height);
-    for (let dy = -MAX_STRUCTURE_FOOTPRINT_RADIUS_CELLS; dy <= MAX_STRUCTURE_FOOTPRINT_RADIUS_CELLS; dy++) {
-      for (let dx = -MAX_STRUCTURE_FOOTPRINT_RADIUS_CELLS; dx <= MAX_STRUCTURE_FOOTPRINT_RADIUS_CELLS; dx++) {
+    for (let dy = -MAX_FOOTPRINT_RADIUS_CELLS; dy <= MAX_FOOTPRINT_RADIUS_CELLS; dy++) {
+      for (let dx = -MAX_FOOTPRINT_RADIUS_CELLS; dx <= MAX_FOOTPRINT_RADIUS_CELLS; dx++) {
         const bx = cell.x + dx;
         const by = cell.y + dy;
         if (bx < 0 || by < 0 || bx >= world.worldSize || by >= world.worldSize) continue;
         const key = structureKey(bx, by);
         const record = live.get(key);
         if (record === undefined || broken.has(key)) continue;
-        const radius = structureFootprintRadiusCells(record.tier);
+        const radius = footprintRadiusOfKind(record.kind);
         if (Math.abs(dx) > radius || Math.abs(dy) > radius) continue;
         const resting = supportBands.get(key);
         if (!flooded && resting !== undefined && band === resting) continue;
@@ -455,10 +491,11 @@ export const plugin: TerracePlugin = {
     supportBands.clear();
     for (const [key, record] of restoredLive) {
       const cell = cellOfKey(key);
-      if (isBuildableCell(world, cell.x, cell.y)) {
-        live.set(key, record);
-        noteSupportBand(world, cell.x, cell.y);
-      }
+      if (!isBuildableCell(world, cell.x, cell.y)) continue;
+      const known = record.kind === UNRESOLVED_KIND ? undefined : record.kind;
+      const kind = kindForSettlement(world, cell.x, cell.y, record.tier, known);
+      live.set(key, { ...record, kind, tier: tierOfKind(kind) });
+      noteSupportBand(world, cell.x, cell.y);
     }
     generation = restoredGeneration;
     lastSeedDay = restoredLastSeedDay;
@@ -517,10 +554,12 @@ export { setReservedStructureCells } from './reservations.ts';
 
 export function foundStructure(world: StructuresWorld, x: number, y: number): boolean {
   if (!canFoundStructure(world, x, y)) return false;
+  const kind = foundingKindAt(world, x, y)!;
+  const tier = tierOfKind(kind);
 
-  live.set(structureKey(x, y), { age: 0, tier: 0 });
+  live.set(structureKey(x, y), { age: 0, tier, kind });
   noteSupportBand(world, x, y);
-  pendingFounded.push({ x, y, tier: 0 });
+  pendingFounded.push({ x, y, tier, kind });
   return true;
 }
 
@@ -528,11 +567,13 @@ export function canFoundStructure(world: StructuresWorld, x: number, y: number):
   if (live.size >= STRUCTURES_CAP) return false;
   if (live.has(structureKey(x, y))) return false;
   if (hasBuildingWithinSeparation(live, world, x, y)) return false;
-  return isBuildableCell(world, x, y);
+  return isBuildableCell(world, x, y) && foundingKindAt(world, x, y) !== null;
 }
 
 export interface StandingStructure extends StructureCell {
   readonly age: number;
+  /** The building's id in spawn-bands.json. */
+  readonly building: string;
   /** Cells from the anchor to the edge of the drawn building, in a square. */
   readonly footprintRadiusCells: number;
 }
@@ -545,8 +586,10 @@ export function standingStructures(): StandingStructure[] {
       x: cell.x,
       y: cell.y,
       tier: record.tier,
+      kind: record.kind,
       age: record.age,
-      footprintRadiusCells: structureFootprintRadiusCells(record.tier),
+      building: buildingIdOf(record.kind),
+      footprintRadiusCells: footprintRadiusOfKind(record.kind),
     });
   }
   return cells;

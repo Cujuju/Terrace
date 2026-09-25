@@ -46,6 +46,16 @@ import net_draped_cone_original from './assets/authored/original/net-draped-cone
 import net_draped_cone_low from './assets/authored/low/net-draped-cone.glb?url';
 import smoke_pit_hut_original from './assets/authored/original/smoke-pit-hut.glb?url';
 import smoke_pit_hut_low from './assets/authored/low/smoke-pit-hut.glb?url';
+import lashed_a_frame_plain_original from './assets/authored/original/lashed-a-frame-plain.glb?url';
+import lashed_a_frame_plain_low from './assets/authored/low/lashed-a-frame-plain.glb?url';
+import stilted_hut_plain_original from './assets/authored/original/stilted-hut-plain.glb?url';
+import stilted_hut_plain_low from './assets/authored/low/stilted-hut-plain.glb?url';
+import twin_hut_yard_plain_original from './assets/authored/original/twin-hut-yard-plain.glb?url';
+import twin_hut_yard_plain_low from './assets/authored/low/twin-hut-yard-plain.glb?url';
+import turf_roof_on_stone_plain_original from './assets/authored/original/turf-roof-on-stone-plain.glb?url';
+import turf_roof_on_stone_plain_low from './assets/authored/low/turf-roof-on-stone-plain.glb?url';
+import smoke_pit_hut_plain_original from './assets/authored/original/smoke-pit-hut-plain.glb?url';
+import smoke_pit_hut_plain_low from './assets/authored/low/smoke-pit-hut-plain.glb?url';
 
 export const AUTHORED_URLS = {
   low: {
@@ -73,6 +83,11 @@ export const AUTHORED_URLS = {
     'turf-roof-on-stone': turf_roof_on_stone_low,
     'net-draped-cone': net_draped_cone_low,
     'smoke-pit-hut': smoke_pit_hut_low,
+    'lashed-a-frame-plain': lashed_a_frame_plain_low,
+    'stilted-hut-plain': stilted_hut_plain_low,
+    'twin-hut-yard-plain': twin_hut_yard_plain_low,
+    'turf-roof-on-stone-plain': turf_roof_on_stone_plain_low,
+    'smoke-pit-hut-plain': smoke_pit_hut_plain_low,
   },
   original: {
     'camp': camp_original,
@@ -99,5 +114,10 @@ export const AUTHORED_URLS = {
     'turf-roof-on-stone': turf_roof_on_stone_original,
     'net-draped-cone': net_draped_cone_original,
     'smoke-pit-hut': smoke_pit_hut_original,
+    'lashed-a-frame-plain': lashed_a_frame_plain_original,
+    'stilted-hut-plain': stilted_hut_plain_original,
+    'twin-hut-yard-plain': twin_hut_yard_plain_original,
+    'turf-roof-on-stone-plain': turf_roof_on_stone_plain_original,
+    'smoke-pit-hut-plain': smoke_pit_hut_plain_original,
   },
 };

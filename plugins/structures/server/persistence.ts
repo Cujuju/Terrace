@@ -5,16 +5,21 @@ import {
   STRUCTURES_CAP,
   LEGACY_STRUCTURE_TIER_MAP,
 } from '../protocol.ts';
+import { buildingIdOf, buildingKindOf } from '../settlementRules.ts';
 import { STRUCTURES_RNG_DEFAULT_SEED, type StructuresRng } from './rng.ts';
 import type { BoardCellRecord } from './growth-model.ts';
 
-export const STRUCTURES_SLICE_VERSION = 3;
+export const STRUCTURES_SLICE_VERSION = 4;
+
+/** A saved building whose kind is unknown (saved before kinds, or since removed from spawn-bands.json). */
+export const UNRESOLVED_KIND = -1;
 
 interface StoredLiveCell {
   readonly x: number;
   readonly y: number;
   readonly age: number;
   readonly tier: number;
+  readonly building?: string;
   readonly population?: number;
 }
 
@@ -35,11 +40,8 @@ export function saveStructures(
   const stored: StoredLiveCell[] = [];
   for (const [key, record] of live) {
     const cell = cellOfKey(key);
-    stored.push(
-      record.population === undefined
-        ? { x: cell.x, y: cell.y, age: record.age, tier: record.tier }
-        : { x: cell.x, y: cell.y, age: record.age, tier: record.tier, population: record.population },
-    );
+    const base = { x: cell.x, y: cell.y, age: record.age, tier: record.tier, building: buildingIdOf(record.kind) };
+    stored.push(record.population === undefined ? base : { ...base, population: record.population });
   }
   return {
     version: STRUCTURES_SLICE_VERSION,
@@ -72,23 +74,26 @@ export function loadStructures(data: unknown): RestoredStructures {
   if (typeof data !== 'object' || data === null) return empty;
   const slice = data as Partial<StructuresSlice>;
   const legacy = slice.version === 1 || slice.version === 2;
-  if (slice.version !== STRUCTURES_SLICE_VERSION && !legacy) return empty;
+  const beforeKinds = legacy || slice.version === 3;
+  if (slice.version !== STRUCTURES_SLICE_VERSION && !beforeKinds) return empty;
 
   const live = new Map<number, BoardCellRecord>();
   if (Array.isArray(slice.live)) {
     for (const entry of slice.live) {
       if (live.size >= STRUCTURES_CAP) break;
       if (typeof entry !== 'object' || entry === null) continue;
-      const { x, y, age, tier: storedTier, population } = entry as Partial<StoredLiveCell>;
+      const { x, y, age, tier: storedTier, building, population } = entry as Partial<StoredLiveCell>;
       if (!isNonNegativeInteger(x) || !isNonNegativeInteger(y) || !isNonNegativeInteger(age)) continue;
       const tier = legacy && isNonNegativeInteger(storedTier)
         ? LEGACY_STRUCTURE_TIER_MAP[storedTier] : storedTier;
       if (!isStructureTier(tier)) continue;
       const key = structureKey(x, y);
       if (live.has(key)) continue;
+      const known = beforeKinds || typeof building !== 'string' ? null : buildingKindOf(building);
+      const kind = known ?? UNRESOLVED_KIND;
       live.set(
         key,
-        isNonNegativeInteger(population) ? { age, tier, population } : { age, tier },
+        isNonNegativeInteger(population) ? { age, tier, kind, population } : { age, tier, kind },
       );
     }
   }

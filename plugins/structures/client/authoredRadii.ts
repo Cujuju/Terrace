@@ -22,5 +22,10 @@ export const AUTHORED_RADII: Readonly<Record<string, number>> = {
   "drying-rack-long-hut": 0.45337248067364333,
   "turf-roof-on-stone": 0.41109608074297443,
   "net-draped-cone": 0.4187678364465165,
-  "smoke-pit-hut": 0.44256813873721557
+  "smoke-pit-hut": 0.44256813873721557,
+  "lashed-a-frame-plain": 0.4163,
+  "stilted-hut-plain": 0.4047,
+  "twin-hut-yard-plain": 0.44,
+  "turf-roof-on-stone-plain": 0.4111,
+  "smoke-pit-hut-plain": 0.4426
 };

@@ -1,3 +1,6 @@
+import { MAX_BUILDING_TIER } from './buildingKinds.ts';
+import { isBuildingKind } from './settlementRules.ts';
+
 export const STRUCTURES_PLUGIN_NAME = 'structures';
 
 export const STRUCTURES_ALL_MESSAGE = 'all';
@@ -28,6 +31,10 @@ export const STRUCTURE_TIER_COUNT = STRUCTURE_TIERS.length;
 
 export const MAX_STRUCTURE_TIER = STRUCTURE_TIER_COUNT - 1;
 
+if (MAX_STRUCTURE_TIER !== MAX_BUILDING_TIER) {
+  throw new RangeError('the tier ladder and MAX_BUILDING_TIER disagree on the top tier');
+}
+
 export function isStructureTier(value: unknown): value is StructureTier {
   return Number.isInteger(value) && (value as number) >= 0 && (value as number) < STRUCTURE_TIER_COUNT;
 }
@@ -36,6 +43,8 @@ export interface StructureCell {
   readonly x: number;
   readonly y: number;
   readonly tier: StructureTier;
+  /** Index into spawn-bands.json's buildings: which model stands here. */
+  readonly kind: number;
 }
 
 export const STRUCTURES_CELL_KEY_STRIDE = 65536;
@@ -48,9 +57,12 @@ export function cellOfKey(key: number): { x: number; y: number } {
   return { x: key % STRUCTURES_CELL_KEY_STRIDE, y: Math.floor(key / STRUCTURES_CELL_KEY_STRIDE) };
 }
 
+/** x, y, tier, kind per structure on the wire. */
+const STRUCTURE_CELL_STRIDE = 4;
+
 export function packStructureCells(cells: Iterable<StructureCell>): number[] {
   const packed: number[] = [];
-  for (const cell of cells) packed.push(cell.x, cell.y, cell.tier);
+  for (const cell of cells) packed.push(cell.x, cell.y, cell.tier, cell.kind);
   return packed;
 }
 
@@ -67,13 +79,14 @@ export function parseStructureCells(value: unknown): StructureCell[] | null {
   if (!Array.isArray(value)) return null;
 
   const cells: StructureCell[] = [];
-  for (let i = 0; i + 2 < value.length; i += 3) {
+  for (let i = 0; i + STRUCTURE_CELL_STRIDE - 1 < value.length; i += STRUCTURE_CELL_STRIDE) {
     if (cells.length >= STRUCTURES_CAP) break;
     const x = value[i];
     const y = value[i + 1];
     const tier = value[i + 2];
-    if (!isCellCoordinate(x) || !isCellCoordinate(y) || !isStructureTier(tier)) continue;
-    cells.push({ x, y, tier });
+    const kind = value[i + 3];
+    if (!isCellCoordinate(x) || !isCellCoordinate(y) || !isStructureTier(tier) || !isBuildingKind(kind)) continue;
+    cells.push({ x, y, tier, kind });
   }
   return cells;
 }
@@ -164,37 +177,11 @@ import {
 export const STRUCTURE_LEGACY_SURVEYED_GROUND_RADIUS =
   (Math.ceil(cellsAcross(STRUCTURE_FOOTPRINT_SPAN_WORLD_UNITS / 2)) + 0.5) * CELL_WORLD_SIZE;
 
-// Radius, in cells, of the flat dry ground under each tier's widest drawn model.
-// client/buildingScale.ts refuses to load a model that outgrows its tier's entry.
-export const STRUCTURE_FOOTPRINT_RADIUS_CELLS: readonly number[] = [2, 2, 2, 4, 7, 4, 3, 2, 3, 4, 8];
-
-if (STRUCTURE_FOOTPRINT_RADIUS_CELLS.length !== STRUCTURE_TIER_COUNT) {
-  throw new RangeError('STRUCTURE_FOOTPRINT_RADIUS_CELLS needs one radius per structure tier');
-}
-
-// A lot never shrinks on upgrade: it covers its own footprint and every lower tier's.
-export const STRUCTURE_LOT_RADIUS_CELLS: readonly number[] = STRUCTURE_FOOTPRINT_RADIUS_CELLS.map(
-  (_, tier) => Math.max(...STRUCTURE_FOOTPRINT_RADIUS_CELLS.slice(0, tier + 1)),
-);
-
-export const MAX_STRUCTURE_LOT_RADIUS_CELLS = Math.max(...STRUCTURE_LOT_RADIUS_CELLS);
-
-export const MAX_STRUCTURE_FOOTPRINT_RADIUS_CELLS = Math.max(...STRUCTURE_FOOTPRINT_RADIUS_CELLS);
-
-/** The half cell each lot's edge cell adds, on both lots, keeps one cell between neighbours. */
-const LOT_EDGE_CELLS = 1;
-
-export function lotSeparationCells(tierA: StructureTier, tierB: StructureTier): number {
-  return STRUCTURE_LOT_RADIUS_CELLS[tierA]! + STRUCTURE_LOT_RADIUS_CELLS[tierB]! + LOT_EDGE_CELLS;
-}
-
-export function structureFootprintRadiusCells(tier: StructureTier): number {
-  return STRUCTURE_FOOTPRINT_RADIUS_CELLS[tier]!;
-}
-
-export function structureLotRadiusCells(tier: StructureTier): number {
-  return STRUCTURE_LOT_RADIUS_CELLS[tier]!;
-}
+export {
+  MAX_FOOTPRINT_RADIUS_CELLS,
+  footprintRadiusOfKind,
+  lotSeparationCells,
+} from './settlementRules.ts';
 
 export const SETTLER_RACES = ['rudy', 'uno'] as const;
 

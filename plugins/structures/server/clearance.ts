@@ -1,25 +1,25 @@
-import {
-  MAX_STRUCTURE_TIER,
-  lotSeparationCells,
-  structureKey,
-  type StructureTier,
-} from '../protocol.ts';
+import { MAX_FOOTPRINT_RADIUS_CELLS, footprintRadiusOfKind, structureKey } from '../protocol.ts';
 import type { LiveCellRecord } from './life.ts';
-import { CAMP_TIER, type StructuresWorld } from './suitability.ts';
+import { FOUNDING_FOOTPRINT_RADIUS_CELLS, type StructuresWorld } from './suitability.ts';
 
-function isWithinSeparation(dx: number, dy: number, separation: number): boolean {
-  return dx * dx + dy * dy < separation * separation;
+/** Tier 0 is camp-grade: packed as the settlement pattern, and absorbed by any upgrade around it. */
+export const CAMP_GRADE_TIER = 0;
+
+/** Each footprint's edge cell surveys half a cell, so neighbouring footprints keep a whole cell between them. */
+const FOOTPRINT_EDGE_CELLS = 1;
+
+function separationCells(radiusCells: number, other: LiveCellRecord): number {
+  return radiusCells + footprintRadiusOfKind(other.kind) + FOOTPRINT_EDGE_CELLS;
 }
 
 function forEachWithinReach(
   world: StructuresWorld,
   x: number,
   y: number,
-  tier: StructureTier,
+  radiusCells: number,
   visit: (dx: number, dy: number, nx: number, ny: number) => boolean,
 ): boolean {
-  // The widest lot sits on the top tier, so this reach covers every pairing.
-  const reach = lotSeparationCells(tier, MAX_STRUCTURE_TIER);
+  const reach = radiusCells + MAX_FOOTPRINT_RADIUS_CELLS + FOOTPRINT_EDGE_CELLS;
   for (let dy = -reach; dy <= reach; dy++) {
     const ny = y + dy;
     if (ny < 0 || ny >= world.worldSize) continue;
@@ -33,17 +33,22 @@ function forEachWithinReach(
   return false;
 }
 
+function within(dx: number, dy: number, separation: number): boolean {
+  return dx * dx + dy * dy < separation * separation;
+}
+
+/** Is any building (above camp grade) too close to a footprint of `radiusCells` anchored here? */
 export function hasBuildingWithinSeparation(
   live: ReadonlyMap<number, LiveCellRecord>,
   world: StructuresWorld,
   x: number,
   y: number,
-  tier: StructureTier = CAMP_TIER,
+  radiusCells: number = FOUNDING_FOOTPRINT_RADIUS_CELLS,
 ): boolean {
-  return forEachWithinReach(world, x, y, tier, (dx, dy, nx, ny) => {
+  return forEachWithinReach(world, x, y, radiusCells, (dx, dy, nx, ny) => {
     const record = live.get(structureKey(nx, ny));
-    return record !== undefined && record.tier > CAMP_TIER &&
-      isWithinSeparation(dx, dy, lotSeparationCells(tier, record.tier));
+    return record !== undefined && record.tier > CAMP_GRADE_TIER &&
+      within(dx, dy, separationCells(radiusCells, record));
   });
 }
 
@@ -53,24 +58,24 @@ export interface UpgradeLot {
 }
 
 /**
- * Surveys the lot an upgrade to `nextTier` claims. A building of the upgrader's tier or
- * higher blocks it; camps and lower-tier buildings inside the lot are absorbed.
+ * Surveys the ground an upgrade into `nextKind` claims. A building of the upgrader's tier or
+ * higher blocks it; camps and lower-tier buildings inside it are absorbed.
  */
 export function surveyUpgradeLot(
   live: ReadonlyMap<number, LiveCellRecord>,
   world: StructuresWorld,
   x: number,
   y: number,
-  currentTier: StructureTier,
-  nextTier: StructureTier,
+  currentTier: number,
+  nextKind: number,
 ): UpgradeLot {
+  const radiusCells = footprintRadiusOfKind(nextKind);
   const absorbed: number[] = [];
-  const blocked = forEachWithinReach(world, x, y, nextTier, (dx, dy, nx, ny) => {
+  const blocked = forEachWithinReach(world, x, y, radiusCells, (dx, dy, nx, ny) => {
     const key = structureKey(nx, ny);
     const record = live.get(key);
-    if (record === undefined) return false;
-    if (!isWithinSeparation(dx, dy, lotSeparationCells(nextTier, record.tier))) return false;
-    if (record.tier > CAMP_TIER && record.tier >= currentTier) return true;
+    if (record === undefined || !within(dx, dy, separationCells(radiusCells, record))) return false;
+    if (record.tier > CAMP_GRADE_TIER && record.tier >= currentTier) return true;
     absorbed.push(key);
     return false;
   });

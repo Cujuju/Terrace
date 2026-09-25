@@ -63,6 +63,7 @@ export function placementsFor(
       cellY: cell.y,
       groundY,
       tier: cell.tier,
+      kind: cell.kind,
       scale: variation.scale,
       yaw: variation.yaw,
       race: settlementRace(cell.x, cell.y),
