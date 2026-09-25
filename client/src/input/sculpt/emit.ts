@@ -4,15 +4,9 @@ import {
   brushProfile,
   brushRadius,
   carveDepthBands,
+  nudgeStrength,
   sculptDirection,
-  smoothBilateral,
-  smoothFeather,
-  smoothFullSteps,
-  smoothCooldown,
-  smoothUnbiased,
-  smoothKernel,
-  smoothLambda,
-  smoothRim,
+  smoothKinkCells,
 } from '../../state/hudState.ts';
 import { footOfFaceCell } from '../../terrain/faceFoot.ts';
 import { isAltSculptPress } from '../../state/controlPrefs.ts';
@@ -28,7 +22,7 @@ import {
 import { emitDragOutcome } from './drag.ts';
 import { currentStrokeAction, type EmitOrigin, type EmitOutcome, type StrokeState } from './strokeState.ts';
 
-const TOOLS_WITH_FOOT_ANCHOR: readonly SculptTool[] = ['stamp', 'smooth'];
+const TOOLS_WITH_FOOT_ANCHOR: readonly SculptTool[] = ['stamp', 'smooth', 'nudge'];
 
 export const emitIntent = (s: StrokeState, origin: EmitOrigin): EmitOutcome => {
   const action = currentStrokeAction(s);
@@ -121,14 +115,8 @@ export const emitIntent = (s: StrokeState, origin: EmitOrigin): EmitOutcome => {
     ...(TOOLS_WITHOUT_EDGE_PROFILE.includes(s.strokeTool)
       ? {}
       : { profile: brushProfile() }),
-    ...(s.strokeTool === 'smooth' ? { smoothLambda: smoothLambda() } : {}),
-    ...(s.strokeTool === 'smooth' ? { smoothFeather: smoothFeather() } : {}),
-    ...(s.strokeTool === 'smooth' ? { smoothBilateral: smoothBilateral() } : {}),
-    ...(s.strokeTool === 'smooth' ? { smoothFullSteps: smoothFullSteps() } : {}),
-    ...(s.strokeTool === 'smooth' ? { smoothCooldown: smoothCooldown() } : {}),
-    ...(s.strokeTool === 'smooth' ? { smoothUnbiased: smoothUnbiased() } : {}),
-    ...(s.strokeTool === 'smooth' ? { smoothKernel: smoothKernel() } : {}),
-    ...(s.strokeTool === 'smooth' ? { smoothRim: smoothRim() } : {}),
+    ...(s.strokeTool === 'smooth' ? { smoothKinkCells: smoothKinkCells() } : {}),
+    ...(s.strokeTool === 'nudge' ? { nudgeStrength: nudgeStrength() } : {}),
     ...(s.strokeTool === 'carve' ? { depthBands: carveDepthBands() } : {}),
     ...(spanBand !== null ? { spanBand } : {}),
     seq: s.nextSeq++,

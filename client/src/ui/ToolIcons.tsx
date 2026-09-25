@@ -210,3 +210,56 @@ export function CarveIcon(): JSX.Element {
     </svg>
   );
 }
+
+export function NudgeIcon(): JSX.Element {
+  return (
+    <svg class="hud-tool__icon" viewBox="0 0 32 32" aria-hidden="true">
+      <defs>
+        <linearGradient id="nudge-top" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#a6e08a" />
+          <stop offset="1" stop-color="#4f9a4a" />
+        </linearGradient>
+        <linearGradient id="nudge-left" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#9a6a45" />
+          <stop offset="1" stop-color="#5a3a22" />
+        </linearGradient>
+        <linearGradient id="nudge-right" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#6e4a2f" />
+          <stop offset="1" stop-color="#3a2415" />
+        </linearGradient>
+        <linearGradient id="nudge-tier" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#b9e89c" />
+          <stop offset="1" stop-color="#58a454" />
+        </linearGradient>
+        <linearGradient id="nudge-cap" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#d2f3b6" />
+          <stop offset="1" stop-color="#6db463" />
+        </linearGradient>
+        <linearGradient id="nudge-wall" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#8f6a4a" />
+          <stop offset="1" stop-color="#4a2f1a" />
+        </linearGradient>
+        <linearGradient id="nudge-arrow" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" stop-color="#ffffff" />
+          <stop offset="1" stop-color="#cfe2ef" />
+        </linearGradient>
+      </defs>
+      <ellipse cx="16" cy="27.5" rx="12" ry="3" fill="#000" opacity="0.35" />
+      <polygon points="16,13 28,19 16,25 4,19" fill="url(#nudge-top)" />
+      <polygon points="4,19 16,25 16,29 4,23" fill="url(#nudge-left)" />
+      <polygon points="28,19 16,25 16,29 28,23" fill="url(#nudge-right)" />
+      <polygon points="6,16 16,11 26,16 16,21" fill="url(#nudge-tier)" />
+      <polygon points="6,16 16,21 16,23.5 6,18.5" fill="url(#nudge-wall)" />
+      <polygon points="26,16 16,21 16,23.5 26,18.5" fill="#4a3220" />
+      <polygon points="10.5,12.6 16,9.8 21.5,12.6 16,15.4" fill="url(#nudge-cap)" />
+      <polygon points="10.5,12.6 16,15.4 16,18 10.5,15.2" fill="url(#nudge-wall)" />
+      <polygon points="21.5,12.6 16,15.4 16,18 21.5,15.2" fill="#4a3220" />
+      <path
+        d="M5.5 5.2l3.6-3.2v2.2h13.8V2l3.6 3.2-3.6 3.2V6.2H9.1v2.2z"
+        fill="url(#nudge-arrow)"
+        stroke="#5b6873"
+        stroke-width="0.4"
+      />
+    </svg>
+  );
+}

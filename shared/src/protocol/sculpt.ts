@@ -6,12 +6,18 @@ import {
   isValidCarveDepth,
   LOWEST_CARVEABLE_BAND,
   MAX_BAND,
+  NUDGE_STRENGTH_DEFAULT,
+  NUDGE_STRENGTH_MAX,
+  NUDGE_STRENGTH_MIN,
   SCULPT_PROFILES,
   SCULPT_TOOLS,
   SMOOTH_FEATHER_DEFAULT,
   SMOOTH_FEATHER_MAX,
   SMOOTH_FEATHER_MIN,
   SMOOTH_KERNELS,
+  SMOOTH_KINK_CELLS_DEFAULT,
+  SMOOTH_KINK_CELLS_MAX,
+  SMOOTH_KINK_CELLS_MIN,
   SMOOTH_KERNEL_DEFAULT,
   SMOOTH_LAMBDA_DEFAULT,
   SMOOTH_LAMBDA_MAX,
@@ -41,6 +47,8 @@ export interface SculptIntent {
   floorBand?: number;
   dragAlt?: boolean;
   spanBand?: number;
+  nudgeStrength?: number;
+  smoothKinkCells?: number;
   smoothLambda?: number;
   smoothFeather?: number;
   smoothRim?: number;
@@ -71,6 +79,8 @@ export const WIRE_DEFAULT_SCULPT_OPTIONS: ResolvedWireSculptOptions = {
   runFloorBand: null,
   dragAlt: false,
   sweepFrom: null,
+  nudgeStrength: NUDGE_STRENGTH_DEFAULT,
+  smoothKinkCells: SMOOTH_KINK_CELLS_DEFAULT,
   smoothLambda: SMOOTH_LAMBDA_DEFAULT,
   smoothFeather: SMOOTH_FEATHER_DEFAULT,
   smoothRim: SMOOTH_RIM_DEFAULT,
@@ -106,6 +116,10 @@ export function sculptOptionsOf(intent: SculptIntent): ResolvedWireSculptOptions
       tool === 'drag' && intent.fromX !== undefined && intent.fromY !== undefined
         ? { x: intent.fromX, y: intent.fromY }
         : null,
+    nudgeStrength:
+      tool === 'nudge' ? (intent.nudgeStrength ?? NUDGE_STRENGTH_DEFAULT) : NUDGE_STRENGTH_DEFAULT,
+    smoothKinkCells:
+      tool === 'smooth' ? (intent.smoothKinkCells ?? SMOOTH_KINK_CELLS_DEFAULT) : SMOOTH_KINK_CELLS_DEFAULT,
     smoothLambda:
       tool === 'smooth'
         ? (intent.smoothLambda ?? SMOOTH_LAMBDA_DEFAULT)
@@ -231,6 +245,32 @@ export function validateSculptIntent(
   // cell, so a spanBand on one would be wrong where it mattered.
   if (spanBand !== undefined && tool === 'drag') return null;
 
+  // Strength paces the nudge and only the nudge.
+  const { nudgeStrength } = m;
+  if (nudgeStrength !== undefined) {
+    if (
+      !Number.isInteger(nudgeStrength) ||
+      (nudgeStrength as number) < NUDGE_STRENGTH_MIN ||
+      (nudgeStrength as number) > NUDGE_STRENGTH_MAX
+    ) {
+      return null;
+    }
+    if (tool !== 'nudge') return null;
+  }
+
+  // Kink size bounds what a smooth removes, smooth only.
+  const { smoothKinkCells } = m;
+  if (smoothKinkCells !== undefined) {
+    if (
+      !Number.isInteger(smoothKinkCells) ||
+      (smoothKinkCells as number) < SMOOTH_KINK_CELLS_MIN ||
+      (smoothKinkCells as number) > SMOOTH_KINK_CELLS_MAX
+    ) {
+      return null;
+    }
+    if (tool !== 'smooth') return null;
+  }
+
   // Lambda tunes the smooth blur and only the smooth blur.
   const { smoothLambda } = m;
   if (smoothLambda !== undefined) {
@@ -339,6 +379,8 @@ export function validateSculptIntent(
     ...(floorBand !== undefined ? { floorBand: floorBand as number } : {}),
     ...(dragAlt !== undefined ? { dragAlt: dragAlt as boolean } : {}),
     ...(spanBand !== undefined ? { spanBand: spanBand as number } : {}),
+    ...(nudgeStrength !== undefined ? { nudgeStrength: nudgeStrength as number } : {}),
+    ...(smoothKinkCells !== undefined ? { smoothKinkCells: smoothKinkCells as number } : {}),
     ...(smoothLambda !== undefined ? { smoothLambda: smoothLambda as number } : {}),
     ...(smoothFeather !== undefined ? { smoothFeather: smoothFeather as number } : {}),
     ...(smoothRim !== undefined ? { smoothRim: smoothRim as number } : {}),

@@ -7,26 +7,20 @@ import {
   FULL_BRUSH_RADIUS,
   MAX_BRUSH_RADIUS,
   MIN_BRUSH_RADIUS,
+  NUDGE_STRENGTH_DEFAULT,
+  NUDGE_STRENGTH_MAX,
+  NUDGE_STRENGTH_MIN,
   SCULPT_PROFILES,
   SCULPT_TOOLS,
-  SMOOTH_FEATHER_DEFAULT,
-  SMOOTH_FEATHER_MAX,
-  SMOOTH_FEATHER_MIN,
-  SMOOTH_KERNELS,
-  SMOOTH_KERNEL_DEFAULT,
-  SMOOTH_RIM_DEFAULT,
-  SMOOTH_RIM_MAX,
-  SMOOTH_RIM_MIN,
-  SMOOTH_LAMBDA_DEFAULT,
-  SMOOTH_LAMBDA_MAX,
-  SMOOTH_LAMBDA_MIN,
+  SMOOTH_KINK_CELLS_DEFAULT,
+  SMOOTH_KINK_CELLS_MAX,
+  SMOOTH_KINK_CELLS_MIN,
   WIRE_DEFAULT_SCULPT_OPTIONS,
   WORLD_UNIT_CELLS,
   forEachFootprintOffset,
   isValidCarveDepth,
   type SculptProfile,
   type SculptTool,
-  type SmoothKernel,
 } from '@terrace/shared';
 
 export const BRUSH_LADDER_TOP_RADIUS = FULL_BRUSH_RADIUS;
@@ -73,21 +67,9 @@ export const DEFAULT_BRUSH_PROFILE: SculptProfile = 'hard';
 
 export const DEFAULT_SCULPT_MODE: SculptMode = 'raise';
 
-export const DEFAULT_SMOOTH_LAMBDA = SMOOTH_LAMBDA_DEFAULT;
+export const DEFAULT_NUDGE_STRENGTH = NUDGE_STRENGTH_DEFAULT;
 
-export const DEFAULT_SMOOTH_FEATHER = SMOOTH_FEATHER_DEFAULT;
-
-export const DEFAULT_SMOOTH_RIM = SMOOTH_RIM_DEFAULT;
-
-export const DEFAULT_SMOOTH_BILATERAL = false;
-
-export const DEFAULT_SMOOTH_FULL_STEPS = false;
-
-export const DEFAULT_SMOOTH_COOLDOWN = false;
-
-export const DEFAULT_SMOOTH_UNBIASED = false;
-
-export const DEFAULT_SMOOTH_KERNEL: SmoothKernel = SMOOTH_KERNEL_DEFAULT;
+export const DEFAULT_SMOOTH_KINK_CELLS = SMOOTH_KINK_CELLS_DEFAULT;
 
 export const DEFAULT_CARVE_DEPTH_BANDS = CARVE_DEFAULT_DEPTH_BANDS;
 
@@ -101,14 +83,8 @@ export interface PersistedHudState {
   readonly brushTool: SculptTool;
   readonly brushProfile: SculptProfile;
   readonly sculptMode: SculptMode;
-  readonly smoothLambda: number;
-  readonly smoothFeather: number;
-  readonly smoothRim: number;
-  readonly smoothBilateral: boolean;
-  readonly smoothFullSteps: boolean;
-  readonly smoothCooldown: boolean;
-  readonly smoothUnbiased: boolean;
-  readonly smoothKernel: SmoothKernel;
+  readonly nudgeStrength: number;
+  readonly smoothKinkCells: number;
   readonly carveDepthBands: number;
   readonly showControls: boolean;
   readonly panelOpen: boolean;
@@ -119,14 +95,8 @@ export const DEFAULT_HUD_STATE: PersistedHudState = {
   brushTool: DEFAULT_BRUSH_TOOL,
   brushProfile: DEFAULT_BRUSH_PROFILE,
   sculptMode: DEFAULT_SCULPT_MODE,
-  smoothLambda: DEFAULT_SMOOTH_LAMBDA,
-  smoothFeather: DEFAULT_SMOOTH_FEATHER,
-  smoothRim: DEFAULT_SMOOTH_RIM,
-  smoothBilateral: DEFAULT_SMOOTH_BILATERAL,
-  smoothFullSteps: DEFAULT_SMOOTH_FULL_STEPS,
-  smoothCooldown: DEFAULT_SMOOTH_COOLDOWN,
-  smoothUnbiased: DEFAULT_SMOOTH_UNBIASED,
-  smoothKernel: DEFAULT_SMOOTH_KERNEL,
+  nudgeStrength: DEFAULT_NUDGE_STRENGTH,
+  smoothKinkCells: DEFAULT_SMOOTH_KINK_CELLS,
   carveDepthBands: DEFAULT_CARVE_DEPTH_BANDS,
   showControls: DEFAULT_SHOW_CONTROLS,
   panelOpen: DEFAULT_PANEL_OPEN,
@@ -154,54 +124,11 @@ function readMode(value: unknown): SculptMode {
   return value === 'raise' || value === 'lower' ? value : DEFAULT_SCULPT_MODE;
 }
 
-function readSmoothLambda(value: unknown): number {
-  return typeof value === 'number' &&
-    Number.isInteger(value) &&
-    value >= SMOOTH_LAMBDA_MIN &&
-    value <= SMOOTH_LAMBDA_MAX
+/** An integer in [min, max], else the fallback. */
+function readIntegerIn(value: unknown, min: number, max: number, fallback: number): number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max
     ? value
-    : DEFAULT_SMOOTH_LAMBDA;
-}
-
-function readSmoothFeather(value: unknown): number {
-  return typeof value === 'number' &&
-    Number.isInteger(value) &&
-    value >= SMOOTH_FEATHER_MIN &&
-    value <= SMOOTH_FEATHER_MAX
-    ? value
-    : DEFAULT_SMOOTH_FEATHER;
-}
-
-function readSmoothRim(value: unknown): number {
-  return typeof value === 'number' &&
-    Number.isInteger(value) &&
-    value >= SMOOTH_RIM_MIN &&
-    value <= SMOOTH_RIM_MAX
-    ? value
-    : DEFAULT_SMOOTH_RIM;
-}
-
-function readSmoothBilateral(value: unknown): boolean {
-  return typeof value === 'boolean' ? value : DEFAULT_SMOOTH_BILATERAL;
-}
-
-function readSmoothFullSteps(value: unknown): boolean {
-  return typeof value === 'boolean' ? value : DEFAULT_SMOOTH_FULL_STEPS;
-}
-
-function readSmoothCooldown(value: unknown): boolean {
-  return typeof value === 'boolean' ? value : DEFAULT_SMOOTH_COOLDOWN;
-}
-
-function readSmoothUnbiased(value: unknown): boolean {
-  return typeof value === 'boolean' ? value : DEFAULT_SMOOTH_UNBIASED;
-}
-
-function readSmoothKernel(value: unknown): SmoothKernel {
-  if (value === true) return 'gauss';
-  return SMOOTH_KERNELS.includes(value as SmoothKernel)
-    ? (value as SmoothKernel)
-    : DEFAULT_SMOOTH_KERNEL;
+    : fallback;
 }
 
 /** The wire predicate is the one depth authority; the HUD never re-states it. */
@@ -234,14 +161,8 @@ export function parseHudState(raw: string | null): PersistedHudState {
     brushTool: readTool(record['brushTool']),
     brushProfile: readProfile(record['brushProfile']),
     sculptMode: readMode(record['sculptMode']),
-    smoothLambda: readSmoothLambda(record['smoothLambda']),
-    smoothFeather: readSmoothFeather(record['smoothFeather']),
-    smoothRim: readSmoothRim(record['smoothRim']),
-    smoothBilateral: readSmoothBilateral(record['smoothBilateral']),
-    smoothFullSteps: readSmoothFullSteps(record['smoothFullSteps']),
-    smoothCooldown: readSmoothCooldown(record['smoothCooldown']),
-    smoothUnbiased: readSmoothUnbiased(record['smoothUnbiased']),
-    smoothKernel: readSmoothKernel(record['smoothKernel'] ?? record['smoothGauss']),
+    nudgeStrength: readIntegerIn(record['nudgeStrength'], NUDGE_STRENGTH_MIN, NUDGE_STRENGTH_MAX, DEFAULT_NUDGE_STRENGTH),
+    smoothKinkCells: readIntegerIn(record['smoothKinkCells'], SMOOTH_KINK_CELLS_MIN, SMOOTH_KINK_CELLS_MAX, DEFAULT_SMOOTH_KINK_CELLS),
     carveDepthBands: readCarveDepthBands(record['carveDepthBands']),
     showControls: readShowControls(record['showControls']),
     panelOpen: readPanelOpen(record['panelOpen']),
@@ -278,36 +199,12 @@ const [sculptChord, setSculptChordSignal] = createSignal<boolean>(false);
 /** Whether the alt chord is held. It narrows the drag, never persisted. */
 const [sculptAlt, setSculptAltSignal] = createSignal<boolean>(false);
 
-const [smoothLambda, setSmoothLambdaSignal] = createSignal<number>(
-  stored.smoothLambda,
+const [nudgeStrength, setNudgeStrengthSignal] = createSignal<number>(
+  stored.nudgeStrength,
 );
 
-const [smoothFeather, setSmoothFeatherSignal] = createSignal<number>(
-  stored.smoothFeather,
-);
-
-const [smoothRim, setSmoothRimSignal] = createSignal<number>(
-  stored.smoothRim,
-);
-
-const [smoothBilateral, setSmoothBilateralSignal] = createSignal<boolean>(
-  stored.smoothBilateral,
-);
-
-const [smoothFullSteps, setSmoothFullStepsSignal] = createSignal<boolean>(
-  stored.smoothFullSteps,
-);
-
-const [smoothCooldown, setSmoothCooldownSignal] = createSignal<boolean>(
-  stored.smoothCooldown,
-);
-
-const [smoothUnbiased, setSmoothUnbiasedSignal] = createSignal<boolean>(
-  stored.smoothUnbiased,
-);
-
-const [smoothKernel, setSmoothKernelSignal] = createSignal<SmoothKernel>(
-  stored.smoothKernel,
+const [smoothKinkCells, setSmoothKinkCellsSignal] = createSignal<number>(
+  stored.smoothKinkCells,
 );
 
 const [carveDepthBands, setCarveDepthBandsSignal] = createSignal<number>(
@@ -328,14 +225,8 @@ function persist(): void {
     brushTool: brushTool(),
     brushProfile: brushProfile(),
     sculptMode: sculptMode(),
-    smoothLambda: smoothLambda(),
-    smoothFeather: smoothFeather(),
-    smoothRim: smoothRim(),
-    smoothBilateral: smoothBilateral(),
-    smoothFullSteps: smoothFullSteps(),
-    smoothCooldown: smoothCooldown(),
-    smoothUnbiased: smoothUnbiased(),
-    smoothKernel: smoothKernel(),
+    nudgeStrength: nudgeStrength(),
+    smoothKinkCells: smoothKinkCells(),
     carveDepthBands: carveDepthBands(),
     showControls: showControls(),
     panelOpen: panelOpen(),
@@ -383,64 +274,17 @@ export function effectiveSculptMode(): SculptMode {
   return sculptChord() ? oppositeSculptMode(sculptMode()) : sculptMode();
 }
 
-export function setSmoothLambda(lambda: number): void {
-  const clamped = Math.min(
-    SMOOTH_LAMBDA_MAX,
-    Math.max(SMOOTH_LAMBDA_MIN, Math.trunc(lambda)),
-  );
-  if (clamped === smoothLambda()) return;
-  setSmoothLambdaSignal(clamped);
+export function setNudgeStrength(strength: number): void {
+  const clamped = Math.min(NUDGE_STRENGTH_MAX, Math.max(NUDGE_STRENGTH_MIN, Math.trunc(strength)));
+  if (clamped === nudgeStrength()) return;
+  setNudgeStrengthSignal(clamped);
   persist();
 }
 
-export function setSmoothFeather(feather: number): void {
-  const clamped = Math.min(
-    SMOOTH_FEATHER_MAX,
-    Math.max(SMOOTH_FEATHER_MIN, Math.trunc(feather)),
-  );
-  if (clamped === smoothFeather()) return;
-  setSmoothFeatherSignal(clamped);
-  persist();
-}
-
-export function setSmoothRim(rim: number): void {
-  const clamped = Math.min(
-    SMOOTH_RIM_MAX,
-    Math.max(SMOOTH_RIM_MIN, Math.trunc(rim)),
-  );
-  if (clamped === smoothRim()) return;
-  setSmoothRimSignal(clamped);
-  persist();
-}
-
-export function setSmoothKernel(kernel: SmoothKernel): void {
-  if (!SMOOTH_KERNELS.includes(kernel)) return;
-  if (kernel === smoothKernel()) return;
-  setSmoothKernelSignal(kernel);
-  persist();
-}
-
-export function setSmoothBilateral(bilateral: boolean): void {
-  if (bilateral === smoothBilateral()) return;
-  setSmoothBilateralSignal(bilateral);
-  persist();
-}
-
-export function setSmoothFullSteps(full: boolean): void {
-  if (full === smoothFullSteps()) return;
-  setSmoothFullStepsSignal(full);
-  persist();
-}
-
-export function setSmoothCooldown(cooldown: boolean): void {
-  if (cooldown === smoothCooldown()) return;
-  setSmoothCooldownSignal(cooldown);
-  persist();
-}
-
-export function setSmoothUnbiased(unbiased: boolean): void {
-  if (unbiased === smoothUnbiased()) return;
-  setSmoothUnbiasedSignal(unbiased);
+export function setSmoothKinkCells(cells: number): void {
+  const clamped = Math.min(SMOOTH_KINK_CELLS_MAX, Math.max(SMOOTH_KINK_CELLS_MIN, Math.trunc(cells)));
+  if (clamped === smoothKinkCells()) return;
+  setSmoothKinkCellsSignal(clamped);
   persist();
 }
 
@@ -472,14 +316,8 @@ export {
   brushProfile,
   sculptMode,
   sculptAlt,
-  smoothBilateral,
-  smoothFeather,
-  smoothFullSteps,
-  smoothCooldown,
-  smoothUnbiased,
-  smoothKernel,
-  smoothLambda,
-  smoothRim,
+  nudgeStrength,
+  smoothKinkCells,
   carveDepthBands,
   showControls,
   panelOpen,
