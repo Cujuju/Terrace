@@ -45,6 +45,7 @@ import {
   type LaserBolt,
   type SaucerPhase,
   type SaucerState,
+  SAUCER_DIAMETER_CELLS,
 } from '../protocol.ts';
 import { BAND_HEIGHT, CELL_WORLD_SIZE } from '@terrace/shared';
 import { igniteCrashCell } from './fire-bridge.ts';
@@ -74,8 +75,11 @@ const ARC_TABLE_PARAMETER_HEADROOM =
 const ARC_TABLE_SAMPLES =
   Math.ceil((DOGFIGHT_SECONDS * ARC_TABLE_PARAMETER_HEADROOM) / ARC_TABLE_STEP_SECONDS) + 1;
 
-const FLYBY_WING_SPACING_CELLS = 6;
-const FLYBY_WING_STAGGER_CELLS = 4;
+// Spacing is in saucer diameters, so wingmen never overlap at any drawn size.
+const FLYBY_WING_SPACING_DIAMETERS = 1.5;
+const FLYBY_WING_STAGGER_DIAMETERS = 1;
+const FLYBY_WING_SPACING_CELLS = SAUCER_DIAMETER_CELLS * FLYBY_WING_SPACING_DIAMETERS;
+const FLYBY_WING_STAGGER_CELLS = SAUCER_DIAMETER_CELLS * FLYBY_WING_STAGGER_DIAMETERS;
 
 const WINGMATE_BEARING_SPREAD_RADIANS = 0.35;
 

@@ -21,6 +21,7 @@ import { compose } from '../../../client/src/render/materialSlots.ts';
 import {
   CELL_WORLD_SIZE,
   MAX_SAUCERS_PER_ENCOUNTER,
+  SAUCER_AUTHORED_DIAMETER_UNITS,
   SAUCER_DIAMETER_CELLS,
   SAUCER_MUZZLE_DROP_FRACTION,
   SAUCER_VARIANT_COUNT,
@@ -31,7 +32,7 @@ export { SAUCER_DIAMETER_CELLS };
 
 export const SAUCER_DIAMETER_WORLD_UNITS = SAUCER_DIAMETER_CELLS * CELL_WORLD_SIZE;
 
-const AUTHORED_UNIT_SCALE = CELL_WORLD_SIZE;
+const AUTHORED_UNIT_SCALE = SAUCER_DIAMETER_WORLD_UNITS / SAUCER_AUTHORED_DIAMETER_UNITS;
 
 const AUTHORED_FIT_TOLERANCE_FRACTION = 0.05;
 
@@ -105,14 +106,14 @@ export async function preloadSaucerModels(
 }
 
 function measureInstalled(assets: readonly RigAsset[]): string | null {
-  const limit = SAUCER_DIAMETER_CELLS * (1 + AUTHORED_FIT_TOLERANCE_FRACTION);
+  const limit = SAUCER_AUTHORED_DIAMETER_UNITS * (1 + AUTHORED_FIT_TOLERANCE_FRACTION);
   let meshes = 0;
   for (const asset of assets) {
     const size = new Box3().setFromObject(asset.scene).getSize(new Vector3());
     if (size.x > limit || size.z > limit) {
       return (
         `an authored hull measures ${size.x.toFixed(2)} x ${size.z.toFixed(2)} authored units ` +
-        `against a ${SAUCER_DIAMETER_CELLS}-cell budget`
+        `against a ${SAUCER_AUTHORED_DIAMETER_UNITS}-unit budget`
       );
     }
     let count = 0;
