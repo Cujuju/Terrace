@@ -172,7 +172,7 @@ export interface BrushQuote {
 }
 
 /** The tools a hover alone fully describes; a carve and a drag need a grasp. */
-const SELF_DESCRIBING_TOOLS: readonly SculptTool[] = ['stamp', 'smooth'];
+const SELF_DESCRIBING_TOOLS: readonly SculptTool[] = ['stamp', 'smooth', 'nudge'];
 
 function aimedIntent(tool: SculptTool): SculptIntent | null {
   const aim = hoverPick();

@@ -18,24 +18,12 @@ import {
   setBrushProfile,
   setBrushRadius,
   setBrushTool,
+  nudgeStrength,
   setCarveDepthBands,
+  setNudgeStrength,
   setSculptMode,
-  setSmoothBilateral,
-  setSmoothFeather,
-  setSmoothFullSteps,
-  setSmoothCooldown,
-  setSmoothUnbiased,
-  setSmoothKernel,
-  setSmoothLambda,
-  setSmoothRim,
-  smoothFeather,
-  smoothBilateral,
-  smoothFullSteps,
-  smoothCooldown,
-  smoothUnbiased,
-  smoothKernel,
-  smoothLambda,
-  smoothRim,
+  setSmoothKinkCells,
+  smoothKinkCells,
   type DenialHint,
   type SculptMode,
 } from '../state/hudState.ts';
@@ -48,6 +36,7 @@ import {
   HardIcon,
   LowerIcon,
   DragIcon,
+  NudgeIcon,
   RaiseIcon,
   SmoothIcon,
   SoftIcon,
@@ -62,20 +51,18 @@ import {
 import {
   CARVE_MAX_DEPTH_BANDS,
   CARVE_MIN_DEPTH_BANDS,
-  SMOOTH_FEATHER_MAX,
-  SMOOTH_FEATHER_MIN,
-  SMOOTH_LAMBDA_MAX,
-  SMOOTH_LAMBDA_MIN,
-  SMOOTH_RIM_MAX,
-  SMOOTH_RIM_MIN,
-  type SmoothKernel,
+  NUDGE_STRENGTH_MAX,
+  NUDGE_STRENGTH_MIN,
+  SMOOTH_KINK_CELLS_MAX,
+  SMOOTH_KINK_CELLS_MIN,
   type SculptProfile,
   type SculptTool,
 } from '@terrace/shared';
 
 const TOOL_TITLE: Record<SculptTool, string> = {
   stamp: 'Stamp: raise or lower brushed ground',
-  smooth: 'Smooth: blend ground with its neighbours',
+  smooth: 'Smooth: straighten kinks in terrace edges, keeping real curves',
+  nudge: 'Nudge: push terraces apart, or draw them together the other way',
   drag: 'Drag: drag a terrace edge outward',
   carve: 'Carve: cut a tunnel, roof intact',
 };
@@ -104,6 +91,7 @@ const HINT_BUTTON: Record<string, string> = {
 const TOOL_LABEL: Record<SculptTool, string> = {
   stamp: 'Stamp',
   smooth: 'Smooth',
+  nudge: 'Nudge',
   drag: 'Drag',
   carve: 'Carve',
 };
@@ -117,6 +105,7 @@ const PROFILE_LABEL: Record<SculptProfile, string> = {
 const TOOL_ICON: Record<SculptTool, Component> = {
   stamp: StampIcon,
   smooth: SmoothIcon,
+  nudge: NudgeIcon,
   drag: DragIcon,
   carve: CarveIcon,
 };
@@ -146,7 +135,10 @@ const HINT_MODIFIER: Record<string, string> = {
   alt: 'Alt+',
 };
 
-const SMOOTH_LAMBDA_DETENTS: readonly number[] = [25, 50, 75, 100];
+const NUDGE_STRENGTH_DETENTS: readonly number[] = [25, 50, 75, 100];
+
+/** Kink sizes worth marking: a cell's jag, a step's, a small bump, the largest. */
+const SMOOTH_KINK_DETENTS: readonly number[] = [SMOOTH_KINK_CELLS_MIN, 2, 4, SMOOTH_KINK_CELLS_MAX];
 
 /** The marked depths: one slab, an overhang's two, then five and the ceiling. */
 const CARVE_DEPTH_DETENTS: readonly number[] = [
@@ -303,23 +295,23 @@ export function BrushModeler(): JSX.Element {
       </div>
       <Show when={brushTool() === 'smooth'}>
         <div class="hud-row brush-slider">
-          <span class="brush-slider__end">{SMOOTH_LAMBDA_MIN}%</span>
+          <span class="brush-slider__end">{SMOOTH_KINK_CELLS_MIN}</span>
           <div
             class="brush-slider__track"
             style={{
-              '--brush-rung': String(smoothLambda() - SMOOTH_LAMBDA_MIN),
-              '--brush-slider-rungs': String(SMOOTH_LAMBDA_MAX - SMOOTH_LAMBDA_MIN),
+              '--brush-rung': String(smoothKinkCells() - SMOOTH_KINK_CELLS_MIN),
+              '--brush-slider-rungs': String(SMOOTH_KINK_CELLS_MAX - SMOOTH_KINK_CELLS_MIN),
             }}
           >
             <span class="brush-slider__rail" />
             <span class="brush-slider__fill" />
-            <For each={SMOOTH_LAMBDA_DETENTS}>
+            <For each={SMOOTH_KINK_DETENTS}>
               {(detent, anchor) => (
                 <span
                   class="brush-slider__detent"
-                  classList={{ on: smoothLambda() >= detent }}
+                  classList={{ on: smoothKinkCells() >= detent }}
                   style={{
-                    '--brush-detent': String(detent - SMOOTH_LAMBDA_MIN),
+                    '--brush-detent': String(detent - SMOOTH_KINK_CELLS_MIN),
                     '--brush-anchor': String(anchor()),
                   }}
                 />
@@ -328,172 +320,63 @@ export function BrushModeler(): JSX.Element {
             <input
               type="range"
               class="brush-slider__input"
-              min={SMOOTH_LAMBDA_MIN}
-              max={SMOOTH_LAMBDA_MAX}
+              min={SMOOTH_KINK_CELLS_MIN}
+              max={SMOOTH_KINK_CELLS_MAX}
               step="1"
-              value={smoothLambda()}
-              aria-label="Smooth strength"
-              aria-valuetext={`${smoothLambda()} percent`}
-              title="Smooth strength: how far each cell moves toward its neighbours per stroke"
+              value={smoothKinkCells()}
+              aria-label="Kink size"
+              aria-valuetext={`${smoothKinkCells()} cells`}
+              title="Kink size: the largest bump in a terrace edge a smooth removes; bigger bends are curves and stay"
               onInput={(event) =>
-                setSmoothLambda(event.currentTarget.valueAsNumber)
+                setSmoothKinkCells(event.currentTarget.valueAsNumber)
               }
             />
-            <span class="brush-slider__value">{smoothLambda()}%</span>
+            <span class="brush-slider__value">{smoothKinkCells()}</span>
           </div>
-          <span class="brush-slider__end">{SMOOTH_LAMBDA_MAX}%</span>
+          <span class="brush-slider__end">{SMOOTH_KINK_CELLS_MAX}</span>
         </div>
+      </Show>
+      <Show when={brushTool() === 'nudge'}>
         <div class="hud-row brush-slider">
-          <span class="controls-label">Feather</span>
-          <input
-            type="checkbox"
-            class="controls-check"
-            aria-label="Feather the smooth edge"
-            title="Feather edge: full strength across the brush, fading over the outer rim. Off by default."
-            checked={smoothFeather() > 0}
-            onChange={(event) =>
-              setSmoothFeather(
-                event.currentTarget.checked
-                  ? (smoothFeather() > 0 ? smoothFeather() : 50)
-                  : 0,
-              )
-            }
-          />
+          <span class="brush-slider__end">{NUDGE_STRENGTH_MIN}%</span>
           <div
             class="brush-slider__track"
             style={{
-              '--brush-rung': String(smoothFeather()),
-              '--brush-slider-rungs': String(SMOOTH_FEATHER_MAX),
+              '--brush-rung': String(nudgeStrength() - NUDGE_STRENGTH_MIN),
+              '--brush-slider-rungs': String(NUDGE_STRENGTH_MAX - NUDGE_STRENGTH_MIN),
             }}
           >
             <span class="brush-slider__rail" />
             <span class="brush-slider__fill" />
+            <For each={NUDGE_STRENGTH_DETENTS}>
+              {(detent, anchor) => (
+                <span
+                  class="brush-slider__detent"
+                  classList={{ on: nudgeStrength() >= detent }}
+                  style={{
+                    '--brush-detent': String(detent - NUDGE_STRENGTH_MIN),
+                    '--brush-anchor': String(anchor()),
+                  }}
+                />
+              )}
+            </For>
             <input
               type="range"
               class="brush-slider__input"
-              min={SMOOTH_FEATHER_MIN}
-              max={SMOOTH_FEATHER_MAX}
+              min={NUDGE_STRENGTH_MIN}
+              max={NUDGE_STRENGTH_MAX}
               step="1"
-              value={smoothFeather()}
-              aria-label="Feather width"
-              aria-valuetext={`${smoothFeather()} percent of reach`}
-              title="Feather width: percent of the brush reach that fades to the rim"
+              value={nudgeStrength()}
+              aria-label="Nudge strength"
+              aria-valuetext={`${nudgeStrength()} percent`}
+              title="Nudge strength: how far terraces move apart or together per stroke"
               onInput={(event) =>
-                setSmoothFeather(event.currentTarget.valueAsNumber)
+                setNudgeStrength(event.currentTarget.valueAsNumber)
               }
             />
-            <span class="brush-slider__value">{smoothFeather()}%</span>
+            <span class="brush-slider__value">{nudgeStrength()}%</span>
           </div>
-        </div>
-        <div class="hud-row brush-slider">
-          <span class="controls-label">Rim</span>
-          <input
-            type="checkbox"
-            class="controls-check"
-            aria-label="Tighten the smooth rim clamp"
-            title="Rim: tighten how far the outer rim may travel, from the full band down to frozen at the reach. Off by default."
-            checked={smoothRim() > 0}
-            onChange={(event) =>
-              setSmoothRim(
-                event.currentTarget.checked
-                  ? (smoothRim() > 0 ? smoothRim() : 50)
-                  : 0,
-              )
-            }
-          />
-          <div
-            class="brush-slider__track"
-            style={{
-              '--brush-rung': String(smoothRim()),
-              '--brush-slider-rungs': String(SMOOTH_RIM_MAX),
-            }}
-          >
-            <span class="brush-slider__rail" />
-            <span class="brush-slider__fill" />
-            <input
-              type="range"
-              class="brush-slider__input"
-              min={SMOOTH_RIM_MIN}
-              max={SMOOTH_RIM_MAX}
-              step="1"
-              value={smoothRim()}
-              aria-label="Rim clamp width"
-              aria-valuetext={`${smoothRim()} percent of reach`}
-              title="Rim width: percent of the brush reach whose clamp tightens to the edge"
-              onInput={(event) =>
-                setSmoothRim(event.currentTarget.valueAsNumber)
-              }
-            />
-            <span class="brush-slider__value">{smoothRim()}%</span>
-          </div>
-        </div>
-        <div class="hud-row">
-          <span class="controls-label">Kernel</span>
-          <select
-            class="controls-select"
-            aria-label="Smooth kernel"
-            title="Kernel: the smooth average. Cross is today; Gauss blurs along contours; Median deletes speckle."
-            value={smoothKernel()}
-            onChange={(event) =>
-              setSmoothKernel(event.currentTarget.value as SmoothKernel)
-            }
-          >
-            <option value="cross">Cross</option>
-            <option value="gauss">Gauss</option>
-            <option value="median">Median</option>
-          </select>
-        </div>
-        <div class="hud-row">
-          <span class="controls-label">Bilateral</span>
-          <input
-            type="checkbox"
-            class="controls-check"
-            aria-label="Blend terraces without dragging across cliffs"
-            title="Bilateral: neighbours past one band sit out of the average. Treads go smooth, steps stay crisp; off by default."
-            checked={smoothBilateral()}
-            onChange={(event) =>
-              setSmoothBilateral(event.currentTarget.checked)
-            }
-          />
-        </div>
-        <div class="hud-row">
-          <span class="controls-label">Full steps</span>
-          <input
-            type="checkbox"
-            class="controls-check"
-            aria-label="Take full steps only"
-            title="Full steps: ignore sub-unit pulls instead of forcing unit moves. Stops the smoother etching stair-steps; off by default."
-            checked={smoothFullSteps()}
-            onChange={(event) =>
-              setSmoothFullSteps(event.currentTarget.checked)
-            }
-          />
-        </div>
-        <div class="hud-row">
-          <span class="controls-label">Cooldown</span>
-          <input
-            type="checkbox"
-            class="controls-check"
-            aria-label="Melt fast then settle clean"
-            title="Cooldown: the first pass melts with unit steps, later passes settle without etching. Off by default."
-            checked={smoothCooldown()}
-            onChange={(event) =>
-              setSmoothCooldown(event.currentTarget.checked)
-            }
-          />
-        </div>
-        <div class="hud-row">
-          <span class="controls-label">Unbiased</span>
-          <input
-            type="checkbox"
-            class="controls-check"
-            aria-label="Round averages to even"
-            title="Unbiased: round-half-even averages instead of truncating toward zero. Kills systematic drift; off by default."
-            checked={smoothUnbiased()}
-            onChange={(event) =>
-              setSmoothUnbiased(event.currentTarget.checked)
-            }
-          />
+          <span class="brush-slider__end">{NUDGE_STRENGTH_MAX}%</span>
         </div>
       </Show>
       <Show when={brushTool() === 'carve'}>

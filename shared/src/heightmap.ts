@@ -27,7 +27,8 @@ import { writeWithEdges } from './sculpt/edges.ts';
 import { applyDragRegion, dragEdgeShape } from './sculpt/drag.ts';
 import { applyCarve } from './sculpt/carve.ts';
 import { applyMound, moundEdgeShape } from './sculpt/mound.ts';
-import { applyClay } from './sculpt/clay.ts';
+import { applyNudge } from './sculpt/nudge.ts';
+import { applyOutlineSmooth } from './sculpt/outlineSmooth.ts';
 export { carveAdmittedCells } from './sculpt/carve.ts';
 import { smooth } from './sculpt/relax.ts';
 import { smoothCascadeReachCells } from './sculpt/reach.ts';
@@ -35,6 +36,12 @@ import type { SpillBand } from './sculpt/layerView.ts';
 import {
   FULL_HEIGHT_SPAN,
   LIBRARY_DEFAULT_SCULPT_OPTIONS,
+  NUDGE_STRENGTH_DEFAULT,
+  NUDGE_STRENGTH_MAX,
+  NUDGE_STRENGTH_MIN,
+  SMOOTH_KINK_CELLS_DEFAULT,
+  SMOOTH_KINK_CELLS_MAX,
+  SMOOTH_KINK_CELLS_MIN,
   LIBRARY_SCULPT_TOOL,
   SMOOTH_FEATHER_DEFAULT,
   SMOOTH_FEATHER_MAX,
@@ -80,8 +87,14 @@ export {
   LOWEST_CARVEABLE_BAND,
   MAX_BAND,
   MIN_BAND,
+  NUDGE_STRENGTH_DEFAULT,
+  NUDGE_STRENGTH_MAX,
+  NUDGE_STRENGTH_MIN,
   SCULPT_PROFILES,
   SCULPT_TOOLS,
+  SMOOTH_KINK_CELLS_DEFAULT,
+  SMOOTH_KINK_CELLS_MAX,
+  SMOOTH_KINK_CELLS_MIN,
   SMOOTH_FEATHER_DEFAULT,
   SMOOTH_FEATHER_MAX,
   SMOOTH_FEATHER_MIN,
@@ -196,9 +209,23 @@ export function applySculpt(
 
   if (tool === 'smooth' && anchor !== 'free') {
     const smoothed = new Set<number>();
-    // HUD way spreads bands apart; the other way draws them together.
-    if (amount !== 0) applyClay(map, cx, cy, radius, amount > 0, smoothLambda, spanBand, smoothed);
+    const kinkCells = Math.min(
+      SMOOTH_KINK_CELLS_MAX,
+      Math.max(SMOOTH_KINK_CELLS_MIN, options?.smoothKinkCells ?? SMOOTH_KINK_CELLS_DEFAULT),
+    );
+    applyOutlineSmooth(map, cx, cy, radius, kinkCells, spanBand, smoothed);
     return diffOf(map, smoothed);
+  }
+
+  if (tool === 'nudge') {
+    const nudged = new Set<number>();
+    const strength = Math.min(
+      NUDGE_STRENGTH_MAX,
+      Math.max(NUDGE_STRENGTH_MIN, options?.nudgeStrength ?? NUDGE_STRENGTH_DEFAULT),
+    );
+    // HUD way spreads bands apart; the other way draws them together.
+    if (amount !== 0) applyNudge(map, cx, cy, radius, amount > 0, strength, spanBand, nudged);
+    return diffOf(map, nudged);
   }
 
   if (tool === 'stamp' && anchor === 'clicked') {

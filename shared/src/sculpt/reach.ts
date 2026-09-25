@@ -1,6 +1,7 @@
 import { SMOOTH_REACH_MARGIN_CELLS, SMOOTH_SPREAD_CELLS } from '../constants.ts';
 import { EDGE_AWARE_TOOLS, EDGE_REGION_MARGIN_CELLS } from './edges.ts';
 import { LIBRARY_SCULPT_TOOL } from './options.ts';
+import { OUTLINE_SMOOTH_READ_MARGIN_CELLS } from './outlineSmooth.ts';
 import { sculptSweepRadius } from './stamp.ts';
 import type { SculptAnchor, SculptOperation, SculptProfile } from './options.ts';
 
@@ -19,7 +20,9 @@ export function sculptReachCells(
   tool: SculptOperation,
   anchor: SculptAnchor,
 ): number {
-  if (tool === 'smooth') return radius + smoothCascadeReachCells(radius);
+  // Smooth and nudge write only their disc but read a margin past it.
+  if (tool === 'smooth') return radius + OUTLINE_SMOOTH_READ_MARGIN_CELLS;
+  if (tool === 'nudge') return radius + smoothCascadeReachCells(radius);
   if (tool === LIBRARY_SCULPT_TOOL) return radius + SMOOTH_SPREAD_CELLS;
   const sweep = sculptSweepRadius(radius, profile, tool, anchor);
   // An edge-aware brush re-encodes the cells just past its disc.

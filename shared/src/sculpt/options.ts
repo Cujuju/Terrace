@@ -7,7 +7,7 @@ export const MAX_BAND = bandOf(MAX_HEIGHT);
 
 export const FULL_HEIGHT_SPAN = MAX_HEIGHT - MIN_HEIGHT;
 
-export type SculptTool = 'stamp' | 'smooth' | 'drag' | 'carve';
+export type SculptTool = 'stamp' | 'smooth' | 'nudge' | 'drag' | 'carve';
 
 /**
  * Library-only: applies a stamp, then relaxes it. Plugins are tuned against
@@ -20,13 +20,14 @@ export type SculptOperation = SculptTool | LibrarySculptTool;
 
 export type SculptProfile = 'soft' | 'hard' | 'stepped';
 
-export const SCULPT_TOOLS: readonly SculptTool[] = ['stamp', 'smooth', 'drag', 'carve'];
+export const SCULPT_TOOLS: readonly SculptTool[] = ['stamp', 'smooth', 'nudge', 'drag', 'carve'];
 
 export const LIBRARY_SCULPT_TOOL: LibrarySculptTool = 'settle';
 
-export const TOOLS_WITHOUT_EDGE_PROFILE: readonly SculptTool[] = ['smooth', 'drag', 'carve'];
+export const TOOLS_WITHOUT_EDGE_PROFILE: readonly SculptTool[] = ['smooth', 'nudge', 'drag', 'carve'];
 
-export const TOOLS_WITHOUT_DIRECTION: readonly SculptTool[] = ['carve'];
+/** Smooth only removes kinks and carve only cuts: neither has a way. */
+export const TOOLS_WITHOUT_DIRECTION: readonly SculptTool[] = ['smooth', 'carve'];
 
 /** Bedrock is a column's floor, not material, so the lowest slab a stroke can open sits above it. */
 export const LOWEST_CARVEABLE_BAND = BEDROCK_BAND + 1;
@@ -47,6 +48,16 @@ export function isValidCarveDepth(depthBands: number): boolean {
     depthBands <= CARVE_MAX_DEPTH_BANDS
   );
 }
+
+/** Nudge strength as integer percent of a full step, 1..100. */
+export const NUDGE_STRENGTH_DEFAULT = 50;
+export const NUDGE_STRENGTH_MIN = 1;
+export const NUDGE_STRENGTH_MAX = 100;
+
+/** The largest outline bump, in cells, a smooth removes; bigger bends are curves and stay. */
+export const SMOOTH_KINK_CELLS_DEFAULT = 2;
+export const SMOOTH_KINK_CELLS_MIN = 1;
+export const SMOOTH_KINK_CELLS_MAX = 8;
 
 /** Laplacian strength as integer percent, 1..100. Integer keeps math exact. */
 export const SMOOTH_LAMBDA_DEFAULT = 50;
@@ -88,6 +99,8 @@ export interface SculptOptions {
   readonly dragAlt?: boolean;
   readonly spanBand?: number | null;
   readonly sweepFrom?: SweepOrigin | null;
+  readonly nudgeStrength?: number;
+  readonly smoothKinkCells?: number;
   readonly smoothLambda?: number;
   /** Feather the smooth rim: full strength inside, fading across the halo. */
   readonly smoothFeather?: number;
@@ -122,6 +135,8 @@ export interface ResolvedSculptOptions {
   readonly dragAlt: boolean;
   readonly spanBand: number | null;
   readonly sweepFrom: SweepOrigin | null;
+  readonly nudgeStrength: number;
+  readonly smoothKinkCells: number;
   readonly smoothLambda: number;
   readonly smoothFeather: number;
   readonly smoothRim: number;
@@ -143,6 +158,8 @@ export const LIBRARY_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
   dragAlt: false,
   spanBand: null,
   sweepFrom: null,
+  nudgeStrength: NUDGE_STRENGTH_DEFAULT,
+  smoothKinkCells: SMOOTH_KINK_CELLS_DEFAULT,
   smoothLambda: SMOOTH_LAMBDA_DEFAULT,
   smoothFeather: SMOOTH_FEATHER_DEFAULT,
   smoothRim: SMOOTH_RIM_DEFAULT,

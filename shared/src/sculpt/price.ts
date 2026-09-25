@@ -108,7 +108,7 @@ export function sculptDisplacementUnits(
 
   // Both profiles level the core radius names, so soft prices as that same
   // fill, apron thrown in. Smooth only melts partial steps: graduated volume.
-  if (tool === 'smooth') {
+  if (tool === 'smooth' || tool === 'nudge') {
     let total = 0;
     forEachFootprintOffset(radius, (_dx, _dy, dist) => {
       total += brushDelta(SCULPT_PRESS_UNITS_PER_CELL, radius, dist, 'soft');
