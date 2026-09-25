@@ -196,6 +196,8 @@ export async function createViewport(
   controls.maxDistance = CAMERA_MAX_DISTANCE;
   controls.maxPolarAngle = MathUtils.degToRad(CAMERA_MAX_POLAR_ANGLE_DEGREES);
   controls.zoomToCursor = true;
+  // Pan slides along the ground at any tilt, not up the screen plane.
+  controls.screenSpacePanning = false;
 
   const resize = (): void => {
     const width = canvas.clientWidth;

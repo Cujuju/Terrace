@@ -1,5 +1,6 @@
 import { createSignal } from 'solid-js';
 import { oppositeSculptMode, sculptMode } from './hudBrushState.ts';
+import { resetCameraKeyPrefs } from './cameraKeyPrefs.ts';
 import { resetFrameRatePrefs } from './frameRatePrefs.ts';
 import { resetFrontierMistPrefs } from './frontierMistPrefs.ts';
 import { resetLayerEdgePrefs } from './layerEdgePrefs.ts';
@@ -132,6 +133,7 @@ export function resetBindings(): void {
   setTwoFingerGestureSignal(DEFAULT_TWO_FINGER_GESTURE);
   setWheelBehaviourSignal(DEFAULT_WHEEL_BEHAVIOUR);
   setPointerLockSignal(DEFAULT_POINTER_LOCK);
+  resetCameraKeyPrefs();
   resetVoidPrefs();
   resetFrontierMistPrefs();
   resetLayerEdgePrefs();

@@ -289,14 +289,14 @@ export function ControlsPanel(): JSX.Element {
         <select
           class="controls-select"
           aria-label="Scroll wheel behaviour"
-          title="Scroll: slide or zoom the view"
+          title="Scroll: Pan suits a trackpad (swipe slides, pinch zooms); Zoom suits a mouse wheel"
           value={wheelBehaviour()}
           onChange={(e) =>
             setWheelBehaviour(e.currentTarget.value as WheelBehaviour)
           }
         >
-          <option value="pan">Pan</option>
-          <option value="zoom">Zoom</option>
+          <option value="pan">Pan (trackpad)</option>
+          <option value="zoom">Zoom (mouse)</option>
         </select>
       </div>
 

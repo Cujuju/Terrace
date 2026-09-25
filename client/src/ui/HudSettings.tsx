@@ -23,6 +23,7 @@ import { chartOpen, setChartOpen } from './Cartographer.tsx';
 import type { WorldActions } from './WorldManager.tsx';
 import { AudioSettingsPanel } from './AudioSettingsPanel.tsx';
 import { BuildingQualityPanel } from './BuildingQualityPanel.tsx';
+import { CameraKeysPanel } from './CameraKeysPanel.tsx';
 import { ControlsPanel } from './ControlsPanel.tsx';
 import type { ConnectionStatus } from '../net/connection.ts';
 
@@ -91,6 +92,7 @@ export function HudSettings(props: {
           aria-label="Control settings"
         >
           <ControlsPanel />
+          <CameraKeysPanel />
           {
 }
           <AudioSettingsPanel />

@@ -83,6 +83,18 @@ export const TRACKPAD_ORBIT_POLAR_RADIANS_PER_PIXEL =
 
 export const SAFARI_GESTURE_ROTATE_SENSITIVITY = 1;
 
+/** Held pan key crosses one screen height of ground per second, at any zoom. */
+export const KEY_PAN_SCREEN_HEIGHTS_PER_S = 1;
+
+/** Held rotate key: a quarter turn per second. */
+export const KEY_ROTATE_RADIANS_PER_S = Math.PI / 2;
+
+/** Held tilt key: 0° to the 85° polar clamp in about two seconds. */
+export const KEY_TILT_RADIANS_PER_S = Math.PI / 4;
+
+/** Held zoom key halves (or doubles) the orbit distance once per second. */
+export const KEY_ZOOM_DOUBLINGS_PER_S = 1;
+
 export const CAMERA_FOV_DEGREES = 55;
 export const CAMERA_NEAR = 0.1;
 export const CAMERA_FAR = 4000;

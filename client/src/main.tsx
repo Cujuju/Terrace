@@ -4,6 +4,7 @@ import { Raycaster, Vector2 } from 'three';
 import { connect, type ConnectionStatus, type TerrainSink } from './net/connection.ts';
 import { bindCameraControls } from './input/cameraBindings.ts';
 import { createCameraGestureLock } from './input/cameraGestureLock.ts';
+import { bindKeyCamera } from './input/keyCamera.ts';
 import { createSculptInput } from './input/sculptInput.ts';
 import { createClientPluginHost } from './plugins/host.ts';
 import { CLIENT_PLUGINS } from './plugins/registry.ts';
@@ -168,6 +169,7 @@ viewport.setGroundHeightSampler((worldX, worldZ) => {
   return world.drawnGroundYAt(cell.x, cell.y);
 });
 const cameraBindings = bindCameraControls(canvas, viewport.controls);
+bindKeyCamera(viewport.controls, (handler) => viewport.onFrame(handler, 'pose'));
 const cameraGesture = createCameraGestureLock(canvas, viewport.controls, () =>
   cameraBindings.pointerLocked(),
 );

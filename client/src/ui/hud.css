@@ -796,6 +796,22 @@ body {
   color: var(--hud-text);
 }
 
+/* Camera keys (ui/CameraKeysPanel.tsx): its own block, like audio. */
+.camera-keys-panel {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--hud-border);
+}
+
+.camera-key {
+  min-width: 44px;
+  cursor: pointer;
+}
+
+.camera-key-armed {
+  border-color: var(--hud-accent);
+}
+
 /* The audio block (ui/AudioSettingsPanel.tsx), beside .controls-panel rather
    than inside it, so the separating rule goes on the block ONCE. */
 .audio-panel {
