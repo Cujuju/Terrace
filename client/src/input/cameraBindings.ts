@@ -11,6 +11,7 @@ import {
   type MouseButtonName,
 } from '../state/controlPrefs.ts';
 import { bindWheelCamera } from './wheelCamera.ts';
+import { stepBrushRadius } from '../state/hudState.ts';
 import { createCameraPointerLock } from './cameraPointerLock.ts';
 
 export interface CameraBindings {
@@ -157,7 +158,7 @@ export function bindCameraControls(
     capture: true,
   });
 
-  const wheelGestures = bindWheelCamera(canvas, controls);
+  const wheelGestures = bindWheelCamera(canvas, controls, stepBrushRadius);
   const pointerLock = createCameraPointerLock(canvas, controls);
 
   return {

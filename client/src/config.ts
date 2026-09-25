@@ -103,3 +103,9 @@ export const FPS_SAMPLE_INTERVAL_MS = 500;
 export const FRAME_STATS_WINDOW_MS = 5000;
 
 export const FRAME_STATS_CAPACITY = 2048;
+
+/** One mouse-wheel notch as browsers report it in pixel mode (Chrome, Edge, Firefox on Windows). */
+export const WHEEL_NOTCH_PIXELS = 100;
+
+/** Pixels per wheel line when a browser reports lines (Firefox on some platforms). */
+export const WHEEL_LINE_PIXELS = 40;

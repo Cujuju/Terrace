@@ -20,6 +20,7 @@ export {
   oppositeSculptMode,
   sculptDirection,
   setBrushRadius,
+  stepBrushRadius,
   setBrushTool,
   setBrushProfile,
   setSculptChord,

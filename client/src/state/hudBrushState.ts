@@ -243,6 +243,13 @@ export function setBrushRadius(radius: number): void {
   persist();
 }
 
+/** Moves the brush `rungs` steps along the size ladder, stopping at either end. */
+export function stepBrushRadius(rungs: number): void {
+  const at = Math.max(0, BRUSH_RADII.indexOf(brushRadius()));
+  const next = Math.min(BRUSH_RADII.length - 1, Math.max(0, at + rungs));
+  setBrushRadius(BRUSH_RADII[next]!);
+}
+
 export function setBrushTool(tool: SculptTool): void {
   if (tool === brushTool()) return;
   setBrushToolSignal(tool);

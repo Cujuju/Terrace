@@ -9,6 +9,8 @@ import {
   TRACKPAD_ORBIT_AZIMUTH_RADIANS_PER_PIXEL,
   TRACKPAD_ORBIT_POLAR_RADIANS_PER_PIXEL,
   TRACKPAD_PAN_SPEED,
+  WHEEL_LINE_PIXELS,
+  WHEEL_NOTCH_PIXELS,
 } from '../config.ts';
 import {
   wheelBehaviour,
@@ -34,12 +36,14 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-export type WheelGesture = 'pinch' | 'orbit' | 'pan' | 'defer';
+export type WheelGesture = 'brush' | 'pinch' | 'orbit' | 'pan' | 'defer';
 
 export function classifyWheel(
-  mods: Pick<ModifierState, 'ctrlKey' | 'altKey'>,
+  mods: Pick<ModifierState, 'ctrlKey' | 'altKey'> & Partial<Pick<ModifierState, 'shiftKey'>>,
   behaviour: WheelBehaviour,
 ): WheelGesture {
+  // A trackpad pinch arrives as Ctrl + wheel, never with Shift, so Ctrl + Shift is free for the brush.
+  if (mods.ctrlKey && mods.shiftKey === true) return 'brush';
   if (mods.ctrlKey) return 'pinch';
   if (mods.altKey) return 'orbit';
   return behaviour === 'zoom' ? 'defer' : 'pan';
@@ -133,11 +137,22 @@ interface SafariGestureEvent extends Event {
   readonly rotation: number;
 }
 
+/** Wheel travel in pixels, whichever unit and axis the browser used; Shift turns the wheel sideways on Windows. */
+function wheelTravelPixels(event: WheelEvent): number {
+  const delta = event.deltaY !== 0 ? event.deltaY : event.deltaX;
+  if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) return delta * WHEEL_LINE_PIXELS;
+  if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) return Math.sign(delta) * WHEEL_NOTCH_PIXELS;
+  return delta;
+}
+
 export function bindWheelCamera(
   canvas: HTMLCanvasElement,
   controls: OrbitControls,
+  stepBrushRadius: (rungs: number) => void,
 ): WheelCameraGestures {
   const camera = controls.object;
+  // Sub-notch travel carries over, so a trackpad's small deltas still step the brush.
+  let brushTravel = 0;
 
   const orbitBy = (azimuthDelta: number, polarDelta: number): void => {
     if (controls.enableRotate === false) return;
@@ -160,6 +175,16 @@ export function bindWheelCamera(
 
     event.preventDefault();
     event.stopImmediatePropagation();
+
+    if (gesture === 'brush') {
+      brushTravel += wheelTravelPixels(event);
+      const rungs = Math.trunc(brushTravel / WHEEL_NOTCH_PIXELS);
+      if (rungs === 0) return;
+      brushTravel -= rungs * WHEEL_NOTCH_PIXELS;
+      // Wheel up grows the brush.
+      stepBrushRadius(-rungs);
+      return;
+    }
 
     if (controls.enabled === false) return;
     if (gesture === 'pinch') {
