@@ -2,7 +2,6 @@ import {
   BAND_HEIGHT,
   DEFAULT_SCULPT_AMOUNT,
   MAX_BRUSH_RADIUS,
-  sculptSweepRadius,
   applySculpt,
   createHeightmap,
   drawnBandOfSample,
@@ -57,7 +56,7 @@ export interface Mark {
 }
 
 const SIMULATION_SPAN_CELLS =
-  2 * (sculptSweepRadius(MAX_BRUSH_RADIUS, 'soft', 'stamp', 'clicked') + FOOTPRINT_LATTICE_MARGIN_CELLS + 1);
+  2 * (MAX_BRUSH_RADIUS + FOOTPRINT_LATTICE_MARGIN_CELLS + 1);
 
 // Mid-terrain simulation ground: raise and lower simulate the same
 // footprint here, so the outline never changes size with sculpt direction.
@@ -65,7 +64,16 @@ const SIMULATION_GROUND_HEIGHT = 8 * BAND_HEIGHT;
 
 const SIMULATION_GROUND_BAND = drawnBandOfSample(SIMULATION_GROUND_HEIGHT);
 
+/** The brush's own disc. */
+function discMark(radius: number): Mark {
+  const cells: (readonly [number, number])[] = [];
+  forEachFootprintOffset(radius, (dx, dy) => cells.push([dx, dy]));
+  return markFromOffsets(cells);
+}
+
 export function oneClickMark(radius: number, tool: SculptTool, profile: SculptProfile): Mark {
+  // A stamp's disc is its mound's top; the flanks spread past it by profile. The outline is the disc.
+  if (tool === 'stamp') return discMark(radius);
   const keys = new Set<string>();
   const cells: (readonly [number, number])[] = [];
   // The outline is direction-independent: a raise and a lower stamp the
@@ -99,16 +107,9 @@ export function oneClickMark(radius: number, tool: SculptTool, profile: SculptPr
       }
     }
   }
-  if (cells.length === 0) {
-    // A pure-melt stroke edits nothing on flat ground, but the brush
-    // still reaches its footprint on rough terrain: outline that area.
-    forEachFootprintOffset(radius, (dx, dy) => {
-      const key = `${dx},${dy}`;
-      if (keys.has(key)) return;
-      keys.add(key);
-      cells.push([dx, dy]);
-    });
-  }
+  // A pure-melt stroke edits nothing on flat ground, but the brush
+  // still reaches its footprint on rough terrain: outline that area.
+  if (cells.length === 0) return discMark(radius);
   return { has: (dx, dy) => keys.has(`${dx},${dy}`), cells };
 }
 

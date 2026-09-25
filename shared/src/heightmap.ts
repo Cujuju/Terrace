@@ -21,13 +21,13 @@ import { anchoredTargetHeight, assertBrushArgs, forEachFootprintCell } from './s
 import {
   applyBrush,
   applyLevelFillBrush,
-  applyStampSkirt,
   stampEdgeShape,
-  stampSkirtReachCells,
 } from './sculpt/stamp.ts';
 import { writeWithEdges } from './sculpt/edges.ts';
 import { applyDragRegion, dragEdgeShape } from './sculpt/drag.ts';
 import { applyCarve } from './sculpt/carve.ts';
+import { applyMound, moundEdgeShape } from './sculpt/mound.ts';
+import { applyClay } from './sculpt/clay.ts';
 export { carveAdmittedCells } from './sculpt/carve.ts';
 import { smooth } from './sculpt/relax.ts';
 import { smoothCascadeReachCells } from './sculpt/reach.ts';
@@ -194,6 +194,24 @@ export function applySculpt(
     return diffOf(map, dragChanged);
   }
 
+  if (tool === 'smooth' && anchor !== 'free') {
+    const smoothed = new Set<number>();
+    // HUD way spreads bands apart; the other way draws them together.
+    if (amount !== 0) applyClay(map, cx, cy, radius, amount > 0, smoothLambda, spanBand, smoothed);
+    return diffOf(map, smoothed);
+  }
+
+  if (tool === 'stamp' && anchor === 'clicked') {
+    const built = new Set<number>();
+    if (amount !== 0) {
+      const raising = amount > 0;
+      writeWithEdges(map, moundEdgeShape(cx, cy, radius, profile, raising, spanBand), built, () =>
+        applyMound(map, cx, cy, radius, raising, profile, spanBand, built),
+      );
+    }
+    return diffOf(map, built);
+  }
+
   if (anchor === 'band' && (targetBand === null || !canSpreadBandTo(map, cx, cy, targetBand))) {
     return [];
   }
@@ -214,19 +232,13 @@ export function applySculpt(
   const anchorTarget = anchoredSmooth
     ? anchoredTargetHeight(map, cx, cy, meltRaising, targetBand, spanBand)
     : 0;
-  // A clicked stamp with a skirt profile (soft, stepped) hangs lower treads past its core.
-  const skirted =
-    tool === 'stamp' && anchor === 'clicked' && stampSkirtReachCells(radius, profile) > 0;
-  const skirtCoreTarget = skirted
-    ? anchoredTargetHeight(map, cx, cy, strokeAmount > 0, targetBand, spanBand)
-    : 0;
   // Settle's relaxation grades only what its deposit adds, so it needs the ground before it.
   const settles = tool === LIBRARY_SCULPT_TOOL && !anchoredSmooth;
   if (settles) assertBrushArgs(map, cx, cy, radius, strokeAmount);
   const beforeDeposit = settles ? footprintHeights(map, cx, cy, radius) : null;
   // Smooth never deposits: relaxation alone melts roughness within anchor bounds.
   if (deposits) {
-    const levels = profile !== 'soft' || skirted;
+    const levels = profile !== 'soft';
     const deposit = (): void => {
       // Radius names the disc under every profile: a clicked disc moves every
       // cell one band, and a skirt hangs outside that edge.
@@ -235,13 +247,9 @@ export function applySculpt(
       } else {
         applyBrush(map, cx, cy, radius, strokeAmount, changed, profile, anchor, targetBand, spanBand);
       }
-      if (skirted) {
-        applyStampSkirt(map, cx, cy, radius, profile, strokeAmount, skirtCoreTarget, spanBand, changed);
-      }
     };
     if (tool === 'stamp' && levels) {
-      const skirt = skirted ? profile : null;
-      const shape = stampEdgeShape(cx, cy, radius, skirt, strokeAmount > 0, spanBand);
+      const shape = stampEdgeShape(cx, cy, radius, null, strokeAmount > 0, spanBand);
       writeWithEdges(map, shape, changed, deposit);
     } else {
       deposit();

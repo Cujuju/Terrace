@@ -270,7 +270,8 @@ viewport.onFrame(() => {
   // A camera gesture holds the aim: the pointer is still while the world slides
   // under it, so the overlays keep the aim they already drew and repaint nothing.
   if (!cameraGesture.active()) {
-    heldAim = activeToolId() === SCULPT_TOOL_ID ? sculptInput.hoverTarget() : null;
+    // A held drag lands on its band's plane, not the ground under the pointer.
+    heldAim = activeToolId() === SCULPT_TOOL_ID ? (sculptInput.dragAim() ?? sculptInput.hoverTarget()) : null;
   }
   const pick = heldAim;
   const tool = brushTool();
