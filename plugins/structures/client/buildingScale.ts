@@ -41,6 +41,12 @@ const TOP_TIER_ALTERNATE_REAL_SIZES: Readonly<Record<string, RealSize>> = {
   'flipper-shrimp': size(9, 12, 12),
 };
 
+// Owner styling on top of the real-size rule: these read better drawn larger.
+const STYLE_SIZE_MULTIPLIERS: Readonly<Record<string, number>> = {
+  longhouse: 1.5,
+  ricks: 1.5,
+};
+
 /** Coastal settlements draw fishing huts up to this tier, then the ladder. */
 export const COASTAL_HUT_MAX_TIER: StructureTier = 3;
 
@@ -90,7 +96,7 @@ export function buildingDrawScale(id: string, parts: readonly AssetPart[]): numb
   const ladderTier = (STRUCTURE_TIERS as readonly string[]).indexOf(id);
   const real = ladderTier >= 0 ? LADDER_REAL_SIZES[ladderTier] : TOP_TIER_ALTERNATE_REAL_SIZES[id];
   if (real === undefined) throw new Error(`structures: no real size for ${id}`);
-  const scale = Math.cbrt(drawnBulk(real) / authoredBulk(parts));
+  const scale = Math.cbrt(drawnBulk(real) / authoredBulk(parts)) * (STYLE_SIZE_MULTIPLIERS[id] ?? 1);
   assertFitsFootprint(id, authoredRadius(id), scale, ladderTier >= 0 ? ladderTier : MAX_STRUCTURE_TIER);
   return scale;
 }

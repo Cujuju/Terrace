@@ -166,7 +166,7 @@ export const STRUCTURE_LEGACY_SURVEYED_GROUND_RADIUS =
 
 // Radius, in cells, of the flat dry ground under each tier's widest drawn model.
 // client/buildingScale.ts refuses to load a model that outgrows its tier's entry.
-export const STRUCTURE_FOOTPRINT_RADIUS_CELLS: readonly number[] = [2, 2, 2, 4, 5, 4, 3, 2, 3, 4, 5];
+export const STRUCTURE_FOOTPRINT_RADIUS_CELLS: readonly number[] = [2, 2, 2, 4, 7, 4, 3, 2, 3, 4, 8];
 
 if (STRUCTURE_FOOTPRINT_RADIUS_CELLS.length !== STRUCTURE_TIER_COUNT) {
   throw new RangeError('STRUCTURE_FOOTPRINT_RADIUS_CELLS needs one radius per structure tier');

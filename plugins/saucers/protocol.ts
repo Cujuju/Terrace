@@ -1,10 +1,11 @@
 import {
   CELL_WORLD_SIZE,
+  cellsAcross,
+  drawnCells,
+  isFiniteNumber,
   MAX_HEIGHT,
   MAX_RELIEF_WORLD_UNITS,
   WORLD_UNITS_PER_BAND,
-  cellsAcross,
-  isFiniteNumber,
 } from '@terrace/shared';
 
 export const SAUCERS_PLUGIN_NAME = 'saucers';
@@ -106,7 +107,13 @@ export const MAX_RENDER_LAG_SECONDS = 0.25;
 
 export const LASER_BOLT_RETAIN_SECONDS = LASER_BOLT_LIFETIME_SECONDS + MAX_RENDER_LAG_SECONDS;
 
-export const SAUCER_DIAMETER_CELLS = cellsAcross(1);
+/** The hull GLBs are authored this many units across. */
+export const SAUCER_AUTHORED_DIAMETER_UNITS = 4;
+
+// Owner rule: a saucer is as wide as the Apache is long (17.7 m).
+export const SAUCER_REAL_DIAMETER_METRES = 17.7;
+
+export const SAUCER_DIAMETER_CELLS = drawnCells(SAUCER_REAL_DIAMETER_METRES);
 
 export const SAUCER_MUZZLE_DROP_FRACTION = 0.18;
 
