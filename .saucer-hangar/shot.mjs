@@ -1,6 +1,6 @@
-import { chromium } from '/home/<user>/.npm-global/lib/node_modules/@playwright/cli/node_modules/playwright/index.mjs';
+const { chromium } = await import(`${process.env.HOME}/.npm-global/lib/node_modules/@playwright/cli/node_modules/playwright/index.mjs`);
 const here = new URL('.', import.meta.url).pathname;
-const b = await chromium.launch({ executablePath:'/home/<user>/.cache/ms-playwright/chromium-1232/chrome-linux64/chrome', args:['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader'] });
+const b = await chromium.launch({ executablePath:`${process.env.HOME}/.cache/ms-playwright/chromium-1232/chrome-linux64/chrome`, args:['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader'] });
 const p = await b.newPage({ viewport:{ width:1400, height:820 } });
 p.on('console', m => { if (m.type()==='error' || m.text().startsWith('sky-env probe')) console.log('console:', m.text()); });
 p.on('pageerror', e => console.log('pageerror:', e.message));

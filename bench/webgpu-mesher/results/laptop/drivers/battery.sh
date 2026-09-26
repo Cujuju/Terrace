@@ -5,7 +5,7 @@
 set -u
 RUN=$1; URL=$2; LOOPSTATS=${3:-}
 HERE=${0:A:h}
-OUT=/Users/dev/Documents/GitHub/Terrace/bench/webgpu-mesher/results/laptop
+OUT=${HERE:h}
 VIVALDI=/Applications/Vivaldi.app/Contents/MacOS/Vivaldi
 DURATION=600
 

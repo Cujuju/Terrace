@@ -6,7 +6,7 @@ that branch. Do not touch the shared checkout, do not `cd` out of the worktree,
 never `git add -A` or bare `git add` — stage exact paths. Never start the app.
 
 Plan approved by the owner 2026-09-04:
-`/home/<user>/.claude/plans/terrace-carve-pick-contract.md`. Read it first; this
+`~/.claude/plans/terrace-carve-pick-contract.md`. Read it first; this
 brief is the executable version of it.
 
 Read `docs/DESIGN.md`, `docs/decisions/picking.md`, `docs/decisions/overhangs.md`
