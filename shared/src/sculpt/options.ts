@@ -18,7 +18,7 @@ export type LibrarySculptTool = 'settle';
 /** Every operation `applySculpt` can perform, wire-reachable or not. */
 export type SculptOperation = SculptTool | LibrarySculptTool;
 
-export type SculptProfile = 'soft' | 'hard' | 'stepped';
+export type SculptProfile = 'soft' | 'stepped' | 'hard';
 
 export const SCULPT_TOOLS: readonly SculptTool[] = ['stamp', 'smooth', 'nudge', 'drag', 'carve'];
 
@@ -54,10 +54,10 @@ export const NUDGE_STRENGTH_DEFAULT = 50;
 export const NUDGE_STRENGTH_MIN = 1;
 export const NUDGE_STRENGTH_MAX = 100;
 
-/** The largest outline bump, in cells, a smooth removes; bigger bends are curves and stay. */
-export const SMOOTH_KINK_CELLS_DEFAULT = 2;
-export const SMOOTH_KINK_CELLS_MIN = 1;
-export const SMOOTH_KINK_CELLS_MAX = 8;
+/** How far, in half cells, a smooth may move an outline: bumps shallower go, deeper bends stay. Default is a cell's stair. */
+export const SMOOTH_KINK_HALF_CELLS_DEFAULT = 1;
+export const SMOOTH_KINK_HALF_CELLS_MIN = 1;
+export const SMOOTH_KINK_HALF_CELLS_MAX = 8;
 
 /** Laplacian strength as integer percent, 1..100. Integer keeps math exact. */
 export const SMOOTH_LAMBDA_DEFAULT = 50;
@@ -81,7 +81,7 @@ export const SMOOTH_RIM_DEFAULT = 0;
 export const SMOOTH_RIM_MIN = 0;
 export const SMOOTH_RIM_MAX = 100;
 
-export const SCULPT_PROFILES: readonly SculptProfile[] = ['soft', 'hard', 'stepped'];
+export const SCULPT_PROFILES: readonly SculptProfile[] = ['soft', 'stepped', 'hard'];
 
 export type SculptSpill = 'banded' | 'free';
 
@@ -100,7 +100,7 @@ export interface SculptOptions {
   readonly spanBand?: number | null;
   readonly sweepFrom?: SweepOrigin | null;
   readonly nudgeStrength?: number;
-  readonly smoothKinkCells?: number;
+  readonly smoothKinkHalfCells?: number;
   readonly smoothLambda?: number;
   /** Feather the smooth rim: full strength inside, fading across the halo. */
   readonly smoothFeather?: number;
@@ -136,7 +136,7 @@ export interface ResolvedSculptOptions {
   readonly spanBand: number | null;
   readonly sweepFrom: SweepOrigin | null;
   readonly nudgeStrength: number;
-  readonly smoothKinkCells: number;
+  readonly smoothKinkHalfCells: number;
   readonly smoothLambda: number;
   readonly smoothFeather: number;
   readonly smoothRim: number;
@@ -159,7 +159,7 @@ export const LIBRARY_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
   spanBand: null,
   sweepFrom: null,
   nudgeStrength: NUDGE_STRENGTH_DEFAULT,
-  smoothKinkCells: SMOOTH_KINK_CELLS_DEFAULT,
+  smoothKinkHalfCells: SMOOTH_KINK_HALF_CELLS_DEFAULT,
   smoothLambda: SMOOTH_LAMBDA_DEFAULT,
   smoothFeather: SMOOTH_FEATHER_DEFAULT,
   smoothRim: SMOOTH_RIM_DEFAULT,
