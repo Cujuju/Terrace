@@ -54,8 +54,8 @@ export const NUDGE_STRENGTH_DEFAULT = 50;
 export const NUDGE_STRENGTH_MIN = 1;
 export const NUDGE_STRENGTH_MAX = 100;
 
-/** How far, in half cells, a smooth may move an outline: bumps shallower go, deeper bends stay. Default is a cell's stair. */
-export const SMOOTH_KINK_HALF_CELLS_DEFAULT = 1;
+/** Kink size in half cells: outline noise narrower than about twice this smooths out, wider curves stay. Default is one cell. */
+export const SMOOTH_KINK_HALF_CELLS_DEFAULT = 2;
 export const SMOOTH_KINK_HALF_CELLS_MIN = 1;
 export const SMOOTH_KINK_HALF_CELLS_MAX = 8;
 
