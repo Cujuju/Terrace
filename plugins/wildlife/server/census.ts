@@ -10,6 +10,7 @@ import {
   canTraverseSegment,
   cellsOverArea,
   isWalkableCell as sharedIsWalkableCell,
+  stepKind,
   waterBandProfile,
   type FreshwaterMap,
   type TraversalProfile,
@@ -98,6 +99,61 @@ export function openDirectionCount(
   }
 
   return open;
+}
+
+export interface ClimbStep {
+  readonly fromX: number;
+  readonly fromY: number;
+  readonly toX: number;
+  readonly toY: number;
+}
+
+/** First climbable step along `heading` within `distance`, sampled per cell like `canProceedAlong`. */
+export function climbStepAhead(
+  world: HabitatWorld,
+  species: WildlifeHabitatSpecies,
+  x: number,
+  y: number,
+  heading: number,
+  distance: number,
+): ClimbStep | null {
+  const profile = walkerProfileOf(species);
+  const cos = Math.cos(heading);
+  const sin = Math.sin(heading);
+  const samples = Math.max(1, Math.ceil(distance));
+  let fromX = Math.floor(x);
+  let fromY = Math.floor(y);
+  for (let sample = 1; sample <= samples; sample++) {
+    const along = (distance * sample) / samples;
+    const toX = Math.floor(x + cos * along);
+    const toY = Math.floor(y + sin * along);
+    if (toX === fromX && toY === fromY) continue;
+    if (!isValidCellFor(world, species, toX, toY)) return null;
+    const kind = stepKind(profile, world.heightAt(fromX, fromY), world.heightAt(toX, toY));
+    if (kind === 'blocked') return null;
+    if (kind === 'climb') return { fromX, fromY, toX, toY };
+    fromX = toX;
+    fromY = toY;
+  }
+  return null;
+}
+
+/** Headings, among the steering fan, that reach a climbable step within one body length. */
+export function climbDirectionCount(
+  world: HabitatWorld,
+  species: WildlifeHabitatSpecies,
+  cellX: number,
+  cellY: number,
+): number {
+  const rule = walkerProfileOf(species).climb;
+  if (rule === undefined || rule === null) return 0;
+  const probeCells = profileOf(species).bodyLengthCells;
+  let climbable = 0;
+  for (let direction = 0; direction < AVOID_TURN_ATTEMPTS; direction++) {
+    const heading = direction * AVOID_TURN_STEP_RADIANS;
+    if (climbStepAhead(world, species, cellX, cellY, heading, probeCells) !== null) climbable++;
+  }
+  return climbable;
 }
 
 export function steepDirectionCount(

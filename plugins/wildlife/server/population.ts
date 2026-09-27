@@ -20,6 +20,7 @@ import {
   type HabitatWorld,
   emptySpeciesCounts,
   isValidCellFor,
+  climbDirectionCount,
   openDirectionCount,
   satisfiesSpawnGround,
   withinSpawnHeights,
@@ -378,7 +379,9 @@ export function despawnWedged(world: HabitatWorld): number {
   for (let i = entities.length - 1; i >= 0; i--) {
     const entity = entities[i];
     if (!spawnGroundConstrains(profileOf(entity.species).spawnGround)) continue;
+    if (entity.climb !== null) continue;
     if (openDirectionCount(world, entity.species, entity.x, entity.y) > 0) continue;
+    if (climbDirectionCount(world, entity.species, entity.x, entity.y) > 0) continue;
     despawnWithCredit(i);
     despawned++;
   }
