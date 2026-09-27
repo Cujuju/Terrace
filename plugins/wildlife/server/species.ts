@@ -1,6 +1,6 @@
 import { cellsAcross, cellsOverArea } from '@terrace/shared';
 import {
-  GRAZER_LEAP_SECONDS_PER_BAND,
+  GRAZER_FACE_TREAD_WORLD_UNITS,
   GRAZER_MAX_LEAP_BANDS,
   SWIM_PACE_SCALE,
   WILDLIFE_HABITAT_SPECIES,
@@ -137,9 +137,11 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesPr
     maxGradientPerCell: GRAZER_MAX_GRADIENT_PER_CELL,
     climb: {
       fallChance: GRAZER_LEAP_FALL_CHANCE,
-      secondsPerBand: GRAZER_LEAP_SECONDS_PER_BAND,
       trigger: 'band-edge',
       maxRiseBands: GRAZER_MAX_LEAP_BANDS,
+      faceTreadCells: cellsAcross(GRAZER_FACE_TREAD_WORLD_UNITS),
+      motion: 'leap',
+      facing: 'travel',
     },
     climbApproach: 'on-course',
     turnRadiusBodyLengths: TURN_RADIUS_BODY_LENGTHS,

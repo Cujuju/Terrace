@@ -1,7 +1,7 @@
 import {
   admitsEveryRise,
   isWalkableCell,
-  stepKind,
+  stepKindAt,
   type ClimbRule,
   type TerrainSampler,
   type TraversalProfile,
@@ -139,7 +139,7 @@ function edgeCost(
 
   const fromHeight = world.heightAt(fromX, fromY);
   const toHeight = world.heightAt(toX, toY);
-  const kind = stepKind(profile, fromHeight, toHeight);
+  const kind = stepKindAt(world, profile, fromX, fromY, toX, toY, fromHeight, toHeight);
   if (kind === 'blocked') return null;
   const rule = profile.climb;
   if (kind === 'climb' && rule !== undefined && rule !== null) {
@@ -382,7 +382,7 @@ export function floodReachableRegion(
       const neighborIndex = (ny - minY) * width + (nx - minX);
       const legal =
         classify(neighborIndex, nx, ny) === OCCUPIABLE &&
-        (!checksGradient || stepKind(profile, fromHeight, heights[neighborIndex]) !== 'blocked');
+        (!checksGradient || stepKindAt(world, profile, x, y, nx, ny, fromHeight, heights[neighborIndex]) !== 'blocked');
       orthogonalLegal[i] = legal;
       if (!legal || reached[neighborIndex] === 1) continue;
       reached[neighborIndex] = 1;
@@ -398,7 +398,7 @@ export function floodReachableRegion(
       const neighborIndex = (ny - minY) * width + (nx - minX);
       if (reached[neighborIndex] === 1) continue;
       if (classify(neighborIndex, nx, ny) !== OCCUPIABLE) continue;
-      if (checksGradient && stepKind(profile, fromHeight, heights[neighborIndex]) === 'blocked') continue;
+      if (checksGradient && stepKindAt(world, profile, x, y, nx, ny, fromHeight, heights[neighborIndex]) === 'blocked') continue;
       reached[neighborIndex] = 1;
       queue[tail++] = neighborIndex;
     }
@@ -491,7 +491,7 @@ export function labelSeaRegions(
           const legal =
             labels[neighborIndex] === 0 &&
             classify(neighborIndex, nx, ny) === OCCUPIABLE &&
-            (!checksGradient || stepKind(profile, fromHeight, heights[neighborIndex]) !== 'blocked');
+            (!checksGradient || stepKindAt(world, profile, cx, cy, nx, ny, fromHeight, heights[neighborIndex]) !== 'blocked');
           orthogonalLegal[i] = legal;
           if (!legal) continue;
           labels[neighborIndex] = regionCount;
@@ -506,7 +506,7 @@ export function labelSeaRegions(
           const neighborIndex = ny * worldSize + nx;
           if (labels[neighborIndex] !== 0) continue;
           if (classify(neighborIndex, nx, ny) !== OCCUPIABLE) continue;
-          if (checksGradient && stepKind(profile, fromHeight, heights[neighborIndex]) === 'blocked') continue;
+          if (checksGradient && stepKindAt(world, profile, cx, cy, nx, ny, fromHeight, heights[neighborIndex]) === 'blocked') continue;
           labels[neighborIndex] = regionCount;
           queue[tail++] = neighborIndex;
         }

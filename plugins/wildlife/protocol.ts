@@ -185,10 +185,11 @@ export const SWIM_PACE_SCALE = 1 / 4;
 
 export const IBEX_CLIMB_SECONDS_PER_BAND = 0.8;
 
-// Owner rule: deer leap riser bands like ibex, at most three bands (band one to four).
-export const GRAZER_LEAP_SECONDS_PER_BAND = IBEX_CLIMB_SECONDS_PER_BAND;
-
+// Owner rule: a deer bounds up or down a face of at most three bands (band one to four)...
 export const GRAZER_MAX_LEAP_BANDS = 3;
+
+// ...where risers closer than half a world unit of flat ground count as one face.
+export const GRAZER_FACE_TREAD_WORLD_UNITS = 0.5;
 
 export const WILDLIFE_POPULATION_CAP = 850;
 

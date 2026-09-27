@@ -1,9 +1,10 @@
 import { BAND_HEIGHT, MAX_HEIGHT, MAX_RELIEF_WORLD_UNITS, cellsAcross } from './constants.ts';
 import { hashToIndex } from './rng.ts';
 import { isFiniteNumber } from './parse.ts';
+import { METRES_PER_WORLD_UNIT } from './scale.ts';
 import {
   admitsHeight,
-  stepKind,
+  stepKindAt,
   type ClimbRule,
   type TerrainSampler,
   type TraversalProfile,
@@ -64,8 +65,50 @@ const FALL_RELEASE_STEPS = 64;
 
 const ASCENT_LEGS = ['face', 'lip'] as const;
 const DESCENT_LEGS = ['turn', 'lip', 'face', 'ground'] as const;
+const FACING_TRAVEL_DESCENT_LEGS = ['lip', 'face', 'ground'] as const;
+const LEAP_LEGS = ['leap'] as const;
 
-export type ClimbLeg = (typeof ASCENT_LEGS)[number] | (typeof DESCENT_LEGS)[number] | 'done';
+export type ClimbLeg =
+  | (typeof ASCENT_LEGS)[number]
+  | (typeof DESCENT_LEGS)[number]
+  | (typeof LEAP_LEGS)[number]
+  | 'done';
+
+const STANDARD_GRAVITY_METRES_PER_SECOND_SQUARED = 9.80665;
+
+const HEIGHT_UNITS_PER_METRE = MAX_HEIGHT / (MAX_RELIEF_WORLD_UNITS * METRES_PER_WORLD_UNIT);
+
+// Real gravity at the world's metric scale (scale.ts), so a bound reads at true weight.
+export const LEAP_GRAVITY_HEIGHT_UNITS_PER_SECOND_SQUARED =
+  STANDARD_GRAVITY_METRES_PER_SECOND_SQUARED * HEIGHT_UNITS_PER_METRE;
+
+// Tucked hooves clear the higher lip by half a band at the apex.
+export const LEAP_APEX_CLEARANCE_HEIGHT_UNITS = BAND_HEIGHT / 2;
+
+// A leap runs centre to centre, so the face lies halfway along it.
+const LEAP_FACE_PROGRESS = 1 / 2;
+
+/** One ballistic bound: rises to `apexHeight` in `riseSeconds`, lands at `seconds`. */
+export interface LeapArc {
+  readonly seconds: number;
+  readonly riseSeconds: number;
+  readonly apexHeight: number;
+  /** A doomed leap falls from here, while still over the low cell. */
+  readonly releaseSeconds: number;
+}
+
+function leapTiming(fromHeight: number, toHeight: number): { seconds: number; riseSeconds: number; apexHeight: number } {
+  const apexHeight = Math.max(fromHeight, toHeight) + LEAP_APEX_CLEARANCE_HEIGHT_UNITS;
+  const g = LEAP_GRAVITY_HEIGHT_UNITS_PER_SECOND_SQUARED;
+  const riseSeconds = Math.sqrt((2 * (apexHeight - fromHeight)) / g);
+  const fallSeconds = Math.sqrt((2 * (apexHeight - toHeight)) / g);
+  return { seconds: riseSeconds + fallSeconds, riseSeconds, apexHeight };
+}
+
+function leapHeightAt(arc: LeapArc, elapsed: number): number {
+  const fromApex = elapsed - arc.riseSeconds;
+  return arc.apexHeight - (LEAP_GRAVITY_HEIGHT_UNITS_PER_SECOND_SQUARED * fromApex * fromApex) / 2;
+}
 
 export interface ClimbState {
   readonly visualId: number;
@@ -84,6 +127,8 @@ export interface ClimbState {
   readonly descending: boolean;
   readonly heading: number;
   readonly turnFrom: number;
+  readonly legs: readonly ClimbLeg[];
+  readonly leap: LeapArc | null;
   readonly risePerSecond: number;
   readonly lipSeconds: number;
   readonly groundSeconds: number;
@@ -119,7 +164,7 @@ export function parseClimbPath(value: unknown): ClimbPath | null {
   if (typeof value !== 'object' || value === null) return null;
   const path = value as Partial<ClimbPath>;
   if (path.leg !== 'turn' && path.leg !== 'lip' && path.leg !== 'face' &&
-      path.leg !== 'ground' && path.leg !== 'done') return null;
+      path.leg !== 'ground' && path.leg !== 'leap' && path.leg !== 'done') return null;
   if (!isFiniteNumber(path.id) || !isFiniteNumber(path.fromX) || !isFiniteNumber(path.fromY) ||
       !isFiniteNumber(path.toX) || !isFiniteNumber(path.toY) ||
       !isFiniteNumber(path.footX) || !isFiniteNumber(path.footY) ||
@@ -192,7 +237,8 @@ function climbGeometryOf(
   const fromCellX = Math.floor(fromX);
   const fromCellY = Math.floor(fromY);
   const fromHeight = world.heightAt(fromCellX, fromCellY);
-  if (stepKind(profile, fromHeight, toHeight) !== 'climb') return null;
+  const kind = stepKindAt(world, profile, fromCellX, fromCellY, toCellX, toCellY, fromHeight, toHeight);
+  if (kind !== 'climb') return null;
 
   const descending = toHeight < fromHeight;
   const lowCellX = descending ? toCellX : fromCellX;
@@ -202,7 +248,26 @@ function climbGeometryOf(
 
   const normalX = highCellX - lowCellX;
   const normalY = highCellY - lowCellY;
+  const heading = (rule.facing ?? 'wall') === 'travel'
+    ? Math.atan2(toCellY - fromCellY, toCellX - fromCellX)
+    : Math.atan2(normalY, normalX);
+  const from = cellCentre({ x: fromCellX, y: fromCellY });
+  const to = cellCentre({ x: toCellX, y: toCellY });
+  const low = cellCentre({ x: lowCellX, y: lowCellY });
+  if ((rule.motion ?? 'climb') === 'leap') {
+    return {
+      descending, fromHeight, toHeight,
+      lowHeight: descending ? toHeight : fromHeight,
+      highHeight: descending ? fromHeight : toHeight,
+      footX: low.x, footY: low.y,
+      exitX: to.x, exitY: to.y,
+      approachX: from.x, approachY: from.y,
+      heading, rule,
+    };
+  }
   const inset = CELL_CENTRE_OFFSET - climbBodyHalfWidthCells(rule);
+  const footX = low.x + normalX * inset;
+  const footY = low.y + normalY * inset;
 
   return {
     descending,
@@ -210,13 +275,13 @@ function climbGeometryOf(
     toHeight,
     lowHeight: descending ? toHeight : fromHeight,
     highHeight: descending ? fromHeight : toHeight,
-    footX: lowCellX + CELL_CENTRE_OFFSET + normalX * inset,
-    footY: lowCellY + CELL_CENTRE_OFFSET + normalY * inset,
-    exitX: toCellX + CELL_CENTRE_OFFSET,
-    exitY: toCellY + CELL_CENTRE_OFFSET,
-    approachX: descending ? highCellX + CELL_CENTRE_OFFSET : lowCellX + CELL_CENTRE_OFFSET + normalX * inset,
-    approachY: descending ? highCellY + CELL_CENTRE_OFFSET : lowCellY + CELL_CENTRE_OFFSET + normalY * inset,
-    heading: Math.atan2(normalY, normalX),
+    footX,
+    footY,
+    exitX: to.x,
+    exitY: to.y,
+    approachX: descending ? from.x : footX,
+    approachY: descending ? from.y : footY,
+    heading,
     rule,
   };
 }
@@ -246,6 +311,16 @@ export function beginClimb(
   const halfWidth = climbBodyHalfWidthCells(rule);
   const lipCells = CELL_CENTRE_OFFSET + halfWidth;
   const groundCells = CELL_CENTRE_OFFSET - halfWidth;
+  const legs = climbLegsFor(rule, geometry.descending);
+  let leap: LeapArc | null = null;
+  if (legs === LEAP_LEGS) {
+    const timing = leapTiming(geometry.fromHeight, geometry.toHeight);
+    // Over the low cell: before the face going up, after it going down.
+    const releaseProgress = geometry.descending
+      ? LEAP_FACE_PROGRESS + (1 - LEAP_FACE_PROGRESS) * releaseFraction
+      : LEAP_FACE_PROGRESS * releaseFraction;
+    leap = { ...timing, releaseSeconds: timing.seconds * releaseProgress };
+  }
 
   return {
     visualId: seed,
@@ -264,6 +339,8 @@ export function beginClimb(
     descending: geometry.descending,
     heading: geometry.heading,
     turnFrom,
+    legs,
+    leap,
     risePerSecond: climbRiseHeightUnitsPerSecond(rule),
     lipSeconds: secondsPerBand,
     groundSeconds: lipCells <= 0 ? 0 : (secondsPerBand * groundCells) / lipCells,
@@ -276,18 +353,21 @@ export function beginClimb(
   };
 }
 
-function legsOf(state: ClimbState): readonly ClimbLeg[] {
-  return state.descending ? DESCENT_LEGS : ASCENT_LEGS;
+function climbLegsFor(rule: ClimbRule, descending: boolean): readonly ClimbLeg[] {
+  if ((rule.motion ?? 'climb') === 'leap') return LEAP_LEGS;
+  if (!descending) return ASCENT_LEGS;
+  return (rule.facing ?? 'wall') === 'travel' ? FACING_TRAVEL_DESCENT_LEGS : DESCENT_LEGS;
 }
 
 export function climbLegOf(state: ClimbState): ClimbLeg {
-  return legsOf(state)[state.legIndex] ?? 'done';
+  return state.legs[state.legIndex] ?? 'done';
 }
 
 function legSeconds(state: ClimbState, leg: ClimbLeg): number {
   if (leg === 'turn') return CLIMB_TURN_SECONDS;
   if (leg === 'lip') return state.lipSeconds;
   if (leg === 'ground') return state.groundSeconds;
+  if (leg === 'leap') return state.leap?.seconds ?? 0;
   return 0;
 }
 
@@ -324,6 +404,19 @@ function advanceFaceLeg(state: ClimbState, seconds: number): number {
   return seconds;
 }
 
+function advanceLeapLeg(state: ClimbState, arc: LeapArc, seconds: number): number {
+  const end = state.doomed ? arc.releaseSeconds : arc.seconds;
+  const used = Math.max(0, Math.min(end - state.legElapsed, seconds));
+  state.legElapsed += used;
+  if (state.doomed && state.legElapsed >= arc.releaseSeconds) {
+    state.height = leapHeightAt(arc, arc.releaseSeconds);
+    state.falling = true;
+    return used;
+  }
+  state.height = state.legElapsed >= arc.seconds ? state.toHeight : leapHeightAt(arc, state.legElapsed);
+  return used;
+}
+
 function advanceFlatLeg(state: ClimbState, leg: ClimbLeg, seconds: number): number {
   const total = legSeconds(state, leg);
   const remaining = total - state.legElapsed;
@@ -348,10 +441,14 @@ export function advanceClimb(mover: ClimbingMover, dt: number): ClimbOutcome {
     return 'climbing';
   }
 
-  const legs = legsOf(state);
+  const legs = state.legs;
   while (state.legIndex < legs.length) {
     const leg = legs[state.legIndex] as ClimbLeg;
-    left -= leg === 'face' ? advanceFaceLeg(state, left) : advanceFlatLeg(state, leg, left);
+    left -= leg === 'face'
+      ? advanceFaceLeg(state, left)
+      : leg === 'leap' && state.leap !== null
+        ? advanceLeapLeg(state, state.leap, left)
+        : advanceFlatLeg(state, leg, left);
     if (state.falling) break;
     if (!legComplete(state, leg)) break;
     state.legIndex += 1;
@@ -395,6 +492,15 @@ function placeOnWall(mover: ClimbingMover, state: ClimbState): void {
       mover.heading = state.heading;
       return;
     }
+    case 'leap': {
+      const u = state.leap === null || state.leap.seconds <= 0
+        ? 1
+        : Math.min(1, state.legElapsed / state.leap.seconds);
+      mover.x = state.entryX + (state.exitX - state.entryX) * u;
+      mover.y = state.entryY + (state.exitY - state.entryY) * u;
+      mover.heading = state.heading;
+      return;
+    }
     default: {
       mover.x = state.exitX;
       mover.y = state.exitY;
@@ -422,7 +528,8 @@ export function approachAndClimb(
   const geometry = climbGeometryOf(world, profile, mover.x, mover.y, target.x, target.y);
   if (geometry === null) return null;
 
-  if (!geometry.descending) mover.heading = geometry.heading;
+  // A wall-facer walks to the edge facing out, then turns; everything else faces its heading.
+  if (!geometry.descending || (geometry.rule.facing ?? 'wall') === 'travel') mover.heading = geometry.heading;
 
   const dx = geometry.approachX - mover.x;
   const dy = geometry.approachY - mover.y;
@@ -476,6 +583,7 @@ export function climbSeed(
 const SEED_MIX_RANGE = 0x7fffffff;
 
 export function climbSeconds(rule: ClimbRule, fromHeight: number, toHeight: number): number {
+  if ((rule.motion ?? 'climb') === 'leap') return leapTiming(fromHeight, toHeight).seconds;
   const rise = Math.abs(toHeight - fromHeight);
   const secondsPerBand = climbSecondsPerBand(rule);
   const halfWidth = climbBodyHalfWidthCells(rule);
@@ -483,5 +591,6 @@ export function climbSeconds(rule: ClimbRule, fromHeight: number, toHeight: numb
   const lip = secondsPerBand;
   if (toHeight >= fromHeight) return face + lip;
   const ground = (secondsPerBand * (CELL_CENTRE_OFFSET - halfWidth)) / (CELL_CENTRE_OFFSET + halfWidth);
-  return CLIMB_TURN_SECONDS + lip + face + ground;
+  const turn = (rule.facing ?? 'wall') === 'travel' ? 0 : CLIMB_TURN_SECONDS;
+  return turn + lip + face + ground;
 }
