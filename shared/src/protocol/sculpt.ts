@@ -15,9 +15,9 @@ import {
   SMOOTH_FEATHER_MAX,
   SMOOTH_FEATHER_MIN,
   SMOOTH_KERNELS,
-  SMOOTH_KINK_CELLS_DEFAULT,
-  SMOOTH_KINK_CELLS_MAX,
-  SMOOTH_KINK_CELLS_MIN,
+  SMOOTH_KINK_HALF_CELLS_DEFAULT,
+  SMOOTH_KINK_HALF_CELLS_MAX,
+  SMOOTH_KINK_HALF_CELLS_MIN,
   SMOOTH_KERNEL_DEFAULT,
   SMOOTH_LAMBDA_DEFAULT,
   SMOOTH_LAMBDA_MAX,
@@ -48,7 +48,7 @@ export interface SculptIntent {
   dragAlt?: boolean;
   spanBand?: number;
   nudgeStrength?: number;
-  smoothKinkCells?: number;
+  smoothKinkHalfCells?: number;
   smoothLambda?: number;
   smoothFeather?: number;
   smoothRim?: number;
@@ -80,7 +80,7 @@ export const WIRE_DEFAULT_SCULPT_OPTIONS: ResolvedWireSculptOptions = {
   dragAlt: false,
   sweepFrom: null,
   nudgeStrength: NUDGE_STRENGTH_DEFAULT,
-  smoothKinkCells: SMOOTH_KINK_CELLS_DEFAULT,
+  smoothKinkHalfCells: SMOOTH_KINK_HALF_CELLS_DEFAULT,
   smoothLambda: SMOOTH_LAMBDA_DEFAULT,
   smoothFeather: SMOOTH_FEATHER_DEFAULT,
   smoothRim: SMOOTH_RIM_DEFAULT,
@@ -118,8 +118,8 @@ export function sculptOptionsOf(intent: SculptIntent): ResolvedWireSculptOptions
         : null,
     nudgeStrength:
       tool === 'nudge' ? (intent.nudgeStrength ?? NUDGE_STRENGTH_DEFAULT) : NUDGE_STRENGTH_DEFAULT,
-    smoothKinkCells:
-      tool === 'smooth' ? (intent.smoothKinkCells ?? SMOOTH_KINK_CELLS_DEFAULT) : SMOOTH_KINK_CELLS_DEFAULT,
+    smoothKinkHalfCells:
+      tool === 'smooth' ? (intent.smoothKinkHalfCells ?? SMOOTH_KINK_HALF_CELLS_DEFAULT) : SMOOTH_KINK_HALF_CELLS_DEFAULT,
     smoothLambda:
       tool === 'smooth'
         ? (intent.smoothLambda ?? SMOOTH_LAMBDA_DEFAULT)
@@ -259,12 +259,12 @@ export function validateSculptIntent(
   }
 
   // Kink size bounds what a smooth removes, smooth only.
-  const { smoothKinkCells } = m;
-  if (smoothKinkCells !== undefined) {
+  const { smoothKinkHalfCells } = m;
+  if (smoothKinkHalfCells !== undefined) {
     if (
-      !Number.isInteger(smoothKinkCells) ||
-      (smoothKinkCells as number) < SMOOTH_KINK_CELLS_MIN ||
-      (smoothKinkCells as number) > SMOOTH_KINK_CELLS_MAX
+      !Number.isInteger(smoothKinkHalfCells) ||
+      (smoothKinkHalfCells as number) < SMOOTH_KINK_HALF_CELLS_MIN ||
+      (smoothKinkHalfCells as number) > SMOOTH_KINK_HALF_CELLS_MAX
     ) {
       return null;
     }
@@ -380,7 +380,7 @@ export function validateSculptIntent(
     ...(dragAlt !== undefined ? { dragAlt: dragAlt as boolean } : {}),
     ...(spanBand !== undefined ? { spanBand: spanBand as number } : {}),
     ...(nudgeStrength !== undefined ? { nudgeStrength: nudgeStrength as number } : {}),
-    ...(smoothKinkCells !== undefined ? { smoothKinkCells: smoothKinkCells as number } : {}),
+    ...(smoothKinkHalfCells !== undefined ? { smoothKinkHalfCells: smoothKinkHalfCells as number } : {}),
     ...(smoothLambda !== undefined ? { smoothLambda: smoothLambda as number } : {}),
     ...(smoothFeather !== undefined ? { smoothFeather: smoothFeather as number } : {}),
     ...(smoothRim !== undefined ? { smoothRim: smoothRim as number } : {}),

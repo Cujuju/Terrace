@@ -6,7 +6,7 @@ import {
   carveDepthBands,
   nudgeStrength,
   sculptDirection,
-  smoothKinkCells,
+  smoothKinkHalfCells,
 } from '../../state/hudState.ts';
 import { footOfFaceCell } from '../../terrain/faceFoot.ts';
 import { isAltSculptPress } from '../../state/controlPrefs.ts';
@@ -115,7 +115,7 @@ export const emitIntent = (s: StrokeState, origin: EmitOrigin): EmitOutcome => {
     ...(TOOLS_WITHOUT_EDGE_PROFILE.includes(s.strokeTool)
       ? {}
       : { profile: brushProfile() }),
-    ...(s.strokeTool === 'smooth' ? { smoothKinkCells: smoothKinkCells() } : {}),
+    ...(s.strokeTool === 'smooth' ? { smoothKinkHalfCells: smoothKinkHalfCells() } : {}),
     ...(s.strokeTool === 'nudge' ? { nudgeStrength: nudgeStrength() } : {}),
     ...(s.strokeTool === 'carve' ? { depthBands: carveDepthBands() } : {}),
     ...(spanBand !== null ? { spanBand } : {}),

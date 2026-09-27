@@ -39,9 +39,9 @@ import {
   NUDGE_STRENGTH_DEFAULT,
   NUDGE_STRENGTH_MAX,
   NUDGE_STRENGTH_MIN,
-  SMOOTH_KINK_CELLS_DEFAULT,
-  SMOOTH_KINK_CELLS_MAX,
-  SMOOTH_KINK_CELLS_MIN,
+  SMOOTH_KINK_HALF_CELLS_DEFAULT,
+  SMOOTH_KINK_HALF_CELLS_MAX,
+  SMOOTH_KINK_HALF_CELLS_MIN,
   LIBRARY_SCULPT_TOOL,
   SMOOTH_FEATHER_DEFAULT,
   SMOOTH_FEATHER_MAX,
@@ -92,9 +92,9 @@ export {
   NUDGE_STRENGTH_MIN,
   SCULPT_PROFILES,
   SCULPT_TOOLS,
-  SMOOTH_KINK_CELLS_DEFAULT,
-  SMOOTH_KINK_CELLS_MAX,
-  SMOOTH_KINK_CELLS_MIN,
+  SMOOTH_KINK_HALF_CELLS_DEFAULT,
+  SMOOTH_KINK_HALF_CELLS_MAX,
+  SMOOTH_KINK_HALF_CELLS_MIN,
   SMOOTH_FEATHER_DEFAULT,
   SMOOTH_FEATHER_MAX,
   SMOOTH_FEATHER_MIN,
@@ -209,11 +209,11 @@ export function applySculpt(
 
   if (tool === 'smooth' && anchor !== 'free') {
     const smoothed = new Set<number>();
-    const kinkCells = Math.min(
-      SMOOTH_KINK_CELLS_MAX,
-      Math.max(SMOOTH_KINK_CELLS_MIN, options?.smoothKinkCells ?? SMOOTH_KINK_CELLS_DEFAULT),
+    const kinkHalfCells = Math.min(
+      SMOOTH_KINK_HALF_CELLS_MAX,
+      Math.max(SMOOTH_KINK_HALF_CELLS_MIN, options?.smoothKinkHalfCells ?? SMOOTH_KINK_HALF_CELLS_DEFAULT),
     );
-    applyOutlineSmooth(map, cx, cy, radius, kinkCells, spanBand, smoothed);
+    applyOutlineSmooth(map, cx, cy, radius, kinkHalfCells, spanBand, smoothed);
     return diffOf(map, smoothed);
   }
 

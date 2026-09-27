@@ -22,8 +22,8 @@ import {
   setCarveDepthBands,
   setNudgeStrength,
   setSculptMode,
-  setSmoothKinkCells,
-  smoothKinkCells,
+  setSmoothKinkHalfCells,
+  smoothKinkHalfCells,
   type DenialHint,
   type SculptMode,
 } from '../state/hudState.ts';
@@ -53,8 +53,8 @@ import {
   CARVE_MIN_DEPTH_BANDS,
   NUDGE_STRENGTH_MAX,
   NUDGE_STRENGTH_MIN,
-  SMOOTH_KINK_CELLS_MAX,
-  SMOOTH_KINK_CELLS_MIN,
+  SMOOTH_KINK_HALF_CELLS_MAX,
+  SMOOTH_KINK_HALF_CELLS_MIN,
   type SculptProfile,
   type SculptTool,
 } from '@terrace/shared';
@@ -138,7 +138,7 @@ const HINT_MODIFIER: Record<string, string> = {
 const NUDGE_STRENGTH_DETENTS: readonly number[] = [25, 50, 75, 100];
 
 /** Kink sizes worth marking: a cell's jag, a step's, a small bump, the largest. */
-const SMOOTH_KINK_DETENTS: readonly number[] = [SMOOTH_KINK_CELLS_MIN, 2, 4, SMOOTH_KINK_CELLS_MAX];
+const SMOOTH_KINK_DETENTS: readonly number[] = [SMOOTH_KINK_HALF_CELLS_MIN, 2, 4, SMOOTH_KINK_HALF_CELLS_MAX];
 
 /** The marked depths: one slab, an overhang's two, then five and the ceiling. */
 const CARVE_DEPTH_DETENTS: readonly number[] = [
@@ -295,12 +295,12 @@ export function BrushModeler(): JSX.Element {
       </div>
       <Show when={brushTool() === 'smooth'}>
         <div class="hud-row brush-slider">
-          <span class="brush-slider__end">{SMOOTH_KINK_CELLS_MIN}</span>
+          <span class="brush-slider__end">{SMOOTH_KINK_HALF_CELLS_MIN}</span>
           <div
             class="brush-slider__track"
             style={{
-              '--brush-rung': String(smoothKinkCells() - SMOOTH_KINK_CELLS_MIN),
-              '--brush-slider-rungs': String(SMOOTH_KINK_CELLS_MAX - SMOOTH_KINK_CELLS_MIN),
+              '--brush-rung': String(smoothKinkHalfCells() - SMOOTH_KINK_HALF_CELLS_MIN),
+              '--brush-slider-rungs': String(SMOOTH_KINK_HALF_CELLS_MAX - SMOOTH_KINK_HALF_CELLS_MIN),
             }}
           >
             <span class="brush-slider__rail" />
@@ -309,9 +309,9 @@ export function BrushModeler(): JSX.Element {
               {(detent, anchor) => (
                 <span
                   class="brush-slider__detent"
-                  classList={{ on: smoothKinkCells() >= detent }}
+                  classList={{ on: smoothKinkHalfCells() >= detent }}
                   style={{
-                    '--brush-detent': String(detent - SMOOTH_KINK_CELLS_MIN),
+                    '--brush-detent': String(detent - SMOOTH_KINK_HALF_CELLS_MIN),
                     '--brush-anchor': String(anchor()),
                   }}
                 />
@@ -320,20 +320,20 @@ export function BrushModeler(): JSX.Element {
             <input
               type="range"
               class="brush-slider__input"
-              min={SMOOTH_KINK_CELLS_MIN}
-              max={SMOOTH_KINK_CELLS_MAX}
+              min={SMOOTH_KINK_HALF_CELLS_MIN}
+              max={SMOOTH_KINK_HALF_CELLS_MAX}
               step="1"
-              value={smoothKinkCells()}
+              value={smoothKinkHalfCells()}
               aria-label="Kink size"
-              aria-valuetext={`${smoothKinkCells()} cells`}
+              aria-valuetext={`${smoothKinkHalfCells()} cells`}
               title="Kink size: the largest bump in a terrace edge a smooth removes; bigger bends are curves and stay"
               onInput={(event) =>
-                setSmoothKinkCells(event.currentTarget.valueAsNumber)
+                setSmoothKinkHalfCells(event.currentTarget.valueAsNumber)
               }
             />
-            <span class="brush-slider__value">{smoothKinkCells()}</span>
+            <span class="brush-slider__value">{smoothKinkHalfCells()}</span>
           </div>
-          <span class="brush-slider__end">{SMOOTH_KINK_CELLS_MAX}</span>
+          <span class="brush-slider__end">{SMOOTH_KINK_HALF_CELLS_MAX}</span>
         </div>
       </Show>
       <Show when={brushTool() === 'nudge'}>
