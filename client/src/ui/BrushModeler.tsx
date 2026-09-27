@@ -61,7 +61,7 @@ import {
 
 const TOOL_TITLE: Record<SculptTool, string> = {
   stamp: 'Stamp: raise or lower brushed ground',
-  smooth: 'Smooth: straighten kinks in terrace edges, keeping real curves',
+  smooth: 'Smooth: smooth out noise in terrace edges, keeping their curves',
   nudge: 'Nudge: push terraces apart, or draw them together the other way',
   drag: 'Drag: drag a terrace edge outward',
   carve: 'Carve: cut a tunnel, roof intact',
@@ -343,7 +343,7 @@ export function BrushModeler(): JSX.Element {
               value={smoothKinkHalfCells()}
               aria-label="Kink size"
               aria-valuetext={`${kinkCellsLabel(smoothKinkHalfCells())} cells`}
-              title="Kink size in cells: how far a smooth may move a terrace edge; shallower bumps go, deeper bends stay"
+              title="Kink size in cells: wiggles in a terrace edge narrower than about twice this smooth out; wider curves keep their shape"
               onInput={(event) =>
                 setSmoothKinkHalfCells(event.currentTarget.valueAsNumber)
               }
