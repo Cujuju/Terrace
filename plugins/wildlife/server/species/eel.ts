@@ -22,7 +22,7 @@ export const EEL_PROFILE: SpeciesProfile = {
   species: 'eel',
   habitat: 'shallow',
   minWaterDepthBands: NO_MIN_WATER_DEPTH,
-  cruiseSpeedCellsPerSecond: cellsAcross(0.9),
+  cruiseSpeedCellsPerSecond: cellsAcross(0.225),
   turnNoiseRadiansPerSecond: 0.5,
   bodyLengthCells: EEL_BODY_LENGTH_CELLS,
   hullBeamCells: EEL_BODY_LENGTH_CELLS * EEL_BEAM_OF_LENGTH,

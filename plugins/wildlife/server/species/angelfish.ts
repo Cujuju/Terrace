@@ -19,7 +19,7 @@ export const ANGELFISH_PROFILE: SpeciesProfile = {
   species: 'angelfish',
   habitat: 'shallow',
   minWaterDepthBands: NO_MIN_WATER_DEPTH,
-  cruiseSpeedCellsPerSecond: cellsAcross(1.6),
+  cruiseSpeedCellsPerSecond: cellsAcross(0.4),
   turnNoiseRadiansPerSecond: 1.0,
   bodyLengthCells: ANGELFISH_BODY_LENGTH_CELLS,
   hullBeamCells: ANGELFISH_BODY_LENGTH_CELLS * ANGELFISH_BEAM_OF_LENGTH,

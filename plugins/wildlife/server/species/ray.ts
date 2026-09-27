@@ -23,7 +23,7 @@ export const RAY_PROFILE: SpeciesProfile = {
   species: 'ray',
   habitat: 'shallow',
   minWaterDepthBands: NO_MIN_WATER_DEPTH,
-  cruiseSpeedCellsPerSecond: cellsAcross(1.0),
+  cruiseSpeedCellsPerSecond: cellsAcross(0.25),
   turnNoiseRadiansPerSecond: 0.3,
   bodyLengthCells: RAY_BODY_LENGTH_CELLS,
   hullBeamCells: RAY_BODY_LENGTH_CELLS * RAY_BEAM_OF_LENGTH,

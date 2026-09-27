@@ -27,7 +27,7 @@ export const SHARK_PROFILE: SpeciesProfile = {
   species: 'shark',
   habitat: 'shallow',
   minWaterDepthBands: NO_MIN_WATER_DEPTH,
-  cruiseSpeedCellsPerSecond: cellsAcross(1.8),
+  cruiseSpeedCellsPerSecond: cellsAcross(0.45),
   turnNoiseRadiansPerSecond: 0.6,
   bodyLengthCells: SHARK_BODY_LENGTH_CELLS,
   hullBeamCells: SHARK_BODY_LENGTH_CELLS * SHARK_BEAM_OF_LENGTH,
