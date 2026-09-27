@@ -37,6 +37,7 @@ export const IBEX_PROFILE: SpeciesProfile = {
   climb: {
     fallChance: IBEX_CLIMB_FALL_CHANCE,
     secondsPerBand: IBEX_CLIMB_SECONDS_PER_BAND,
+    facing: 'travel',
   },
   turnRadiusBodyLengths: TURN_RADIUS_BODY_LENGTHS,
   idle: IBEX_IDLE_BOUTS,

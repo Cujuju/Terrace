@@ -65,5 +65,5 @@ export const buildWolf = assetSpeciesBuilder(
     poseWalk(joints, beat, LEG_SWING_RADIANS, WALK_BOB_WORLD_UNITS);
     joints.head!.rotation.z = Math.sin(beat * 2) * HEAD_NOD_RADIANS;
   },
-  true,
+  { posesByGait: true },
 );

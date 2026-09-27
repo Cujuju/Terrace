@@ -62,6 +62,12 @@ export interface TraversalProfile {
  */
 export type ClimbTrigger = 'sheer' | 'band-edge';
 
+/** `climb`: scale the face at `secondsPerBand`. `leap`: one ballistic bound between cell centres. */
+export type ClimbMotion = 'climb' | 'leap';
+
+/** `wall`: face the riser, turning round to descend. `travel`: face the way the step goes. */
+export type ClimbFacing = 'wall' | 'travel';
+
 export interface ClimbRule {
   readonly fallChance: number;
   readonly secondsPerBand?: number;
@@ -69,6 +75,13 @@ export interface ClimbRule {
   readonly trigger?: ClimbTrigger;
   /** Tallest climbable step in drawn bands; absent means any height. */
   readonly maxRiseBands?: number;
+  /**
+   * Flat run, in cells, that separates two risers into separate faces. When set,
+   * `maxRiseBands` caps the whole face, not each riser.
+   */
+  readonly faceTreadCells?: number;
+  readonly motion?: ClimbMotion;
+  readonly facing?: ClimbFacing;
 }
 
 export type StepKind = 'walk' | 'climb' | 'blocked';
@@ -84,6 +97,82 @@ export function stepKind(profile: TraversalProfile, fromHeight: number, toHeight
   if (rule.maxRiseBands !== undefined && bands > rule.maxRiseBands) return 'blocked';
   if ((rule.trigger ?? 'sheer') === 'band-edge') return bands === 0 ? 'walk' : 'climb';
   return rise > Math.max(profile.maxGradientPerCell, SHEER_RISE_HEIGHT_UNITS_PER_CELL) ? 'climb' : 'walk';
+}
+
+/**
+ * Drawn-band span of the face a step crosses. Along the step's line, the face runs on
+ * past flat runs shorter than `treadCells`, up to `scanCells` per side.
+ */
+export function climbFaceBands(
+  world: TerrainSampler,
+  treadCells: number,
+  scanCells: number,
+  fromCellX: number,
+  fromCellY: number,
+  toCellX: number,
+  toCellY: number,
+): number {
+  const dx = Math.sign(toCellX - fromCellX);
+  const dy = Math.sign(toCellY - fromCellY);
+  const fromBand = drawnBandOfSample(world.heightAt(fromCellX, fromCellY));
+  const toBand = drawnBandOfSample(world.heightAt(toCellX, toCellY));
+  const span = { lowest: Math.min(fromBand, toBand), highest: Math.max(fromBand, toBand) };
+  walkFace(world, treadCells, scanCells, toCellX, toCellY, dx, dy, toBand, span);
+  walkFace(world, treadCells, scanCells, fromCellX, fromCellY, -dx, -dy, fromBand, span);
+  return span.highest - span.lowest;
+}
+
+function walkFace(
+  world: TerrainSampler,
+  treadCells: number,
+  scanCells: number,
+  startX: number,
+  startY: number,
+  dx: number,
+  dy: number,
+  startBand: number,
+  span: { lowest: number; highest: number },
+): void {
+  let band = startBand;
+  let flatRun = 1;
+  for (let k = 1; k <= scanCells && flatRun < treadCells; k++) {
+    const x = startX + dx * k;
+    const y = startY + dy * k;
+    if (x < 0 || y < 0 || x >= world.worldSize || y >= world.worldSize) return;
+    const next = drawnBandOfSample(world.heightAt(x, y));
+    if (next === band) {
+      flatRun++;
+      continue;
+    }
+    band = next;
+    flatRun = 1;
+    if (band < span.lowest) span.lowest = band;
+    if (band > span.highest) span.highest = band;
+  }
+}
+
+/**
+ * `stepKind` between two adjacent cells, plus the face cap: a climb whose face spans
+ * more than `maxRiseBands` is blocked. Heights may be passed when already read.
+ */
+export function stepKindAt(
+  world: TerrainSampler,
+  profile: TraversalProfile,
+  fromCellX: number,
+  fromCellY: number,
+  toCellX: number,
+  toCellY: number,
+  fromHeight: number = world.heightAt(fromCellX, fromCellY),
+  toHeight: number = world.heightAt(toCellX, toCellY),
+): StepKind {
+  const kind = stepKind(profile, fromHeight, toHeight);
+  const rule = profile.climb;
+  if (kind !== 'climb' || rule === undefined || rule === null) return kind;
+  if (rule.faceTreadCells === undefined || rule.maxRiseBands === undefined) return kind;
+  // A face past the cap needs at most cap + 1 risers, each within one tread.
+  const scanCells = (rule.maxRiseBands + 1) * rule.faceTreadCells;
+  const face = climbFaceBands(world, rule.faceTreadCells, scanCells, fromCellX, fromCellY, toCellX, toCellY);
+  return face > rule.maxRiseBands ? 'blocked' : kind;
 }
 
 /** True when no pair of heights is ever blocked, so flood fills need not read heights. */

@@ -32,7 +32,7 @@ import {
   newClimbRiserShift,
   type ClimbRiserShift,
 } from '../../../client/src/plugins/kit/climbRiser.ts';
-import { moverGaitOf, type MoverGait } from '../../../client/src/plugins/kit/moverGait.ts';
+import { leapProgressOf, moverGaitOf, type MoverGait } from '../../../client/src/plugins/kit/moverGait.ts';
 import { moverStanceFromWire } from '@terrace/shared';
 import {
   BODY_COLUMNS,
@@ -47,6 +47,8 @@ import {
 
 const PHASE_RADIANS_PER_ID = Math.PI * (3 - Math.sqrt(5));
 
+const TWO_PI = Math.PI * 2;
+
 /** Beyond this camera distance a creature holds its pose: ground sampling, gait
  *  animation and palette capture run once every LOD_FULL_EVERY frames, staggered by
  *  id. Placement still refreshes. */
@@ -57,6 +59,8 @@ const MAX_ANIMATION_STEP_SECONDS = 0.1;
 
 interface CreatureView {
   phase: number;
+  /** Phase the last full update posed with; a hold re-addresses that slot. */
+  posePhase: number;
   drawnX: number;
   drawnZ: number;
   /** Written by the full path only, so it doubles as the last-full Y. */
@@ -91,6 +95,7 @@ function reconcileViews(sampled: ReadonlyMap<number, InterpolatedEntity>): void 
   reconcileById(sampled, views, {
     acquire: (id) => ({
       phase: id * PHASE_RADIANS_PER_ID,
+      posePhase: id * PHASE_RADIANS_PER_ID,
       drawnX: 0,
       drawnZ: 0,
       drawnY: null,
@@ -137,6 +142,7 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
       entity.climbHeight,
       entity.falling,
       moverStanceFromWire(entity.stance),
+      entity.climbPath,
     );
     // Hold path needs an already-placed pose to freeze (first sight always full).
     const heldY = view.drawnY;
@@ -161,7 +167,7 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
         entity.species,
         sizeClassAt(entity.size),
         id,
-        view.phase,
+        view.posePhase,
         gait,
         view.drawnX,
         heldY,
@@ -214,6 +220,9 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
         Math.hypot(drawnX - view.lastFullX, drawnY - previousDrawnY, drawnZ - view.lastFullZ),
       );
     }
+    // A leap poses by its progress; every other gait by its stride phase.
+    const leap = gait === 'fall' ? null : leapProgressOf(entity);
+    view.posePhase = leap === null ? view.phase : leap * TWO_PI;
     view.drawnY = drawnY;
     view.drawnX = drawnX;
     view.drawnZ = drawnZ;
@@ -226,7 +235,7 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
       entity.species,
       sizeClass,
       id,
-      view.phase,
+      view.posePhase,
       gait,
       view.drawnX,
       drawnY,

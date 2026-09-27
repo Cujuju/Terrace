@@ -10,7 +10,7 @@ import {
   canTraverseSegment,
   cellsOverArea,
   isWalkableCell as sharedIsWalkableCell,
-  stepKind,
+  stepKindAt,
   waterBandProfile,
   type FreshwaterMap,
   type TraversalProfile,
@@ -129,7 +129,7 @@ export function climbStepAhead(
     const toY = Math.floor(y + sin * along);
     if (toX === fromX && toY === fromY) continue;
     if (!isValidCellFor(world, species, toX, toY)) return null;
-    const kind = stepKind(profile, world.heightAt(fromX, fromY), world.heightAt(toX, toY));
+    const kind = stepKindAt(world, profile, fromX, fromY, toX, toY);
     if (kind === 'blocked') return null;
     if (kind === 'climb') return { fromX, fromY, toX, toY };
     fromX = toX;

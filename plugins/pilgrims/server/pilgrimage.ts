@@ -27,7 +27,6 @@ import {
   stanceWireOf,
 } from '@terrace/shared';
 import {
-  PEEP_CLIMB_SECONDS_PER_BAND,
   PILGRIMS_CAP,
   settlementRace,
   type PilgrimEntityState,
@@ -131,8 +130,7 @@ export class SettlednessTracker {
 
 export const PILGRIM_CLIMB_FALL_CHANCE = 0.15;
 
-export const PILGRIM_WALKER_PROFILE: TraversalProfile =
-  climbingWalkerProfile(PILGRIM_CLIMB_FALL_CHANCE, PEEP_CLIMB_SECONDS_PER_BAND);
+export const PILGRIM_WALKER_PROFILE: TraversalProfile = climbingWalkerProfile(PILGRIM_CLIMB_FALL_CHANCE);
 
 export function isWalkableCell(world: PilgrimWorld, x: number, y: number): boolean {
   return sharedIsWalkableCell(world, PILGRIM_WALKER_PROFILE, x, y);

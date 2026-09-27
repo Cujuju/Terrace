@@ -134,7 +134,7 @@ export function disposeSpeciesAssets(): void {
 export function assetSpeciesBuilder(
   spec: SpeciesAssetSpec,
   animate: (joints: SpeciesJoints, seconds: number, phase: number, gait: MoverGait) => void,
-  posesByGait: boolean = false,
+  { posesByGait = false, ownsClimbPitch = false }: { posesByGait?: boolean; ownsClimbPitch?: boolean } = {},
 ): SpeciesModelBuilder {
   return (): AuthoredSpecies => {
     const entry = installed.get(spec.species);
@@ -144,7 +144,7 @@ export function assetSpeciesBuilder(
           'preload (or installSpeciesAsset, under Node) runs first',
       );
     }
-    return { root: entry.root, joints: entry.joints, animate, posesByGait };
+    return { root: entry.root, joints: entry.joints, animate, posesByGait, ownsClimbPitch };
   };
 }
 

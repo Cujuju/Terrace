@@ -218,7 +218,7 @@ export function createWildlifeModels(instanceCapacity: number): WildlifeModels {
       herd,
       animate(seconds, phase, gait) {
         authored.animate(joints, seconds, phase, gait);
-        applyMoverBodyTilt(rigRoot, gait, seconds, phase);
+        applyMoverBodyTilt(rigRoot, gait, seconds, phase, authored.ownsClimbPitch === true);
       },
     };
   }

@@ -43,14 +43,19 @@ function riserStandOf(
 ): { readonly x: number; readonly y: number; readonly normalX: number; readonly normalY: number } | null {
   const path = mover.climbPath;
   if (path !== undefined && path.leg !== 'face' && !mover.falling) return null;
-  const normalX = Math.round(Math.cos(path?.heading ?? mover.heading));
-  const normalY = Math.round(Math.sin(path?.heading ?? mover.heading));
-  if (bodyReachCells === undefined && Math.abs(normalX) + Math.abs(normalY) !== 1) return null;
-  const normalLength = Math.hypot(normalX, normalY);
-
   const descending = path !== undefined && path.fromHeight > path.toHeight;
   const lowX = Math.floor(path === undefined ? mover.x : descending ? path.toX : path.fromX);
   const lowY = Math.floor(path === undefined ? mover.y : descending ? path.toY : path.fromY);
+  // Low cell toward high cell; the heading may face either way.
+  const normalX = path === undefined
+    ? Math.round(Math.cos(mover.heading))
+    : Math.sign(Math.floor(descending ? path.fromX : path.toX) - lowX);
+  const normalY = path === undefined
+    ? Math.round(Math.sin(mover.heading))
+    : Math.sign(Math.floor(descending ? path.fromY : path.toY) - lowY);
+  if (bodyReachCells === undefined && Math.abs(normalX) + Math.abs(normalY) !== 1) return null;
+  if (normalX === 0 && normalY === 0) return null;
+  const normalLength = Math.hypot(normalX, normalY);
   // A server cell index is its rendered centre.
   const groundAtFoot = ctx.drawnGroundYAt(lowX, lowY);
   if (groundAtFoot === null || groundAtFoot >= feetY) return null;

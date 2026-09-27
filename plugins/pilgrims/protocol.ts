@@ -19,16 +19,10 @@ export const SETTLERS_CAP = 6;
 export const WALKERS_WIRE_CAP = PILGRIMS_CAP + WANDERERS_CAP + SETTLERS_CAP;
 
 import {
-  CLIMB_SECONDS_PER_BAND,
   WORLD_UNIT_CELLS,
   cellsAcross,
 } from '@terrace/shared';
 import { isFiniteNumber, parseClimbPath, type ClimbPath } from '@terrace/shared';
-
-// Owner rule: peeps climb three times the shared default climb speed.
-export const PEEP_CLIMB_SPEED_MULTIPLE_OF_DEFAULT = 3;
-
-export const PEEP_CLIMB_SECONDS_PER_BAND = CLIMB_SECONDS_PER_BAND / PEEP_CLIMB_SPEED_MULTIPLE_OF_DEFAULT;
 
 export const SETTLER_RACES = ['rudy', 'uno'] as const;
 
