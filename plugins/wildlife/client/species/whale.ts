@@ -1,5 +1,6 @@
 import type { SpeciesJoints } from './speciesModel.ts';
 import { TWO_PI } from './speciesModel.ts';
+import { SWIM_PACE_SCALE } from '../../protocol.ts';
 import type { SpeciesEnvelope } from './assetSpecies.ts';
 import { WHALE_ENVELOPE } from '../whaleSpecies.ts';
 
@@ -15,7 +16,7 @@ export function whaleEnvelope(halfWidth: number): SpeciesEnvelope {
   };
 }
 
-export const WHALE_FLUKE_HZ = 0.45;
+export const WHALE_FLUKE_HZ = 0.45 * SWIM_PACE_SCALE;
 export const WHALE_FLUKE_SWING_RADIANS = 0.3;
 export const WHALE_BODY_ROLL_FRACTION = 0.12;
 

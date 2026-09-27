@@ -1,4 +1,5 @@
 import { TWO_PI } from './speciesModel.ts';
+import { SWIM_PACE_SCALE } from '../../protocol.ts';
 import {
   SWIMMER_JOINTS,
   assetSpeciesBuilder,
@@ -12,7 +13,7 @@ const PEDUNCLE_X = HULL_CENTRE_X - HULL_LENGTH / 2;
 const CAUDAL_REACH = 0.13;
 const BAR_HALF_THICKNESS = 0.085;
 
-export const ANGELFISH_TAIL_HZ = 2.2;
+export const ANGELFISH_TAIL_HZ = 2.2 * SWIM_PACE_SCALE;
 export const ANGELFISH_TAIL_SWING_RADIANS = 0.35;
 const BODY_COUNTER_YAW_FRACTION = 0.18;
 const PECTORAL_DIHEDRAL_RADIANS = 0.55;

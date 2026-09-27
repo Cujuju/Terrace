@@ -1,4 +1,5 @@
 import { cellsAcross, cellsOverArea } from '@terrace/shared';
+import { SWIM_PACE_SCALE } from '../../protocol.ts';
 import {
   mediumBodyLengthCells,
   AQUATIC_MAX_GRADIENT_PER_CELL,
@@ -19,7 +20,7 @@ export const ANGELFISH_PROFILE: SpeciesProfile = {
   species: 'angelfish',
   habitat: 'shallow',
   minWaterDepthBands: NO_MIN_WATER_DEPTH,
-  cruiseSpeedCellsPerSecond: cellsAcross(0.4),
+  cruiseSpeedCellsPerSecond: cellsAcross(1.6 * SWIM_PACE_SCALE),
   turnNoiseRadiansPerSecond: 1.0,
   bodyLengthCells: ANGELFISH_BODY_LENGTH_CELLS,
   hullBeamCells: ANGELFISH_BODY_LENGTH_CELLS * ANGELFISH_BEAM_OF_LENGTH,

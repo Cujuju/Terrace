@@ -1,7 +1,8 @@
 import { TWO_PI } from './speciesModel.ts';
+import { SWIM_PACE_SCALE } from '../../protocol.ts';
 import { assetSpeciesBuilder, type SpeciesAssetSpec } from './assetSpecies.ts';
 
-const WING_FLAP_HZ = 0.6;
+const WING_FLAP_HZ = 0.6 * SWIM_PACE_SCALE;
 const WING_FLAP_RADIANS = 0.30;
 const TAIL_WAVE_RADIANS = 0.12;
 const TAIL_LAG_RADIANS = 1.2;

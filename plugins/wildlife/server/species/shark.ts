@@ -1,4 +1,5 @@
 import { cellsAcross, cellsOverArea } from '@terrace/shared';
+import { SWIM_PACE_SCALE } from '../../protocol.ts';
 import {
   mediumBodyLengthCells,
   AQUATIC_MAX_GRADIENT_PER_CELL,
@@ -27,7 +28,7 @@ export const SHARK_PROFILE: SpeciesProfile = {
   species: 'shark',
   habitat: 'shallow',
   minWaterDepthBands: NO_MIN_WATER_DEPTH,
-  cruiseSpeedCellsPerSecond: cellsAcross(0.45),
+  cruiseSpeedCellsPerSecond: cellsAcross(1.8 * SWIM_PACE_SCALE),
   turnNoiseRadiansPerSecond: 0.6,
   bodyLengthCells: SHARK_BODY_LENGTH_CELLS,
   hullBeamCells: SHARK_BODY_LENGTH_CELLS * SHARK_BEAM_OF_LENGTH,

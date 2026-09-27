@@ -1,11 +1,12 @@
 import { TWO_PI } from './speciesModel.ts';
+import { SWIM_PACE_SCALE } from '../../protocol.ts';
 import {
   SWIMMER_JOINTS,
   assetSpeciesBuilder,
   type SpeciesAssetSpec,
 } from './assetSpecies.ts';
 
-export const FISH_TAIL_HZ = 3.2;
+export const FISH_TAIL_HZ = 3.2 * SWIM_PACE_SCALE;
 export const FISH_TAIL_SWING_RADIANS = 0.45;
 const BODY_COUNTER_YAW_FRACTION = 0.18;
 const PECTORAL_DIHEDRAL_RADIANS = 0.55;

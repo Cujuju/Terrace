@@ -1,7 +1,8 @@
 import { TWO_PI } from './speciesModel.ts';
+import { SWIM_PACE_SCALE } from '../../protocol.ts';
 import { assetSpeciesBuilder, type SpeciesAssetSpec } from './assetSpecies.ts';
 
-const DEEPSEA_SWAY_HZ = 0.7;
+const DEEPSEA_SWAY_HZ = 0.7 * SWIM_PACE_SCALE;
 const DEEPSEA_SWAY_RADIANS = 0.22;
 const DEEPSEA_LURE_BOB = 0.05;
 const DEEPSEA_LURE_LAG_RADIANS = 1;

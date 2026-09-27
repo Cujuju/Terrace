@@ -180,6 +180,9 @@ export function parseEntitiesPayload(payload: unknown): WildlifeEntityState[] | 
   return parsed;
 }
 
+// Owner rule: swimmers cruise at a quarter of their first tuned speed; stroke rate scales with speed.
+export const SWIM_PACE_SCALE = 1 / 4;
+
 export const IBEX_CLIMB_SECONDS_PER_BAND = 0.8;
 
 // Owner rule: deer leap riser bands like ibex, at most three bands (band one to four).

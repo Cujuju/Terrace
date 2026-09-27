@@ -1,4 +1,5 @@
 import { cellsAcross, cellsOverArea } from '@terrace/shared';
+import { SWIM_PACE_SCALE } from '../../protocol.ts';
 import {
   mediumBodyLengthCells,
   AQUATIC_MAX_GRADIENT_PER_CELL,
@@ -23,7 +24,7 @@ export const RAY_PROFILE: SpeciesProfile = {
   species: 'ray',
   habitat: 'shallow',
   minWaterDepthBands: NO_MIN_WATER_DEPTH,
-  cruiseSpeedCellsPerSecond: cellsAcross(0.25),
+  cruiseSpeedCellsPerSecond: cellsAcross(1.0 * SWIM_PACE_SCALE),
   turnNoiseRadiansPerSecond: 0.3,
   bodyLengthCells: RAY_BODY_LENGTH_CELLS,
   hullBeamCells: RAY_BODY_LENGTH_CELLS * RAY_BEAM_OF_LENGTH,

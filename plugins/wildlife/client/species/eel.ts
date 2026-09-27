@@ -1,4 +1,5 @@
 import { TWO_PI } from './speciesModel.ts';
+import { SWIM_PACE_SCALE } from '../../protocol.ts';
 import { assetSpeciesBuilder, type SpeciesAssetSpec } from './assetSpecies.ts';
 
 const HULL_LENGTH = 1.15;
@@ -8,7 +9,7 @@ const MAX_HALF_WIDTH = 0.075;
 const PEDUNCLE_X = HULL_CENTRE_X - HULL_LENGTH / 2;
 const PADDLE_REACH = 0.14;
 
-export const EEL_TAIL_HZ = 1.6;
+export const EEL_TAIL_HZ = 1.6 * SWIM_PACE_SCALE;
 const SPINE_AMPLITUDES = [0.05, 0.09, 0.13, 0.17, 0.21] as const;
 const SPINE_LAG_RADIANS = 1.1;
 export const EEL_TAIL_SWING_RADIANS = 0.40;
