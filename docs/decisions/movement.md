@@ -105,6 +105,7 @@ Settled with the owner. Facts only; history is in git.
 
 - Anything drawn at ground level reads `ctx.drawnGroundYAt`, which accepts fractional cells.
 - Cell frames: terrain draws cell k centred on rendered cell k; server positions are corner-indexed (cell k spans [k, k+1)).
+  - Server code aims at an integer cell through `cellCentre` (`shared/src/climb.ts`), never a `+ 0.5` literal. Route steering, waypoint snaps and boat fleet hops all use it.
   - Server-frame positions go through `serverGroundSampler(ctx)` and `serverWorldPosition` (`client/src/plugins/kit/groundFollow.ts`), which subtract `CELL_CENTRE_OFFSET`. Integer cell indices (trees, fires, relics) are already rendered centres.
   - Climb-path anchors are server-frame; `climbRiser` shifts are rendered-frame offsets from `renderedCellOf(mover.x)`.
   - Hot paths call `ctx.drawnGroundYAt` directly.
@@ -126,6 +127,5 @@ Settled with the owner. Facts only; history is in git.
 - #492: the water curtain reads the drawn band without the arrival check.
 - #493: footprint samplers floor their probes, and skip probes that come back unknown.
 - #412: the vertical pop at climb start and at arrival.
-- Boats steer to a waypoint hop's cell corner (`fleet.ts` goal `hop.x`), not its centre (`+ 0.5` as route cells do); the debug overlay draws where they steer.
 - Disc systems, rotating storms and saucers resolve positions with `Math.round` (centre frame), unlike `Math.floor` elsewhere on the server.
 - The drawn riser is quantised to ⅛ cell.
