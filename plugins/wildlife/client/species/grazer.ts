@@ -1,4 +1,5 @@
-import { poseSit, poseStand, poseWalk } from './quadruped.ts';
+import { poseFall, poseLeap, poseSit, poseStand, poseWalk } from './quadruped.ts';
+import { GRAZER_LEAP_SECONDS_PER_BAND } from '../../protocol.ts';
 import {
   assetSpeciesBuilder,
   type SpeciesAssetSpec,
@@ -23,6 +24,8 @@ export const GRAZER_ENVELOPE = {
   length: GRAZER_ASSET_ENVELOPE.length,
   bodyHalfLength: GRAZER_ASSET_ENVELOPE.halfLength,
   height: GRAZER_ASSET_ENVELOPE.crownY,
+  // Body centre to muzzle: the leap and fall poses swing legs, never past the head.
+  climbReach: GRAZER_ASSET_ENVELOPE.halfLength,
 } as const;
 
 const GRAZER_JOINTS = ['rig', 'foreLeft', 'foreRight', 'hindLeft', 'hindRight', 'head'];
@@ -51,6 +54,12 @@ const HEAD_NOD_RADIANS = 0.05;
 export const buildGrazer = assetSpeciesBuilder(
   GRAZER_ASSET,
   (joints, seconds, phase, gait) => {
+    if (gait === 'climb' || gait === 'fall') {
+      if (gait === 'climb') poseLeap(joints, seconds, phase, WALK_BOB_WORLD_UNITS, GRAZER_LEAP_SECONDS_PER_BAND);
+      else poseFall(joints, seconds, phase);
+      joints.head!.rotation.z = 0;
+      return;
+    }
     if (gait === 'stand' || gait === 'sit') {
       if (gait === 'stand') poseStand(joints, seconds, phase, WALK_BOB_WORLD_UNITS);
       else poseSit(joints, seconds, phase, WALK_BOB_WORLD_UNITS);

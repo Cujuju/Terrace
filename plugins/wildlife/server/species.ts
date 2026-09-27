@@ -1,5 +1,7 @@
 import { cellsAcross, cellsOverArea } from '@terrace/shared';
 import {
+  GRAZER_LEAP_SECONDS_PER_BAND,
+  GRAZER_MAX_LEAP_BANDS,
   WILDLIFE_HABITAT_SPECIES,
   type WildlifeHabitatSpecies,
 } from '../protocol.ts';
@@ -22,7 +24,7 @@ import {
   type SpeciesProfile,
 } from './species/profile.ts';
 import { BISON_PROFILE } from './species/bison.ts';
-import { IBEX_PROFILE } from './species/ibex.ts';
+import { IBEX_CLIMB_FALL_CHANCE, IBEX_PROFILE } from './species/ibex.ts';
 import { RAY_PROFILE } from './species/ray.ts';
 import { SHARK_PROFILE } from './species/shark.ts';
 import { EEL_PROFILE } from './species/eel.ts';
@@ -57,6 +59,9 @@ const DEEPSEA_BEAM_OF_LENGTH = 0.55 / 1.2;
 export const DEEPSEA_BODY_LENGTH_CELLS = mediumBodyLengthCells('deepsea');
 
 export const GRAZER_BODY_LENGTH_CELLS = mediumBodyLengthCells('grazer');
+
+// Owner rule: a deer leap risks what an ibex climb does.
+export const GRAZER_LEAP_FALL_CHANCE = IBEX_CLIMB_FALL_CHANCE;
 
 export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesProfile>> = {
   fish: {
@@ -129,6 +134,13 @@ export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesPr
     sizeDraw: 'per-group',
     schoolingProbabilityBySize: SOLITARY_SCHOOLING_PROBABILITY_BY_SIZE,
     maxGradientPerCell: GRAZER_MAX_GRADIENT_PER_CELL,
+    climb: {
+      fallChance: GRAZER_LEAP_FALL_CHANCE,
+      secondsPerBand: GRAZER_LEAP_SECONDS_PER_BAND,
+      trigger: 'band-edge',
+      maxRiseBands: GRAZER_MAX_LEAP_BANDS,
+    },
+    climbApproach: 'on-course',
     turnRadiusBodyLengths: TURN_RADIUS_BODY_LENGTHS,
     groupStartle: false,
     spawnGround: { kind: 'open', minOpenDirections: GRAZER_SPAWN_OPEN_DIRECTIONS },

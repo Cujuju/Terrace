@@ -19,6 +19,7 @@ import {
 } from '@terrace/shared';
 import { drawnLengthWorldUnits, realLengthMetres, type WildlifeHabitatSpecies } from '../protocol.ts';
 import { type HabitatWorld, canTraverse, isValidCellFor, walkerProfileOf } from './census.ts';
+import { climbOnCourse } from './climbOnCourse.ts';
 import { erodedSamplerFor, isHullPoseValid } from './hull.ts';
 import { type WildlifeEntity, despawnWithCredit, livingEntities } from './population.ts';
 import { randomSigned, rollEvent } from './rng.ts';
@@ -290,6 +291,9 @@ export function advanceEntity(
   const lookahead = lookaheadCellsFor(entity);
   const stepCells = speedOf(entity) * dt;
   const turnRate = maxTurnRadiansPerSecondOf(entity);
+  if (profile.climbApproach === 'on-course' && climbOnCourse(world, entity, desired, lookahead, stepCells)) {
+    return 'alive';
+  }
   const eroded = erodedSamplerFor(world, entity.species, entity.size);
   const wanted = steerThisTick(world, entity, desired, lookahead, stepCells, occupants);
 

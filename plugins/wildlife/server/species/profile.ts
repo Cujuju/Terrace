@@ -113,6 +113,8 @@ export interface SpeciesProfile {
 
   readonly maxGradientPerCell: number;
   readonly climb?: ClimbRule | null;
+  /** `cornered` (default): climb only when no heading is walkable. `on-course`: climb any climbable step met ahead. */
+  readonly climbApproach?: 'cornered' | 'on-course';
 
   readonly turnRadiusBodyLengths: number;
 

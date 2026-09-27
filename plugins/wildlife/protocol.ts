@@ -182,6 +182,11 @@ export function parseEntitiesPayload(payload: unknown): WildlifeEntityState[] | 
 
 export const IBEX_CLIMB_SECONDS_PER_BAND = 0.8;
 
+// Owner rule: deer leap riser bands like ibex, at most three bands (band one to four).
+export const GRAZER_LEAP_SECONDS_PER_BAND = IBEX_CLIMB_SECONDS_PER_BAND;
+
+export const GRAZER_MAX_LEAP_BANDS = 3;
+
 export const WILDLIFE_POPULATION_CAP = 850;
 
 export const BIRDS_PER_FLOCK_MIN = 5;

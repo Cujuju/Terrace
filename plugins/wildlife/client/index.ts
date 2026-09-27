@@ -20,7 +20,6 @@ import { loadRigAsset } from '../../../client/src/render/rigAsset.ts';
 import { disposeSpeciesAssets, installSpeciesAsset } from './species/assetSpecies.ts';
 import { SPECIES_ASSETS } from './species/assets.ts';
 import { modelScaleFor } from './modelScale.ts';
-import { IBEX_ENVELOPE } from './species/ibex.ts';
 import {
   drawnGroundSampler,
   followClimbGroundY,
@@ -37,6 +36,7 @@ import { moverStanceFromWire } from '@terrace/shared';
 import {
   BODY_COLUMNS,
   SWIM_PROFILES,
+  WALKER_CLIMB_REACH_BY_SPECIES,
   creatureWorldY,
   placementKindOf,
   swimmerSeabedY,
@@ -202,8 +202,9 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     view.lodGait = gait;
     view.sinceFullSeconds = 0;
     const modelScale = modelScaleFor(entity.species, sizeClass, id);
+    const climbReach = WALKER_CLIMB_REACH_BY_SPECIES[entity.species];
     advanceClimbRiserShift(view.riserShift, ctx, entity, drawnY, sinceFull,
-      entity.species === 'ibex' ? cellsAcross(IBEX_ENVELOPE.climbReach * modelScale) : undefined);
+      climbReach === null ? undefined : cellsAcross(climbReach * modelScale));
     const drawnX = (entity.x + view.riserShift.x) * CELL_WORLD_SIZE;
     const drawnZ = (entity.y + view.riserShift.y) * CELL_WORLD_SIZE;
     if (kind === 'walker' && previousDrawnY !== null) {

@@ -273,6 +273,21 @@ export const WALKER_STRIDE_WORLD_UNITS_BY_SPECIES: Readonly<Record<WildlifeSpeci
     bird: null,
   };
 
+/** Body reach from centre that a climbing pose keeps clear of the face; null = no climber. */
+export const WALKER_CLIMB_REACH_BY_SPECIES: Readonly<Record<WildlifeSpecies, number | null>> = {
+  fish: null,
+  whale: null,
+  deepsea: null,
+  grazer: GRAZER_ENVELOPE.climbReach,
+  wolf: null,
+  ibex: IBEX_ENVELOPE.climbReach,
+  bison: null,
+  ray: null,
+  shark: null,
+  eel: null,
+  angelfish: null,
+  bird: null,
+};
 export function walkerStrideRadians(species: WildlifeSpecies, distanceWorldUnits: number): number {
   const stride = WALKER_STRIDE_WORLD_UNITS_BY_SPECIES[species];
   if (stride === null) {

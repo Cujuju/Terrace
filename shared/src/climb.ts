@@ -3,7 +3,7 @@ import { hashToIndex } from './rng.ts';
 import { isFiniteNumber } from './parse.ts';
 import {
   admitsHeight,
-  exceedsWalkableGradient,
+  stepKind,
   type ClimbRule,
   type TerrainSampler,
   type TraversalProfile,
@@ -187,7 +187,7 @@ function climbGeometryOf(
   const fromCellX = Math.floor(fromX);
   const fromCellY = Math.floor(fromY);
   const fromHeight = world.heightAt(fromCellX, fromCellY);
-  if (!exceedsWalkableGradient(profile, toHeight - fromHeight)) return null;
+  if (stepKind(profile, fromHeight, toHeight) !== 'climb') return null;
 
   const descending = toHeight < fromHeight;
   const lowCellX = descending ? toCellX : fromCellX;

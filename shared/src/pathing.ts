@@ -1,6 +1,7 @@
 import {
-  exceedsWalkableGradient,
+  admitsEveryRise,
   isWalkableCell,
+  stepKind,
   type ClimbRule,
   type TerrainSampler,
   type TraversalProfile,
@@ -138,13 +139,13 @@ function edgeCost(
 
   const fromHeight = world.heightAt(fromX, fromY);
   const toHeight = world.heightAt(toX, toY);
-  const heightDiff = Math.abs(toHeight - fromHeight);
-  if (exceedsWalkableGradient(profile, heightDiff)) {
-    const rule = profile.climb;
-    if (rule === undefined || rule === null) return null;
+  const kind = stepKind(profile, fromHeight, toHeight);
+  if (kind === 'blocked') return null;
+  const rule = profile.climb;
+  if (kind === 'climb' && rule !== undefined && rule !== null) {
     return baseCost + climbEdgeCost(rule, fromHeight, toHeight);
   }
-  return baseCost + heightDiff * SLOPE_COST_PER_HEIGHT_UNIT;
+  return baseCost + Math.abs(toHeight - fromHeight) * SLOPE_COST_PER_HEIGHT_UNIT;
 }
 
 function climbEdgeCost(rule: ClimbRule, fromHeight: number, toHeight: number): number {
@@ -340,9 +341,7 @@ export function floodReachableRegion(
   const OCCUPIABLE = 2;
   const ground = new Uint8Array(cells);
   const heights = new Float64Array(cells);
-  const limit = profile.maxGradientPerCell;
-  const climbs = profile.climb !== undefined && profile.climb !== null;
-  const checksGradient = Number.isFinite(limit) && !climbs;
+  const checksGradient = !admitsEveryRise(profile);
 
   const classify = (index: number, cx: number, cy: number): number => {
     const known = ground[index];
@@ -383,7 +382,7 @@ export function floodReachableRegion(
       const neighborIndex = (ny - minY) * width + (nx - minX);
       const legal =
         classify(neighborIndex, nx, ny) === OCCUPIABLE &&
-        (!checksGradient || Math.abs(heights[neighborIndex] - fromHeight) <= limit);
+        (!checksGradient || stepKind(profile, fromHeight, heights[neighborIndex]) !== 'blocked');
       orthogonalLegal[i] = legal;
       if (!legal || reached[neighborIndex] === 1) continue;
       reached[neighborIndex] = 1;
@@ -399,7 +398,7 @@ export function floodReachableRegion(
       const neighborIndex = (ny - minY) * width + (nx - minX);
       if (reached[neighborIndex] === 1) continue;
       if (classify(neighborIndex, nx, ny) !== OCCUPIABLE) continue;
-      if (checksGradient && Math.abs(heights[neighborIndex] - fromHeight) > limit) continue;
+      if (checksGradient && stepKind(profile, fromHeight, heights[neighborIndex]) === 'blocked') continue;
       reached[neighborIndex] = 1;
       queue[tail++] = neighborIndex;
     }
@@ -448,9 +447,7 @@ export function labelSeaRegions(
   const OCCUPIABLE = 2;
   const ground = new Uint8Array(worldSize * worldSize);
   const heights = new Float64Array(worldSize * worldSize);
-  const limit = profile.maxGradientPerCell;
-  const climbs = profile.climb !== undefined && profile.climb !== null;
-  const checksGradient = Number.isFinite(limit) && !climbs;
+  const checksGradient = !admitsEveryRise(profile);
   const queue = new Int32Array(worldSize * worldSize);
   const orthogonalLegal = [false, false, false, false];
 
@@ -494,7 +491,7 @@ export function labelSeaRegions(
           const legal =
             labels[neighborIndex] === 0 &&
             classify(neighborIndex, nx, ny) === OCCUPIABLE &&
-            (!checksGradient || Math.abs(heights[neighborIndex] - fromHeight) <= limit);
+            (!checksGradient || stepKind(profile, fromHeight, heights[neighborIndex]) !== 'blocked');
           orthogonalLegal[i] = legal;
           if (!legal) continue;
           labels[neighborIndex] = regionCount;
@@ -509,7 +506,7 @@ export function labelSeaRegions(
           const neighborIndex = ny * worldSize + nx;
           if (labels[neighborIndex] !== 0) continue;
           if (classify(neighborIndex, nx, ny) !== OCCUPIABLE) continue;
-          if (checksGradient && Math.abs(heights[neighborIndex] - fromHeight) > limit) continue;
+          if (checksGradient && stepKind(profile, fromHeight, heights[neighborIndex]) === 'blocked') continue;
           labels[neighborIndex] = regionCount;
           queue[tail++] = neighborIndex;
         }

@@ -8,6 +8,7 @@ import {
   RELAX_SLACK,
   SEA_LEVEL,
 } from './constants.ts';
+import { drawnBandOfSample } from './bands.ts';
 import { NO_FRESHWATER, type Freshwater, type FreshwaterMap } from './freshwater.ts';
 
 export interface TerrainSampler {
@@ -55,22 +56,41 @@ export interface TraversalProfile {
   readonly climb?: ClimbRule | null;
 }
 
+/**
+ * Steps climbed rather than walked. `sheer`: rises past `SHEER_RISE_HEIGHT_UNITS_PER_CELL`.
+ * `band-edge`: every drawn band change; treads draw flat, so in-band steps are walked.
+ */
+export type ClimbTrigger = 'sheer' | 'band-edge';
+
 export interface ClimbRule {
   readonly fallChance: number;
   readonly secondsPerBand?: number;
   readonly bodyHalfWidthCells?: number;
+  readonly trigger?: ClimbTrigger;
+  /** Tallest climbable step in drawn bands; absent means any height. */
+  readonly maxRiseBands?: number;
 }
 
-export function exceedsWalkableGradient(profile: TraversalProfile, heightDifference: number): boolean {
-  const limit = walkableGradientLimit(profile);
-  if (!Number.isFinite(limit)) return false;
-  return Math.abs(heightDifference) > limit;
+export type StepKind = 'walk' | 'climb' | 'blocked';
+
+/** The one rule for moving between two adjacent cells' heights. */
+export function stepKind(profile: TraversalProfile, fromHeight: number, toHeight: number): StepKind {
+  const rise = Math.abs(toHeight - fromHeight);
+  const rule = profile.climb;
+  if (rule === undefined || rule === null) {
+    return rise > profile.maxGradientPerCell ? 'blocked' : 'walk';
+  }
+  const bands = Math.abs(drawnBandOfSample(toHeight) - drawnBandOfSample(fromHeight));
+  if (rule.maxRiseBands !== undefined && bands > rule.maxRiseBands) return 'blocked';
+  if ((rule.trigger ?? 'sheer') === 'band-edge') return bands === 0 ? 'walk' : 'climb';
+  return rise > Math.max(profile.maxGradientPerCell, SHEER_RISE_HEIGHT_UNITS_PER_CELL) ? 'climb' : 'walk';
 }
 
-export function walkableGradientLimit(profile: TraversalProfile): number {
-  const limit = profile.maxGradientPerCell;
-  if (profile.climb === undefined || profile.climb === null) return limit;
-  return Math.max(limit, SHEER_RISE_HEIGHT_UNITS_PER_CELL);
+/** True when no pair of heights is ever blocked, so flood fills need not read heights. */
+export function admitsEveryRise(profile: TraversalProfile): boolean {
+  const rule = profile.climb;
+  if (rule === undefined || rule === null) return !Number.isFinite(profile.maxGradientPerCell);
+  return rule.maxRiseBands === undefined;
 }
 
 export type FreshwaterPassability = 'blocked' | 'channels' | 'all';
@@ -110,8 +130,8 @@ export function canTraverseSegment(
   toX: number,
   toY: number,
 ): boolean {
-  const limit = walkableGradientLimit(profile);
-  if (!Number.isFinite(limit)) return true;
+  const climbs = profile.climb !== undefined && profile.climb !== null;
+  if (!climbs && !Number.isFinite(profile.maxGradientPerCell)) return true;
 
   const dx = toX - fromX;
   const dy = toY - fromY;
@@ -124,7 +144,7 @@ export function canTraverseSegment(
     const sampleX = Math.floor(fromX + dx * t);
     const sampleY = Math.floor(fromY + dy * t);
     const height = world.heightAt(sampleX, sampleY);
-    if (exceedsWalkableGradient(profile, height - previousHeight)) return false;
+    if (stepKind(profile, previousHeight, height) !== 'walk') return false;
     previousHeight = height;
   }
   return true;
@@ -158,7 +178,7 @@ export function canProceedAlong(
     }
 
     const height = world.heightAt(sampleX, sampleY);
-    if (exceedsWalkableGradient(profile, height - previousHeight)) return false;
+    if (stepKind(profile, previousHeight, height) !== 'walk') return false;
     previousHeight = height;
 
     if (!admitsHeight(profile, height)) return false;
