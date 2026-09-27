@@ -155,6 +155,58 @@ function smoothstep(t: number): number {
   return t * t * (3 - 2 * t);
 }
 
+interface BoundKey {
+  readonly at: number;
+  readonly fore: number;
+  readonly hind: number;
+  readonly lift: number;
+  /** Body pitch, nose up positive: rising bound, then falling bound. */
+  readonly risePitch: number;
+  readonly dropPitch: number;
+}
+
+// Gather, drive off the hind legs, tuck, reach, absorb. Pitch follows the arc, capped.
+// Matching start and end keys make progress 1 wrapping to 0 seamless.
+const BOUND_KEYS: readonly BoundKey[] = [
+  { at: 0, fore: 0.25, hind: 0.3, lift: -2, risePitch: 0, dropPitch: 0 },
+  { at: 0.14, fore: 1.3, hind: -1.0, lift: 0.5, risePitch: 0.6, dropPitch: 0.15 },
+  { at: 0.5, fore: 1.45, hind: 0.55, lift: 1, risePitch: 0.2, dropPitch: -0.2 },
+  { at: 0.84, fore: 0.35, hind: -0.35, lift: 0.5, risePitch: -0.15, dropPitch: -0.55 },
+  { at: 1, fore: 0.25, hind: 0.3, lift: -2, risePitch: 0, dropPitch: 0 },
+];
+
+/** Pose one leap at `progress` (0 take-off, 1 landing). The rig joint carries the arc's pitch. */
+export function poseBound(
+  joints: SpeciesJoints,
+  progress: number,
+  descending: boolean,
+  bobAmplitude: number,
+): void {
+  const u = Math.min(1, Math.max(0, progress));
+  let previous = BOUND_KEYS[0]!;
+  let next = BOUND_KEYS[BOUND_KEYS.length - 1]!;
+  for (let i = 1; i < BOUND_KEYS.length; i++) {
+    if (u <= BOUND_KEYS[i]!.at) {
+      previous = BOUND_KEYS[i - 1]!;
+      next = BOUND_KEYS[i]!;
+      break;
+    }
+  }
+  const span = next.at - previous.at;
+  const t = span <= 0 ? 0 : smoothstep((u - previous.at) / span);
+  const mix = (from: number, to: number): number => from + (to - from) * t;
+  const fore = mix(previous.fore, next.fore);
+  const hind = mix(previous.hind, next.hind);
+  joints.foreLeft!.rotation.z = fore;
+  joints.foreRight!.rotation.z = fore;
+  joints.hindLeft!.rotation.z = hind;
+  joints.hindRight!.rotation.z = hind;
+  joints.rig!.position.y = mix(previous.lift, next.lift) * bobAmplitude;
+  joints.rig!.rotation.z = descending
+    ? mix(previous.dropPitch, next.dropPitch)
+    : mix(previous.risePitch, next.risePitch);
+}
+
 const FALL_FLAIL_HZ = 4;
 const FALL_LEG_SPLAY_RADIANS = 0.7;
 const FALL_FLAIL_RADIANS = 0.35;

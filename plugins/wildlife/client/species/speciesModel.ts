@@ -25,6 +25,8 @@ export interface AuthoredSpecies {
   readonly joints: Readonly<Record<string, Object3D>>;
   animate(joints: SpeciesJoints, seconds: number, phase: number, gait: MoverGait): void;
   readonly posesByGait?: boolean;
+  /** Climbs are leaps: the pose pitches the body along the arc; phase is leap progress. */
+  readonly ownsClimbPitch?: boolean;
 }
 
 export type SpeciesModelBuilder = (pool: SpeciesModelPool) => AuthoredSpecies;

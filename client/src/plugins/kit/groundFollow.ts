@@ -162,7 +162,9 @@ export function followClimbGroundY(
     state.revision = revision;
     if (entered) state.falling = false;
   }
-  const progress = Math.max(0, Math.min(1, (height - path.fromHeight) / (path.toHeight - path.fromHeight)));
+  const rise = (height - path.fromHeight) / (path.toHeight - path.fromHeight);
+  // A leap arcs past both ends; extrapolating keeps its apex above the higher ground.
+  const progress = path.leg === 'leap' ? rise : Math.max(0, Math.min(1, rise));
   let targetY = lerp(state.fromY, state.toY, progress);
   if (mover.falling) {
     if (!state.falling) {

@@ -1,5 +1,5 @@
-import { poseFall, poseLeap, poseSit, poseStand, poseWalk } from './quadruped.ts';
-import { GRAZER_LEAP_SECONDS_PER_BAND } from '../../protocol.ts';
+import { poseBound, poseFall, poseSit, poseStand, poseWalk } from './quadruped.ts';
+import { TWO_PI } from './speciesModel.ts';
 import {
   assetSpeciesBuilder,
   type SpeciesAssetSpec,
@@ -54,21 +54,24 @@ const HEAD_NOD_RADIANS = 0.05;
 export const buildGrazer = assetSpeciesBuilder(
   GRAZER_ASSET,
   (joints, seconds, phase, gait) => {
-    if (gait === 'climb' || gait === 'fall') {
-      if (gait === 'climb') poseLeap(joints, seconds, phase, WALK_BOB_WORLD_UNITS, GRAZER_LEAP_SECONDS_PER_BAND);
-      else poseFall(joints, seconds, phase);
-      joints.head!.rotation.z = 0;
+    joints.head!.rotation.z = 0;
+    if (gait === 'climb' || gait === 'descend') {
+      poseBound(joints, phase / TWO_PI, gait === 'descend', WALK_BOB_WORLD_UNITS);
+      return;
+    }
+    joints.rig!.rotation.z = 0;
+    if (gait === 'fall') {
+      poseFall(joints, seconds, phase);
       return;
     }
     if (gait === 'stand' || gait === 'sit') {
       if (gait === 'stand') poseStand(joints, seconds, phase, WALK_BOB_WORLD_UNITS);
       else poseSit(joints, seconds, phase, WALK_BOB_WORLD_UNITS);
-      joints.head!.rotation.z = 0;
       return;
     }
     const beat = phase;
     poseWalk(joints, beat, LEG_SWING_RADIANS, WALK_BOB_WORLD_UNITS);
     joints.head!.rotation.z = Math.sin(beat * 2) * HEAD_NOD_RADIANS;
   },
-  true,
+  { posesByGait: true, ownsClimbPitch: true },
 );

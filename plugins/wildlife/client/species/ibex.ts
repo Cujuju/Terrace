@@ -158,7 +158,7 @@ export const buildIbex: SpeciesModelBuilder = (pool) => {
     joints: { rig, head: headPivot, ...legJoints(legs) },
     posesByGait: true,
     animate(joints, seconds, phase, gait) {
-      if (gait === 'climb') {
+      if (gait === 'climb' || gait === 'descend') {
         poseLeap(joints, seconds, phase, WALK_BOB_WORLD_UNITS, IBEX_CLIMB_SECONDS_PER_BAND);
         joints.head!.rotation.z = 0;
         return;
