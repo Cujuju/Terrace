@@ -41,8 +41,11 @@ Settled with the owner. Facts only; history is in git.
 
 ## Climbing
 
-- A profile with a `climb` rule may cross any rise, up or down.
-  - Walkable rises are walked; only sheer faces are climbed.
+- `stepKind(profile, fromHeight, toHeight)` (`traversal.ts`) is the one step rule: `walk`, `climb` or `blocked`. Traversal, climb geometry, path cost and floods all read it.
+- A profile with a `climb` rule may cross any rise, up or down, unless the rule sets `maxRiseBands`.
+  - `trigger: 'sheer'` (default): walkable rises are walked; only sheer faces are climbed.
+  - `trigger: 'band-edge'`: every drawn band change is climbed; in-band steps are walked whatever their gradient (treads draw flat).
+  - Bands are `drawnBandOfSample(height)`; on real worlds it matches the drawn band at every dry cell centre.
   - `climb.ts` defines progress, the profile defines who may climb, and `pathing.ts` defines the price.
 - Climb speed = walk speed × `CLIMB_SPEED_FRACTION_OF_WALK` (1/2).
 - Fall speed = walk speed × `FALL_SPEED_MULTIPLE_OF_WALK` (3), for every species.
@@ -50,6 +53,8 @@ Settled with the owner. Facts only; history is in git.
 - Per-climber speed:
   - Read it with `climbRiseHeightUnitsPerSecond(rule)`.
   - Ibex sets its own `secondsPerBand`.
+  - Peeps (every walker kind) climb at `PEEP_CLIMB_SPEED_MULTIPLE_OF_DEFAULT` (3) × the default.
+  - Deer leap at ibex's `secondsPerBand`, `band-edge`, `maxRiseBands` 3 (band 1 → 4).
 - Legs:
   - A climb is a vertical face leg plus a horizontal lip leg, never a diagonal.
   - Descents add a turn of `CLIMB_TURN_SECONDS`.
@@ -93,13 +98,15 @@ Settled with the owner. Facts only; history is in git.
   - It is a prefilter; routes still come from `findRoute`.
   - Flood from the start, never the goal: reachability is asymmetric.
   - Cache ground per cell.
-  - Water profiles and climbers read no height.
+  - Profiles that admit every rise (water, climbers without `maxRiseBands`) read no height.
 - `RoutePlan` is exported for future roads.
 
 ## Drawn ground (client)
 
 - Anything drawn at ground level reads `ctx.drawnGroundYAt`, which accepts fractional cells.
-  - Movers go through `drawnGroundSampler(ctx)` (`client/src/plugins/kit/groundFollow.ts`).
+- Cell frames: terrain draws cell k centred on rendered cell k; server positions are corner-indexed (cell k spans [k, k+1)).
+  - Server-frame positions go through `serverGroundSampler(ctx)` and `serverWorldPosition` (`client/src/plugins/kit/groundFollow.ts`), which subtract `CELL_CENTRE_OFFSET`. Integer cell indices (trees, fires, relics) are already rendered centres.
+  - Climb-path anchors are server-frame; `climbRiser` shifts are rendered-frame offsets from `renderedCellOf(mover.x)`.
   - Hot paths call `ctx.drawnGroundYAt` directly.
   - The camera also reads `drawnGroundYAt`.
 - `ctx.terrainSampleAt` is the raw server height, used only to reproduce server rules (the mana quote, the temple site check). Nothing draws at it.
@@ -119,5 +126,6 @@ Settled with the owner. Facts only; history is in git.
 - #492: the water curtain reads the drawn band without the arrival check.
 - #493: footprint samplers floor their probes, and skip probes that come back unknown.
 - #412: the vertical pop at climb start and at arrival.
-- Half-cell frame mismatch: movers are drawn at `x * CELL_WORLD_SIZE` with corner-indexed cells, while the terrain is centre-indexed. Fixing it needs its own arc.
+- Boats steer to a waypoint hop's cell corner (`fleet.ts` goal `hop.x`), not its centre (`+ 0.5` as route cells do); the debug overlay draws where they steer.
+- Disc systems, rotating storms and saucers resolve positions with `Math.round` (centre frame), unlike `Math.floor` elsewhere on the server.
 - The drawn riser is quantised to ⅛ cell.

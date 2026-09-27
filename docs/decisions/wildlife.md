@@ -90,3 +90,13 @@ cost more of that cap than they did (21 against 9) and every other species is
 ~9% smaller for it — accepted, because a pod is three whales by definition and
 a world with room for only nine could hold three pods in total and would read
 as a world of lone whales.
+
+## Decisions made 2026-09-26 (deer leap bands; swimmers slow down — owner request)
+
+1. **Deer leap between drawn bands, never walk them.** The grazer climb rule is `trigger: 'band-edge'`, `maxRiseBands` `GRAZER_MAX_LEAP_BANDS` (3: band 1 → 4), at ibex's `secondsPerBand`. A taller step is a wall. Descents follow the same limit (assumption, not stated by the owner).
+2. **Deer leap on course.** `climbApproach: 'on-course'` makes a deer hold its heading to a climbable step ahead and climb it (`climbOnCourse.ts`). Ibex keep the default `'cornered'`, climbing only when no heading is walkable.
+3. **One deer leap in a thousand falls** (`GRAZER_LEAP_FALL_CHANCE`). Deer leap about every 3 s on terraces; ibex's 1% killed 17 of 120 simulated deer in 200 s.
+4. **Wedged means no way out, climbs included.** `despawnWedged` keeps a creature that has a climbable exit within one body length (`climbDirectionCount`) or is mid-climb. This also spares ibex that can climb out.
+5. **Swimmers cruise at `SWIM_PACE_SCALE` (¼) of their first tuned speed, and stroke rates (tail, fluke, wing, sway) scale by the same factor.**
+
+Measured on two saved worlds (60 deer, 200 s, real `advanceEntity`): 0 walked band changes, leaps of 1–3 bands only. The multi-band "teleport" was the client drawing movers half a cell off (`movement.md` → Drawn ground, cell frames), not the server.
