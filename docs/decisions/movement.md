@@ -41,8 +41,10 @@ Settled with the owner. Facts only; history is in git.
 
 ## Climbing
 
-- `stepKind(profile, fromHeight, toHeight)` (`traversal.ts`) is the one step rule: `walk`, `climb` or `blocked`. Traversal, climb geometry, path cost and floods all read it.
+- `stepKind(profile, fromHeight, toHeight)` (`traversal.ts`) is the one step rule: `walk`, `climb` or `blocked`. Traversal reads it.
+- `stepKindAt(world, profile, from cell, to cell)` adds the face cap. Climb geometry, path cost, floods and the wildlife step probe read it.
 - A profile with a `climb` rule may cross any rise, up or down, unless the rule sets `maxRiseBands`.
+  - With `faceTreadCells` set, `maxRiseBands` caps the whole face, not each riser. The face runs on along the step's line past every flat run shorter than `faceTreadCells` (`climbFaceBands`).
   - `trigger: 'sheer'` (default): walkable rises are walked; only sheer faces are climbed.
   - `trigger: 'band-edge'`: every drawn band change is climbed; in-band steps are walked whatever their gradient (treads draw flat).
   - Bands are `drawnBandOfSample(height)`; on real worlds it matches the drawn band at every dry cell centre.
@@ -53,13 +55,22 @@ Settled with the owner. Facts only; history is in git.
 - Per-climber speed:
   - Read it with `climbRiseHeightUnitsPerSecond(rule)`.
   - Ibex sets its own `secondsPerBand`.
-  - Peeps (every walker kind) climb at `PEEP_CLIMB_SPEED_MULTIPLE_OF_DEFAULT` (3) × the default.
-  - Deer leap at ibex's `secondsPerBand`, `band-edge`, `maxRiseBands` 3 (band 1 → 4).
-- Legs:
-  - A climb is a vertical face leg plus a horizontal lip leg, never a diagonal.
-  - Descents add a turn of `CLIMB_TURN_SECONDS`.
-  - `advanceClimb` owns both axes; `arrived` and `fallen` are terminal.
+  - Peeps (every walker kind) climb at the default (owner rule, 2026-09-27; the 3× speed was reverted).
+- Motion (`ClimbRule.motion`):
+  - `climb` (default): a vertical face leg plus a horizontal lip leg, never a diagonal.
+  - `leap`: one `leap` leg, a ballistic arc from cell centre to cell centre under real gravity at the `scale.ts` metric scale (`LEAP_GRAVITY_HEIGHT_UNITS_PER_SECOND_SQUARED`).
+    - The apex clears the higher ground by `LEAP_APEX_CLEARANCE_HEIGHT_UNITS` (half a band). A 1-band leap takes about 0.9 s, a 3-band one about 1.2 s.
+    - A doomed leap releases while still over the low cell and drops there.
+- Facing (`ClimbRule.facing`):
+  - `wall` (default): faces the riser; descents add a turn of `CLIMB_TURN_SECONDS`.
+  - `travel`: faces the way the step goes, up or down, with no turn.
+- `advanceClimb` owns both axes; `arrived` and `fallen` are terminal.
 - The foot is in the low cell. The inset is `climbBodyHalfWidthCells` (measured from the peep), clamped to `CELL_CENTRE_OFFSET`.
+- Client poses:
+  - `moverGaitOf` returns `descend` for a descent whose heading points along the step (travel-facers), else `climb`.
+  - A `leap` leg poses by its progress (`leapProgressOf`, from the position between the path ends), carried as pose phase.
+  - `climbRiser` takes the face normal from the path's low and high cells, not the heading.
+  - `followClimbGroundY` does not clamp a leap's height between its ends, so the apex draws above the higher ground.
 - Fall rolls:
   - There is one roll per climb, as a hash out of `FALL_ROLL_BASIS_POINTS` (10 000). No `Math.random`.
   - A second draw from `seed + 1` sets the release point, between 0.25 and 0.9 of the way up the face.

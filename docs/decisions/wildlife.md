@@ -100,3 +100,11 @@ as a world of lone whales.
 5. **Swimmers cruise at `SWIM_PACE_SCALE` (¼) of their first tuned speed, and stroke rates (tail, fluke, wing, sway) scale by the same factor.**
 
 Measured on two saved worlds (60 deer, 200 s, real `advanceEntity`): 0 walked band changes, leaps of 1–3 bands only. The multi-band "teleport" was the client drawing movers half a cell off (`movement.md` → Drawn ground, cell frames), not the server.
+
+## Decisions made 2026-09-27 (deer faces, deer bound, travel facing — owner request)
+
+1. **A deer crosses a face of at most 3 bands, up or down.** The 3 is `GRAZER_MAX_LEAP_BANDS`. Risers closer than half a world unit of flat ground (`GRAZER_FACE_TREAD_WORLD_UNITS`, 2 cells) are one face (`faceTreadCells`). This supersedes 2026-09-26 item 1's per-riser limit. Chained leaps had carried deer down 14–16-band cliffs.
+2. **A deer leap is one ballistic bound** (`motion: 'leap'`), not a timed climb. The pose (`poseBound`) gathers, drives off the hind legs, tucks, reaches and absorbs, pitched along the arc (`ownsClimbPitch`).
+3. **Deer and ibex face the way they travel** (`facing: 'travel'`), descending face-first with no turn. Ibex descents pitch nose-down (`descend` gait). Peeps still face the wall.
+
+Measured on a saved world (80 deer, 200 s): no chain of leaps with less than a tread between them spans more than 3 bands.
