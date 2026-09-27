@@ -101,6 +101,8 @@ export interface SculptOptions {
   readonly sweepFrom?: SweepOrigin | null;
   readonly nudgeStrength?: number;
   readonly smoothKinkHalfCells?: number;
+  /** Alt smooth: bands sharing a wall simplify it as one line. */
+  readonly smoothWalls?: boolean;
   readonly smoothLambda?: number;
   /** Feather the smooth rim: full strength inside, fading across the halo. */
   readonly smoothFeather?: number;
@@ -137,6 +139,8 @@ export interface ResolvedSculptOptions {
   readonly sweepFrom: SweepOrigin | null;
   readonly nudgeStrength: number;
   readonly smoothKinkHalfCells: number;
+  /** Alt smooth: bands sharing a wall simplify it as one line. */
+  readonly smoothWalls: boolean;
   readonly smoothLambda: number;
   readonly smoothFeather: number;
   readonly smoothRim: number;
@@ -160,6 +164,7 @@ export const LIBRARY_DEFAULT_SCULPT_OPTIONS: ResolvedSculptOptions = {
   sweepFrom: null,
   nudgeStrength: NUDGE_STRENGTH_DEFAULT,
   smoothKinkHalfCells: SMOOTH_KINK_HALF_CELLS_DEFAULT,
+  smoothWalls: false,
   smoothLambda: SMOOTH_LAMBDA_DEFAULT,
   smoothFeather: SMOOTH_FEATHER_DEFAULT,
   smoothRim: SMOOTH_RIM_DEFAULT,

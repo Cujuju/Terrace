@@ -88,3 +88,34 @@ export function edgeUnits(distanceFixed: number | null): number {
   const u = Math.floor((Math.abs(distanceFixed) * EDGE_UNITS_PER_CELL + OUTLINE_FIXED_POINT / 2) / OUTLINE_FIXED_POINT);
   return u < EDGE_UNITS_PER_CELL ? u : EDGE_UNITS_PER_CELL;
 }
+
+/** Fixed-point coordinates stay under this, so x * span + y keys a vertex exactly. */
+const VERTEX_KEY_SPAN = 1 << 20;
+
+export function vertexKey(p: Point): number {
+  return p.x * VERTEX_KEY_SPAN + p.y;
+}
+
+/** The point on the lines nearest p, or null when there are none. */
+export function nearestPoint(lines: readonly Point[][], p: Point): Point | null {
+  let best: Point | null = null;
+  let bestSquared = Infinity;
+  for (const line of lines) {
+    for (let i = 1; i < line.length; i++) {
+      const a = line[i - 1]!;
+      const b = line[i]!;
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const length = dx * dx + dy * dy;
+      const along = length === 0 ? 0 : Math.max(0, Math.min(length, (p.x - a.x) * dx + (p.y - a.y) * dy));
+      const nx = length === 0 ? a.x : a.x + Math.trunc((dx * along) / length);
+      const ny = length === 0 ? a.y : a.y + Math.trunc((dy * along) / length);
+      const squared = (p.x - nx) * (p.x - nx) + (p.y - ny) * (p.y - ny);
+      if (squared < bestSquared) {
+        bestSquared = squared;
+        best = { x: nx, y: ny, pinned: true };
+      }
+    }
+  }
+  return best;
+}

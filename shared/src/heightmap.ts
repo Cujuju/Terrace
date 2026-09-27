@@ -213,7 +213,7 @@ export function applySculpt(
       SMOOTH_KINK_HALF_CELLS_MAX,
       Math.max(SMOOTH_KINK_HALF_CELLS_MIN, options?.smoothKinkHalfCells ?? SMOOTH_KINK_HALF_CELLS_DEFAULT),
     );
-    applyOutlineSmooth(map, cx, cy, radius, kinkHalfCells, spanBand, smoothed);
+    applyOutlineSmooth(map, cx, cy, radius, kinkHalfCells, options?.smoothWalls ?? false, spanBand, smoothed);
     return diffOf(map, smoothed);
   }
 

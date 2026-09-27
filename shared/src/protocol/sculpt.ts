@@ -49,6 +49,7 @@ export interface SculptIntent {
   spanBand?: number;
   nudgeStrength?: number;
   smoothKinkHalfCells?: number;
+  smoothWalls?: boolean;
   smoothLambda?: number;
   smoothFeather?: number;
   smoothRim?: number;
@@ -81,6 +82,7 @@ export const WIRE_DEFAULT_SCULPT_OPTIONS: ResolvedWireSculptOptions = {
   sweepFrom: null,
   nudgeStrength: NUDGE_STRENGTH_DEFAULT,
   smoothKinkHalfCells: SMOOTH_KINK_HALF_CELLS_DEFAULT,
+  smoothWalls: false,
   smoothLambda: SMOOTH_LAMBDA_DEFAULT,
   smoothFeather: SMOOTH_FEATHER_DEFAULT,
   smoothRim: SMOOTH_RIM_DEFAULT,
@@ -120,6 +122,7 @@ export function sculptOptionsOf(intent: SculptIntent): ResolvedWireSculptOptions
       tool === 'nudge' ? (intent.nudgeStrength ?? NUDGE_STRENGTH_DEFAULT) : NUDGE_STRENGTH_DEFAULT,
     smoothKinkHalfCells:
       tool === 'smooth' ? (intent.smoothKinkHalfCells ?? SMOOTH_KINK_HALF_CELLS_DEFAULT) : SMOOTH_KINK_HALF_CELLS_DEFAULT,
+    smoothWalls: tool === 'smooth' ? (intent.smoothWalls ?? false) : false,
     smoothLambda:
       tool === 'smooth'
         ? (intent.smoothLambda ?? SMOOTH_LAMBDA_DEFAULT)
@@ -271,6 +274,13 @@ export function validateSculptIntent(
     if (tool !== 'smooth') return null;
   }
 
+  // Alt smooth: stacked walls simplify as one line. Smooth only.
+  const { smoothWalls } = m;
+  if (smoothWalls !== undefined) {
+    if (typeof smoothWalls !== 'boolean') return null;
+    if (tool !== 'smooth') return null;
+  }
+
   // Lambda tunes the smooth blur and only the smooth blur.
   const { smoothLambda } = m;
   if (smoothLambda !== undefined) {
@@ -381,6 +391,7 @@ export function validateSculptIntent(
     ...(spanBand !== undefined ? { spanBand: spanBand as number } : {}),
     ...(nudgeStrength !== undefined ? { nudgeStrength: nudgeStrength as number } : {}),
     ...(smoothKinkHalfCells !== undefined ? { smoothKinkHalfCells: smoothKinkHalfCells as number } : {}),
+    ...(smoothWalls !== undefined ? { smoothWalls: smoothWalls as boolean } : {}),
     ...(smoothLambda !== undefined ? { smoothLambda: smoothLambda as number } : {}),
     ...(smoothFeather !== undefined ? { smoothFeather: smoothFeather as number } : {}),
     ...(smoothRim !== undefined ? { smoothRim: smoothRim as number } : {}),

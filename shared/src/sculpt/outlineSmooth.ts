@@ -6,7 +6,7 @@ import { footprintRadiusSquared, isFootprintOffset } from './footprint.ts';
 import { graspedCeilingRange, layerSpanIndex } from './grasp.ts';
 import { buildLayerView, commitLayerView } from './layerView.ts';
 import { SMOOTH_KINK_HALF_CELLS_MAX } from './options.ts';
-import { edgeUnits, signedDistance, traceBandOutlines } from './outlineField.ts';
+import { edgeUnits, nearestPoint, signedDistance, traceBandOutlines, vertexKey } from './outlineField.ts';
 import { OUTLINE_FIXED_POINT, type Point } from './outlineTrace.ts';
 
 // Player smooth: trace each band outline, simplify it within the kink tolerance,
@@ -119,6 +119,7 @@ export function applyOutlineSmooth(
   cy: number,
   radius: number,
   kinkHalfCells: number,
+  walls: boolean,
   spanBand: number | null,
   changed: Set<number>,
 ): void {
@@ -156,17 +157,26 @@ export function applyOutlineSmooth(
   const reclassifyFixed = 2 * tolerance + OUTLINE_FIXED_POINT;
 
   // Level b's outline, simplified, with the inside on each segment's positive-cross side.
-  const outlines = traceBandOutlines(heightAt, lowBand, highBand, x0, y0, x1, y1);
+  let outlines = traceBandOutlines(heightAt, lowBand, highBand, x0, y0, x1, y1);
   for (const [band, raw] of outlines) {
-    outlines.set(band, raw.map((line) => {
-      const pinnedLine = line.map((p) => {
-        const dx = p.x - cxFixed;
-        const dy = p.y - cyFixed;
-        return { x: p.x, y: p.y, pinned: dx * dx + dy * dy >= pinRadiusFixed * pinRadiusFixed };
-      });
-      return cutCorners(simplify(pinnedLine, tolerance), tolerance);
-    }));
+    outlines.set(band, raw.map((line) => line.map((p) => {
+      const dx = p.x - cxFixed;
+      const dy = p.y - cyFixed;
+      return { x: p.x, y: p.y, pinned: dx * dx + dy * dy >= pinRadiusFixed * pinRadiusFixed };
+    })));
   }
+  // Ascending, so an alt smooth can lay each level's shared wall on the level below's smoothed one.
+  const smoothed = new Map<number, Point[][]>();
+  for (let band = lowBand + 1; band <= highBand; band++) {
+    let lines = outlines.get(band)!;
+    const below = smoothed.get(band - 1);
+    if (walls && below !== undefined) {
+      const shared = new Set(outlines.get(band - 1)!.flatMap((line) => line.map(vertexKey)));
+      lines = lines.map((line) => line.map((p) => (shared.has(vertexKey(p)) ? (nearestPoint(below, p) ?? p) : p)));
+    }
+    smoothed.set(band, lines.map((line) => cutCorners(simplify(line, tolerance), tolerance)));
+  }
+  outlines = smoothed;
 
   for (let dy = -radius; dy <= radius; dy++) {
     for (let dx = -radius; dx <= radius; dx++) {
@@ -181,7 +191,10 @@ export function applyOutlineSmooth(
       if (spanBand !== null && band - spanBand > SMOOTH_LAYER_BAND_REACH) continue;
       const px = x * OUTLINE_FIXED_POINT;
       const py = y * OUTLINE_FIXED_POINT;
-      let nextBand = lowBand;
+      // Up: the highest level the cell is inside. Down: the top of the unbroken run from the bottom.
+      let up = lowBand;
+      let down = lowBand;
+      let unbroken = true;
       let nearEdge = false;
       const distances = new Map<number, number | null>();
       for (let level = lowBand + 1; level <= highBand; level++) {
@@ -189,9 +202,13 @@ export function applyOutlineSmooth(
         distances.set(level, d);
         const reclassifies = d !== null && Math.abs(d) <= reclassifyFixed;
         const inside = reclassifies ? d >= 0 : band >= level;
-        if (inside) nextBand = level;
+        if (inside) up = level;
+        if (inside && unbroken) down = level;
+        else unbroken = false;
         if (d !== null && Math.abs(d) < OUTLINE_FIXED_POINT) nearEdge = true;
       }
+      // Smoothed outlines that cross keep the cell's own band: no band eats into its neighbour.
+      const nextBand = band < down ? down : band > up ? up : band;
       if (nextBand === band && !nearEdge) continue;
       const i = cellIndex(map, x, y);
       const span = map.columnSpans.has(i) ? layerSpanIndex(map, i, spanBand) : 0;
