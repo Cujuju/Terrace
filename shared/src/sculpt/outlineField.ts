@@ -90,6 +90,26 @@ export function signedDistance(lines: readonly Point[][], px: number, py: number
   return side >= 0 ? distance : -distance;
 }
 
+/** Twice a closed ring's signed area: positive when what it encloses is inside its level. */
+export function ringArea(ring: readonly Point[]): number {
+  let twice = 0;
+  for (let i = 1; i < ring.length; i++) twice += ring[i - 1]!.x * ring[i]!.y - ring[i]!.x * ring[i - 1]!.y;
+  return twice;
+}
+
+/** Whether a closed ring encloses the point: crossings of a ray toward +x, exact in integers. */
+export function ringContains(ring: readonly Point[], px: number, py: number): boolean {
+  let inside = false;
+  for (let i = 1; i < ring.length; i++) {
+    const a = ring[i - 1]!;
+    const b = ring[i]!;
+    if (a.y > py === b.y > py) continue;
+    const t = (b.x - a.x) * (py - a.y) - (px - a.x) * (b.y - a.y);
+    if (b.y > a.y ? t > 0 : t < 0) inside = !inside;
+  }
+  return inside;
+}
+
 /** A fixed-point distance as the edge units a cell stores; no outline, or a cell or more away, stores none. */
 export function edgeUnits(distanceFixed: number | null): number {
   if (distanceFixed === null) return EDGE_UNITS_PER_CELL;

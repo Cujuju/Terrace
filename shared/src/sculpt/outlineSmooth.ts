@@ -6,7 +6,15 @@ import { footprintRadiusSquared, isFootprintOffset } from './footprint.ts';
 import { graspedCeilingRange, layerSpanIndex } from './grasp.ts';
 import { buildLayerView, commitLayerView } from './layerView.ts';
 import { SMOOTH_KINK_HALF_CELLS_MAX } from './options.ts';
-import { edgeUnits, nearestPoint, signedDistance, traceBandOutlines, vertexKey } from './outlineField.ts';
+import {
+  edgeUnits,
+  nearestPoint,
+  ringArea,
+  ringContains,
+  signedDistance,
+  traceBandOutlines,
+  vertexKey,
+} from './outlineField.ts';
 import { OUTLINE_FIXED_POINT, type Point } from './outlineTrace.ts';
 
 // Player smooth: trace each band outline, drop bumps narrower than about twice
@@ -166,6 +174,23 @@ function smoothLine(line: Point[], kinkHalfCells: number): Point[] {
   if (closed) out.push(out[0]!);
   return out;
 }
+
+/** A ring wholly inside the brush, no wider than a bump the median outvotes, is one bump: it goes whole. */
+function isOutvotedRing(line: readonly Point[], outvoteFixed: number): boolean {
+  if (!isClosed(line) || line.some((p) => p.pinned)) return false;
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const p of line) {
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
+  }
+  return maxX - minX <= outvoteFixed && maxY - minY <= outvoteFixed;
+}
+
 export function applyOutlineSmooth(
   map: Heightmap,
   cx: number,
@@ -207,14 +232,24 @@ export function applyOutlineSmooth(
   const cyFixed = cy * OUTLINE_FIXED_POINT;
   const reclassifyFixed = reclassifyCells(kinkHalfCells) * OUTLINE_FIXED_POINT;
 
+  const outvoteFixed = medianReachSamples(kinkHalfCells) * SAMPLE_FIXED;
+
   // Level b's outline, the inside on each segment's positive-cross side; points past the rim are pinned.
   let outlines = traceBandOutlines(heightAt, lowBand, highBand, x0, y0, x1, y1);
+  const dropped = new Map<number, Point[][]>();
   for (const [band, raw] of outlines) {
-    outlines.set(band, raw.map((line) => line.map((p) => {
-      const dx = p.x - cxFixed;
-      const dy = p.y - cyFixed;
-      return { x: p.x, y: p.y, pinned: dx * dx + dy * dy >= pinRadiusFixed * pinRadiusFixed };
-    })));
+    const kept: Point[][] = [];
+    const gone: Point[][] = [];
+    for (const line of raw) {
+      const pinnedLine = line.map((p) => {
+        const dx = p.x - cxFixed;
+        const dy = p.y - cyFixed;
+        return { x: p.x, y: p.y, pinned: dx * dx + dy * dy >= pinRadiusFixed * pinRadiusFixed };
+      });
+      (isOutvotedRing(pinnedLine, outvoteFixed) ? gone : kept).push(pinnedLine);
+    }
+    outlines.set(band, kept);
+    dropped.set(band, gone);
   }
   // Ascending, so an alt smooth can lay each level's shared wall on the level below's smoothed one.
   const smoothed = new Map<number, Point[][]>();
@@ -252,7 +287,9 @@ export function applyOutlineSmooth(
         const d = signedDistance(outlines.get(level)!, px, py);
         distances.set(level, d);
         const reclassifies = d !== null && Math.abs(d) <= reclassifyFixed;
-        const inside = reclassifies ? d >= 0 : band >= level;
+        // A dropped island's cells leave the level; a dropped hole's join it.
+        const ring = dropped.get(level)!.find((r) => ringContains(r, px, py));
+        const inside = ring !== undefined ? ringArea(ring) < 0 : reclassifies ? d >= 0 : band >= level;
         if (inside) up = level;
         if (inside && unbroken) down = level;
         else unbroken = false;
