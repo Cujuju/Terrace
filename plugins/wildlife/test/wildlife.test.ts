@@ -238,8 +238,9 @@ describe('wildlife sync', () => {
     tick(harness, 7);
     expect(harness.sink.ofType('wildlife:entities')).toHaveLength(3);
 
+    // The broadcasting tick itself: a respawn on the next tick would change the population.
     harness.sink.clear();
-    tick(harness, 2);
+    tick(harness, 1);
     const messages = harness.sink.ofType('wildlife:entities');
     expect(messages).toHaveLength(1);
     expect(messages[0].target).toBe(PLAYER.id);
@@ -248,7 +249,9 @@ describe('wildlife sync', () => {
     expect(payload.entities).toHaveLength(livingEntities().length + livingBirds().length);
 
     for (const entity of payload.entities) {
-      expect(Object.keys(entity).sort()).toEqual([
+      // A climbing creature (a leaping deer, a scaling ibex) also carries its climb path.
+      expect('climbPath' in entity).toBe(entity.climbHeight !== null);
+      expect(Object.keys(entity).filter((key) => key !== 'climbPath').sort()).toEqual([
         'climbHeight',
         'falling',
         'heading',

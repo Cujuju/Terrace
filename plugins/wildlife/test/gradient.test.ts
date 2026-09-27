@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { BAND_HEIGHT, SEA_LEVEL, newStillness } from '@terrace/shared';
-import { type HabitatWorld, canTraverse } from '../server/census.ts';
+import { SEA_LEVEL, bandFloorHeight, bandLevelHeight, isClimbStep, newStillness } from '@terrace/shared';
+import { GRAZER_MAX_LEAP_BANDS } from '../protocol.ts';
+import { type HabitatWorld, canTraverse, walkerProfileOf } from '../server/census.ts';
 import { advanceEntity, lookaheadCellsFor, speedOf, steerToValidHeading } from '../server/movement.ts';
 import type { WildlifeEntity } from '../server/population.ts';
-import { AQUATIC_MAX_GRADIENT_PER_CELL, GRAZER_MAX_GRADIENT_PER_CELL } from '../server/species.ts';
+import { AQUATIC_MAX_GRADIENT_PER_CELL } from '../server/species.ts';
+
+const TREAD_BAND = 1;
 
 function fakeWorld(heightAtX: (x: number) => number, worldSize = 40): HabitatWorld {
   return {
@@ -15,9 +18,13 @@ function fakeWorld(heightAtX: (x: number) => number, worldSize = 40): HabitatWor
   };
 }
 
-function riserWorld(riseUnits: number): HabitatWorld {
-  const belowHeight = SEA_LEVEL + BAND_HEIGHT;
-  return fakeWorld((x) => (x < 10 ? belowHeight : belowHeight + riseUnits));
+function riserWorld(bands: number): HabitatWorld {
+  return fakeWorld((x) => bandLevelHeight(x < 10 ? TREAD_BAND : TREAD_BAND + bands));
+}
+
+/** The steepest step that stays inside one drawn band. */
+function inBandSlopeWorld(): HabitatWorld {
+  return fakeWorld((x) => (x < 10 ? bandFloorHeight(TREAD_BAND) : bandFloorHeight(TREAD_BAND + 1) - 1));
 }
 
 function grazer(x: number, y: number, overrides: Partial<WildlifeEntity> = {}): WildlifeEntity {
@@ -40,19 +47,17 @@ function grazer(x: number, y: number, overrides: Partial<WildlifeEntity> = {}): 
   };
 }
 
-describe('gradient-limited traversal (canTraverse)', () => {
-  it('rejects a grazer riser step that exceeds GRAZER_MAX_GRADIENT_PER_CELL, and accepts one at exactly the limit', () => {
-    const world = riserWorld(GRAZER_MAX_GRADIENT_PER_CELL + 1);
-    expect(canTraverse(world, 'grazer', 9.5, 5, 10.5, 5)).toBe(false);
+describe('band-limited traversal (canTraverse)', () => {
+  it('makes every drawn band change a grazer leap, never a walk, and walks any in-band step', () => {
+    const riser = riserWorld(1);
+    expect(canTraverse(riser, 'grazer', 9.5, 5, 10.5, 5)).toBe(false);
+    expect(isClimbStep(riser, walkerProfileOf('grazer'), 9.5, 5, 10.5, 5)).toBe(true);
 
-    const ramp = riserWorld(GRAZER_MAX_GRADIENT_PER_CELL);
-    expect(canTraverse(ramp, 'grazer', 9.5, 5, 10.5, 5)).toBe(true);
+    expect(canTraverse(inBandSlopeWorld(), 'grazer', 9.5, 5, 10.5, 5)).toBe(true);
   });
 
-  it('rejects a mid-path riser even when both endpoints share a height (case e)', () => {
-    const plateauHeight = SEA_LEVEL + BAND_HEIGHT;
-    const gorgeHeight = plateauHeight - (GRAZER_MAX_GRADIENT_PER_CELL + 1);
-    const world = fakeWorld((x) => (x >= 1 && x < 2 ? gorgeHeight : plateauHeight));
+  it('rejects a mid-path band change even when both endpoints share a band (case e)', () => {
+    const world = fakeWorld((x) => bandLevelHeight(x >= 1 && x < 2 ? TREAD_BAND - 1 : TREAD_BAND));
     expect(canTraverse(world, 'grazer', 0.5, 5, 2.5, 5)).toBe(false);
   });
 
@@ -67,9 +72,9 @@ describe('gradient-limited traversal (canTraverse)', () => {
 
 const TICK_DT = 0.1;
 
-describe('gradient veto in steering (steerToValidHeading)', () => {
-  it('turns a grazer along the terrace instead of crossing a riser (case a)', () => {
-    const world = riserWorld(GRAZER_MAX_GRADIENT_PER_CELL + 1);
+describe('band veto in steering (steerToValidHeading)', () => {
+  it('never steers a grazer to walk across a riser (case a)', () => {
+    const world = riserWorld(1);
     const entity = grazer(9.5, 20);
     const lookahead = 2;
     const heading = steerToValidHeading(
@@ -84,8 +89,8 @@ describe('gradient veto in steering (steerToValidHeading)', () => {
     expect(Math.abs(Math.cos(heading!))).toBeLessThan(1e-9);
   });
 
-  it('lets a grazer cross a gentle ramp under the limit (case b), and does not constrain a fish crossing the same-shaped terrain (case c)', () => {
-    const world = riserWorld(GRAZER_MAX_GRADIENT_PER_CELL - 1);
+  it('lets a grazer walk straight up an in-band slope (case b), and does not constrain a fish crossing a drop (case c)', () => {
+    const world = inBandSlopeWorld();
     const entity = grazer(9.5, 20);
     const heading = steerToValidHeading(world, entity, 0, 2, speedOf(entity) * TICK_DT);
 
@@ -115,17 +120,25 @@ describe('gradient veto in steering (steerToValidHeading)', () => {
   });
 });
 
-describe('flee still respects the gradient veto (advanceEntity, case d)', () => {
-  it('a panicking grazer deflects along the terrace instead of bolting up the riser', () => {
-    const world = riserWorld(GRAZER_MAX_GRADIENT_PER_CELL + 1);
+describe('a fleeing grazer leaps what it can and deflects from the rest (advanceEntity, case d)', () => {
+  it('leaps a riser of GRAZER_MAX_LEAP_BANDS, and deflects along the terrace from one band taller', () => {
+    const leapable = riserWorld(GRAZER_MAX_LEAP_BANDS);
+    const leaper = grazer(9.5, 20, { heading: 0, fleeSecondsRemaining: 2 });
+
+    advanceEntity(leapable, leaper, TICK_DT);
+
+    expect(leaper.climb).not.toBeNull();
+    expect(leaper.climb!.toX).toBe(10);
+
+    const world = riserWorld(GRAZER_MAX_LEAP_BANDS + 1);
     const entity = grazer(9.5, 20, { heading: 0, fleeSecondsRemaining: 2 });
-    const startX = entity.x;
-    const startHeight = world.heightAt(Math.floor(startX), 20);
+    const startHeight = world.heightAt(Math.floor(entity.x), 20);
 
     expect(entity.x + lookaheadCellsFor(entity)).toBeGreaterThan(10);
 
-    advanceEntity(world, entity, 0.1);
+    advanceEntity(world, entity, TICK_DT);
 
+    expect(entity.climb).toBeNull();
     expect(Math.floor(entity.x)).toBeLessThan(10);
     expect(world.heightAt(Math.floor(entity.x), Math.floor(entity.y))).toBe(startHeight);
   });

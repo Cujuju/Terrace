@@ -4,6 +4,7 @@ import { buildIbex, IBEX_ENVELOPE } from '../client/species/ibex.ts';
 import type { SpeciesJoints, SpeciesModelPool } from '../client/species/speciesModel.ts';
 import { applyMoverBodyTilt } from '../../../client/src/plugins/kit/moverBodyTilt.ts';
 import { advanceClimbRiserShift, newClimbRiserShift } from '../../../client/src/plugins/kit/climbRiser.ts';
+import { renderedCellOf } from '../../../client/src/plugins/kit/groundFollow.ts';
 import { cellsAcross, beginClimb, climbingWalkerProfile, climbWireOf } from '@terrace/shared';
 import { SEA_SURFACE_WORLD_Y as DRAWN_SEA_SURFACE_WORLD_Y } from '../../../client/src/worldScale.ts';
 import {
@@ -87,7 +88,8 @@ describe('ibex cliff clearance', () => {
       const ctx = { drawnGroundYAt: (x: number, y: number) => (x - 8) * nx + (y - 8) * ny >= 0.5 ? 2 : 0 };
       const shift = newClimbRiserShift();
       advanceClimbRiserShift(shift, ctx, mover, 1, 1 / 60, reach);
-      const front = (mover.x + shift.x - 8) * nx + (mover.y + shift.y - 8) * ny + reach * normalLength;
+      const drawnX = renderedCellOf(mover.x) + shift.x, drawnY = renderedCellOf(mover.y) + shift.y;
+      const front = (drawnX - 8) * nx + (drawnY - 8) * ny + reach * normalLength;
       expect(front).toBeLessThan(0.5);
     }
     model.root.traverse((object) => {

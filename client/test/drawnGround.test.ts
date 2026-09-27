@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CELL_CENTRE_OFFSET,
   CHUNK_SIZE,
   bandLevelHeight,
   bandOf,
@@ -197,9 +198,11 @@ describe('continuous drawn climb support', () => {
     footX: 0, footY: 0, fromHeight: 33, toHeight: 161, heading: 0,
   };
   const frameSeconds = 1 / 60;
+  // Low support in server cell 0, high in cell 1; samples arrive in rendered cells.
+  const supportAt = (x: number): number => (Math.floor(x + CELL_CENTRE_OFFSET) === 0 ? 0.5 : 2.5);
 
   it('maps fractional progress in either direction and interpolates entry and arrival', () => {
-    const ctx = { drawnGroundYAt: (x: number) => x === 0 ? 0.5 : 2.5, terrainRevisionAt: () => 0 };
+    const ctx = { drawnGroundYAt: supportAt, terrainRevisionAt: () => 0 };
     for (const climbing of [path, { ...path, fromX: 1, toX: 0, fromHeight: path.toHeight, toHeight: path.fromHeight }]) {
       const state = newClimbGroundState();
       let previous: number | null = null;
@@ -231,7 +234,7 @@ describe('continuous drawn climb support', () => {
   it('caches supports, rebases revisions, and falls continuously to foot support', () => {
     let revision = 0, offset = 0, calls = 0, known = true;
     const ctx = {
-      drawnGroundYAt: (x: number) => { calls++; return known ? (x === 0 ? 0.5 : 2.5) + offset : null; },
+      drawnGroundYAt: (x: number) => { calls++; return known ? supportAt(x) + offset : null; },
       terrainRevisionAt: () => revision,
     };
     const state = newClimbGroundState();
