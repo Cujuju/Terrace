@@ -1,5 +1,5 @@
 import { Group } from 'three';
-import { CELL_WORLD_SIZE, cellsAcross } from '@terrace/shared';
+import { cellsAcross } from '@terrace/shared';
 import type {
   ClientPluginCtx,
   TerraceClientPlugin,
@@ -21,7 +21,8 @@ import { disposeSpeciesAssets, installSpeciesAsset } from './species/assetSpecie
 import { SPECIES_ASSETS } from './species/assets.ts';
 import { modelScaleFor } from './modelScale.ts';
 import {
-  drawnGroundSampler,
+  serverGroundSampler,
+  serverWorldPosition,
   followClimbGroundY,
   newClimbGroundState,
   type ClimbGroundState,
@@ -124,7 +125,7 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
 
   models.beginFrame(animationSeconds);
 
-  const sample = drawnGroundSampler(ctx);
+  const sample = serverGroundSampler(ctx);
   const camera = ctx.cameraPosition();
 
   for (const [id, entity] of sampled) {
@@ -139,8 +140,8 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     );
     // Hold path needs an already-placed pose to freeze (first sight always full).
     const heldY = view.drawnY;
-    const dx = entity.x * CELL_WORLD_SIZE - camera.x;
-    const dz = entity.y * CELL_WORLD_SIZE - camera.z;
+    const dx = serverWorldPosition(entity.x) - camera.x;
+    const dz = serverWorldPosition(entity.y) - camera.z;
     // Unplaced creature counts as level with the camera; it takes the full path anyway.
     const dy = (heldY ?? camera.y) - camera.y;
     // Hold: frozen phase and gait address the slot the last full update captured, whose
@@ -154,8 +155,8 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     if (!full && heldY !== null) {
       // Body column fields follow the frozen drawnY, so they match the held draw; a
       // size-class change lands on the next full frame.
-      view.drawnX = (entity.x + view.riserShift.x) * CELL_WORLD_SIZE;
-      view.drawnZ = (entity.y + view.riserShift.y) * CELL_WORLD_SIZE;
+      view.drawnX = serverWorldPosition(entity.x + view.riserShift.x);
+      view.drawnZ = serverWorldPosition(entity.y + view.riserShift.y);
       models.draw(
         entity.species,
         sizeClassAt(entity.size),
@@ -205,8 +206,8 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     const climbReach = WALKER_CLIMB_REACH_BY_SPECIES[entity.species];
     advanceClimbRiserShift(view.riserShift, ctx, entity, drawnY, sinceFull,
       climbReach === null ? undefined : cellsAcross(climbReach * modelScale));
-    const drawnX = (entity.x + view.riserShift.x) * CELL_WORLD_SIZE;
-    const drawnZ = (entity.y + view.riserShift.y) * CELL_WORLD_SIZE;
+    const drawnX = serverWorldPosition(entity.x + view.riserShift.x);
+    const drawnZ = serverWorldPosition(entity.y + view.riserShift.y);
     if (kind === 'walker' && previousDrawnY !== null) {
       view.phase += walkerStrideRadians(
         entity.species,

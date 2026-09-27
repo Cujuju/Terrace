@@ -1,7 +1,7 @@
 import { Group, type PointLight } from 'three';
-import { CELL_WORLD_SIZE } from '@terrace/shared';
 import {
-  drawnGroundSampler,
+  serverGroundSampler,
+  serverWorldPosition,
   followClimbGroundY,
   newClimbGroundState,
   type ClimbGroundState,
@@ -212,7 +212,7 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
   const sampled = interpolator.sample();
   reconcileViews(sampled);
 
-  const groundAt = drawnGroundSampler(ctx);
+  const groundAt = serverGroundSampler(ctx);
 
   for (const [id, monster] of sampled) {
     const view = views.get(id);
@@ -227,9 +227,9 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     view.drawnY = drawnY;
     advanceClimbRiserShift(view.riserShift, ctx, monster, drawnY, dt);
     root.position.set(
-      (monster.x + view.riserShift.x) * CELL_WORLD_SIZE,
+      serverWorldPosition(monster.x + view.riserShift.x),
       drawnY,
-      (monster.y + view.riserShift.y) * CELL_WORLD_SIZE,
+      serverWorldPosition(monster.y + view.riserShift.y),
     );
     root.rotation.y = -monster.heading;
 
@@ -241,9 +241,9 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
 
     if (view.dread !== null) {
       view.dread.root.position.set(
-        monster.x * CELL_WORLD_SIZE,
+        serverWorldPosition(monster.x),
         SEA_SURFACE_WORLD_Y,
-        monster.y * CELL_WORLD_SIZE,
+        serverWorldPosition(monster.y),
       );
       view.dread.update(animationSeconds, step, true);
     }

@@ -1,6 +1,6 @@
 import { Group, Vector3 } from 'three';
 import { NO_SAMPLE } from '../../../client/src/plugins/kit/viewReconcile.ts';
-import { CELL_WORLD_SIZE } from '@terrace/shared';
+import { serverWorldPosition } from '../../../client/src/plugins/kit/groundFollow.ts';
 import type {
   ClientPluginCtx,
   MoverPose,
@@ -95,9 +95,9 @@ function renderFrame(dt: number): void {
     if (view === undefined) continue;
 
     view.drawnAt.set(
-      boat.x * CELL_WORLD_SIZE,
+      serverWorldPosition(boat.x),
       SEA_SURFACE_WORLD_Y + BOAT_SHAPE.waterlineLift,
-      boat.y * CELL_WORLD_SIZE,
+      serverWorldPosition(boat.y),
     );
     view.model.draw(
       view.drawnAt.x,

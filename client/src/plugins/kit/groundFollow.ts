@@ -1,5 +1,6 @@
 import {
   SHEER_RISE_TO_RUN,
+  CELL_CENTRE_OFFSET,
   CELL_WORLD_SIZE,
   WALK_SPEED_FOR_COSTING_WORLD_UNITS_PER_SECOND,
   type ClimbPath,
@@ -36,6 +37,20 @@ export type GroundSampler = (cellX: number, cellY: number) => number | null;
 
 export function drawnGroundSampler(ctx: ClientPluginCtx): GroundSampler {
   return (cellX, cellY) => ctx.drawnGroundYAt(cellX, cellY);
+}
+
+/** Server positions are corner-indexed (cell k spans [k, k+1)); terrain draws cell k centred on k. */
+export function renderedCellOf(serverCoordinate: number): number {
+  return serverCoordinate - CELL_CENTRE_OFFSET;
+}
+
+export function serverWorldPosition(serverCoordinate: number): number {
+  return renderedCellOf(serverCoordinate) * CELL_WORLD_SIZE;
+}
+
+/** Drawn ground under a server-frame position. */
+export function serverGroundSampler(ctx: Pick<ClientPluginCtx, 'drawnGroundYAt'>): GroundSampler {
+  return (x, y) => ctx.drawnGroundYAt(renderedCellOf(x), renderedCellOf(y));
 }
 
 export interface ClimbPose {
@@ -128,14 +143,17 @@ export function followClimbGroundY(
     return followGroundY(previousY, height * HEIGHT_WORLD_SCALE, dt,
       GROUND_FOLLOW_WORLD_UNITS_PER_SECOND, Infinity);
   }
-  const revision = supportRevision(ctx, path.fromX, path.fromY) +
-    supportRevision(ctx, path.toX, path.toY) + supportRevision(ctx, path.footX, path.footY);
+  const fromX = renderedCellOf(path.fromX), fromZ = renderedCellOf(path.fromY);
+  const toX = renderedCellOf(path.toX), toZ = renderedCellOf(path.toY);
+  const footX = renderedCellOf(path.footX), footZ = renderedCellOf(path.footY);
+  const revision = supportRevision(ctx, fromX, fromZ) +
+    supportRevision(ctx, toX, toZ) + supportRevision(ctx, footX, footZ);
   const entered = state.pathId !== path.id;
   const changed = entered || state.revision !== revision;
   if (changed) {
-    const fromY = ctx.drawnGroundYAt(path.fromX, path.fromY);
-    const toY = ctx.drawnGroundYAt(path.toX, path.toY);
-    const footY = ctx.drawnGroundYAt(path.footX, path.footY);
+    const fromY = ctx.drawnGroundYAt(fromX, fromZ);
+    const toY = ctx.drawnGroundYAt(toX, toZ);
+    const footY = ctx.drawnGroundYAt(footX, footZ);
     if (fromY === null || toY === null || footY === null) return null;
     state.fromY = fromY;
     state.toY = toY;

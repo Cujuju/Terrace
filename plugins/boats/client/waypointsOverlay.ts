@@ -13,12 +13,12 @@ import {
   SphereGeometry,
 } from 'three';
 import {
-  CELL_WORLD_SIZE,
   parseWaypointDebugFrame,
   waypointForMember,
 } from '@terrace/shared';
 import { BOATS_PAYLOAD_CAP, parseBoatsPayload, type BoatState } from '../protocol.ts';
 import type { InterpolatedBoat } from './interpolation.ts';
+import { serverWorldPosition } from '../../../client/src/plugins/kit/groundFollow.ts';
 
 /** Fleet-chain debug overlay (the `?waypoints` flag). Six fixed draw objects:
  * chain lines, sailed lines, hop/slot/cursor points, and one instanced
@@ -265,9 +265,9 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
       if (drawn >= BOATS_PAYLOAD_CAP) break;
       slotOfBoat.set(boat.id, drawn);
       markerMatrix.makeTranslation(
-        boat.x * CELL_WORLD_SIZE,
+        serverWorldPosition(boat.x),
         FLEET_MARKER_LIFT_WORLD_UNITS,
-        boat.y * CELL_WORLD_SIZE,
+        serverWorldPosition(boat.y),
       );
       boatMarkers.setMatrixAt(drawn, markerMatrix);
       const fleet = fleetOfBoat.get(boat.id);
@@ -315,17 +315,17 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
         );
         let prevX = chain.anchor.x;
         let prevY = chain.anchor.y;
-        hops.push(chain.anchor.x * CELL_WORLD_SIZE, WAYPOINT_LIFT_WORLD_UNITS, chain.anchor.y * CELL_WORLD_SIZE);
+        hops.push(serverWorldPosition(chain.anchor.x), WAYPOINT_LIFT_WORLD_UNITS, serverWorldPosition(chain.anchor.y));
         for (const hop of chain.hops) {
           segments.push(
-            prevX * CELL_WORLD_SIZE,
+            serverWorldPosition(prevX),
             WAYPOINT_LIFT_WORLD_UNITS,
-            prevY * CELL_WORLD_SIZE,
-            hop.x * CELL_WORLD_SIZE,
+            serverWorldPosition(prevY),
+            serverWorldPosition(hop.x),
             WAYPOINT_LIFT_WORLD_UNITS,
-            hop.y * CELL_WORLD_SIZE,
+            serverWorldPosition(hop.y),
           );
-          hops.push(hop.x * CELL_WORLD_SIZE, WAYPOINT_LIFT_WORLD_UNITS, hop.y * CELL_WORLD_SIZE);
+          hops.push(serverWorldPosition(hop.x), WAYPOINT_LIFT_WORLD_UNITS, serverWorldPosition(hop.y));
           prevX = hop.x;
           prevY = hop.y;
         }
@@ -333,28 +333,28 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
           const prev = chain.sailed[s - 1];
           const cur = chain.sailed[s];
           sailedSegments.push(
-            prev.x * CELL_WORLD_SIZE,
+            serverWorldPosition(prev.x),
             WAYPOINT_LIFT_WORLD_UNITS,
-            prev.y * CELL_WORLD_SIZE,
-            cur.x * CELL_WORLD_SIZE,
+            serverWorldPosition(prev.y),
+            serverWorldPosition(cur.x),
             WAYPOINT_LIFT_WORLD_UNITS,
-            cur.y * CELL_WORLD_SIZE,
+            serverWorldPosition(cur.y),
           );
         }
         if (last >= 0) {          const goal = chain.hops[last];
           const at = Math.max(0, Math.min(chain.cursor, last));
           const cursor = chain.hops[at];
           cursors.push(
-            cursor.x * CELL_WORLD_SIZE,
+            serverWorldPosition(cursor.x),
             WAYPOINT_LIFT_WORLD_UNITS,
-            cursor.y * CELL_WORLD_SIZE,
+            serverWorldPosition(cursor.y),
           );
           for (let rank = 0; rank < chain.members; rank++) {
             const slot = waypointForMember(goal, rank, chain.spacing);
             slots.push(
-              slot.x * CELL_WORLD_SIZE,
+              serverWorldPosition(slot.x),
               WAYPOINT_LIFT_WORLD_UNITS,
-              slot.y * CELL_WORLD_SIZE,
+              serverWorldPosition(slot.y),
             );
           }
         }
@@ -391,9 +391,9 @@ export function createWaypointsOverlay(layer: Group): WaypointsOverlay {
         const slot = slotOfBoat.get(id);
         if (slot === undefined) continue;
         markerMatrix.makeTranslation(
-          pose.x * CELL_WORLD_SIZE,
+          serverWorldPosition(pose.x),
           FLEET_MARKER_LIFT_WORLD_UNITS,
-          pose.y * CELL_WORLD_SIZE,
+          serverWorldPosition(pose.y),
         );
         boatMarkers.setMatrixAt(slot, markerMatrix);
         moved = true;

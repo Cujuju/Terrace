@@ -6,6 +6,7 @@ import {
   type ClimbPath,
 } from '@terrace/shared';
 import { BAND_GRID_CELLS } from '../../terrain/bandGrid.ts';
+import { renderedCellOf } from './groundFollow.ts';
 import type { ClientPluginCtx } from '../types.ts';
 
 export interface ClimbRiserShift {
@@ -50,7 +51,7 @@ function riserStandOf(
   const descending = path !== undefined && path.fromHeight > path.toHeight;
   const lowX = Math.floor(path === undefined ? mover.x : descending ? path.toX : path.fromX);
   const lowY = Math.floor(path === undefined ? mover.y : descending ? path.toY : path.fromY);
-  // Terrain sample centres are integer rendered world cells.
+  // A server cell index is its rendered centre.
   const groundAtFoot = ctx.drawnGroundYAt(lowX, lowY);
   if (groundAtFoot === null || groundAtFoot >= feetY) return null;
 
@@ -67,8 +68,8 @@ function riserStandOf(
        (path.footY - lowY - CELL_CENTRE_OFFSET) * normalY));
     const stand = along - RISER_PROBE_HALF_STEP - halfWidth / normalLength;
     return {
-      x: normalX === 0 ? mover.x : lowX + normalX * stand,
-      y: normalY === 0 ? mover.y : lowY + normalY * stand,
+      x: normalX === 0 ? renderedCellOf(mover.x) : lowX + normalX * stand,
+      y: normalY === 0 ? renderedCellOf(mover.y) : lowY + normalY * stand,
       normalX: normalX / normalLength,
       normalY: normalY / normalLength,
     };
@@ -101,12 +102,14 @@ export function advanceClimbRiserShift(
   shift.endProgress = 0;
   const stand = mover.climbHeight === null ? null : riserStandOf(ctx, mover, feetY, bodyReachCells);
   const budget = RISER_SHIFT_CELLS_PER_SECOND * Math.max(0, dt);
-  shift.x = chase(shift.x, stand === null ? 0 : stand.x - mover.x, budget);
-  shift.y = chase(shift.y, stand === null ? 0 : stand.y - mover.y, budget);
+  const moverCellX = renderedCellOf(mover.x);
+  const moverCellY = renderedCellOf(mover.y);
+  shift.x = chase(shift.x, stand === null ? 0 : stand.x - moverCellX, budget);
+  shift.y = chase(shift.y, stand === null ? 0 : stand.y - moverCellY, budget);
   if (stand !== null && bodyReachCells !== undefined) {
     // Contact clearance is a constraint; easing outward would leave the head inside the face.
-    const penetration = (mover.x + shift.x - stand.x) * stand.normalX +
-      (mover.y + shift.y - stand.y) * stand.normalY;
+    const penetration = (moverCellX + shift.x - stand.x) * stand.normalX +
+      (moverCellY + shift.y - stand.y) * stand.normalY;
     if (penetration > 0) {
       shift.x -= stand.normalX * penetration;
       shift.y -= stand.normalY * penetration;

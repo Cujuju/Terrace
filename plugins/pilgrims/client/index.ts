@@ -1,8 +1,8 @@
 import { Group } from 'three';
 import { NO_SAMPLE } from '../../../client/src/plugins/kit/viewReconcile.ts';
-import { CELL_WORLD_SIZE } from '@terrace/shared';
 import {
-  drawnGroundSampler,
+  serverGroundSampler,
+  serverWorldPosition,
   followClimbGroundY,
   newClimbGroundState,
   type ClimbGroundState,
@@ -98,7 +98,7 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
   reconcileViews(sampled);
   models.beginFrame(animationSeconds);
 
-  const groundAt = drawnGroundSampler(ctx);
+  const groundAt = serverGroundSampler(ctx);
 
   for (const [id, pilgrim] of sampled) {
     const view = views.get(id);
@@ -122,8 +122,8 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     }
     view.drawnY = drawnY;
     advanceClimbRiserShift(view.riserShift, ctx, pilgrim, drawnY, dt);
-    const drawnX = (pilgrim.x + view.riserShift.x) * CELL_WORLD_SIZE;
-    const drawnZ = (pilgrim.y + view.riserShift.y) * CELL_WORLD_SIZE;
+    const drawnX = serverWorldPosition(pilgrim.x + view.riserShift.x);
+    const drawnZ = serverWorldPosition(pilgrim.y + view.riserShift.y);
     view.drawnX = drawnX;
     view.drawnZ = drawnZ;
     view.drawn = true;

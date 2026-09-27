@@ -79,15 +79,15 @@ function createClumpField(color: number, capacity: number): ClumpField {
       let drawn = 0;
       for (const clump of clumps) {
         if (drawn >= capacity) break;
-        // Clumps draw at cell centres; sample the drawn centre.
-        const groundY = groundAt(clump.cellX + 0.5, clump.cellY + 0.5);
+        // A cell index is its rendered centre.
+        const groundY = groundAt(clump.cellX, clump.cellY);
         if (groundY === null) continue;
 
         const offset = jitter(clump.cellX, clump.cellY, clump.index);
         scratch.position.set(
-          (clump.cellX + 0.5) * CELL_WORLD_SIZE + offset.dx,
+          clump.cellX * CELL_WORLD_SIZE + offset.dx,
           groundY - CLUMP_RADIUS_WORLD_UNITS * clump.scale * CLUMP_SINK_FRACTION,
-          (clump.cellY + 0.5) * CELL_WORLD_SIZE + offset.dz,
+          clump.cellY * CELL_WORLD_SIZE + offset.dz,
         );
         scratch.rotation.set(offset.dx * Math.PI, offset.dz * Math.PI, 0);
         scratch.scale.set(clump.scale, clump.scale * CLUMP_FLATTEN, clump.scale);
