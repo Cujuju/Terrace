@@ -1,5 +1,5 @@
 import type { SculptIntent } from '@terrace/shared';
-import type { Group, Object3D } from 'three';
+import type { Group, Object3D, Ray } from 'three';
 import type { NodeMaterial } from 'three/webgpu';
 import type { Component } from 'solid-js';
 import type { CellOccupancy } from '../terrain/occupancy.ts';
@@ -137,6 +137,9 @@ export interface ClientPluginCtx {
   onCanvasPress(handler: (event: PointerEvent) => boolean): () => void;
 
   pickTerrainCell(clientX: number, clientY: number): { x: number; y: number } | null;
+
+  /** Camera ray under the pointer; `groundDistance` is where terrain first blocks it (Infinity if none). */
+  aimRay(clientX: number, clientY: number): { ray: Ray; groundDistance: number } | null;
 
   markPickable(object: Object3D, occupancy?: CellOccupancy): () => void;
 

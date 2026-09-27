@@ -1,5 +1,5 @@
 import type { SculptIntent } from '@terrace/shared';
-import { Group, Raycaster, Vector2, type Intersection, type Object3D } from 'three';
+import { Group, Raycaster, Vector2, type Intersection, type Object3D, type Ray } from 'three';
 import type { Component } from 'solid-js';
 import { FPS_SAMPLE_INTERVAL_MS } from '../config.ts';
 import { BOOT_MARKS, bootMarked } from '../bootMarks.ts';
@@ -230,6 +230,19 @@ export function createClientPluginHost(
   const pickableOccupancy: CellOccupancy[] = [];
 
   const NO_OCCUPANTS: readonly CellOccupancy[] = [];
+
+  const aimRay = (
+    clientX: number,
+    clientY: number,
+  ): { ray: Ray; groundDistance: number } | null => {
+    const device = pointerToNdc(clientX, clientY, canvas.getBoundingClientRect());
+    if (device === null) return null;
+    const raycaster = new Raycaster();
+    raycaster.setFromCamera(new Vector2(device.x, device.y), viewport.camera);
+    const { ray } = raycaster;
+    const ground = world.pickPointedCell(ray.origin, ray.direction, NO_OCCUPANTS);
+    return { ray, groundDistance: ground === null ? Infinity : ground.distance };
+  };
 
   const cameraScratch = { x: 0, y: 0, z: 0 };
   const cameraPosition = (): WorldPosition => {
@@ -577,6 +590,7 @@ export function createClientPluginHost(
           if (i !== -1) pressHandlers.splice(i, 1);
         });
       },
+      aimRay,
       pickTerrainCell,
       pickWorldCell,
       cameraPosition,

@@ -1,8 +1,5 @@
-import {
-  CELL_WORLD_SIZE,
-  WORLD_UNIT_CELLS,
-  cellsAcross,
-} from '@terrace/shared';
+import { CELL_WORLD_SIZE } from '@terrace/shared';
+import { Vector3, type Ray, type Sphere } from 'three';
 import type { RelicView, SkillId, SkillKind } from '../protocol.ts';
 import { skillInfo } from '../protocol.ts';
 
@@ -71,24 +68,31 @@ export function gemSpinAngle(elapsedS: number, phaseS: number): number {
   return (elapsedS + phaseS) * GEM_SPIN_TURNS_PER_S * TAU;
 }
 
-export const RELIC_PICK_RADIUS_CELLS = cellsAcross(4);
+/** Hitbox radius over the gem's bounding radius: a small spinning gem is hard to hit exactly. */
+export const GEM_HITBOX_SCALE = 1.5;
 
-export function relicUnderCell(
-  relics: readonly RelicView[],
-  cell: { x: number; y: number },
+export interface GemHitbox {
+  readonly relic: RelicView;
+  readonly sphere: Sphere;
+}
+
+const hitPoint = new Vector3();
+
+/** Nearest gem the ray enters before `groundDistance`; terrain in front hides a gem. */
+export function relicOnRay(
+  ray: Ray,
+  hitboxes: Iterable<GemHitbox>,
+  groundDistance: number,
 ): RelicView | null {
-  const limitSquared = RELIC_PICK_RADIUS_CELLS * RELIC_PICK_RADIUS_CELLS;
-
   let best: RelicView | null = null;
-  let bestSquared = Number.POSITIVE_INFINITY;
+  let bestDistance = groundDistance;
 
-  for (const relic of relics) {
-    const dx = relic.x - cell.x;
-    const dy = relic.y - cell.y;
-    const squared = dx * dx + dy * dy;
-    if (squared > limitSquared || squared >= bestSquared) continue;
+  for (const { relic, sphere } of hitboxes) {
+    if (ray.intersectSphere(sphere, hitPoint) === null) continue;
+    const distance = ray.origin.distanceTo(hitPoint);
+    if (distance >= bestDistance) continue;
     best = relic;
-    bestSquared = squared;
+    bestDistance = distance;
   }
 
   return best;

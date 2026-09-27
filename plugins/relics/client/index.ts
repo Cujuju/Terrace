@@ -1,4 +1,4 @@
-import { Color, Mesh, type BufferGeometry } from 'three';
+import { Color, Mesh, Sphere, type BufferGeometry } from 'three';
 import type { NodeMaterial } from 'three/webgpu';
 import type { ClientPluginCtx, TerraceClientPlugin } from '../../../client/src/plugins/types.ts';
 import {
@@ -14,14 +14,15 @@ import {
 } from '../protocol.ts';
 import {
   CELL_WORLD_SIZE,
+  GEM_HITBOX_SCALE,
   GEM_HOVER_CELLS,
-  GEM_RADIUS_CELLS,
   gemBobOffset,
   gemGroundY,
   gemPhaseFor,
   gemSpinAngle,
   relicColor,
-  relicUnderCell,
+  relicOnRay,
+  type GemHitbox,
 } from './gems.ts';
 import { createGemMaterial } from './gemMaterial.ts';
 import {
@@ -134,21 +135,32 @@ function animateGems(ctx: ClientPluginCtx, dt: number): void {
   }
 }
 
+function* shownGemHitboxes(): Generator<GemHitbox> {
+  for (const entry of gems.values()) {
+    if (!entry.mesh.visible) continue;
+    const sphere = new Sphere()
+      .copy(entry.mesh.geometry.boundingSphere!)
+      .applyMatrix4(entry.mesh.matrixWorld);
+    sphere.radius *= GEM_HITBOX_SCALE;
+    yield { relic: entry.relic, sphere };
+  }
+}
+
 function handlePress(ctx: ClientPluginCtx, event: PointerEvent): boolean {
   if (event.button !== PRIMARY_BUTTON) return false;
-
-  const cell = ctx.pickTerrainCell(event.clientX, event.clientY);
 
   const armed = armedSkill();
   if (armed !== null) {
     armSkill(null);
+    const cell = ctx.pickTerrainCell(event.clientX, event.clientY);
     if (cell !== null) ctx.send(CAST_MESSAGE, { skill: armed, x: cell.x, y: cell.y });
     return true;
   }
 
-  if (cell === null) return false;
+  const aim = ctx.aimRay(event.clientX, event.clientY);
+  if (aim === null) return false;
 
-  const relic = relicUnderCell(relics(), cell);
+  const relic = relicOnRay(aim.ray, shownGemHitboxes(), aim.groundDistance);
   if (relic === null) return false;
 
   ctx.send(COLLECT_MESSAGE, { id: relic.id });

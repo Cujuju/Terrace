@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { Ray, Sphere, Vector3 } from 'three';
 import { SKILLS, type RelicView } from '../protocol.ts';
 import {
   GEM_BOB_AMPLITUDE_CELLS,
   GEM_BOB_PERIOD_S,
   GEM_SPIN_TURNS_PER_S,
-  RELIC_PICK_RADIUS_CELLS,
   SKILL_KIND_COLOR,
   cooldownLabelSeconds,
   cssColor,
@@ -12,7 +12,7 @@ import {
   gemPhaseFor,
   gemSpinAngle,
   relicColor,
-  relicUnderCell,
+  relicOnRay,
 } from '../client/gems.ts';
 
 function relic(id: string, x: number, y: number): RelicView {
@@ -60,26 +60,30 @@ describe('gem animation', () => {
   });
 });
 
-describe('relicUnderCell', () => {
-  const relics = [relic('near', 10, 10), relic('far', 40, 40)];
-
-  it('claims a direct hit', () => {
-    expect(relicUnderCell(relics, { x: 10, y: 10 })?.id).toBe('near');
+describe('relicOnRay', () => {
+  const alongX = new Ray(new Vector3(0, 0, 0), new Vector3(1, 0, 0));
+  const hitbox = (id: string, x: number, y = 0, radius = 1) => ({
+    relic: relic(id, 0, 0),
+    sphere: new Sphere(new Vector3(x, y, 0), radius),
   });
 
-  it('claims within the tolerance and not outside it', () => {
-    expect(relicUnderCell(relics, { x: 10 + RELIC_PICK_RADIUS_CELLS, y: 10 })?.id).toBe('near');
-    expect(relicUnderCell(relics, { x: 10 + RELIC_PICK_RADIUS_CELLS + 1, y: 10 })).toBeNull();
+  it('picks the gem the ray passes through, and nothing it misses', () => {
+    expect(relicOnRay(alongX, [hitbox('hit', 10)], Infinity)?.id).toBe('hit');
+    expect(relicOnRay(alongX, [hitbox('miss', 10, 5)], Infinity)).toBeNull();
+    expect(relicOnRay(alongX, [], Infinity)).toBeNull();
   });
 
-  it('picks the nearest when two are in range', () => {
-    const crowded = [relic('a', 10, 10), relic('b', 11, 10)];
-    expect(relicUnderCell(crowded, { x: 11, y: 10 })?.id).toBe('b');
-    expect(relicUnderCell(crowded, { x: 10, y: 10 })?.id).toBe('a');
+  it('picks the nearer of two gems on the ray', () => {
+    expect(relicOnRay(alongX, [hitbox('far', 20), hitbox('near', 10)], Infinity)?.id).toBe('near');
   });
 
-  it('claims nothing when there are no relics', () => {
-    expect(relicUnderCell([], { x: 10, y: 10 })).toBeNull();
+  it('ignores a gem hidden behind the ground', () => {
+    expect(relicOnRay(alongX, [hitbox('behind', 10)], 5)).toBeNull();
+    expect(relicOnRay(alongX, [hitbox('before', 10)], 15)?.id).toBe('before');
+  });
+
+  it('ignores a gem behind the camera', () => {
+    expect(relicOnRay(alongX, [hitbox('behind', -10)], Infinity)).toBeNull();
   });
 });
 
