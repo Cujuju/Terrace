@@ -20,6 +20,7 @@ import { bakeRig, instantiateRig, type RigBlueprint } from '../../../client/src/
 import { createRigHerd, type RigHerd } from '../../../client/src/render/rigHerd.ts';
 import { bakeSolidColor } from '../../../client/src/render/bakeSolidColor.ts';
 import {
+  PEEP_CLIMB_SECONDS_PER_BAND,
   SETTLER_RACES,
   WALKER_KINDS,
   WALKERS_WIRE_CAP,
@@ -57,7 +58,10 @@ const SIT_LEG_RADIANS = Math.PI / 2;
 
 const SIT_ARM_RADIANS = -0.3;
 
-const CLIMB_REACH_HZ = 0.75;
+// Reach cycles per band climbed, so the hand-over-hand cadence tracks climb speed.
+const CLIMB_REACHES_PER_BAND = 0.75;
+
+const CLIMB_REACH_HZ = CLIMB_REACHES_PER_BAND / PEEP_CLIMB_SECONDS_PER_BAND;
 
 const CLIMB_ARM_HIGH_RADIANS = 2.4;
 const CLIMB_ARM_LOW_RADIANS = 1.4;

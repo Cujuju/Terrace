@@ -175,12 +175,18 @@ export const LAND_WALKER_PROFILE: TraversalProfile = {
   maxGradientPerCell: LAND_WALKER_MAX_GRADIENT_PER_CELL,
 };
 
-export function climbingWalkerProfile(fallChance: number): TraversalProfile {
-  return withClimb(LAND_WALKER_PROFILE, fallChance);
+export function climbingWalkerProfile(fallChance: number, secondsPerBand?: number): TraversalProfile {
+  return withClimb(LAND_WALKER_PROFILE, fallChance, secondsPerBand);
 }
 
-export function withClimb(profile: TraversalProfile, fallChance: number): TraversalProfile {
-  return { ...profile, climb: { fallChance } };
+/** Omitting `secondsPerBand` keeps the shared default climb speed. */
+export function withClimb(
+  profile: TraversalProfile,
+  fallChance: number,
+  secondsPerBand?: number,
+): TraversalProfile {
+  const climb: ClimbRule = secondsPerBand === undefined ? { fallChance } : { fallChance, secondsPerBand };
+  return { ...profile, climb };
 }
 
 export const RIVER_FORDING_WALKER_PROFILE: TraversalProfile = {
