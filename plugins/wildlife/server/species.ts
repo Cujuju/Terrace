@@ -25,7 +25,7 @@ import {
   type SpeciesProfile,
 } from './species/profile.ts';
 import { BISON_PROFILE } from './species/bison.ts';
-import { IBEX_CLIMB_FALL_CHANCE, IBEX_PROFILE } from './species/ibex.ts';
+import { IBEX_PROFILE } from './species/ibex.ts';
 import { RAY_PROFILE } from './species/ray.ts';
 import { SHARK_PROFILE } from './species/shark.ts';
 import { EEL_PROFILE } from './species/eel.ts';
@@ -61,8 +61,8 @@ export const DEEPSEA_BODY_LENGTH_CELLS = mediumBodyLengthCells('deepsea');
 
 export const GRAZER_BODY_LENGTH_CELLS = mediumBodyLengthCells('grazer');
 
-// Owner rule: a deer leap risks what an ibex climb does.
-export const GRAZER_LEAP_FALL_CHANCE = IBEX_CLIMB_FALL_CHANCE;
+// Owner rule: deer leap often on terraces, so one leap in a thousand falls.
+export const GRAZER_LEAP_FALL_CHANCE = 0.001;
 
 export const SPECIES_PROFILES: Readonly<Record<WildlifeHabitatSpecies, SpeciesProfile>> = {
   fish: {
