@@ -1,4 +1,4 @@
-import { MIN_BRUSH_RADIUS, STEPPED_RING_WIDTH_CELLS } from '../constants.ts';
+import { MIN_BRUSH_RADIUS, MIN_DRAWN_TREAD_HALF_CELLS, STEPPED_RING_WIDTH_CELLS } from '../constants.ts';
 import { bandLevelHeight, drawnBandOfSample } from '../bands.ts';
 import { cellIndex, inBounds, type Heightmap } from '../grid.ts';
 import { footprintRingQuarters, type EdgeShape } from './edges.ts';
@@ -19,6 +19,9 @@ const PARABOLA_RADIUS_DIVISOR = 2;
 const QUARTERS_PER_CELL_SQUARED = 4;
 const RING_FIXED_POINT = 256;
 
+/** A parabola's treads narrow outward; none narrower than draws clean. */
+const SOFT_MIN_TREAD_FIXED = (MIN_DRAWN_TREAD_HALF_CELLS * RING_FIXED_POINT) / 2;
+
 function parabolaScaleCells(radius: number): number {
   return Math.max(STEPPED_RING_WIDTH_CELLS, Math.ceil(radius / PARABOLA_RADIUS_DIVISOR));
 }
@@ -34,14 +37,16 @@ export function moundRings(radius: number, profile: SculptProfile): number[] {
     ? RING_FIXED_POINT / 2
     : Math.floor(Math.sqrt(footprintRadiusSquared(radius) * RING_FIXED_POINT * RING_FIXED_POINT));
   const scale = parabolaScaleCells(radius);
+  let treadFixed = discFixed;
   for (let band = 1; band <= MOUND_MAX_FLANK_BANDS; band++) {
-    const ring = profile === 'stepped'
-      ? footprintRingQuarters(radius + band * STEPPED_RING_WIDTH_CELLS)
-      : Math.floor(
-          (QUARTERS_PER_CELL_SQUARED *
-            (discFixed + Math.floor(Math.sqrt(band * scale * scale * RING_FIXED_POINT * RING_FIXED_POINT))) ** 2) /
-            (RING_FIXED_POINT * RING_FIXED_POINT),
-        );
+    let ring: number;
+    if (profile === 'stepped') {
+      ring = footprintRingQuarters(radius + band * STEPPED_RING_WIDTH_CELLS);
+    } else {
+      const parabolaFixed = discFixed + Math.floor(Math.sqrt(band * scale * scale * RING_FIXED_POINT * RING_FIXED_POINT));
+      treadFixed = Math.max(parabolaFixed, treadFixed + SOFT_MIN_TREAD_FIXED);
+      ring = Math.floor((QUARTERS_PER_CELL_SQUARED * treadFixed ** 2) / (RING_FIXED_POINT * RING_FIXED_POINT));
+    }
     if (ring > rings[rings.length - 1]!) rings.push(ring);
   }
   return rings;

@@ -12,9 +12,9 @@ import {
   NUDGE_STRENGTH_MIN,
   SCULPT_PROFILES,
   SCULPT_TOOLS,
-  SMOOTH_KINK_CELLS_DEFAULT,
-  SMOOTH_KINK_CELLS_MAX,
-  SMOOTH_KINK_CELLS_MIN,
+  SMOOTH_KINK_HALF_CELLS_DEFAULT,
+  SMOOTH_KINK_HALF_CELLS_MAX,
+  SMOOTH_KINK_HALF_CELLS_MIN,
   WIRE_DEFAULT_SCULPT_OPTIONS,
   WORLD_UNIT_CELLS,
   forEachFootprintOffset,
@@ -69,7 +69,7 @@ export const DEFAULT_SCULPT_MODE: SculptMode = 'raise';
 
 export const DEFAULT_NUDGE_STRENGTH = NUDGE_STRENGTH_DEFAULT;
 
-export const DEFAULT_SMOOTH_KINK_CELLS = SMOOTH_KINK_CELLS_DEFAULT;
+export const DEFAULT_SMOOTH_KINK_HALF_CELLS = SMOOTH_KINK_HALF_CELLS_DEFAULT;
 
 export const DEFAULT_CARVE_DEPTH_BANDS = CARVE_DEFAULT_DEPTH_BANDS;
 
@@ -84,7 +84,7 @@ export interface PersistedHudState {
   readonly brushProfile: SculptProfile;
   readonly sculptMode: SculptMode;
   readonly nudgeStrength: number;
-  readonly smoothKinkCells: number;
+  readonly smoothKinkHalfCells: number;
   readonly carveDepthBands: number;
   readonly showControls: boolean;
   readonly panelOpen: boolean;
@@ -96,7 +96,7 @@ export const DEFAULT_HUD_STATE: PersistedHudState = {
   brushProfile: DEFAULT_BRUSH_PROFILE,
   sculptMode: DEFAULT_SCULPT_MODE,
   nudgeStrength: DEFAULT_NUDGE_STRENGTH,
-  smoothKinkCells: DEFAULT_SMOOTH_KINK_CELLS,
+  smoothKinkHalfCells: DEFAULT_SMOOTH_KINK_HALF_CELLS,
   carveDepthBands: DEFAULT_CARVE_DEPTH_BANDS,
   showControls: DEFAULT_SHOW_CONTROLS,
   panelOpen: DEFAULT_PANEL_OPEN,
@@ -162,7 +162,7 @@ export function parseHudState(raw: string | null): PersistedHudState {
     brushProfile: readProfile(record['brushProfile']),
     sculptMode: readMode(record['sculptMode']),
     nudgeStrength: readIntegerIn(record['nudgeStrength'], NUDGE_STRENGTH_MIN, NUDGE_STRENGTH_MAX, DEFAULT_NUDGE_STRENGTH),
-    smoothKinkCells: readIntegerIn(record['smoothKinkCells'], SMOOTH_KINK_CELLS_MIN, SMOOTH_KINK_CELLS_MAX, DEFAULT_SMOOTH_KINK_CELLS),
+    smoothKinkHalfCells: readIntegerIn(record['smoothKinkHalfCells'], SMOOTH_KINK_HALF_CELLS_MIN, SMOOTH_KINK_HALF_CELLS_MAX, DEFAULT_SMOOTH_KINK_HALF_CELLS),
     carveDepthBands: readCarveDepthBands(record['carveDepthBands']),
     showControls: readShowControls(record['showControls']),
     panelOpen: readPanelOpen(record['panelOpen']),
@@ -203,8 +203,8 @@ const [nudgeStrength, setNudgeStrengthSignal] = createSignal<number>(
   stored.nudgeStrength,
 );
 
-const [smoothKinkCells, setSmoothKinkCellsSignal] = createSignal<number>(
-  stored.smoothKinkCells,
+const [smoothKinkHalfCells, setSmoothKinkHalfCellsSignal] = createSignal<number>(
+  stored.smoothKinkHalfCells,
 );
 
 const [carveDepthBands, setCarveDepthBandsSignal] = createSignal<number>(
@@ -226,7 +226,7 @@ function persist(): void {
     brushProfile: brushProfile(),
     sculptMode: sculptMode(),
     nudgeStrength: nudgeStrength(),
-    smoothKinkCells: smoothKinkCells(),
+    smoothKinkHalfCells: smoothKinkHalfCells(),
     carveDepthBands: carveDepthBands(),
     showControls: showControls(),
     panelOpen: panelOpen(),
@@ -288,10 +288,10 @@ export function setNudgeStrength(strength: number): void {
   persist();
 }
 
-export function setSmoothKinkCells(cells: number): void {
-  const clamped = Math.min(SMOOTH_KINK_CELLS_MAX, Math.max(SMOOTH_KINK_CELLS_MIN, Math.trunc(cells)));
-  if (clamped === smoothKinkCells()) return;
-  setSmoothKinkCellsSignal(clamped);
+export function setSmoothKinkHalfCells(cells: number): void {
+  const clamped = Math.min(SMOOTH_KINK_HALF_CELLS_MAX, Math.max(SMOOTH_KINK_HALF_CELLS_MIN, Math.trunc(cells)));
+  if (clamped === smoothKinkHalfCells()) return;
+  setSmoothKinkHalfCellsSignal(clamped);
   persist();
 }
 
@@ -324,7 +324,7 @@ export {
   sculptMode,
   sculptAlt,
   nudgeStrength,
-  smoothKinkCells,
+  smoothKinkHalfCells,
   carveDepthBands,
   showControls,
   panelOpen,

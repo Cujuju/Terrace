@@ -162,10 +162,10 @@ function actionEffect(action: ControlAction, binding: ControlBinding): string {
     : 'sculpt the other way';
 }
 
-/** Neither sculpt binding names a direction: the HUD toggle does, chords invert it. Alt narrows the drag to one band. */
+/** Neither sculpt binding names a direction: the HUD toggle does, chords invert it. Alt narrows the drag to one band and keeps smoothed walls whole. */
 function sculptHint(action: ControlAction, b: ControlBinding): string {
   const press = `${HINT_MODIFIER[b.modifier]}${BUTTON_LABEL[b.button]}-drag`;
-  if (action === 'alt') return `${press} sculpts the HUD direction, current band only`;
+  if (action === 'alt') return `${press} sculpts the HUD direction, current band only; smooths walls whole`;
   return b.modifier === 'none'
     ? `${press} sculpts the HUD direction`
     : `${press} sculpts the other way`;
