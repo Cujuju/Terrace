@@ -37,31 +37,36 @@ function isClosed(line: readonly Point[]): boolean {
   return line.length > 2 && line[0]!.x === line[line.length - 1]!.x && line[0]!.y === line[line.length - 1]!.y;
 }
 
-/** Signed fixed-point distance to the nearest outline point, positive inside; a vertex's side is its segments' summed unit normals. */
+/** Which side of vertex v the point is on: positive inside, by its segments' summed unit normals. */
+function vertexSide(line: readonly Point[], v: number, px: number, py: number): number {
+  const closed = isClosed(line);
+  const before = v > 0 ? v - 1 : closed ? line.length - 2 : -1;
+  const after = v < line.length - 1 ? v + 1 : closed ? 1 : -1;
+  let nx = 0;
+  let ny = 0;
+  if (before >= 0) {
+    const [ux, uy] = normalOf(line[before]!, line[v]!);
+    const length = Math.floor(Math.sqrt(ux * ux + uy * uy)) || 1;
+    nx += Math.trunc((ux * OUTLINE_FIXED_POINT) / length);
+    ny += Math.trunc((uy * OUTLINE_FIXED_POINT) / length);
+  }
+  if (after >= 0) {
+    const [ux, uy] = normalOf(line[v]!, line[after]!);
+    const length = Math.floor(Math.sqrt(ux * ux + uy * uy)) || 1;
+    nx += Math.trunc((ux * OUTLINE_FIXED_POINT) / length);
+    ny += Math.trunc((uy * OUTLINE_FIXED_POINT) / length);
+  }
+  return nx * (px - line[v]!.x) + ny * (py - line[v]!.y);
+}
+
+/** Signed fixed-point distance to the nearest outline point, positive inside. */
 export function signedDistance(lines: readonly Point[][], px: number, py: number): number | null {
   let bestSquared = Infinity;
-  let bestSide = 0;
+  let bestLine: readonly Point[] | null = null;
+  // The nearest point's vertex, or -1 inside a segment, whose cross product then gives the side.
+  let bestVertex = -1;
+  let bestCross = 0;
   for (const line of lines) {
-    const closed = isClosed(line);
-    const vertexSide = (v: number): number => {
-      const before = v > 0 ? v - 1 : closed ? line.length - 2 : -1;
-      const after = v < line.length - 1 ? v + 1 : closed ? 1 : -1;
-      let nx = 0;
-      let ny = 0;
-      if (before >= 0) {
-        const [ux, uy] = normalOf(line[before]!, line[v]!);
-        const length = Math.floor(Math.sqrt(ux * ux + uy * uy)) || 1;
-        nx += Math.trunc((ux * OUTLINE_FIXED_POINT) / length);
-        ny += Math.trunc((uy * OUTLINE_FIXED_POINT) / length);
-      }
-      if (after >= 0) {
-        const [ux, uy] = normalOf(line[v]!, line[after]!);
-        const length = Math.floor(Math.sqrt(ux * ux + uy * uy)) || 1;
-        nx += Math.trunc((ux * OUTLINE_FIXED_POINT) / length);
-        ny += Math.trunc((uy * OUTLINE_FIXED_POINT) / length);
-      }
-      return nx * (px - line[v]!.x) + ny * (py - line[v]!.y);
-    };
     for (let i = 1; i < line.length; i++) {
       const a = line[i - 1]!;
       const b = line[i]!;
@@ -74,12 +79,15 @@ export function signedDistance(lines: readonly Point[][], px: number, py: number
       const squared = (px - nx) * (px - nx) + (py - ny) * (py - ny);
       if (squared >= bestSquared) continue;
       bestSquared = squared;
-      bestSide = along <= 0 ? vertexSide(i - 1) : along >= length ? vertexSide(i) : dx * (py - a.y) - dy * (px - a.x);
+      bestLine = line;
+      bestVertex = along <= 0 ? i - 1 : along >= length ? i : -1;
+      if (bestVertex < 0) bestCross = dx * (py - a.y) - dy * (px - a.x);
     }
   }
-  if (bestSquared === Infinity) return null;
+  if (bestLine === null) return null;
+  const side = bestVertex >= 0 ? vertexSide(bestLine, bestVertex, px, py) : bestCross;
   const distance = Math.floor(Math.sqrt(bestSquared));
-  return bestSide >= 0 ? distance : -distance;
+  return side >= 0 ? distance : -distance;
 }
 
 /** A fixed-point distance as the edge units a cell stores; no outline, or a cell or more away, stores none. */

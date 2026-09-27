@@ -9,28 +9,38 @@ import { SMOOTH_KINK_HALF_CELLS_MAX } from './options.ts';
 import { edgeUnits, nearestPoint, signedDistance, traceBandOutlines, vertexKey } from './outlineField.ts';
 import { OUTLINE_FIXED_POINT, type Point } from './outlineTrace.ts';
 
-// Player smooth: trace each band outline, low-pass it along its length so
-// noise narrower than the kink size cancels and wider arcs stay, rebuild cells.
+// Player smooth: trace each band outline, drop bumps narrower than about twice
+// the kink with a median along it (wider arcs stay), rebuild cells.
 
-/** Outlines are resampled two points per cell, so the blur's reach is set in cells. */
+/** Outlines are resampled two points per cell, so windows are set in cells. */
 const SAMPLES_PER_CELL = 2;
 const SAMPLE_FIXED = OUTLINE_FIXED_POINT / SAMPLES_PER_CELL;
 
 /** Blurred coordinates carry 16x precision, so repeated passes round nothing away. */
 const BLUR_PRECISION = 16;
 
-/**
- * The shrink-corrected blur (twice the blur less the blur twice) reaches three
- * sigmas each way per blur: sigma is half the kink, so 1.5 kinks in all.
- */
-const BLUR_REACH_PER_KINK_HALF_CELL = 3 / 4;
+/** The median reaches twice the kink each way, so a bump up to twice the kink wide is outvoted. */
+const MEDIAN_REACH_KINKS = 2;
 
-/** The outline is traced this many cells past the blur's reach, so it runs pinned into untouched ground. */
-const TRACE_MARGIN_CELLS = 2;
+/** A cell farther than the widest outvoted bump plus this keeps its side of the smoothed outline. */
+const RECLASSIFY_MARGIN_CELLS = 1;
 
-/** Cells past the brush a smooth at this kink size reads. */
+/** The outline is traced a cell past the farthest point a brush cell reclassifies by. */
+const TRACE_MARGIN_CELLS = 1;
+
+/** Half the median window, in samples. */
+function medianReachSamples(kinkHalfCells: number): number {
+  return (MEDIAN_REACH_KINKS * kinkHalfCells * SAMPLES_PER_CELL) / 2;
+}
+
+/** How far from a smoothed outline, in cells, a brush cell takes that outline's side. */
+function reclassifyCells(kinkHalfCells: number): number {
+  return Math.ceil((MEDIAN_REACH_KINKS * kinkHalfCells) / 2) + RECLASSIFY_MARGIN_CELLS;
+}
+
+/** Cells past the brush a smooth reads; blurs never read past the pinned rim. */
 function smoothReachCells(kinkHalfCells: number): number {
-  return Math.ceil(kinkHalfCells * BLUR_REACH_PER_KINK_HALF_CELL) + TRACE_MARGIN_CELLS;
+  return reclassifyCells(kinkHalfCells) + TRACE_MARGIN_CELLS;
 }
 
 /** Every cell past the brush a smooth reads, at the largest kink size. */
@@ -83,31 +93,76 @@ function blur(values: Int32Array, pinned: Uint8Array, closed: boolean, passes: n
   return current;
 }
 
+/** Blurred precision back to fixed-point outline units, rounded. */
+function unblurred(v: number): number {
+  return Math.floor((v + BLUR_PRECISION / 2) / BLUR_PRECISION);
+}
+
 /**
- * Low-pass the line: twice the blur less the blur twice passes long waves
- * nearly untouched (arcs keep their radius) and cancels short ones.
+ * Each point takes the median of its neighbours' offsets from a wide low-pass:
+ * a narrow bump is outvoted outright, while an arc's offsets vary smoothly and stay.
  */
-function lowPass(line: Point[], kinkHalfCells: number): Point[] {
+function smoothLine(line: Point[], kinkHalfCells: number): Point[] {
   const closed = isClosed(line);
   const samples = resample(line);
   const n = samples.length;
-  if (n < 3) return line;
-  // Sigma is half the kink: kink/2 cells is kinkHalfCells samples, and variance passes/2.
-  const passes = Math.ceil((kinkHalfCells * kinkHalfCells) / 2);
   const pinned = Uint8Array.from(samples, (p) => (p.pinned ? 1 : 0));
-  const axis = (pick: (p: Point) => number): Int32Array => {
-    const raw = Int32Array.from(samples, (p) => pick(p) * BLUR_PRECISION);
+  if (n < 3 || !pinned.includes(0)) return line;
+  const reach = medianReachSamples(kinkHalfCells);
+  // Twice the blur less the blur twice keeps arcs' radius; sigma is the median's reach, variance passes / 2.
+  const passes = 2 * reach * reach;
+  const reference = (raw: Int32Array): Int32Array => {
     const once = blur(raw, pinned, closed, passes);
     const twice = blur(once, pinned, closed, passes);
     return raw.map((v, i) => (pinned[i] === 1 ? v : 2 * once[i]! - twice[i]!));
   };
-  const xs = axis((p) => p.x);
-  const ys = axis((p) => p.y);
-  const out = samples.map((p, i) => ({
-    x: Math.floor((xs[i]! + BLUR_PRECISION / 2) / BLUR_PRECISION),
-    y: Math.floor((ys[i]! + BLUR_PRECISION / 2) / BLUR_PRECISION),
-    pinned: p.pinned,
-  }));
+  const xs = Int32Array.from(samples, (p) => p.x * BLUR_PRECISION);
+  const ys = Int32Array.from(samples, (p) => p.y * BLUR_PRECISION);
+  const refX = reference(xs);
+  const refY = reference(ys);
+
+  // Each point's offset from the reference along its normal; pinned points sit on it.
+  const normalX = new Int32Array(n);
+  const normalY = new Int32Array(n);
+  const normalLength = new Int32Array(n);
+  const offsets = new Int32Array(n);
+  for (let i = 0; i < n; i++) {
+    const before = i > 0 ? i - 1 : closed ? n - 1 : i;
+    const after = i < n - 1 ? i + 1 : closed ? 0 : i;
+    const tx = refX[after]! - refX[before]!;
+    const ty = refY[after]! - refY[before]!;
+    const length = Math.floor(Math.sqrt(tx * tx + ty * ty));
+    normalX[i] = -ty;
+    normalY[i] = tx;
+    normalLength[i] = length;
+    if (length > 0) offsets[i] = Math.trunc(((xs[i]! - refX[i]!) * -ty + (ys[i]! - refY[i]!) * tx) / length);
+  }
+
+  // A ring's window stops short of meeting itself, so no sample votes twice.
+  const span = closed ? Math.min(reach, (n - 1) >> 1) : reach;
+  const window = new Int32Array(2 * span + 1);
+  const out: Point[] = [];
+  for (let i = 0; i < n; i++) {
+    if (pinned[i] === 1) {
+      out.push(samples[i]!);
+      continue;
+    }
+    if (normalLength[i] === 0) {
+      out.push({ x: unblurred(refX[i]!), y: unblurred(refY[i]!), pinned: false });
+      continue;
+    }
+    let count = 0;
+    for (let d = -span; d <= span; d++) {
+      const j = i + d;
+      if (closed) window[count++] = offsets[(j + n) % n]!;
+      else if (j >= 0 && j < n) window[count++] = offsets[j]!;
+    }
+    const votes = window.subarray(0, count).sort();
+    const median = votes[(count - 1) >> 1]!;
+    const x = refX[i]! + Math.trunc((median * normalX[i]!) / normalLength[i]!);
+    const y = refY[i]! + Math.trunc((median * normalY[i]!) / normalLength[i]!);
+    out.push({ x: unblurred(x), y: unblurred(y), pinned: false });
+  }
   if (closed) out.push(out[0]!);
   return out;
 }
@@ -150,10 +205,9 @@ export function applyOutlineSmooth(
   const pinRadiusFixed = Math.floor(Math.sqrt(rimSquared * OUTLINE_FIXED_POINT * OUTLINE_FIXED_POINT));
   const cxFixed = cx * OUTLINE_FIXED_POINT;
   const cyFixed = cy * OUTLINE_FIXED_POINT;
-  // A bump the blur removes is at most about the kink deep: a cell farther keeps its side.
-  const reclassifyFixed = (kinkHalfCells + 1) * OUTLINE_FIXED_POINT;
+  const reclassifyFixed = reclassifyCells(kinkHalfCells) * OUTLINE_FIXED_POINT;
 
-  // Level b's outline, simplified, with the inside on each segment's positive-cross side.
+  // Level b's outline, the inside on each segment's positive-cross side; points past the rim are pinned.
   let outlines = traceBandOutlines(heightAt, lowBand, highBand, x0, y0, x1, y1);
   for (const [band, raw] of outlines) {
     outlines.set(band, raw.map((line) => line.map((p) => {
@@ -171,7 +225,7 @@ export function applyOutlineSmooth(
       const shared = new Set(outlines.get(band - 1)!.flatMap((line) => line.map(vertexKey)));
       lines = lines.map((line) => line.map((p) => (shared.has(vertexKey(p)) ? (nearestPoint(below, p) ?? p) : p)));
     }
-    smoothed.set(band, lines.map((line) => lowPass(line, kinkHalfCells)));
+    smoothed.set(band, lines.map((line) => smoothLine(line, kinkHalfCells)));
   }
   outlines = smoothed;
 
