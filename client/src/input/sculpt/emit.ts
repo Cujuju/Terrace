@@ -35,6 +35,9 @@ export const emitIntent = (s: StrokeState, origin: EmitOrigin): EmitOutcome => {
     console.debug('[terrace] sculpt: directionless-raise guard hit (dead by construction)');
     return 'absent-silent';
   }
+
+  // Alt picks the tool's alt variant: a one-band drag, a wall-true smooth. Live per emit, so the chord switches later dabs.
+  const alt = s.strokeButton !== null && !s.strokeIsTouch && isAltSculptPress(s.strokeButton, s.mods);
   if (s.strokeGrab !== null) {
     const to = dragPlaneCell(s, s.strokeGrab);
     if (to === null) {
@@ -45,12 +48,7 @@ export const emitIntent = (s: StrokeState, origin: EmitOrigin): EmitOutcome => {
       return noteFlatSilent(s, origin);
     }
     s.descentFrozen = false;
-    // Alt drags one band only. Live per leg, so the chord switches later
-    // legs; the run floor is kept.
-    const dragAlt =
-      s.strokeButton !== null &&
-      !s.strokeIsTouch &&
-      isAltSculptPress(s.strokeButton, s.mods);
+    // The run floor is kept across legs.
     return emitDragOutcome(
       s,
       to.x,
@@ -58,7 +56,7 @@ export const emitIntent = (s: StrokeState, origin: EmitOrigin): EmitOutcome => {
       action,
       s.strokeGrab,
       s.strokeGrabFloor ?? s.strokeGrab,
-      dragAlt,
+      alt,
     );
   }
   s.descentFrozen = false;
@@ -116,6 +114,7 @@ export const emitIntent = (s: StrokeState, origin: EmitOrigin): EmitOutcome => {
       ? {}
       : { profile: brushProfile() }),
     ...(s.strokeTool === 'smooth' ? { smoothKinkHalfCells: smoothKinkHalfCells() } : {}),
+    ...(s.strokeTool === 'smooth' && alt ? { smoothWalls: true } : {}),
     ...(s.strokeTool === 'nudge' ? { nudgeStrength: nudgeStrength() } : {}),
     ...(s.strokeTool === 'carve' ? { depthBands: carveDepthBands() } : {}),
     ...(spanBand !== null ? { spanBand } : {}),

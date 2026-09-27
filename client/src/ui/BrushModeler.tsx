@@ -168,7 +168,10 @@ function modeTitle(mode: SculptMode, bindings: ControlBindings): string {
 }
 
 /** Edge badge naming the live alt mode. A letter today, digits if modes multiply. */
-const DRAG_ALT_BADGE = 'A';
+const ALT_BADGE = 'A';
+
+/** The alt smooth's added title: stacked walls smooth as one. */
+const SMOOTH_ALT_TITLE = 'Alt: bands sharing a wall smooth it as one';
 
 export function BrushModeler(): JSX.Element {
   return (
@@ -187,11 +190,20 @@ export function BrushModeler(): JSX.Element {
                 type="button"
                 class="brush-button"
                 classList={{ active: brushTool() === tool }}
-                aria-label={`${TOOL_LABEL[tool]} tool`}
-                title={TOOL_TITLE[tool]}
+                aria-label={`${TOOL_LABEL[tool]} tool${tool === 'smooth' && brushTool() === 'smooth' && sculptAlt() ? ', alt' : ''}`}
+                title={
+                  tool === 'smooth' && brushTool() === 'smooth' && sculptAlt()
+                    ? `${TOOL_TITLE[tool]} · ${SMOOTH_ALT_TITLE}`
+                    : TOOL_TITLE[tool]
+                }
                 onClick={() => setBrushTool(tool)}
               >
                 <Dynamic component={TOOL_ICON[tool]} />
+                <Show when={tool === 'smooth' && brushTool() === 'smooth' && sculptAlt()}>
+                  <span class="mode-alt-badge" aria-hidden="true">
+                    {ALT_BADGE}
+                  </span>
+                </Show>
               </button>
             )}
           </For>
@@ -240,7 +252,7 @@ export function BrushModeler(): JSX.Element {
             />
             <Show when={sculptAlt() && brushTool() === 'drag'}>
               <span class="mode-alt-badge" aria-hidden="true">
-                {DRAG_ALT_BADGE}
+                {ALT_BADGE}
               </span>
             </Show>
           </button>
