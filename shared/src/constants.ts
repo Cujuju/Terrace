@@ -63,6 +63,9 @@ export const SOFT_APRON_MAX_REACH_CELLS = 2 ** SOFT_APRON_MAX_BANDS - 1;
 /** How far past the core the sheet may reach before the tread cap takes over. */
 export const SOFT_APRON_REACH_PER_RADIUS = 2;
 
+/** A tread narrower than this draws ragged: a cell stores one edge (1 cell measured ragged, 1.5 clean). */
+export const MIN_DRAWN_TREAD_HALF_CELLS = 3;
+
 /** A stepped stamp's tread: each band below the target reaches this much further out. */
 export const STEPPED_RING_WIDTH_CELLS = 2;
 

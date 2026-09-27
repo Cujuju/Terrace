@@ -22,8 +22,8 @@ import {
   setCarveDepthBands,
   setNudgeStrength,
   setSculptMode,
-  setSmoothKinkCells,
-  smoothKinkCells,
+  setSmoothKinkHalfCells,
+  smoothKinkHalfCells,
   type DenialHint,
   type SculptMode,
 } from '../state/hudState.ts';
@@ -53,8 +53,8 @@ import {
   CARVE_MIN_DEPTH_BANDS,
   NUDGE_STRENGTH_MAX,
   NUDGE_STRENGTH_MIN,
-  SMOOTH_KINK_CELLS_MAX,
-  SMOOTH_KINK_CELLS_MIN,
+  SMOOTH_KINK_HALF_CELLS_MAX,
+  SMOOTH_KINK_HALF_CELLS_MIN,
   type SculptProfile,
   type SculptTool,
 } from '@terrace/shared';
@@ -137,8 +137,13 @@ const HINT_MODIFIER: Record<string, string> = {
 
 const NUDGE_STRENGTH_DETENTS: readonly number[] = [25, 50, 75, 100];
 
-/** Kink sizes worth marking: a cell's jag, a step's, a small bump, the largest. */
-const SMOOTH_KINK_DETENTS: readonly number[] = [SMOOTH_KINK_CELLS_MIN, 2, 4, SMOOTH_KINK_CELLS_MAX];
+/** Kink sizes worth marking, in half cells: a stair's half cell, then one, two and four cells. */
+const SMOOTH_KINK_DETENTS: readonly number[] = [SMOOTH_KINK_HALF_CELLS_MIN, 2, 4, SMOOTH_KINK_HALF_CELLS_MAX];
+
+/** Half cells shown as cells: 1 → 0.5. */
+function kinkCellsLabel(halfCells: number): string {
+  return (halfCells / 2).toFixed(1);
+}
 
 /** The marked depths: one slab, an overhang's two, then five and the ceiling. */
 const CARVE_DEPTH_DETENTS: readonly number[] = [
@@ -163,7 +168,10 @@ function modeTitle(mode: SculptMode, bindings: ControlBindings): string {
 }
 
 /** Edge badge naming the live alt mode. A letter today, digits if modes multiply. */
-const DRAG_ALT_BADGE = 'A';
+const ALT_BADGE = 'A';
+
+/** The alt smooth's added title: stacked walls smooth as one. */
+const SMOOTH_ALT_TITLE = 'Alt: bands sharing a wall smooth it as one';
 
 export function BrushModeler(): JSX.Element {
   return (
@@ -182,11 +190,20 @@ export function BrushModeler(): JSX.Element {
                 type="button"
                 class="brush-button"
                 classList={{ active: brushTool() === tool }}
-                aria-label={`${TOOL_LABEL[tool]} tool`}
-                title={TOOL_TITLE[tool]}
+                aria-label={`${TOOL_LABEL[tool]} tool${tool === 'smooth' && brushTool() === 'smooth' && sculptAlt() ? ', alt' : ''}`}
+                title={
+                  tool === 'smooth' && brushTool() === 'smooth' && sculptAlt()
+                    ? `${TOOL_TITLE[tool]} · ${SMOOTH_ALT_TITLE}`
+                    : TOOL_TITLE[tool]
+                }
                 onClick={() => setBrushTool(tool)}
               >
                 <Dynamic component={TOOL_ICON[tool]} />
+                <Show when={tool === 'smooth' && brushTool() === 'smooth' && sculptAlt()}>
+                  <span class="mode-alt-badge" aria-hidden="true">
+                    {ALT_BADGE}
+                  </span>
+                </Show>
               </button>
             )}
           </For>
@@ -235,7 +252,7 @@ export function BrushModeler(): JSX.Element {
             />
             <Show when={sculptAlt() && brushTool() === 'drag'}>
               <span class="mode-alt-badge" aria-hidden="true">
-                {DRAG_ALT_BADGE}
+                {ALT_BADGE}
               </span>
             </Show>
           </button>
@@ -295,12 +312,12 @@ export function BrushModeler(): JSX.Element {
       </div>
       <Show when={brushTool() === 'smooth'}>
         <div class="hud-row brush-slider">
-          <span class="brush-slider__end">{SMOOTH_KINK_CELLS_MIN}</span>
+          <span class="brush-slider__end">{kinkCellsLabel(SMOOTH_KINK_HALF_CELLS_MIN)}</span>
           <div
             class="brush-slider__track"
             style={{
-              '--brush-rung': String(smoothKinkCells() - SMOOTH_KINK_CELLS_MIN),
-              '--brush-slider-rungs': String(SMOOTH_KINK_CELLS_MAX - SMOOTH_KINK_CELLS_MIN),
+              '--brush-rung': String(smoothKinkHalfCells() - SMOOTH_KINK_HALF_CELLS_MIN),
+              '--brush-slider-rungs': String(SMOOTH_KINK_HALF_CELLS_MAX - SMOOTH_KINK_HALF_CELLS_MIN),
             }}
           >
             <span class="brush-slider__rail" />
@@ -309,9 +326,9 @@ export function BrushModeler(): JSX.Element {
               {(detent, anchor) => (
                 <span
                   class="brush-slider__detent"
-                  classList={{ on: smoothKinkCells() >= detent }}
+                  classList={{ on: smoothKinkHalfCells() >= detent }}
                   style={{
-                    '--brush-detent': String(detent - SMOOTH_KINK_CELLS_MIN),
+                    '--brush-detent': String(detent - SMOOTH_KINK_HALF_CELLS_MIN),
                     '--brush-anchor': String(anchor()),
                   }}
                 />
@@ -320,20 +337,20 @@ export function BrushModeler(): JSX.Element {
             <input
               type="range"
               class="brush-slider__input"
-              min={SMOOTH_KINK_CELLS_MIN}
-              max={SMOOTH_KINK_CELLS_MAX}
+              min={SMOOTH_KINK_HALF_CELLS_MIN}
+              max={SMOOTH_KINK_HALF_CELLS_MAX}
               step="1"
-              value={smoothKinkCells()}
+              value={smoothKinkHalfCells()}
               aria-label="Kink size"
-              aria-valuetext={`${smoothKinkCells()} cells`}
-              title="Kink size: the largest bump in a terrace edge a smooth removes; bigger bends are curves and stay"
+              aria-valuetext={`${kinkCellsLabel(smoothKinkHalfCells())} cells`}
+              title="Kink size in cells: how far a smooth may move a terrace edge; shallower bumps go, deeper bends stay"
               onInput={(event) =>
-                setSmoothKinkCells(event.currentTarget.valueAsNumber)
+                setSmoothKinkHalfCells(event.currentTarget.valueAsNumber)
               }
             />
-            <span class="brush-slider__value">{smoothKinkCells()}</span>
+            <span class="brush-slider__value">{kinkCellsLabel(smoothKinkHalfCells())}</span>
           </div>
-          <span class="brush-slider__end">{SMOOTH_KINK_CELLS_MAX}</span>
+          <span class="brush-slider__end">{kinkCellsLabel(SMOOTH_KINK_HALF_CELLS_MAX)}</span>
         </div>
       </Show>
       <Show when={brushTool() === 'nudge'}>
