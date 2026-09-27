@@ -137,8 +137,13 @@ const HINT_MODIFIER: Record<string, string> = {
 
 const NUDGE_STRENGTH_DETENTS: readonly number[] = [25, 50, 75, 100];
 
-/** Kink sizes worth marking: a cell's jag, a step's, a small bump, the largest. */
+/** Kink sizes worth marking, in half cells: a stair's half cell, then one, two and four cells. */
 const SMOOTH_KINK_DETENTS: readonly number[] = [SMOOTH_KINK_HALF_CELLS_MIN, 2, 4, SMOOTH_KINK_HALF_CELLS_MAX];
+
+/** Half cells shown as cells: 1 → 0.5. */
+function kinkCellsLabel(halfCells: number): string {
+  return (halfCells / 2).toFixed(1);
+}
 
 /** The marked depths: one slab, an overhang's two, then five and the ceiling. */
 const CARVE_DEPTH_DETENTS: readonly number[] = [
@@ -295,7 +300,7 @@ export function BrushModeler(): JSX.Element {
       </div>
       <Show when={brushTool() === 'smooth'}>
         <div class="hud-row brush-slider">
-          <span class="brush-slider__end">{SMOOTH_KINK_HALF_CELLS_MIN}</span>
+          <span class="brush-slider__end">{kinkCellsLabel(SMOOTH_KINK_HALF_CELLS_MIN)}</span>
           <div
             class="brush-slider__track"
             style={{
@@ -325,15 +330,15 @@ export function BrushModeler(): JSX.Element {
               step="1"
               value={smoothKinkHalfCells()}
               aria-label="Kink size"
-              aria-valuetext={`${smoothKinkHalfCells()} cells`}
-              title="Kink size: the largest bump in a terrace edge a smooth removes; bigger bends are curves and stay"
+              aria-valuetext={`${kinkCellsLabel(smoothKinkHalfCells())} cells`}
+              title="Kink size in cells: how far a smooth may move a terrace edge; shallower bumps go, deeper bends stay"
               onInput={(event) =>
                 setSmoothKinkHalfCells(event.currentTarget.valueAsNumber)
               }
             />
-            <span class="brush-slider__value">{smoothKinkHalfCells()}</span>
+            <span class="brush-slider__value">{kinkCellsLabel(smoothKinkHalfCells())}</span>
           </div>
-          <span class="brush-slider__end">{SMOOTH_KINK_HALF_CELLS_MAX}</span>
+          <span class="brush-slider__end">{kinkCellsLabel(SMOOTH_KINK_HALF_CELLS_MAX)}</span>
         </div>
       </Show>
       <Show when={brushTool() === 'nudge'}>
