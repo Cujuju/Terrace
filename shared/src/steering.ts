@@ -2,6 +2,7 @@ import {
   WORLD_UNIT_CELLS,
   cellsAcross,
 } from './constants.ts';
+import { cellCentre } from './climb.ts';
 import { findRoute, type RouteBudget, type RouteCell } from './pathing.ts';
 import { canProceedAlong, type TerrainSampler, type TraversalProfile } from './traversal.ts';
 
@@ -152,10 +153,6 @@ export interface RoutedMover extends Mover {
 const ROUTE_RESYNC_WINDOW_CELLS = cellsAcross(2);
 
 const ROUTE_REJOIN_RADIUS_CELLS = 1;
-
-function cellCentre(cell: RouteCell): { x: number; y: number } {
-  return { x: cell.x + 0.5, y: cell.y + 0.5 };
-}
 
 export interface FollowRouteOptions extends SteerOptions {
   readonly lookaheadCells: number;

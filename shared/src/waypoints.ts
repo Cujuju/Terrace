@@ -1,3 +1,4 @@
+import { cellCentre } from './climb.ts';
 import { isFiniteNumber } from './parse.ts';
 import {
   isWalkableCell,
@@ -337,19 +338,19 @@ export function snapWaypointToWalkable(
     for (let step = 0; step < sideLength; step++) {
       const topX = clampCell(cx - ring + step);
       if (isWalkableCell(world, profile, topX, clampCell(cy - ring))) {
-        return { x: topX + 0.5, y: clampCell(cy - ring) + 0.5 };
+        return cellCentre({ x: topX, y: clampCell(cy - ring) });
       }
       const rightY = clampCell(cy - ring + step);
       if (isWalkableCell(world, profile, clampCell(cx + ring), rightY)) {
-        return { x: clampCell(cx + ring) + 0.5, y: rightY + 0.5 };
+        return cellCentre({ x: clampCell(cx + ring), y: rightY });
       }
       const bottomX = clampCell(cx + ring - step);
       if (isWalkableCell(world, profile, bottomX, clampCell(cy + ring))) {
-        return { x: bottomX + 0.5, y: clampCell(cy + ring) + 0.5 };
+        return cellCentre({ x: bottomX, y: clampCell(cy + ring) });
       }
       const leftY = clampCell(cy + ring - step);
       if (isWalkableCell(world, profile, clampCell(cx - ring), leftY)) {
-        return { x: clampCell(cx - ring) + 0.5, y: leftY + 0.5 };
+        return cellCentre({ x: clampCell(cx - ring), y: leftY });
       }
     }
   }

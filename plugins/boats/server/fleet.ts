@@ -1,4 +1,5 @@
 import {
+  CELL_CENTRE_OFFSET,
   MAX_DEBUG_SAILED_CELLS_PER_CHAIN,
   MAX_HEIGHT,
   MAX_RELIEF_WORLD_UNITS,
@@ -6,6 +7,7 @@ import {
   ROUTE_NODE_BUDGET,
   WORLD_UNIT_CELLS,
   buildWaypointChain,
+  cellCentre,
   cellsAcross,
   createRouteBudget,
   findRouteWithStatus,
@@ -213,8 +215,9 @@ function nearestRouteIndex(
   let best = 0;
   let bestSquared = Infinity;
   for (let i = 0; i < cells.length; i++) {
-    const dx = cells[i].x + 0.5 - x;
-    const dy = cells[i].y + 0.5 - y;
+    const centre = cellCentre(cells[i]);
+    const dx = centre.x - x;
+    const dy = centre.y - y;
     const d = dx * dx + dy * dy;
     if (d < bestSquared) {
       bestSquared = d;
@@ -1157,12 +1160,12 @@ function routeLegPoints(
   }
   const points: Waypoint[] = [];
   for (let i = 0; i < outcome.plan.cells.length; i += FLEET_HOP_LENGTH_CELLS) {
-    points.push({ x: outcome.plan.cells[i].x, y: outcome.plan.cells[i].y });
+    points.push(cellCentre(outcome.plan.cells[i]));
   }
-  const last = outcome.plan.cells[outcome.plan.cells.length - 1];
+  const last = cellCentre(outcome.plan.cells[outcome.plan.cells.length - 1]);
   const tail = points[points.length - 1];
   if (tail === undefined || tail.x !== last.x || tail.y !== last.y) {
-    points.push({ x: last.x, y: last.y });
+    points.push(last);
   }
   if (points.length === 0) return null;
   if (isPerfLoggingEnabled()) {
@@ -1350,8 +1353,7 @@ function refloat(world: BoatWorld, eroded: TerrainSampler, boat: Boat, step: num
   const originX = Math.floor(boat.x);
   const originY = Math.floor(boat.y);
   for (const [dx, dy] of COASTAL_DISC) {
-    const targetX = originX + dx + CELL_CENTRE_OFFSET;
-    const targetY = originY + dy + CELL_CENTRE_OFFSET;
+    const { x: targetX, y: targetY } = cellCentre({ x: originX + dx, y: originY + dy });
     if (!isManoeuvrablePose(world, eroded, targetX, targetY, boat.heading)) continue;
     const range = distance(boat.x, boat.y, targetX, targetY);
     if (range <= step) {
@@ -1364,8 +1366,6 @@ function refloat(world: BoatWorld, eroded: TerrainSampler, boat: Boat, step: num
     return;
   }
 }
-
-const CELL_CENTRE_OFFSET = 0.5;
 
 /** One capped rescue search from the shared tick pool. Deducts what it
  * spends so later searches see the remainder. */
@@ -1502,8 +1502,8 @@ function sailBoat(tick: SailTick, index: number): void {
             slot.y,
             FLEET_SNAP_RADIUS_CELLS,
           );
-    goalX = Math.min(Math.max(berth.x, 0.5), world.worldSize - 0.5);
-    goalY = Math.min(Math.max(berth.y, 0.5), world.worldSize - 0.5);
+    goalX = Math.min(Math.max(berth.x, CELL_CENTRE_OFFSET), world.worldSize - CELL_CENTRE_OFFSET);
+    goalY = Math.min(Math.max(berth.y, CELL_CENTRE_OFFSET), world.worldSize - CELL_CENTRE_OFFSET);
     standoff = squadron.standoff;
     slotIndex = squadron.slot;
   } else if (target === null) {
@@ -1760,13 +1760,9 @@ function sailBoat(tick: SailTick, index: number): void {
       voyage.routeIndex + BOAT_AIM_AHEAD_CELLS,
       voyage.route.length - 1,
     );
+    const aim = cellCentre(voyage.route[aimIndex]);
     aimBearing =
-      aimIndex > voyage.routeIndex
-        ? Math.atan2(
-            voyage.route[aimIndex].y + 0.5 - boat.y,
-            voyage.route[aimIndex].x + 0.5 - boat.x,
-          )
-        : boat.heading;
+      aimIndex > voyage.routeIndex ? Math.atan2(aim.y - boat.y, aim.x - boat.x) : boat.heading;
   } else {
     aimBearing = Math.atan2(goalY - boat.y, goalX - boat.x);
   }
@@ -2158,7 +2154,7 @@ export function fleetWaypointDebug(): WaypointDebugFrame {
           ? []
           : sailed
               .slice(0, MAX_DEBUG_SAILED_CELLS_PER_CHAIN)
-              .map((cell) => ({ x: cell.x + 0.5, y: cell.y + 0.5 })),
+              .map(cellCentre),
     });
   }
   return { chains };

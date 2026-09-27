@@ -30,6 +30,11 @@ export function climbSecondsPerBand(rule: ClimbRule): number {
 
 export const CELL_CENTRE_OFFSET = 0.5;
 
+/** Server-frame centre of integer cell (x, y); cell k spans [k, k+1). */
+export function cellCentre(cell: { readonly x: number; readonly y: number }): { x: number; y: number } {
+  return { x: cell.x + CELL_CENTRE_OFFSET, y: cell.y + CELL_CENTRE_OFFSET };
+}
+
 const CLIMB_BODY_HALF_DEPTH_WORLD_UNITS = 0.125 * 0.95 * 0.85;
 
 export const CLIMB_BODY_HALF_WIDTH_CELLS = cellsAcross(CLIMB_BODY_HALF_DEPTH_WORLD_UNITS);
