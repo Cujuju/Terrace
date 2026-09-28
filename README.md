@@ -100,7 +100,7 @@ world hours later.
 | `PLUGINS_ENABLED` | *(unset)* | Overrides every world's plugin enablement for this run: a comma-separated allow-list of plugin names, or `none` for a core-only world (terrain, water, sky). Unset, each world's own settings apply. Plugins stay installed either way, so their saved slices are kept. |
 | `PUBLIC_WS_URL` | `ws://localhost:2567` | *Compose only.* Baked into the client bundle, so changing it needs `--build`. |
 | `CLIENT_PORT` | `8080` | *Compose only.* Host port serving the client page. |
-| `TERRACE_VERSION` | *(unset)* | *Compose only.* Build stamp, e.g. `TERRACE_VERSION=$(git rev-parse --short HEAD) docker compose up --build`. Open pages compare it across a restart to decide whether to reload. Unset, every restart looks new and pages reload once. |
+| `TERRACE_VERSION` | *(unset)* | *Compose only.* Build stamp, e.g. `TERRACE_VERSION=$(node server/scripts/app-version.ts) docker compose up --build` (needs Node 24 on the host). Open pages compare it across a restart to decide whether to reload. Unset, every restart looks new and pages reload once. |
 
 Plugins read their own variables from the same `.env`; `.env.example` documents
 each one.

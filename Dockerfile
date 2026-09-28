@@ -65,6 +65,8 @@ FROM source AS client-build
 # rebuilding this image, which is what `docker compose up --build` does.
 ARG VITE_SERVER_URL
 ARG VITE_ROOM_NAME
+# The bundle's version stamp; must match the server stage's (see BUILD IDENTITY below).
+ARG TERRACE_VERSION
 
 # Full install: the client needs its dev dependencies (vite, the solid plugin).
 RUN --mount=type=cache,id=terrace-pnpm-store,target=/pnpm/store \
@@ -112,17 +114,17 @@ ENV NODE_ENV=production
 
 # BUILD IDENTITY FOR AN IMAGE THAT SHIPS NO `.git`.
 #
-# server/src/version.ts derives SERVER_VERSION from git and the per-plugin
+# server/src/app-version.ts derives the app version from git and the per-plugin
 # stamps (plugins/plugin-version.ts) derive from a plugin directory's git tree
 # hash. Neither can work here: the image has no repository. TERRACE_VERSION is
 # the documented override for both, and writing it into the image's environment
 # is what makes it survive to run time — an ARG alone would not.
 #
 # Set it to something that changes when the code does, e.g.
-#   docker compose build --build-arg TERRACE_VERSION=$(git rev-parse --short HEAD)
+#   docker compose build --build-arg TERRACE_VERSION=$(node server/scripts/app-version.ts)
 # (compose passes it through from the environment; see docker-compose.yml).
 #
-# LEFT UNSET IS SAFE, NOT SILENT. version.ts degrades to 'unversioned' and the
+# LEFT UNSET IS SAFE, NOT SILENT. app-version.ts degrades to 'unversioned' and the
 # plugin stamps degrade to a per-BOOT nonce, which makes every restart look like
 # a new build and reloads open pages. Conservative rather than wrong — and in
 # docker a restart usually IS a redeploy, so it is rarely a false alarm.

@@ -24,7 +24,7 @@ services:
         # stage). The image ships no `.git`, so this is the only thing the
         # server's version stamp and the per-plugin build stamps can derive
         # from. Set it to something that moves when the code does:
-        #   TERRACE_VERSION=$(git rev-parse --short HEAD) docker compose up --build
+        #   TERRACE_VERSION=$(node server/scripts/app-version.ts) docker compose up --build
         # Unset, the stamps fall back to a per-boot value: every restart looks
         # like a new build and open pages reload. Conservative, not wrong.
         TERRACE_VERSION: ${TERRACE_VERSION:-}
@@ -118,6 +118,8 @@ services:
         # ws://your-box.example:2567 — and rebuild: `docker compose up --build`.
         # If you changed PORT, change this too.
         VITE_SERVER_URL: ${PUBLIC_WS_URL:-ws://localhost:2567}
+        # The bundle's version stamp; the HUD flags skew when it differs from the server's.
+        TERRACE_VERSION: ${TERRACE_VERSION:-}
     ports:
       - "${CLIENT_PORT:-8080}:80"
     # Ordering only. The page loads fine before the server is up; the client

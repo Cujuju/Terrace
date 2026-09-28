@@ -77,8 +77,9 @@ old bundle. Launch it directly — `node client/node_modules/vite/bin/vite.js
 This cost a whole D1 measurement on 2026-09-06.
 
 Every run now checks the sample's `clientVersion` against
-`TERRACE_EXPECT_VERSION` (or this checkout's HEAD) and warns when the page is
-not running the code under test. Heed it — that warning is the only thing
+`TERRACE_EXPECT_VERSION` (or this checkout's app version, from
+`node server/scripts/app-version.ts`) and warns when the page is not running
+the code under test. Heed it — that warning is the only thing
 between a failed restart and a number for the wrong build.
 
 ### 2. One sample
@@ -195,7 +196,7 @@ One JSON object, printed and appended to the sink.
 | `label`, `scenario` | what you passed on the command line |
 | `launchMode` | `none` (default), `once`, `hold` or `headless` — see the launch-mode table |
 | `gpu` | the unmasked WebGL renderer string. **If this does not name the discrete GPU, throw the run away** — you measured SwiftShader. |
-| `clientVersion` | `<commit count>.<short hash>` of the bundle that was served |
+| `clientVersion` | app version (`server/src/app-version.ts`) of the bundle that was served |
 | `pixelRatio`, `cameraDistance`, `settleMs` | the framing the sample was taken at |
 | `programs`, `geometries`, `textures` | `renderer.info` totals at the end of the run |
 | `sample` | the frame block the run is judged on (below) |
