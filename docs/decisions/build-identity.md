@@ -21,3 +21,13 @@ stay as they are — overlapping god-beasts shielding each other is emergent
 flavor, not a bug (no spawn offset); the three #25 test towers and consumed
 relics on Frostwick Hollows stay as landmarks. (The kraken reachability knob
 was closed the same day — see the Deep Strata section above.)
+
+## Decisions made 2026-09-27 (version scheme)
+
+**Watermark format (owner request, supersedes `<commit count>.<short hash>`).**
+`0.<feat commits>.<non-feat commits not reachable from any feat>`, merges excluded; one
+scheme across the owner's projects. One implementation for both halves:
+`server/src/app-version.ts`. Commit type is the bump: `feat` → minor, else
+patch. `TERRACE_VERSION` still overrides where .git is absent; docker sets it
+from `node server/scripts/app-version.ts`. Trade-off: no hash, so two branches
+with equal counts stamp the same version.
