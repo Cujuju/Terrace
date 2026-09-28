@@ -385,7 +385,7 @@ export function WorldManager(props: { actions: WorldActions }): JSX.Element {
                               {
 }
                               <Show when={stamp() !== ''}>
-                                <span class="plugin-version"> v{stamp()}</span>
+                                <span class="plugin-version"> {stamp()}</span>
                               </Show>
                             </span>
                             <span class="plugin-controls">

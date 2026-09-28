@@ -200,7 +200,6 @@ their next join snapshot.
 - **`MODULE_TYPELESS_PACKAGE_JSON` warning** for a bare `.ts` plugin is harmless.
   Silence it with `plugins/hello/package.json`:
   `{"name": "@terrace/plugin-hello", "version": "0.1.0", "private": true, "type": "module"}`.
-  That `version` is the first half of the build stamp the world panel shows.
 - **npm dependencies** need that `package.json` (the `plugins/*` glob makes it a
   workspace package) *and* one `pnpm install` to update `pnpm-lock.yaml`. The
   Docker build uses `--frozen-lockfile` and fails with

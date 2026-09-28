@@ -38,9 +38,10 @@ by an admin who is not at that terminal, warns connected players first, and
 works in docker and systemd where there is no terminal at all.
 
 **Per-plugin build stamps, derived from content.** Discovery stamps each plugin
-`<package version>+<git tree hash of plugins/<name>>`, with a
+`<git tree hash of plugins/<name>>`, with a
 `-dirty.<digest of its status + diff>` suffix when there are uncommitted
-changes. The TREE hash, not "the last commit that touched the directory":
+changes. No `package.json` version: nobody bumps it, and the tree hash already
+covers that file. The TREE hash, not "the last commit that touched the directory":
 identical bytes must stamp identically and a revert must stamp as the bytes it
 went back to. The dirty marker carries CONTENT rather than being a flag,
 because a bare `-dirty` would make two different edits stamp the same and the

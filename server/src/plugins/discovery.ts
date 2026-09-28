@@ -172,7 +172,7 @@ export async function discoverPlugins(pluginsDir: string): Promise<LoadedPlugin[
   } else {
     logInfo(`loaded ${loaded.length} plugin(s): ${loaded.map((p) => p.plugin.name).join(', ')}`);
     for (const entry of loaded) {
-      logInfo(`plugin "${entry.plugin.name}" v${entry.version}`);
+      logInfo(`plugin "${entry.plugin.name}" build ${entry.version}`);
     }
   }
   return loaded;

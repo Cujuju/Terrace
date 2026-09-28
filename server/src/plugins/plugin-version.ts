@@ -1,10 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { logWarn } from '../log.ts';
-
-const UNKNOWN_PACKAGE_VERSION = '0.0.0';
 
 const STAMP_DIGEST_LENGTH = 7;
 
@@ -28,19 +25,6 @@ function git(cwd: string, args: readonly string[]): string | null {
   } catch {
     return null;
   }
-}
-
-function packageVersion(pluginDir: string): string {
-  try {
-    const raw = readFileSync(join(pluginDir, 'package.json'), 'utf8');
-    const parsed: unknown = JSON.parse(raw);
-    if (typeof parsed === 'object' && parsed !== null) {
-      const version = (parsed as { version?: unknown }).version;
-      if (typeof version === 'string' && version.trim() !== '') return version.trim();
-    }
-  } catch {
-  }
-  return UNKNOWN_PACKAGE_VERSION;
 }
 
 function dirtyPluginDirectories(pluginsDir: string): Map<string, string[]> | null {
@@ -86,23 +70,22 @@ export function createPluginVersionContext(pluginsDir: string): PluginVersionCon
 
 export function pluginVersionStamp(context: PluginVersionContext, directory: string): string {
   const pluginDir = join(context.pluginsDir, directory);
-  const version = packageVersion(pluginDir);
 
   const tree = git(pluginDir, ['rev-parse', '--short', 'HEAD:./']);
   if (tree !== null && /^[0-9a-f]+$/.test(tree.trim())) {
     const hash = tree.trim();
     const status = context.dirty?.get(directory);
-    if (status === undefined) return `${version}+${hash}`;
+    if (status === undefined) return hash;
     const diff = git(pluginDir, ['diff', 'HEAD', '--', '.']) ?? '';
-    return `${version}+${hash}-dirty.${shortDigest([...status, diff].join('\n'))}`;
+    return `${hash}-dirty.${shortDigest([...status, diff].join('\n'))}`;
   }
 
   const fromEnv = process.env['TERRACE_VERSION'];
   if (fromEnv !== undefined && fromEnv.trim() !== '') {
-    return `${version}+env.${shortDigest(`${fromEnv.trim()}:${directory}`)}`;
+    return `env.${shortDigest(`${fromEnv.trim()}:${directory}`)}`;
   }
 
-  return `${version}+boot.${BOOT_NONCE}`;
+  return `boot.${BOOT_NONCE}`;
 }
 
 const RELOAD_STAMP_MARKER = 'reload';

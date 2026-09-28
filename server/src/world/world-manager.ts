@@ -341,16 +341,16 @@ export class WorldManager {
     const failure = this.installAndProbe(id, replacement);
     if (failure === null) {
       this.announceBuildIdentity();
-      logInfo(`plugin "${name}" reloaded in place as v${replacement.version}`);
+      logInfo(`plugin "${name}" reloaded in place as build ${replacement.version}`);
       return { version: replacement.version };
     }
 
     logError(
-      `reloading plugin "${name}" failed at ${failure} — rolling back to v${previous.version}`,
+      `reloading plugin "${name}" failed at ${failure} — rolling back to build ${previous.version}`,
     );
     const rolledBack = this.installAndProbe(id, previous, true);
     if (rolledBack !== null) {
-      logError(`rolling plugin "${name}" back to v${previous.version} also failed at ${rolledBack}`);
+      logError(`rolling plugin "${name}" back to build ${previous.version} also failed at ${rolledBack}`);
     }
     if (this.session === null) {
       logError(

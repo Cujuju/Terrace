@@ -57,7 +57,7 @@ export function asLoadedPlugin(plugin: TerracePlugin): LoadedPlugin {
     exports: {},
     directory: plugin.name,
     entryPath: `<test>/${plugin.name}/server/index.ts`,
-    version: '0.0.0+test',
+    version: 'test',
   };
 }
 
