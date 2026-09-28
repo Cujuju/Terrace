@@ -1,21 +1,8 @@
 import { defineConfig } from 'vitest/config';
 import solid from 'vite-plugin-solid';
-import { execSync, type ExecSyncOptions } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
-import { isAbsolute } from 'node:path';
-
-function buildVersion(): string {
-  const fromEnv = process.env['TERRACE_VERSION'];
-  if (fromEnv !== undefined && fromEnv.trim() !== '') return fromEnv.trim();
-  try {
-    const opts: ExecSyncOptions = { stdio: ['ignore', 'pipe', 'ignore'] };
-    const count = execSync('git rev-list --count HEAD', opts).toString().trim();
-    const hash = execSync('git rev-parse --short HEAD', opts).toString().trim();
-    if (/^\d+$/.test(count) && /^[0-9a-f]+$/.test(hash)) return `${count}.${hash}`;
-  } catch {
-  }
-  return 'unversioned';
-}
+import { isAbsolute, resolve } from 'node:path';
+import { resolveAppVersion } from '../server/src/app-version.ts';
 
 function watchEnabled(): boolean {
   const raw = process.env['TERRACE_WATCH'];
@@ -71,7 +58,7 @@ export default defineConfig({
   plugins: [solid(), perfSink()],
   assetsInclude: ['**/*.glb'],
   define: {
-    __CLIENT_VERSION__: JSON.stringify(buildVersion()),
+    __CLIENT_VERSION__: JSON.stringify(resolveAppVersion(resolve(import.meta.dirname, '..'))),
   },
   server: {
     headers: { 'Document-Policy': 'js-profiling' },

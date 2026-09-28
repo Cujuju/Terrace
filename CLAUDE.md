@@ -29,6 +29,9 @@ uncommitted changes get overwritten.
 
 Stage only your exact paths — never `-A`, never a bare `git add`.
 
+The commit type is the version bump (`server/src/app-version.ts`): `feat` raises
+the minor number, every other type the patch. Nothing to edit by hand.
+
 Working in a worktree? Commit to its branch, then call `ExitWorktree`
 (`action: "keep"`) to return to this checkout and merge there — git against the
 shared checkout is blocked from inside a worktree until you do.
