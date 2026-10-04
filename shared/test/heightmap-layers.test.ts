@@ -3,7 +3,6 @@ import {
   applySculpt,
   bandLevelHeight,
   BAND_HEIGHT,
-  bandFloorHeight,
   BEDROCK_BAND,
   carveBands,
   createHeightmap,
@@ -17,8 +16,11 @@ import {
   sculptOptionsOf,
   setColumn,
   smooth,
+  SMOOTH_LAYER_BAND_REACH,
   WIRE_DEFAULT_SCULPT_OPTIONS,
+  type CellDiff,
   type Heightmap,
+  type SculptIntent,
   type SculptOptions,
   type SeededRng,
 } from '../src/index.ts';
@@ -121,7 +123,7 @@ describe('a smooth grasping a lower layer never swallows the cave above it', () 
   });
 });
 
-describe('an anchored smooth conserves height (2026-09-15)', () => {
+describe('the player smooth writes only its disc, within its read window\'s bands', () => {
   const SIZE = 96;
   const GROUND_BAND = 40;
   const TRENCH_X = 40;
@@ -164,8 +166,7 @@ describe('an anchored smooth conserves height (2026-09-15)', () => {
     }
     return map;
   };
-  const totalOf = (map: Heightmap): number => map.cells.reduce((sum, h) => sum + h, 0);
-  const press = (map: Heightmap): number =>
+  const press =(map: Heightmap): number =>
     applySculpt(map, CLICK_X, ROW, MAX_BRUSH_RADIUS, -DEFAULT_SCULPT_AMOUNT, SMOOTH_LOWER).length;
   const noiseMapOver = (rng: SeededRng, lowBand: number, highBand: number): Heightmap => {
     const map = createHeightmap(RANDOM_SIZE);
@@ -193,35 +194,72 @@ describe('an anchored smooth conserves height (2026-09-15)', () => {
     return map;
   };
 
-  it('moves height whatever the pit under it holds, leaking at most two bands per touched cell', () => {
-    // Laplacian passes are not exactly conserving; see docs/decisions/
-    // relaxation.md. Every write stays inside a clamp window two bands wide.
+  /** Every fixture here grasps its bottom span, so its ceiling is the ground a smooth reads. */
+  const groundBandAt = (map: Heightmap, x: number, y: number): number =>
+    drawnBandOfSample(readSpans(map, x, y)[0]!.ceiling);
+
+  /** One wire smooth press; reports writes off the disc or outside the read window's band range. */
+  const smoothPress = (
+    map: Heightmap,
+    cx: number,
+    cy: number,
+    radius: number,
+    dir: 1 | -1,
+    extra: Partial<SculptIntent> = {},
+  ): { diff: CellDiff[]; breaches: unknown[] } => {
+    const reach = radius + OUTLINE_SMOOTH_READ_MARGIN_CELLS;
+    let lowBand = Infinity;
+    let highBand = -Infinity;
+    for (let y = Math.max(0, cy - reach); y <= Math.min(map.size - 1, cy + reach); y++) {
+      for (let x = Math.max(0, cx - reach); x <= Math.min(map.size - 1, cx + reach); x++) {
+        const band = groundBandAt(map, x, y);
+        lowBand = Math.min(lowBand, band);
+        highBand = Math.max(highBand, band);
+      }
+    }
+    const disc = new Set<number>();
+    forEachFootprintOffset(radius, (dx, dy) => {
+      const x = cx + dx;
+      const y = cy + dy;
+      if (x >= 0 && y >= 0 && x < map.size && y < map.size) disc.add(y * map.size + x);
+    });
+    const options = sculptOptionsOf({ type: 'sculpt', x: cx, y: cy, radius, dir, tool: 'smooth', ...extra });
+    const diff = applySculpt(map, cx, cy, radius, dir * DEFAULT_SCULPT_AMOUNT, options);
+    const breaches: unknown[] = [];
+    for (const cell of diff) {
+      const band = groundBandAt(map, cell.x, cell.y);
+      if (!disc.has(cell.y * map.size + cell.x) || band < lowBand || band > highBand) {
+        breaches.push({ cx, cy, radius, dir, cell, band, lowBand, highBand });
+      }
+    }
+    return { diff, breaches };
+  };
+
+  it('a press beside a pit of any depth writes only its disc, inside its window\'s bands', () => {
     for (const digs of TRENCH_DEPTHS) {
       const map = trenchAndTower(digs);
-      const before = totalOf(map);
-      const moved = press(map);
-      expect(moved).toBeGreaterThan(0);
-      expect(Math.abs(totalOf(map) - before)).toBeLessThanOrEqual(moved * 2 * BAND_HEIGHT);
+      const { diff, breaches } = smoothPress(map, CLICK_X, ROW, MAX_BRUSH_RADIUS, -1);
+      expect(diff.length).toBeGreaterThan(0);
+      expect([digs, breaches]).toEqual([digs, []]);
     }
   });
 
-  it('every brush size and direction drifts at most two bands per touched cell', () => {
+  it('every brush size keeps those rules, and neither direction nor profile changes the press', () => {
     for (const radius of [1, MAX_BRUSH_RADIUS]) {
+      let first: CellDiff[] | null = null;
       for (const dir of [1, -1] as const) {
         for (const profile of ['soft', 'hard'] as const) {
           const map = trenchAndTower(TRENCH_DEPTHS[1]!);
-          const before = totalOf(map);
-          const options = sculptOptionsOf({
-            type: 'sculpt', x: CLICK_X, y: ROW, radius, dir, tool: 'smooth', profile,
-          });
-          const diff = applySculpt(map, CLICK_X, ROW, radius, dir * DEFAULT_SCULPT_AMOUNT, options);
-          expect(Math.abs(totalOf(map) - before)).toBeLessThanOrEqual(diff.length * 2 * BAND_HEIGHT);
+          const { diff, breaches } = smoothPress(map, CLICK_X, ROW, radius, dir, { profile });
+          expect([radius, dir, profile, breaches]).toEqual([radius, dir, profile, []]);
+          if (first === null) first = diff;
+          else expect([radius, dir, profile, diff]).toEqual([radius, dir, profile, first]);
         }
       }
     }
   });
 
-  it('a spanBand press on a layered column conserves SOLID VOLUME', () => {
+  it('a spanBand press holds walls above the grasped layer and never touches the roof', () => {
     const ROOF_GAP_BANDS = 6;
     const map = createHeightmap(RANDOM_SIZE);
     map.cells.fill(bandLevelHeight(BUILT_GROUND_BAND));
@@ -237,27 +275,32 @@ describe('an anchored smooth conserves height (2026-09-15)', () => {
         ]);
       }
     }
-    const volumeOf = (m: Heightmap): number => {
-      let volume = 0;
-      for (let y = 0; y < m.size; y++) {
-        for (let x = 0; x < m.size; x++) {
-          for (const span of readSpans(m, x, y)) {
-            volume += span.ceiling - bandFloorHeight(span.floorBand);
-          }
+    const spanBand = drawnBandOfSample(bandLevelHeight(BUILT_GROUND_BAND));
+    const disc = new Set<number>();
+    forEachFootprintOffset(BUILT_RADIUS, (dx, dy) => disc.add((32 + dy) * map.size + 32 + dx));
+    let touched = 0;
+    let heldWalls = 0;
+    for (const dir of [1, -1] as const) {
+      const before = new Map<number, ReturnType<typeof readSpans>>();
+      for (let y = 20; y < 44; y++) {
+        for (let x = 20; x < 44; x++) before.set(y * map.size + x, readSpans(map, x, y));
+      }
+      const { diff, breaches } = smoothPress(map, 32, 32, BUILT_RADIUS, dir, { spanBand });
+      touched += diff.length;
+      expect([dir, breaches]).toEqual([dir, []]);
+      for (const [i, was] of before) {
+        const now = readSpans(map, i % map.size, Math.floor(i / map.size));
+        expect(now).toHaveLength(2);
+        expect(now[1]).toEqual(was[1]);
+        // Ground more than a band above the grasped layer is another layer's: it holds still.
+        if (drawnBandOfSample(was[0]!.ceiling) - spanBand > SMOOTH_LAYER_BAND_REACH) {
+          expect(now[0]).toEqual(was[0]);
+          if (disc.has(i)) heldWalls++;
         }
       }
-      return volume;
-    };
-    const before = volumeOf(map);
-    const spanBand = drawnBandOfSample(bandLevelHeight(BUILT_GROUND_BAND));
-    let touched = 0;
-    for (const dir of [1, -1] as const) {
-      const options = sculptOptionsOf({
-        type: 'sculpt', x: 32, y: 32, radius: BUILT_RADIUS, dir, tool: 'smooth', spanBand,
-      });
-      touched += applySculpt(map, 32, 32, BUILT_RADIUS, dir * DEFAULT_SCULPT_AMOUNT, options).length;
     }
-    expect(Math.abs(volumeOf(map) - before)).toBeLessThanOrEqual(touched * 2 * BAND_HEIGHT);
+    expect(touched).toBeGreaterThan(0);
+    expect(heldWalls).toBeGreaterThan(0);
   });
 
   it.each([
@@ -278,30 +321,10 @@ describe('an anchored smooth conserves height (2026-09-15)', () => {
         const cy = RANDOM_MARGIN + Math.floor(rng.next() * span);
         const radius = 1 + Math.floor(rng.next() * MAX_BRUSH_RADIUS);
         const dir = rng.next() < 0.5 ? 1 : -1;
-        const reach = radius + OUTLINE_SMOOTH_READ_MARGIN_CELLS;
-        let lowBand = Infinity;
-        let highBand = -Infinity;
-        for (let y = Math.max(0, cy - reach); y <= Math.min(map.size - 1, cy + reach); y++) {
-          for (let x = Math.max(0, cx - reach); x <= Math.min(map.size - 1, cx + reach); x++) {
-            const band = drawnBandOfSample(map.cells[y * map.size + x]!);
-            lowBand = Math.min(lowBand, band);
-            highBand = Math.max(highBand, band);
-          }
-        }
-        const disc = new Set<number>();
-        forEachFootprintOffset(radius, (dx, dy) => disc.add((cy + dy) * map.size + cx + dx));
-        const smoothPress = sculptOptionsOf({
-          type: 'sculpt', x: cx, y: cy, radius, dir, tool: 'smooth',
-        });
-        const diff = applySculpt(map, cx, cy, radius, dir * DEFAULT_SCULPT_AMOUNT, smoothPress);
+        const outcome = smoothPress(map, cx, cy, radius, dir);
         pressed++;
-        if (diff.length > 0) moved++;
-        for (const cell of diff) {
-          const band = drawnBandOfSample(cell.h);
-          if (!disc.has(cell.y * map.size + cell.x) || band < lowBand || band > highBand) {
-            breaches.push({ m, cx, cy, radius, dir, cell, lowBand, highBand });
-          }
-        }
+        if (outcome.diff.length > 0) moved++;
+        for (const breach of outcome.breaches) breaches.push({ m, breach });
       }
     }
     expect(pressed).toBe(RANDOM_MAPS * RANDOM_PRESSES_PER_MAP);
