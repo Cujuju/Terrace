@@ -138,6 +138,7 @@ export function applyWorldPluginListing(message: {
     actions: message.actions ?? [],
     versions: message.versions ?? {},
   });
+  setWorldFeedback({ kind: 'listed' });
 }
 
 export function applyWorldAdminResult(message: {

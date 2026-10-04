@@ -19,7 +19,7 @@ import {
   perfOpen,
   setPerfOpen,
 } from '../state/hudState.ts';
-import { chartOpen, setChartOpen } from './Cartographer.tsx';
+import { chartOpen, setChartOpen } from '../state/chartState.ts';
 import type { WorldActions } from './WorldManager.tsx';
 import { AudioSettingsPanel } from './AudioSettingsPanel.tsx';
 import { BuildingQualityPanel } from './BuildingQualityPanel.tsx';

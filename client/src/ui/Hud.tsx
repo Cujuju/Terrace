@@ -15,7 +15,8 @@ import { HudSettings } from './HudSettings.tsx';
 import { WorldHeader } from './WorldHeader.tsx';
 import { Toolbar } from './Toolbar.tsx';
 import { SCULPT_TOOL_ID, activeToolId } from '../plugins/toolbar.ts';
-import { Cartographer, chartOpen } from './Cartographer.tsx';
+import { Cartographer } from './Cartographer.tsx';
+import { chartOpen } from '../state/chartState.ts';
 import type { ChartSource } from '../terrain/chart.ts';
 
 export function Hud(props: {

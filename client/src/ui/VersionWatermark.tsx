@@ -195,14 +195,14 @@ export function VersionWatermark(): JSX.Element {
                 <span class="hud-version__plugin-head">max</span>
                 <For each={stat().plugins}>
                   {(row) => {
-                    const objects = drawObjects().get(row.name);
+                    const objects = (): number | undefined => drawObjects().get(row.name);
                     return (
                       <>
                         <span class="hud-version__perf-label">{row.name}</span>
                         <span>{row.msPerFrame.toFixed(2)}</span>
                         <span>{row.msPerRun.toFixed(2)}</span>
                         <span>{`${String(Math.round(row.shareOfFrame * 100))}%`}</span>
-                        <span>{objects === undefined || objects === 0 ? '' : `~${String(objects)}`}</span>
+                        <span>{objects() === undefined || objects() === 0 ? '' : `~${String(objects())}`}</span>
                         <span>{row.asyncMs < 0.005 ? '' : row.asyncMs.toFixed(2)}</span>
                         <span>{row.msMaxRun < 0.005 ? '' : row.msMaxRun.toFixed(1)}</span>
                       </>

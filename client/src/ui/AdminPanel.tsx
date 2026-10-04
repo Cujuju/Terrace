@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createSignal, onCleanup, type JSX } from 'solid-js';
+import { For, Show, createEffect, createMemo, createSignal, on, onCleanup, type JSX } from 'solid-js';
 import type { WorldAdminRequestMessage, WorldPluginAction } from '@terrace/shared';
 import {
   activeWorldId,
@@ -69,6 +69,21 @@ export function AdminPanel(props: { actions: WorldActions }): JSX.Element {
     activeWorldId() !== null && worldPlugins()?.id === activeWorldId();
 
   if (unlocked() && !listedForLiveWorld()) requestListing();
+
+  createEffect(on(worldFeedback, (feedback) => {
+    if (feedback.kind !== 'refused') return;
+    if (feedback.reason === 'badKey' || feedback.reason === 'throttled' || feedback.reason === 'disabled') {
+      setUnlocked(false);
+    }
+  }));
+  createEffect(on(activeWorldId, (id) => {
+    if (unlocked() && id !== null && !listedForLiveWorld()) requestListing();
+  }, { defer: true }));
+  createEffect(on(worldPlugins, (listing) => {
+    if (unlocked() && activeWorldId() !== null && listing !== null && !listedForLiveWorld()) {
+      requestListing();
+    }
+  }, { defer: true }));
 
   const onKeyDown = (event: KeyboardEvent): void => {
     if (event.key === 'Escape') setAdminPanelOpen(false);

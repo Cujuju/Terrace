@@ -1,4 +1,4 @@
-import { createSignal, onCleanup, onMount, Show, type JSX } from 'solid-js';
+import { onCleanup, onMount, Show, type JSX } from 'solid-js';
 import {
   buildChartModel,
   CHART_LAND,
@@ -12,12 +12,7 @@ import {
   type ChartWindow,
 } from '../terrain/chart.ts';
 import { worldIdentity } from '../state/hudState.ts';
-
-const [chartOpen, setChartOpenSignal] = createSignal(false);
-export { chartOpen };
-export function setChartOpen(open: boolean): void {
-  setChartOpenSignal(open);
-}
+import { setChartOpen } from '../state/chartState.ts';
 
 const CHART_TERRAIN_TARGET_PX = 1536;
 const CHART_MIN_PX_PER_CELL = 2;
