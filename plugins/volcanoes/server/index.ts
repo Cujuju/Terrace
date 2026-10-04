@@ -55,6 +55,9 @@ let activity: VolcanicActivity = DEFAULT_VOLCANIC_ACTIVITY;
 
 const pendingDugSites = new Set<number>();
 
+// Set by load(); onWorldCreate keeps restored vents and starts fresh only without them.
+let restoredThisSession = false;
+
 function siteKey(x: number, y: number): number {
   return y * 0x10000 + x;
 }
@@ -63,6 +66,7 @@ function resetSessionState(): void {
   tickCount = 0;
   activity = DEFAULT_VOLCANIC_ACTIVITY;
   pendingDugSites.clear();
+  restoredThisSession = false;
   resetVolcanoes();
 }
 
@@ -174,7 +178,9 @@ const persistence: PersistenceSlice = {
     return saveVolcanoes();
   },
   load(data: unknown): void {
+    resetVolcanoes();
     loadVolcanoes(data);
+    restoredThisSession = true;
   },
 };
 
@@ -232,7 +238,10 @@ export const plugin: TerracePlugin = {
   },
 
   onWorldCreate(world: WorldApi): void {
-    resetSessionState();
+    tickCount = 0;
+    pendingDugSites.clear();
+    if (!restoredThisSession) resetVolcanoes();
+    restoredThisSession = false;
     activity = parseActivity(world.setting(VOLCANOES_ACTIVITY_SETTING_KEY));
     loadFireBridge(world);
 
