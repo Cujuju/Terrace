@@ -5,11 +5,10 @@ Relaxation: `relaxation.md`. Spans and carve: `overhangs.md`. Picking:
 
 ## Tools
 
-- `stamp`, `smooth`, `drag`, `carve`. Modes raise / lower (`dir: 1 | -1`).
-- Edge `soft | hard | stepped`: stamp only. Stepped drops one band per
-  `STEPPED_RING_WIDTH_CELLS` (2) cells past the core, up to `STEPPED_MAX_RINGS`.
-- `smoothLambda` 1–100, default 50: per-pass Laplacian scale. Lower melts
-  toward one band above click; Raise fills toward one below.
+- `stamp`, `smooth`, `nudge`, `drag`, `carve` (`SCULPT_TOOLS`, wire order).
+  Modes raise / lower (`dir: 1 | -1`); smooth and carve have none
+  (`TOOLS_WITHOUT_DIRECTION`).
+- Edge `soft | hard | stepped`: stamp only. See "Brush redesign" below.
 - Carve only lowers; mode chord ignored, HUD hides Mode.
 - `settle` library-only, never on the wire.
 
@@ -38,13 +37,9 @@ Relaxation: `relaxation.md`. Spans and carve: `overhangs.md`. Picking:
 
 ## Anchoring
 
-- Anchor = clicked cell's drawn band; one press moves a cell at most one drawn
-  band. A cell is done once its drawn band reaches the target band
-  (`hasReachedBand`); its in-band height is not re-snapped.
-- All anchored call sites use `anchoredTargetHeight`.
-- Anchored smooth: past-target cells freeze; rest stay within ~one band of
-  start, capped at target. No pin without a guarding deposit; over-steep pairs
-  heal next stroke.
+- Wire anchor is `clicked` (drag: `band`). Only stamp targets the clicked
+  cell: one press moves it one drawn band (`anchoredTargetHeight`). Smooth and
+  nudge have no anchor target.
 - `anchor: 'free'`, `spill: 'free'`: library only.
 
 ## Price (mana plugin)
@@ -64,8 +59,7 @@ Relaxation: `relaxation.md`. Spans and carve: `overhangs.md`. Picking:
 
 ## Edges
 
-- Footprint fully at world floor: no-op. Pit fill works: pit rises to melt
-  target, wall stands.
+- Footprint fully at world floor: no-op.
 - Bottom span always floored at `BEDROCK_BAND`.
 
 ## Edge-aware brushes — 2026-09-23
@@ -87,3 +81,32 @@ Plan: `docs/plans/edge-aware-brushes.md`.
   `server/scripts/encode-world-edges.ts`, run with the server stopped. Each
   world gets a new restore point; nothing is deleted. The game has no
   migration code.
+
+## Brush redesign — signed off 2026-10-04
+
+Commits 2026-09-23..26 (`06776661`, `52a10901`, `9ba4767e`, `b1d9b4f4`,
+`c202e258`, smooth-outline fixes through `3bae0111`).
+
+- Stamp: each press moves the clicked cell one band and fills the whole disc
+  to it; ground already past the shape is untouched. Profile shapes the
+  flanks, at most `MOUND_MAX_FLANK_BANDS` (8): hard none, stepped one band per
+  `STEPPED_RING_WIDTH_CELLS` (2), soft a parabola with drawable treads
+  (`MIN_DRAWN_TREAD_HALF_CELLS`). Rings are edge-encoded (`mound.ts`).
+- Smooth: no direction, ignores amount. Traces each band outline in the
+  brush and moves each point to the median of its neighbours' offsets, so
+  kinks up to about twice `smoothKinkHalfCells` (1–8, default 2) go and wider
+  arcs stay. Closed rings no wider than that drop. Vertices outside the brush
+  stay pinned; only disc cells change; crossings keep a cell's own band.
+  `smoothWalls` (alt) treats stacked walls as one line. Not volume-conserving
+  (`outlineSmooth.ts`).
+- Nudge: raise spreads bands apart, lower draws them together, stretching
+  elevation about the brush centre up to 50% at `nudgeStrength` 100 (1–100,
+  default 50), pressure `R² − d²`. Each cell stays within its 3×3
+  neighbourhood's range; disc-only writes; priced graduated like smooth
+  (`nudge.ts`).
+- Smooth and nudge skip walls more than `SMOOTH_LAYER_BAND_REACH` (1) above
+  the grasped span.
+- Reach (`sculptReachCells`): smooth `r + OUTLINE_SMOOTH_READ_MARGIN_CELLS`;
+  nudge understated at r 1–3 (#525).
+- The Laplacian wire fields (`smoothLambda` and seven lab flags) are still
+  validated but inert (#518).

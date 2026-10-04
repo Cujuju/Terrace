@@ -1,7 +1,8 @@
 # Relaxation
 
 Facts about the gradient relaxation that free `smooth` and the library
-`settle` run, and the Laplacian melt that player `smooth` runs.
+`settle` run. Player `smooth` no longer relaxes: it smooths band outlines
+(`sculpt-tools.md`, brush redesign signed off 2026-10-04).
 
 Owner decision 2026-09-16: the player brush smooths with Laplacian (it keeps
 the sculpt, softens edges) instead of relaxing to the gradient limit (which
@@ -15,7 +16,9 @@ flattened mounds and stranded the clicked cell as a spire).
 - `SMOOTH_PASS_LIMIT` = 2560 passes. A sweep that hits it leaves the gradient invariant locally violated, deterministically on both replicas, and `smooth` returns its pass count so a caller can tell. Walls of 593 units and up do not converge inside the cap; the worst player-constructible stroke converges in about 118 passes. The next stroke over that ground resumes the cascade.
 - Saved worlds are never migrated. Player smooth re-grades over-steep terrain it reaches; settle does not (below).
 
-## Player smooth (Laplacian, 2026-09-16)
+## Player smooth (Laplacian, 2026-09-16) — superseded 2026-10-04
+
+Replaced by the outline smooth (`sculpt-tools.md`). Kept as history.
 
 - Three red-black passes per stroke move each footprint cell toward its
   four-neighbour average by the wire lambda (integer percent, default 50),
