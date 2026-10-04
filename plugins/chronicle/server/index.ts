@@ -293,8 +293,15 @@ export const plugin: TerracePlugin = {
       restored = null;
       return;
     }
+    // No slice restored: start this world's saga from nothing, never on another's.
+    resetChronicleState();
+    worldSimMillis = world.simMillis;
     sagaGenesisMillis = world.genesisMillis;
     write(world, [GENESIS_TEXT]);
+  },
+
+  onWorldClose(): void {
+    resetChronicleState();
   },
 
   onTick(world: WorldApi, _dt: number): void {

@@ -38,7 +38,7 @@ import {
   type SkillId,
   type SkillView,
 } from '../protocol.ts';
-import { applyManaPerk, loadManaBridge, revokeManaPerk } from './mana-bridge.ts';
+import { applyManaPerk, loadManaBridge, resetManaBridge, revokeManaPerk } from './mana-bridge.ts';
 import { composeManaPerk, isPerkSkill } from './perk.ts';
 import {
   RELIC_RNG_DEFAULT_SEED,
@@ -397,6 +397,11 @@ export const plugin: TerracePlugin = {
 
     topUpRelics(world);
     broadcastRelics(world);
+  },
+
+  onWorldClose(): void {
+    resetRelicsState();
+    resetManaBridge();
   },
 
   onPlayerJoin(world: WorldApi, player: Player): void {

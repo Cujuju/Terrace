@@ -155,6 +155,10 @@ export const plugin: TerracePlugin = {
     releaseHabitatIndex();
   },
 
+  onWorldClose(): void {
+    resetMonstersState();
+  },
+
   onIntent(intent: SculptIntent): IntentVerdict | void {
     return guardGround(intent);
   },
