@@ -49,6 +49,8 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
   private handlersByType: Map<string, (player: Player, payload: unknown) => void> | null = null;
   private dormantSlices: Record<string, unknown> = {};
   private writeSuppressed: Set<string> = new Set();
+  // Each plugin's last good stored slice: a save() that throws re-emits it instead of dropping the slice.
+  private lastGoodSlices = new Map<string, unknown>();
   private readonly faults = new Map<string, number>();
   private terrainChangeDepth = 0;
   private worldEventDepth = 0;
@@ -345,8 +347,21 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
       const { plugin } = loaded;
       if (!plugin.persistence) continue;
       if (this.writeSuppressed.has(plugin.name)) continue;
-      const data = this.safely(plugin, 'persistence.save', () => plugin.persistence?.save());
-      if (data !== undefined) slices[plugin.name] = wrapSlice(plugin.persistence.version, data);
+      let data: unknown;
+      try {
+        data = plugin.persistence.save();
+      } catch (error) {
+        this.recordFault(plugin, 'persistence.save', error);
+        if (this.lastGoodSlices.has(plugin.name)) {
+          slices[plugin.name] = this.lastGoodSlices.get(plugin.name);
+          logWarn(`plugin "${plugin.name}" could not save; its previous saved state is kept`);
+        }
+        continue;
+      }
+      if (data === undefined) continue;
+      const slice = wrapSlice(plugin.persistence.version, data);
+      this.lastGoodSlices.set(plugin.name, slice);
+      slices[plugin.name] = slice;
     }
     return slices;
   }
@@ -356,6 +371,7 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
     const enabled = new Set(this.pluginNames);
     this.dormantSlices = {};
     this.writeSuppressed = new Set();
+    this.lastGoodSlices = new Map(Object.entries(slices));
     for (const name of Object.keys(slices)) {
       if (!installed.has(name)) {
         logInfo(`snapshot contains data for plugin "${name}", which is not installed — ignored`);
