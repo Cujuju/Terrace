@@ -1,9 +1,19 @@
 import { MAX_FOOTPRINT_RADIUS_CELLS, footprintRadiusOfKind, structureKey } from '../protocol.ts';
+import { categoryAt, chainStepOf } from '../settlementRules.ts';
 import type { LiveCellRecord } from './life.ts';
 import { FOUNDING_FOOTPRINT_RADIUS_CELLS, type StructuresWorld } from './suitability.ts';
 
-/** Tier 0 is camp-grade: packed as the settlement pattern, and absorbed by any upgrade around it. */
-export const CAMP_GRADE_TIER = 0;
+/**
+ * Chain step 0 is camp-grade: packed as the settlement pattern, absorbed by any upgrade around
+ * it. Step, not tier: a chain may repeat a tier.
+ */
+export const CAMP_GRADE_STEP = 0;
+
+/** How far along its ground's chain a building stands. Ground with no category (water) reads as camp-grade. */
+export function chainStepAt(world: StructuresWorld, x: number, y: number, kind: number): number {
+  const category = categoryAt(world, x, y);
+  return category === null ? CAMP_GRADE_STEP : chainStepOf(category, kind);
+}
 
 /** Each footprint's edge cell surveys half a cell, so neighbouring footprints keep a whole cell between them. */
 const FOOTPRINT_EDGE_CELLS = 1;
@@ -47,8 +57,8 @@ export function hasBuildingWithinSeparation(
 ): boolean {
   return forEachWithinReach(world, x, y, radiusCells, (dx, dy, nx, ny) => {
     const record = live.get(structureKey(nx, ny));
-    return record !== undefined && record.tier > CAMP_GRADE_TIER &&
-      within(dx, dy, separationCells(radiusCells, record));
+    return record !== undefined && within(dx, dy, separationCells(radiusCells, record)) &&
+      chainStepAt(world, nx, ny, record.kind) > CAMP_GRADE_STEP;
   });
 }
 
@@ -58,15 +68,15 @@ export interface UpgradeLot {
 }
 
 /**
- * Surveys the ground an upgrade into `nextKind` claims. A building of the upgrader's tier or
- * higher blocks it; camps and lower-tier buildings inside it are absorbed.
+ * Surveys the ground an upgrade into `nextKind` claims. A building at the upgrader's chain step
+ * or further blocks it; camps and buildings at earlier steps inside it are absorbed.
  */
 export function surveyUpgradeLot(
   live: ReadonlyMap<number, LiveCellRecord>,
   world: StructuresWorld,
   x: number,
   y: number,
-  currentTier: number,
+  currentStep: number,
   nextKind: number,
 ): UpgradeLot {
   const radiusCells = footprintRadiusOfKind(nextKind);
@@ -75,7 +85,8 @@ export function surveyUpgradeLot(
     const key = structureKey(nx, ny);
     const record = live.get(key);
     if (record === undefined || !within(dx, dy, separationCells(radiusCells, record))) return false;
-    if (record.tier > CAMP_GRADE_TIER && record.tier >= currentTier) return true;
+    const step = chainStepAt(world, nx, ny, record.kind);
+    if (step > CAMP_GRADE_STEP && step >= currentStep) return true;
     absorbed.push(key);
     return false;
   });

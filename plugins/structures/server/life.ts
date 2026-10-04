@@ -29,7 +29,12 @@ import {
   wrappedNeighborIndex,
   type LandmassLabels,
 } from './topology.ts';
-import { hasBuildingWithinSeparation, surveyUpgradeLot } from './clearance.ts';
+import {
+  CAMP_GRADE_STEP,
+  chainStepAt,
+  hasBuildingWithinSeparation,
+  surveyUpgradeLot,
+} from './clearance.ts';
 import type { StructuresRng } from './rng.ts';
 
 export const CA_GENERATION_INTERVAL_SECONDS = 15;
@@ -202,12 +207,12 @@ export class GenerationSurvey {
     live: ReadonlyMap<number, LiveCellRecord>,
     x: number,
     y: number,
-    currentTier: number,
+    currentStep: number,
     nextKind: number,
   ): boolean {
     if (!isBuildableCell(world, x, y, footprintRadiusOfKind(nextKind))) return false;
-    const onBoard = surveyUpgradeLot(live, world, x, y, currentTier, nextKind);
-    const staged = surveyUpgradeLot(this.staged, world, x, y, currentTier, nextKind);
+    const onBoard = surveyUpgradeLot(live, world, x, y, currentStep, nextKind);
+    const staged = surveyUpgradeLot(this.staged, world, x, y, currentStep, nextKind);
     if (onBoard.blocked || staged.blocked) return false;
     for (const key of [...onBoard.absorbed, ...staged.absorbed]) {
       this.staged.delete(key);
@@ -267,11 +272,12 @@ export class GenerationSurvey {
     const category = categoryAt(world, x, y);
     if (category === null) return null;
     const neighbours = liveMooreNeighbors(live, world.worldSize, x, y);
-    if (!isReadyToUpgrade(age, chainStepOf(category, current.kind), neighbours, isBlessedStructureCell(key))) {
+    const step = chainStepOf(category, current.kind);
+    if (!isReadyToUpgrade(age, step, neighbours, isBlessedStructureCell(key))) {
       return null;
     }
     const next = nextKindInChain(category, current.kind) ?? this.landmarkFor(world, live, x, y, category, current);
-    if (next === null || !this.claimUpgradeLot(world, live, x, y, current.tier, next)) return null;
+    if (next === null || !this.claimUpgradeLot(world, live, x, y, step, next)) return null;
     return { age, tier: tierOfKind(next), kind: next };
   }
 
@@ -301,7 +307,8 @@ export class GenerationSurvey {
         const scaled = scaledNeighborCount(live, labels, x, y, this.phantom);
         const survives =
           current !== undefined &&
-          (current.tier > 0 || survivesAt(scaled, this.phantom.denominator));
+          (chainStepAt(world, x, y, current.kind) > CAMP_GRADE_STEP ||
+            survivesAt(scaled, this.phantom.denominator));
         const fedBirth =
           current === undefined &&
           fedBornAt(scaled, this.phantom.denominator) &&
@@ -416,7 +423,7 @@ export class GenerationSurvey {
       const cell = cellOfKey(key);
       if (previous === undefined) {
         born.push({ x: cell.x, y: cell.y, tier: record.tier, kind: record.kind });
-      } else if (previous.tier !== record.tier) {
+      } else if (previous.kind !== record.kind) {
         upgraded.push({ x: cell.x, y: cell.y, tier: record.tier, kind: record.kind });
       }
     }
