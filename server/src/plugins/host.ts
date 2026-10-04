@@ -348,8 +348,11 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
       if (!plugin.persistence) continue;
       if (this.writeSuppressed.has(plugin.name)) continue;
       let data: unknown;
+      let detached: unknown;
       try {
         data = plugin.persistence.save();
+        // Detached: a plugin may mutate the object it returned before a later save throws.
+        detached = data === undefined ? undefined : structuredClone(data);
       } catch (error) {
         this.recordFault(plugin, 'persistence.save', error);
         if (this.lastGoodSlices.has(plugin.name)) {
@@ -359,9 +362,8 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
         continue;
       }
       if (data === undefined) continue;
-      const slice = wrapSlice(plugin.persistence.version, data);
-      this.lastGoodSlices.set(plugin.name, slice);
-      slices[plugin.name] = slice;
+      slices[plugin.name] = wrapSlice(plugin.persistence.version, data);
+      this.lastGoodSlices.set(plugin.name, wrapSlice(plugin.persistence.version, detached));
     }
     return slices;
   }
@@ -371,7 +373,7 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
     const enabled = new Set(this.pluginNames);
     this.dormantSlices = {};
     this.writeSuppressed = new Set();
-    this.lastGoodSlices = new Map(Object.entries(slices));
+    this.lastGoodSlices = new Map(Object.entries(structuredClone(slices)));
     for (const name of Object.keys(slices)) {
       if (!installed.has(name)) {
         logInfo(`snapshot contains data for plugin "${name}", which is not installed — ignored`);
