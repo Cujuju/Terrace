@@ -1,9 +1,7 @@
-import { cellsAcross } from '@terrace/shared';
 import { SEA_SURFACE_WORLD_Y } from '../../../client/src/worldScale.ts';
 import type { MonsterKind } from '../protocol.ts';
 import { CTHULHU_LURK_DEPTH } from './anatomy.ts';
 import { KRAKEN_LURK_DEPTH } from './kraken-anatomy.ts';
-import { YETI_FOOT_GROUND_HALF_EXTENT } from './yeti-anatomy.ts';
 
 export { SEA_SURFACE_WORLD_Y };
 
@@ -11,15 +9,12 @@ export const UNKNOWN_TERRAIN_WORLD_Y = 0;
 
 export type MonsterPlacementRule =
   | { readonly placement: 'swimmer'; readonly lurkDepth: number }
-  | { readonly placement: 'walker'; readonly footGroundHalfExtentCells: number };
+  | { readonly placement: 'walker' };
 
 const PLACEMENT_BY_KIND: Readonly<Record<MonsterKind, MonsterPlacementRule>> = {
   cthulhu: { placement: 'swimmer', lurkDepth: CTHULHU_LURK_DEPTH },
   kraken: { placement: 'swimmer', lurkDepth: KRAKEN_LURK_DEPTH },
-  yeti: {
-    placement: 'walker',
-    footGroundHalfExtentCells: cellsAcross(YETI_FOOT_GROUND_HALF_EXTENT),
-  },
+  yeti: { placement: 'walker' },
 };
 
 export function placementRuleOf(kind: MonsterKind): MonsterPlacementRule {
@@ -44,9 +39,9 @@ export function walkerGroundWorldY(
   sampleRenderedY: (cellX: number, cellY: number) => number | null,
   x: number,
   y: number,
-  _halfExtentCells: number,
+  _halfExtentCells?: number,
 ): number | null {
-  // Body-centre exact spot; a straddled riser defers to climbHeight upstream.
+  // Sample the body centre; legacy footprint arguments are ignored, and climbHeight handles straddled risers upstream.
   return sampleRenderedY(x, y);
 }
 
@@ -58,7 +53,7 @@ export function monsterOriginY(
 ): number {
   const rule = placementRuleOf(kind);
   if (rule.placement === 'walker') {
-    const ground = walkerGroundWorldY(sampleRenderedY, x, y, rule.footGroundHalfExtentCells);
+    const ground = walkerGroundWorldY(sampleRenderedY, x, y);
     return ground ?? UNKNOWN_TERRAIN_WORLD_Y;
   }
   return monsterOriginWorldY(sampleRenderedY(x, y), rule.lurkDepth);

@@ -7,7 +7,6 @@ import {
 import { createCthulhuFactory } from './cthulhu.ts';
 import {
   createWorkshop,
-  surfaceArraysOf,
   surfaceTransfers,
   type ModelWorkshop,
   type SurfaceArrays,

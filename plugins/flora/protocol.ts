@@ -147,7 +147,7 @@ export const FLORA_PINE_MIN_HEIGHT = GRASSLAND_MAX_HEIGHT + LAND_RAMP_ANCHOR_SPA
 export const FLORA_PINE_MAX_HEIGHT = SNOW_LINE_HEIGHT;
 
 export function isPineBand(height: number): boolean {
-  const bandFloor = Math.floor(height / BAND_HEIGHT) * BAND_HEIGHT;
+  const bandFloor = quantizeToBand(height);
   return bandFloor >= FLORA_PINE_MIN_HEIGHT && bandFloor < FLORA_PINE_MAX_HEIGHT;
 }
 
@@ -302,6 +302,7 @@ export function cropStalkVariation(x: number, y: number, index: number): CropSta
 
 import {
   BAND_HEIGHT,
+  quantizeToBand,
   CONTOUR_CELL_CENTRE_GUARD,
   GRASSLAND_MAX_HEIGHT,
   LAND_RAMP_ANCHOR_SPACING,

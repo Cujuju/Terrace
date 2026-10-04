@@ -120,7 +120,7 @@ export function advanceMonster(
 
   if (steered === null) {
     monster.heading = desired;
-    if (climbOut(world, monster, desired, stepCells)) return 'moved';
+    climbOut(world, monster, desired, stepCells);
     return 'moved';
   }
 

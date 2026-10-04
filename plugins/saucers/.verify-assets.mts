@@ -1,15 +1,15 @@
 (globalThis as unknown as { self?: unknown }).self ??= globalThis;
 
 import { readFile } from 'node:fs/promises';
-import { parseRigAsset } from '/mnt/e/Development/Projects/Terrace/.claude/worktrees/saucers/client/src/render/rigAsset.ts';
+import { parseRigAsset } from '../../client/src/render/rigAsset.ts';
 import { Box3, Vector3 } from 'three';
 
-const DIR = '/mnt/e/Development/Projects/Terrace/.claude/worktrees/saucers/plugins/saucers/client/assets';
+const DIR = new URL('./client/assets/', import.meta.url);
 const NAMES = ['saucer-a.glb', 'saucer-b.glb', 'saucer-c.glb'];
 const REQUIRED = ['hull', 'ring', 'dome', 'lights', 'muzzle', 'top'];
 
 for (const name of NAMES) {
-  const bytes = await readFile(`${DIR}/${name}`);
+  const bytes = await readFile(new URL(name, DIR));
   try {
     const asset = await parseRigAsset(
       bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,

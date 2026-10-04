@@ -1,4 +1,4 @@
-import { BAND_HEIGHT, MAX_HEIGHT, MAX_STEP, RELAX_SLACK, WORLD_UNIT_CELLS } from '@terrace/shared';
+import { BAND_HEIGHT, MAX_HEIGHT, MAX_STEP, RELAX_SLACK, cellsAcross } from '@terrace/shared';
 import { isFiniteNumber } from '@terrace/shared';
 
 export const MUDSLIDES_PLUGIN_NAME = 'mudslides';
@@ -22,14 +22,15 @@ export function parseFrequency(value: string | undefined): MudslideFrequency {
     : DEFAULT_MUDSLIDE_FREQUENCY;
 }
 
-export { WORLD_UNITS_PER_BAND } from '@terrace/shared';
+export { WORLD_UNITS_PER_BAND, cellsAcross } from '@terrace/shared';
 
-export function cellsAcross(worldUnits: number): number {
-  return Math.max(1, Math.round(worldUnits * WORLD_UNIT_CELLS));
-}
+const MIN_MUDSLIDE_SPAN_CELLS = 1;
 
 export const MUDSLIDE_SLOPE_SPAN_WORLD_UNITS = 2;
-export const MUDSLIDE_SLOPE_SPAN_CELLS = cellsAcross(MUDSLIDE_SLOPE_SPAN_WORLD_UNITS);
+export const MUDSLIDE_SLOPE_SPAN_CELLS = Math.max(
+  MIN_MUDSLIDE_SPAN_CELLS,
+  Math.round(cellsAcross(MUDSLIDE_SLOPE_SPAN_WORLD_UNITS)),
+);
 
 export const MUDSLIDE_MAX_DROP_PER_CELL = MAX_STEP + RELAX_SLACK;
 
@@ -46,7 +47,10 @@ export const MUDSLIDE_RIM_STEEPNESS = 0.6;
 export const MUDSLIDE_RIM_DROP = Math.ceil(MUDSLIDE_MAX_DROP_PER_CELL * MUDSLIDE_RIM_STEEPNESS);
 
 export const MUDSLIDE_MAX_PATH_WORLD_UNITS = 24;
-export const MUDSLIDE_MAX_PATH_CELLS = cellsAcross(MUDSLIDE_MAX_PATH_WORLD_UNITS);
+export const MUDSLIDE_MAX_PATH_CELLS = Math.max(
+  MIN_MUDSLIDE_SPAN_CELLS,
+  Math.round(cellsAcross(MUDSLIDE_MAX_PATH_WORLD_UNITS)),
+);
 
 export { BROADCAST_POSITION_DECIMALS, roundBroadcastPosition } from '@terrace/shared';
 
