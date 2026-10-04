@@ -11,7 +11,7 @@ import {
 } from '@terrace/shared';
 import type { ServerConfig } from '../config.ts';
 import { MAX_WORLD_SIZE, MIN_WORLD_SIZE } from '../config.ts';
-import { logError, logInfo } from '../log.ts';
+import { logError, logInfo, logWarn } from '../log.ts';
 import type { WorldRegistry } from '../persistence/world-registry.ts';
 import type { ServerRestartService } from '../restart.ts';
 import { generateWorldName } from './world-name.ts';
@@ -97,14 +97,14 @@ export class WorldAdminService {
   ): Promise<WorldAdminResultMessage> {
     const refusal = this.gate.authorize(clientId, request.key);
     if (refusal !== null) return fail('create', refusal);
-    const plan = this.planCreate(request.name, request.worldSize);
+    const plan = this.planCreate(request.name, request.worldSize, request.difficulty);
     if ('refused' in plan) return fail('create', plan.refused);
     let id: string | null;
     try {
       id = await this.deps.manager.createWorldInBackground(
         plan.name,
         plan.size,
-        request.difficulty ?? this.deps.config.difficulty,
+        this.deps.config.difficulty,
       );
     } catch (error) {
       logError(`creating world "${plan.name}" failed`, error);
@@ -248,20 +248,25 @@ export class WorldAdminService {
     difficulty: number | undefined,
     loadNow: boolean | undefined,
   ): WorldAdminResultMessage {
-    const plan = this.planCreate(name, worldSize);
+    const plan = this.planCreate(name, worldSize, difficulty);
     if ('refused' in plan) return fail('create', plan.refused);
-    const id = this.deps.manager.createWorld(
-      plan.name,
-      plan.size,
-      difficulty ?? this.deps.config.difficulty,
-    );
+    const id = this.deps.manager.createWorld(plan.name, plan.size, this.deps.config.difficulty);
     return this.finishCreate(requesterId, id, loadNow);
   }
 
   private planCreate(
     name: string | undefined,
     worldSize: number | undefined,
+    difficulty: number | undefined,
   ): { name: string; size: number } | { refused: WorldAdminRefusal } {
+    // Difficulty is deployment configuration, never stored per world (phase-2 decision).
+    if (difficulty !== undefined && difficulty !== this.deps.config.difficulty) {
+      logWarn(
+        `refusing to create a world at difficulty ${String(difficulty)}: difficulty comes from ` +
+          `the server's environment (${String(this.deps.config.difficulty)}), not the world`,
+      );
+      return { refused: 'failed' };
+    }
     const size = worldSize ?? this.deps.config.worldSize;
     if (size < MIN_WORLD_SIZE || size > MAX_WORLD_SIZE || size % CHUNK_SIZE !== 0) {
       return { refused: 'invalidSize' };
