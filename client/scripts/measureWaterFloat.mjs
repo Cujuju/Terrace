@@ -244,7 +244,7 @@ function report(scene, m) {
   }
   console.log(`max above ground: ${m.maxAbove.toFixed(4)} wu`);
   console.log(`max below ground: ${m.maxBelow.toFixed(4)} wu`);
-  const pass = Math.abs(m.worst) <= FAIL_GAP_WORLD_UNITS;
+  const pass = m.counted > 0 && Math.abs(m.worst) <= FAIL_GAP_WORLD_UNITS;
   console.log(pass ? 'PASS' : 'FAIL');
   return pass;
 }

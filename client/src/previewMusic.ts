@@ -142,7 +142,7 @@ function realtimeMode(seed: number, initial: ComposerMood): void {
 
   element('start').addEventListener('click', () => {
     if (composer !== null) return;
-    context = new AudioContext();
+    context ??= new AudioContext();
     void context.resume();
     composer = createComposer(context, context.destination, Number(seedInput.value));
     composer.setMood(mood());

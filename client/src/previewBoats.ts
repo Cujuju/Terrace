@@ -106,7 +106,7 @@ async function main(): Promise<void> {
     stateParam === 'sailing' ? [false] : stateParam === 'fighting' ? [true] : [false, true];
   const viewParam = query.get('view');
   const view: CameraView =
-    viewParam !== null && viewParam in CAMERA_VIEWS ? (viewParam as CameraView) : 'iso';
+    viewParam !== null && Object.hasOwn(CAMERA_VIEWS, viewParam) ? (viewParam as CameraView) : 'iso';
   const clock = Number(query.get('t') ?? '0.6');
 
   const { scene, camera, renderer } = buildScene();

@@ -17,13 +17,13 @@ import {
 } from 'three';
 import { WebGPURenderer } from 'three/webgpu';
 import { backgroundRadiance } from './render/skyEnvironment.ts';
-import { BAND_HEIGHT, CELL_WORLD_SIZE, cellsAcross } from '@terrace/shared';
+import { BAND_HEIGHT, CELL_WORLD_SIZE, bandOf, cellsAcross } from '@terrace/shared';
 import {
-  FLOW_RADIUS_WORLD_UNITS,
   LAVA_COOL_SECONDS,
   VENT_MIN_BANDS_ABOVE_SEA,
   GENESIS_CONE_BANDS,
   WORLD_UNITS_PER_BAND,
+  lavaKey,
   type LavaCellState,
 } from '../../plugins/volcanoes/protocol.ts';
 import { nextFlowCell } from '../../plugins/volcanoes/server/flow.ts';
@@ -82,11 +82,8 @@ function heightAtCell(cx: number, cy: number): number {
   return Math.max(0, cone + plain - gully - riverCut);
 }
 
-function bandOfHeight(height: number): number {
-  return Math.floor(height / BAND_HEIGHT);
-}
 function capWorldY(cx: number, cy: number): number {
-  return bandOfHeight(heightAtCell(cx, cy)) * WORLD_UNITS_PER_BAND;
+  return bandOf(heightAtCell(cx, cy)) * WORLD_UNITS_PER_BAND;
 }
 
 function isRiverCell(cx: number, cy: number): boolean {
@@ -125,7 +122,7 @@ function buildTerrain(): Mesh {
 
   for (let cy = 0; cy < GRID_CELLS; cy++) {
     for (let cx = 0; cx < GRID_CELLS; cx++) {
-      const band = bandOfHeight(heightAtCell(cx, cy));
+      const band = bandOf(heightAtCell(cx, cy));
       const y = band * WORLD_UNITS_PER_BAND;
       const color = isRiverCell(cx, cy) ? new Color(0.20, 0.42, 0.58) : colorForBand(band);
 
@@ -143,7 +140,7 @@ function buildTerrain(): Mesh {
       ];
       for (const [nx, ny, edgeA, edgeB] of neighbours) {
         if (nx >= GRID_CELLS || ny >= GRID_CELLS) continue;
-        const neighbourY = bandOfHeight(heightAtCell(nx, ny)) * WORLD_UNITS_PER_BAND;
+        const neighbourY = bandOf(heightAtCell(nx, ny)) * WORLD_UNITS_PER_BAND;
         if (neighbourY >= y) continue;
         const lowA = new Vector3(edgeA.x, neighbourY, edgeA.z);
         const lowB = new Vector3(edgeB.x, neighbourY, edgeB.z);
@@ -172,7 +169,7 @@ function walkFlow(ageOfIndex: (index: number, total: number) => number): LavaCel
   };
 
   const cells: LavaCellState[] = [];
-  const visited = new Set<number>([VENT_CELL * 0x10000 + VENT_CELL]);
+  const visited = new Set<number>([lavaKey(VENT_CELL, VENT_CELL)]);
   let x = VENT_CELL;
   let y = VENT_CELL;
 
@@ -181,7 +178,7 @@ function walkFlow(ageOfIndex: (index: number, total: number) => number): LavaCel
     if (typeof next === 'string') break;
     x = next.x;
     y = next.y;
-    visited.add(x * 0x10000 + y);
+    visited.add(lavaKey(x, y));
     cells.push({ x, y, ageSeconds: 0 });
   }
 
@@ -241,7 +238,7 @@ async function main(): Promise<void> {
   }
   flow.update(clock);
 
-  const view = CAMERA_VIEWS[viewName] ?? CAMERA_VIEWS.iso;
+  const view = Object.hasOwn(CAMERA_VIEWS, viewName) ? CAMERA_VIEWS[viewName] : CAMERA_VIEWS.iso;
   const camera = new PerspectiveCamera(
     CAMERA_FOV_DEGREES,
     window.innerWidth / window.innerHeight,
@@ -287,5 +284,3 @@ async function main(): Promise<void> {
 }
 
 void main();
-
-void FLOW_RADIUS_WORLD_UNITS;

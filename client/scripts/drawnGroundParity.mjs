@@ -33,6 +33,8 @@ const CELL_CENTRE_OFFSET = 1 / 2;
 const WORLD_SIZE = CHUNK_SIZE * 3;
 
 const CENTRE = Math.floor(WORLD_SIZE / 2);
+const WORLD_LAST_SAMPLE = WORLD_SIZE - 1;
+const MAX_REPORTED_EXAMPLES = 8;
 
 function worldOf(fill) {
   const map = createHeightmap(WORLD_SIZE);
@@ -220,8 +222,19 @@ function gateChunk(map, mirror, cx, cy, report) {
           break;
         }
       }
-      if (drawn === null) continue;
       const expected = drawnBandAt(map, px + CELL_CENTRE_OFFSET, pz + CELL_CENTRE_OFFSET);
+      if (drawn === null) {
+        if (expected === null || px <= 0 || pz <= 0 || px >= WORLD_LAST_SAMPLE || pz >= WORLD_LAST_SAMPLE) continue;
+        if (nearContour(px, pz)) {
+          report.skippedNearContour++;
+          continue;
+        }
+        report.holes++;
+        if (report.examples.length < MAX_REPORTED_EXAMPLES) {
+          report.examples.push(`(${px}, ${pz}) missing cap, function band ${expected}`);
+        }
+        continue;
+      }
       report.samples++;
       if (drawn === expected) continue;
       if (nearContour(px, pz)) {
@@ -229,7 +242,7 @@ function gateChunk(map, mirror, cx, cy, report) {
         continue;
       }
       report.mismatches++;
-      if (report.examples.length < 8) {
+      if (report.examples.length < MAX_REPORTED_EXAMPLES) {
         report.examples.push(`(${px}, ${pz}) mesh band ${drawn}, function band ${expected}`);
       }
     }
@@ -239,15 +252,16 @@ function gateChunk(map, mirror, cx, cy, report) {
 let failed = false;
 for (const fixture of FIXTURES) {
   const { map, mirror } = worldOf(fixture.build);
-  const report = { samples: 0, mismatches: 0, skippedNearContour: 0, skippedChunks: 0, examples: [] };
+  const report = { samples: 0, mismatches: 0, holes: 0, skippedNearContour: 0, skippedChunks: 0, examples: [] };
   const perEdge = chunksPerEdge(WORLD_SIZE);
   for (let cy = 0; cy < perEdge; cy++) {
     for (let cx = 0; cx < perEdge; cx++) gateChunk(map, mirror, cx, cy, report);
   }
-  const status = report.mismatches === 0 ? 'PASS' : 'FAIL';
-  if (report.mismatches > 0) failed = true;
+  const pass = report.samples > 0 && report.mismatches === 0 && report.holes === 0;
+  const status = pass ? 'PASS' : 'FAIL';
+  if (!pass) failed = true;
   console.log(
-    `${status} ${fixture.name}: ${report.samples} samples, ${report.mismatches} mismatches, ` +
+    `${status} ${fixture.name}: ${report.samples} samples, ${report.mismatches} mismatches, ${report.holes} holes, ` +
       `${report.skippedNearContour} within one step of a contour, ${report.skippedChunks} blocky chunks`,
   );
   for (const example of report.examples) console.log(`     ${example}`);

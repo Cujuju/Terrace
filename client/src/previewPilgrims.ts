@@ -98,7 +98,7 @@ async function main(): Promise<void> {
   const races: SettlerRace[] = isSettlerRace(raceParam) ? [raceParam] : ['rudy', 'uno'];
   const viewParam = query.get('view');
   const view: CameraView =
-    viewParam !== null && viewParam in CAMERA_VIEWS ? (viewParam as CameraView) : 'iso';
+    viewParam !== null && Object.hasOwn(CAMERA_VIEWS, viewParam) ? (viewParam as CameraView) : 'iso';
   const stride = Number(query.get('stride') ?? '0.25');
   const gaitParam = query.get('gait');
   const gait: MoverGait = MOVER_GAITS.find((named) => named === gaitParam) ?? 'walk';

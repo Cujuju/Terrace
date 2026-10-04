@@ -77,7 +77,7 @@ function readSizeClass(query: URLSearchParams): WildlifeSizeClass {
 
 function readView(query: URLSearchParams): CameraView {
   const requested = query.get('view');
-  return requested !== null && requested in CAMERA_VIEWS ? (requested as CameraView) : 'iso';
+  return requested !== null && Object.hasOwn(CAMERA_VIEWS, requested) ? (requested as CameraView) : 'iso';
 }
 
 function readVariant(query: URLSearchParams): number {

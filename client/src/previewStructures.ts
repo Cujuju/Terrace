@@ -122,7 +122,9 @@ function frameCameraOn(camera: PerspectiveCamera, object: { root: Group }, view:
   const verticalFovRadians = (CAMERA_FOV_DEGREES * Math.PI) / 180;
   const distance = (radius * CAMERA_FRAMING_PADDING) / Math.sin(verticalFovRadians / 2);
 
-  const direction = (VIEW_DIRECTIONS[view] ?? VIEW_DIRECTIONS.front).clone().normalize();
+  const direction = (
+    Object.hasOwn(VIEW_DIRECTIONS, view) ? VIEW_DIRECTIONS[view] : VIEW_DIRECTIONS.front
+  ).clone().normalize();
   camera.position.copy(center).addScaledVector(direction, distance);
   camera.lookAt(center);
   camera.updateProjectionMatrix();

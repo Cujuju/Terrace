@@ -50,7 +50,7 @@ function readParams(): { kind: 'kraken' | 'cthulhu'; view: CameraView; t: number
   const tRaw = Number(params.get('t') ?? '0');
   return {
     kind: kindRaw === 'cthulhu' ? 'cthulhu' : 'kraken',
-    view: viewRaw !== null && viewRaw in CAMERA_VIEWS ? (viewRaw as CameraView) : 'iso',
+    view: viewRaw !== null && Object.hasOwn(CAMERA_VIEWS, viewRaw) ? (viewRaw as CameraView) : 'iso',
     t: Number.isFinite(tRaw) ? tRaw : 0,
   };
 }

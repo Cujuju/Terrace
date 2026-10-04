@@ -97,6 +97,7 @@ async function shoot(ws, urlBase, page, name, query, outDir) {
   await rpc(ws, 'Page.navigate', { url }, sessionId);
 
   const deadline = Date.now() + READY_TIMEOUT_MS;
+  let ready = false;
   let stats = null;
   while (Date.now() < deadline) {
     await sleep(READY_POLL_INTERVAL_MS);
@@ -106,19 +107,20 @@ async function shoot(ws, urlBase, page, name, query, outDir) {
         'Runtime.evaluate',
         {
           expression:
-            'window.__previewReady === true ? window.__previewStats : null',
+            '({ ready: window.__previewReady === true, stats: window.__previewStats ?? null })',
           returnByValue: true,
         },
         sessionId,
       );
-      if (res.result?.value) {
-        stats = res.result.value;
+      if (res.result?.value?.ready === true) {
+        ready = true;
+        stats = res.result.value.stats;
         break;
       }
     } catch {
     }
   }
-  if (stats === null) {
+  if (!ready) {
     await rpc(ws, 'Target.closeTarget', { targetId }).catch(() => {});
     throw new Error(`${name}: __previewReady not set within ${(READY_TIMEOUT_MS / 1000) | 0}s`);
   }

@@ -58,7 +58,7 @@ type CameraView = keyof typeof CAMERA_VIEWS;
 const query = new URLSearchParams(window.location.search);
 const viewParam = query.get('view');
 const view: CameraView =
-  viewParam !== null && viewParam in CAMERA_VIEWS ? (viewParam as CameraView) : 'iso';
+  viewParam !== null && Object.hasOwn(CAMERA_VIEWS, viewParam) ? (viewParam as CameraView) : 'iso';
 const timeParam = Number(query.get('t') ?? '0');
 const seconds = Number.isFinite(timeParam) ? timeParam : 0;
 const dusk = query.get('sky') === 'dusk';

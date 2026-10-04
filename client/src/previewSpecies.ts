@@ -138,13 +138,13 @@ async function main(): Promise<void> {
   const query = new URLSearchParams(window.location.search);
   const species = query.get('species') ?? 'fish';
   const viewName = query.get('view') ?? 'iso';
-  const view: CameraView = viewName in CAMERA_VIEWS ? (viewName as CameraView) : 'iso';
+  const view: CameraView = Object.hasOwn(CAMERA_VIEWS, viewName) ? (viewName as CameraView) : 'iso';
   const seconds = Number.parseFloat(query.get('t') ?? '0') || 0;
   const phase = Number.parseFloat(query.get('phase') ?? '0') || 0;
   const gait = readGait(query);
   const scale = Number.parseFloat(query.get('scale') ?? '1') || 1;
   const zoom = Number.parseFloat(query.get('zoom') ?? '1') || 1;
-  const build = BUILDERS[species] ?? buildFish;
+  const build = Object.hasOwn(BUILDERS, species) ? BUILDERS[species] : buildFish;
 
   const geometries: BufferGeometry[] = [];
   const materials: Material[] = [];
@@ -207,7 +207,7 @@ async function main(): Promise<void> {
   (window as unknown as { __previewStats: unknown }).__previewStats = {
     triangles,
     surfaces: herd.meshes.length,
-    instances: (herd.meshes[0] as any).count,
+    instances: herd.meshes[0]?.count ?? 0,
     bounds: { min: box.min.toArray(), max: box.max.toArray() },
   };
 

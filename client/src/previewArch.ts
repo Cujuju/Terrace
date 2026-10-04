@@ -15,11 +15,11 @@ import {
   BAND_HEIGHT,
   CHUNK_SIZE,
   SEA_LEVEL,
-  SPAN_STRIDE,
   cellIndex,
   chunkIndex,
   chunksPerEdge,
   spanAt,
+  spanCount,
   type Span,
 } from '@terrace/shared';
 import { CELL_WORLD_SIZE, HEIGHT_WORLD_SCALE } from './config.ts';
@@ -65,7 +65,7 @@ const query = new URLSearchParams(window.location.search);
 
 function readView(): CameraView {
   const raw = query.get('view');
-  return raw !== null && raw in CAMERA_VIEWS ? (raw as CameraView) : 'iso';
+  return raw !== null && Object.hasOwn(CAMERA_VIEWS, raw) ? (raw as CameraView) : 'iso';
 }
 
 function readEdges(): boolean {
@@ -183,14 +183,9 @@ function animate(): void {
       x: number,
       z: number,
     ): Span[] => {
-      const packed = mirror.map.columnSpans.get(cellIndex(mirror.map, x, z));
-      if (packed === undefined) return [spanAt(mirror.map, x, z, 0)];
       const out: Span[] = [];
-      for (let k = 0; k < packed.length / SPAN_STRIDE; k++) {
-        out.push({
-          floorBand: packed[k * SPAN_STRIDE]!,
-          ceiling: packed[k * SPAN_STRIDE + 1]!,
-        });
+      for (let k = 0; k < spanCount(mirror.map, x, z); k++) {
+        out.push(spanAt(mirror.map, x, z, k));
       }
       return out;
     };

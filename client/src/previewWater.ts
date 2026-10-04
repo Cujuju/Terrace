@@ -109,7 +109,7 @@ const sceneName = params.get('scene') ?? 'staircase';
 const view = params.get('view') ?? 'iso';
 const zoomRaw = Number(params.get('zoom'));
 const zoom = Number.isFinite(zoomRaw) && zoomRaw > 0 ? zoomRaw : 1;
-const builder = SCENE_BUILDERS[sceneName] ?? buildStaircase;
+const builder = Object.hasOwn(SCENE_BUILDERS, sceneName) ? SCENE_BUILDERS[sceneName] : buildStaircase;
 const isNight = params.get('light') === 'night';
 
 const scene = new Scene();
@@ -191,7 +191,10 @@ const camera = new PerspectiveCamera(
   0.1,
   8000,
 );
-camera.position.copy(centre).addScaledVector(CAMERA_VIEWS[view] ?? CAMERA_VIEWS.iso, span * 0.85 * zoom);
+camera.position.copy(centre).addScaledVector(
+  Object.hasOwn(CAMERA_VIEWS, view) ? CAMERA_VIEWS[view] : CAMERA_VIEWS.iso,
+  span * 0.85 * zoom,
+);
 camera.lookAt(centre);
 
 let frames = 0;
