@@ -6,6 +6,9 @@ export const PENDING_JOBS_INDEX = 0;
 const PENDING_JOBS_SLOTS = 1;
 const BYTES_PER_INT32 = 4;
 const SETTLE_POLL_MS = 250;
+// Far above the slowest write (SQLite busy_timeout of 5 s per statement plus a
+// full-world blob): only a worker that died outside its handler stalls this long.
+const SETTLE_STALL_LIMIT_MS = 60_000;
 
 const RECYCLED_HEIGHT_BUFFERS = 2;
 export interface SnapshotWriteJob {
@@ -76,20 +79,21 @@ export class SnapshotWriterThread {
       if (Atomics.load(this.pending, PENDING_JOBS_INDEX) <= 0) this.worker.unref();
       if (callback !== null) callback(reply.error);
     });
-    const die = (reason: string): void => {
-      if (this.dead) return;
-      this.dead = true;
-      logError(`snapshot writer thread stopped (${reason}); writing snapshots inline`);
-      Atomics.store(this.pending, PENDING_JOBS_INDEX, 0);
-      Atomics.notify(this.pending, PENDING_JOBS_INDEX);
-      for (const callback of this.callbacks.splice(0)) callback?.(reason);
-    };
     this.worker.on('error', (error: Error) => {
-      die(error.message);
+      this.die(error.message);
     });
     this.worker.on('exit', (code: number) => {
-      die(`exit code ${String(code)}`);
+      this.die(`exit code ${String(code)}`);
     });
+  }
+
+  private die(reason: string): void {
+    if (this.dead) return;
+    this.dead = true;
+    logError(`snapshot writer thread stopped (${reason}); writing snapshots inline`);
+    Atomics.store(this.pending, PENDING_JOBS_INDEX, 0);
+    Atomics.notify(this.pending, PENDING_JOBS_INDEX);
+    for (const callback of this.callbacks.splice(0)) callback?.(reason);
   }
 
   scratchHeights(cells: number): Int16Array {
@@ -119,10 +123,22 @@ export class SnapshotWriterThread {
     this.post({ kind: 'close', dbPath }, null, []);
     this.settle();
   }
+  // Blocks the event loop, so the worker's error/exit events cannot fire here;
+  // a stall with no progress is therefore treated as the worker's death.
   settle(): void {
+    let last = Atomics.load(this.pending, PENDING_JOBS_INDEX);
+    let progressAt = Date.now();
     for (;;) {
       const left = Atomics.load(this.pending, PENDING_JOBS_INDEX);
       if (left <= 0) return;
+      if (left !== last) {
+        last = left;
+        progressAt = Date.now();
+      } else if (Date.now() - progressAt >= SETTLE_STALL_LIMIT_MS) {
+        void this.worker.terminate();
+        this.die(`no progress for ${String(SETTLE_STALL_LIMIT_MS)} ms`);
+        return;
+      }
       Atomics.wait(this.pending, PENDING_JOBS_INDEX, left, SETTLE_POLL_MS);
     }
   }
