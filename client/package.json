@@ -16,6 +16,7 @@
     "three": "^0.185.1"
   },
   "devDependencies": {
+    "@types/node": "^24.13.3",
     "@types/three": "^0.185.4",
     "@webgpu/types": "^0.1.72",
     "typescript": "7.0.2",
