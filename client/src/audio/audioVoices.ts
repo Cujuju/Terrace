@@ -90,6 +90,8 @@ export function createAudioVoices(deps: {
   }
 
   function releaseAmbience(layer: AmbienceLayer): void {
+    // Silencing the layer makes a decode still in flight drop its voice on arrival.
+    layer.weight = SILENT_GAIN;
     if (layer.stopTimer !== null) {
       clearTimeout(layer.stopTimer);
       layer.stopTimer = null;
