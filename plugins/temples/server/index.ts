@@ -1,4 +1,4 @@
-import type { CellDiff } from '@terrace/shared';
+import { chunkIndex, chunkIndexOfCell, type CellDiff } from '@terrace/shared';
 import type {
   PersistenceSlice,
   Player,
@@ -158,6 +158,16 @@ export const plugin: TerracePlugin = {
 
   onPlayerJoin(world: WorldApi, player: Player): void {
     broadcastState(world, player.id);
+  },
+
+  // State is sent per viewer, so a player who reveals the temple's chunk must be told.
+  onChunkUnlockedForToken(world: WorldApi, token: string, cx: number, cy: number): void {
+    if (temple === null) return;
+    const size = world.worldSize;
+    if (chunkIndexOfCell(size, temple.x, temple.y) !== chunkIndex(size, cx, cy)) return;
+    for (const player of world.players()) {
+      if (player.token === token) broadcastState(world, player.id);
+    }
   },
 
   messages: {
