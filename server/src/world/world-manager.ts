@@ -490,11 +490,19 @@ export class WorldManager {
   unload(): boolean {
     if (this.session === null) return false;
     const closing = this.session;
+    // Save before releasing, as openInto does: a failed save keeps the world live.
+    try {
+      snapshotIfDirty(closing);
+    } catch (error) {
+      logError(`refusing to unload: could not save world "${closing.id}"`, error);
+      throw error;
+    }
+    this.cancelSwitch();
     this.session = null;
     try {
-      closeSession(closing);
+      releaseSession(closing);
     } catch (error) {
-      logError(`saving world "${closing.id}" while unloading it failed`, error);
+      logWarn(`closing world "${closing.id}" reported: ${String(error)}`);
     }
     this.deps.registry.writeActive(null);
     this.announceWorldUnloaded();

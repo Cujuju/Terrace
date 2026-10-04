@@ -181,10 +181,17 @@ export class WorldAdminService {
       case 'worldLoad':
         return this.load(clientId, request.id);
 
-      case 'worldUnload':
-        return this.deps.manager.unload()
+      case 'worldUnload': {
+        let unloaded: boolean;
+        try {
+          unloaded = this.deps.manager.unload();
+        } catch {
+          return fail('unload', 'failed');
+        }
+        return unloaded
           ? { type: 'worldAdminResult', action: 'unload', ok: true }
           : fail('unload', 'noWorldLoaded');
+      }
 
       case 'worldRename':
         return this.rename(request.id, request.name);
