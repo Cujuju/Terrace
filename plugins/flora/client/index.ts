@@ -59,6 +59,7 @@ let stumpModels: StumpModels | null = null;
 let unsubscribeMessages: Array<() => void> = [];
 let unmarkPickable: Array<() => void> = [];
 let unsubscribeTerrain: (() => void) | null = null;
+let unsubscribeReset: (() => void) | null = null;
 
 const trees = new Map<number, TreeCell>();
 
@@ -310,6 +311,20 @@ function applyStumpChanges(left: readonly StumpCell[], rotted: readonly StumpCel
   for (const cell of left) stumps.set(stumpKey(cell.x, cell.y), cell);
 }
 
+function clearFloraState(): void {
+  trees.clear();
+  crops.clear();
+  grass.clear();
+  fringe.clear();
+  stumps.clear();
+  pendingTrees.clear();
+  pendingCrops.clear();
+  pendingGrassGround.clear();
+  pendingFringeGround.clear();
+  pendingStumps.clear();
+  for (const ground of groundChanges) ground.clear();
+}
+
 const TREE_DRAW_OBJECTS = 4;
 const CROP_DRAW_OBJECTS = 2;
 const GRASS_DRAW_OBJECTS = 3;
@@ -326,17 +341,7 @@ export const clientPlugin: TerraceClientPlugin = {
     FRINGE_DRAW_OBJECTS,
 
   attach(ctx: ClientPluginCtx): void {
-    trees.clear();
-    crops.clear();
-    grass.clear();
-    fringe.clear();
-    stumps.clear();
-    pendingTrees.clear();
-    pendingCrops.clear();
-    pendingGrassGround.clear();
-    pendingFringeGround.clear();
-    pendingStumps.clear();
-    for (const ground of groundChanges) ground.clear();
+    clearFloraState();
 
     models = createFloraModels();
     ctx.layer.add(models.root);
@@ -437,6 +442,16 @@ export const clientPlugin: TerraceClientPlugin = {
       }),
     ];
 
+    // The server skips empty full-state messages, so a new world must clear the old one.
+    unsubscribeReset = ctx.onWorldReset(() => {
+      clearFloraState();
+      rebuild(ctx);
+      rebuildCrops(ctx);
+      rebuildGrass(ctx);
+      rebuildFringe(ctx);
+      rebuildStumps(ctx);
+    });
+
     unsubscribeTerrain = ctx.onTerrainChanged((dirty) => {
       treeGround.invalidate(ctx, dirty, pendingTrees);
       cropGround.invalidate(ctx, dirty, pendingCrops);
@@ -454,18 +469,10 @@ export const clientPlugin: TerraceClientPlugin = {
     unmarkPickable = [];
     unsubscribeTerrain?.();
     unsubscribeTerrain = null;
+    unsubscribeReset?.();
+    unsubscribeReset = null;
 
-    trees.clear();
-    crops.clear();
-    grass.clear();
-    fringe.clear();
-    stumps.clear();
-    pendingTrees.clear();
-    pendingCrops.clear();
-    pendingGrassGround.clear();
-    pendingFringeGround.clear();
-    pendingStumps.clear();
-    for (const ground of groundChanges) ground.clear();
+    clearFloraState();
 
     stumpModels?.dispose();
     stumpModels = null;

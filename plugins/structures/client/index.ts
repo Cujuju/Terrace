@@ -40,6 +40,7 @@ let siteSurveys: SiteSurveyCache | null = null;
 let unsubscribeMessages: Array<() => void> = [];
 let unsubscribeFrames: (() => void) | null = null;
 let unsubscribeTerrain: (() => void) | null = null;
+let unsubscribeReset: (() => void) | null = null;
 
 const buildings = new Map<number, StructureCell>();
 
@@ -149,6 +150,13 @@ export const clientPlugin: TerraceClientPlugin = {
       }),
     ];
 
+    // The server skips an empty full-state message, so a new world must clear the old one.
+    unsubscribeReset = ctx.onWorldReset(() => {
+      replaceAll([]);
+      siteSurveys?.clear();
+      rebuild(ctx);
+    });
+
     unsubscribeTerrain = ctx.onTerrainChanged(() => {
       if (pendingCells.length === 0) return;
       if (pendingRevisionOf(ctx) === pendingRevision) return;
@@ -168,6 +176,8 @@ export const clientPlugin: TerraceClientPlugin = {
     unsubscribeMessages = [];
     unsubscribeTerrain?.();
     unsubscribeTerrain = null;
+    unsubscribeReset?.();
+    unsubscribeReset = null;
     unsubscribeFrames?.();
     unsubscribeFrames = null;
 
