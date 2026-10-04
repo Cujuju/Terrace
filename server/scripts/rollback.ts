@@ -1,5 +1,7 @@
-import { DEFAULT_DB_PATH, loadConfig } from '../src/config.ts';
-import { SnapshotStore } from '../src/persistence/snapshot-store.ts';
+import { cellX, cellY, createHeightmap, setColumn } from '@terrace/shared';
+import { loadConfig } from '../src/config.ts';
+import type { SnapshotStore } from '../src/persistence/snapshot-store.ts';
+import { WorldRegistry } from '../src/persistence/world-registry.ts';
 
 const EXIT_USAGE = 2;
 
@@ -7,10 +9,10 @@ function usage(): void {
   console.error(
     [
       'Usage:',
-      '  node scripts/rollback.ts list          list the restore points, newest first',
-      '  node scripts/rollback.ts to <id>       roll the world back to that restore point',
+      '  node scripts/rollback.ts list [--world <id>]       list the restore points, newest first',
+      '  node scripts/rollback.ts to <id> [--world <id>]    roll the world back to that restore point',
       '',
-      'The database is $DB_PATH, or ' + DEFAULT_DB_PATH + ' relative to the current directory.',
+      'The world is the one the server loads (its active world in $WORLDS_DIR) unless --world names another.',
       'STOP THE SERVER FIRST — a running one overwrites this within the minute.',
     ].join('\n'),
   );
@@ -45,10 +47,18 @@ function rollbackTo(store: SnapshotStore, id: number): number {
     return EXIT_USAGE;
   }
 
+  // Repack the decoded columns exactly as a live world does, so caves and arches survive.
+  const map = createHeightmap(target.worldSize);
+  map.cells.set(target.cells);
+  for (const [i, spans] of target.columnSpans) {
+    setColumn(map, cellX(target.worldSize, i), cellY(target.worldSize, i), spans);
+  }
+
   const newId = store.saveSnapshot({
     worldSize: target.worldSize,
     name: target.name ?? '',
     cells: target.cells,
+    columnSpans: map.columnSpans,
     mask: target.mask,
     pluginSlices: target.pluginSlices,
     tokenMasks: target.tokenMasks,
@@ -63,14 +73,28 @@ function rollbackTo(store: SnapshotStore, id: number): number {
 }
 
 function main(): number {
-  const [command, argument] = process.argv.slice(2);
-  if (command !== 'list' && command !== 'to') {
+  const args = process.argv.slice(2);
+  const worldFlag = args.indexOf('--world');
+  const named = worldFlag === -1 ? undefined : args[worldFlag + 1];
+  const [command, argument] = worldFlag === -1 ? args : args.filter((_, i) => i < worldFlag || i > worldFlag + 1);
+  if ((command !== 'list' && command !== 'to') || (worldFlag !== -1 && named === undefined)) {
     usage();
     return EXIT_USAGE;
   }
 
   const config = loadConfig();
-  const store = SnapshotStore.open(config.dbPath, config.snapshotRetention);
+  const registry = new WorldRegistry(config.worldsDir);
+  const worldId = named ?? registry.readActive();
+  if (worldId === null) {
+    console.error(`no active world in ${registry.worldsDir} — name one with --world <id>`);
+    return EXIT_USAGE;
+  }
+  if (!registry.has(worldId)) {
+    console.error(`no world "${worldId}" in ${registry.worldsDir}`);
+    return EXIT_USAGE;
+  }
+  console.log(`world "${worldId}" (${registry.pathFor(worldId)})`);
+  const store = registry.openStore(worldId, config.snapshotRetention);
   try {
     if (command === 'list') {
       list(store);
