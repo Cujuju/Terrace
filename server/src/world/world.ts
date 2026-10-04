@@ -38,7 +38,7 @@ import {
   MIN_WORLD_DIFFICULTY,
 } from '../config.ts';
 import { NULL_SINK, type MessageSink } from '../net/message-sink.ts';
-import type { Player } from '../player.ts';
+import { isSessionScopedToken, type Player } from '../player.ts';
 import {
   drawGenesisSeed,
   generateFreshGenesisCells,
@@ -208,6 +208,7 @@ export class World {
 
     for (const [token, tokenMask] of tokenMasks) {
       if (tokenMask.length !== expectedMask.length) continue;
+      if (isSessionScopedToken(token)) continue;
       const copy = createChunkMask(size);
       copy.set(tokenMask);
       world.masksByToken.set(token, copy);
@@ -280,6 +281,7 @@ export class World {
     this.masksByToken.clear();
     for (const [token, tokenMask] of tokenMasks) {
       if (tokenMask.length !== this.mask.length) continue;
+      if (isSessionScopedToken(token)) continue;
       const copy = createChunkMask(this.size);
       copy.set(tokenMask);
       this.masksByToken.set(token, copy);
@@ -472,6 +474,10 @@ export class World {
   removePlayer(playerId: string): Player | undefined {
     const player = this.playersById.get(playerId);
     this.playersById.delete(playerId);
+    // Its chunks stay in the union mask; only the unreachable per-token copy goes.
+    if (player !== undefined && isSessionScopedToken(player.token)) {
+      this.masksByToken.delete(player.token);
+    }
     return player;
   }
 

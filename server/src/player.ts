@@ -35,6 +35,11 @@ export function sanitizePlayerName(raw: unknown, sessionId: string): string {
   return Array.from(cleaned).slice(0, MAX_PLAYER_NAME_LENGTH).join('');
 }
 
+/** A fallback identity that dies with its connection: nobody can present it again. */
+export function isSessionScopedToken(token: string): boolean {
+  return token.startsWith(SESSION_SCOPED_TOKEN_PREFIX);
+}
+
 export function sanitizePlayerToken(raw: unknown, sessionId: string): string {
   if (
     typeof raw === 'string' &&
