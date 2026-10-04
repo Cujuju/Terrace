@@ -208,7 +208,6 @@ export class World {
 
     for (const [token, tokenMask] of tokenMasks) {
       if (tokenMask.length !== expectedMask.length) continue;
-      if (isSessionScopedToken(token)) continue;
       const copy = createChunkMask(size);
       copy.set(tokenMask);
       world.masksByToken.set(token, copy);
@@ -281,7 +280,6 @@ export class World {
     this.masksByToken.clear();
     for (const [token, tokenMask] of tokenMasks) {
       if (tokenMask.length !== this.mask.length) continue;
-      if (isSessionScopedToken(token)) continue;
       const copy = createChunkMask(this.size);
       copy.set(tokenMask);
       this.masksByToken.set(token, copy);
@@ -416,8 +414,22 @@ export class World {
     return collectUnlockedChunkPayloads({ map: this.map, mask: tokenMask });
   }
 
+  // For persistence: a session-scoped mask is kept only while its player is
+  // connected, since nobody can present that token again once they leave.
   tokenMasks(): ReadonlyMap<string, Uint8Array> {
-    return this.masksByToken;
+    let unreachable: string[] | null = null;
+    for (const token of this.masksByToken.keys()) {
+      if (isSessionScopedToken(token) && !this.hasPlayerWithToken(token)) (unreachable ??= []).push(token);
+    }
+    if (unreachable === null) return this.masksByToken;
+    const kept = new Map(this.masksByToken);
+    for (const token of unreachable) kept.delete(token);
+    return kept;
+  }
+
+  private hasPlayerWithToken(token: string): boolean {
+    for (const player of this.playersById.values()) if (player.token === token) return true;
+    return false;
   }
 
   heightsForPersistence(): Int16Array {
