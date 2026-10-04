@@ -1,10 +1,15 @@
 import {
   CHUNK_UNLOCK_MANA,
+  displacementManaCost,
   openedChunkCount,
 } from '../../mana/pricing.ts';
 import {
   MAX_DRAG_SWEEP_CELLS,
   chunksPerEdge,
+  displacementOf,
+  runFloorBandAt,
+  snapshotSolidUnits,
+  strokeSolidMeasure,
   strokeSweep,
   type SculptIntent,
 } from '@terrace/shared';
@@ -20,6 +25,7 @@ import {
 } from '../../../server/test/support/harness.ts';
 import {
   MANA_CAPACITY,
+  MANA_PER_BAND_CELL,
   manaBalanceOf,
   plugin as manaPlugin,
   resetManaState,
@@ -66,7 +72,9 @@ function boot(): Harness {
   return { world, host };
 }
 
-function leg(from: { x: number; y: number } | null): SculptIntent {
+/** A drag carries its run's floor, read in the grabbed column (2dd1f8ca). */
+function leg(world: World, from: { x: number; y: number } | null): SculptIntent {
+  const grabbed = from ?? LEG_TO;
   return {
     type: 'sculpt',
     x: LEG_TO.x,
@@ -75,6 +83,7 @@ function leg(from: { x: number; y: number } | null): SculptIntent {
     dir: 1,
     tool: 'drag',
     targetBand: HELD_BAND,
+    floorBand: runFloorBandAt(world.map, grabbed.x, grabbed.y, HELD_BAND),
     ...(from === null ? {} : { fromX: from.x, fromY: from.y }),
     seq: 1,
   };
@@ -104,33 +113,42 @@ describe('a sweep opens every chunk it crosses', () => {
     handleSculptIntent(
       { world: harness.world, interceptors: harness.host },
       PLAYER,
-      leg(null),
+      leg(harness.world, null),
     );
     expect(harness.world.isChunkUnlockedForToken(PLAYER.token, ...BEHIND_CHUNK)).toBe(false);
 
     handleSculptIntent(
       { world: harness.world, interceptors: harness.host },
       PLAYER,
-      leg(LEG_FROM),
+      leg(harness.world, LEG_FROM),
     );
     expect(harness.world.isChunkUnlockedForToken(PLAYER.token, ...BEHIND_CHUNK)).toBe(true);
   });
 
   it('charges the unlock fee for exactly the chunks it opened', () => {
-    const intent = leg(LEG_FROM);
+    const intent = leg(harness.world, LEG_FROM);
     const quoted = openedChunkCount(WORLD_SIZE, strokeSweep(intent), (cx, cy) =>
       harness.world.isChunkUnlockedForToken(PLAYER.token, cx, cy),
     );
     expect(quoted).toBeGreaterThan(0);
 
+    // The run the drag writes is charged as moved material on top of the fee.
+    const { map } = harness.world;
+    const measure = strokeSolidMeasure('drag');
+    const solidBefore = snapshotSolidUnits(map, 0, 0, map.size - 1, map.size - 1, measure);
     const before = unlockedChunks(harness.world);
-    handleSculptIntent({ world: harness.world, interceptors: harness.host }, PLAYER, intent);
+    const outcome = handleSculptIntent({ world: harness.world, interceptors: harness.host }, PLAYER, intent);
     const after = unlockedChunks(harness.world);
 
     let newlyOpened = 0;
     for (const index of after) if (!before.has(index)) newlyOpened++;
 
+    expect(outcome.applied).toBe(true);
+    const moved = displacementOf(solidBefore, map, outcome.applied ? outcome.diff : [], measure);
+    const displacementCost = displacementManaCost(moved, MANA_PER_BAND_CELL, 'drag');
     expect(newlyOpened).toBe(quoted);
-    expect(MANA_CAPACITY - (manaBalanceOf(PLAYER.id) ?? 0)).toBe(quoted * CHUNK_UNLOCK_MANA);
+    expect(MANA_CAPACITY - (manaBalanceOf(PLAYER.id) ?? 0)).toBe(
+      displacementCost + quoted * CHUNK_UNLOCK_MANA,
+    );
   });
 });

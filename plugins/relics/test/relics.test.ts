@@ -441,20 +441,28 @@ describe('relics plugin', () => {
     });
 
     it('buys the holder more sculpts, through the real intent pipeline', async () => {
+      // A stamp is charged what it moved, and repeat presses grow a mound
+      // (52a10901), so the baseline is a perkless player's same presses.
+      const attempts = (MANA_CAPACITY / MANA_COST_PER_MIN_RADIUS_SCULPT) * 2;
+      const pressesApplied = (sculptor: Harness): number => {
+        let applied = 0;
+        for (let n = 0; n < attempts; n++) {
+          const outcome = handleSculptIntent(
+            { world: sculptor.world, interceptors: sculptor.host },
+            PLAYER,
+            { type: 'sculpt', x: TARGET_CELL.x, y: TARGET_CELL.y, radius: 1, dir: 1 },
+          );
+          if (outcome.applied) applied++;
+        }
+        return applied;
+      };
+
+      const standardSculpts = pressesApplied(boot());
+      expect(standardSculpts).toBeLessThan(attempts);
+
       harness = boot();
       collectSkill(harness, 'azure-heart');
-
-      const standardSculpts = MANA_CAPACITY / MANA_COST_PER_MIN_RADIUS_SCULPT;
-      let applied = 0;
-      for (let n = 0; n < standardSculpts * 2; n++) {
-        const outcome = handleSculptIntent(
-          { world: harness.world, interceptors: harness.host },
-          PLAYER,
-          { type: 'sculpt', x: TARGET_CELL.x, y: TARGET_CELL.y, radius: 1, dir: 1 },
-        );
-        if (outcome.applied) applied++;
-      }
-      expect(applied).toBeGreaterThan(standardSculpts);
+      expect(pressesApplied(harness)).toBeGreaterThan(standardSculpts);
     });
   });
 

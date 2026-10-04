@@ -20,6 +20,7 @@ import {
   strokeSweep,
   type SculptIntent,
   drawnBandOfSample,
+  runFloorBandAt,
 } from '@terrace/shared';
 import {
   DEFAULT_WORLD_DIFFICULTY,
@@ -1118,7 +1119,13 @@ describe('charge follows effect — a stroke that changes nothing costs nothing'
         dir: -1,
         tool,
         profile,
-        ...(tool === 'drag' ? { targetBand: FLOOR_ADJACENT_BAND } : {}),
+        // A drag carries its run's floor, read in the grabbed column (2dd1f8ca).
+        ...(tool === 'drag'
+          ? {
+            targetBand: FLOOR_ADJACENT_BAND,
+            floorBand: runFloorBandAt(harness.world.map, INTERIOR_CELL.x, INTERIOR_CELL.y, FLOOR_ADJACENT_BAND),
+          }
+          : {}),
         ...(tool === 'carve' ? { spanBand: FLOOR_ADJACENT_BAND } : {}),
       },
     );

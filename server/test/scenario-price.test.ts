@@ -1,8 +1,18 @@
-import { CARVE_DEFAULT_DEPTH_BANDS, MAX_HEIGHT } from '@terrace/shared';
+import {
+  CARVE_DEFAULT_DEPTH_BANDS,
+  displacementOf,
+  MAX_HEIGHT,
+  snapshotSolidUnits,
+  strokeSolidMeasure,
+} from '@terrace/shared';
 import { beforeEach, describe, expect, it } from 'vitest';
 // The runner is plugin-agnostic; a price only exists with the mana plugin in
 // the chain, so this scenario loads the real one beside reveal.
-import { CHUNK_UNLOCK_MANA, sculptManaCost } from '../../plugins/mana/pricing.ts';
+import {
+  CHUNK_UNLOCK_MANA,
+  displacementManaCost,
+  sculptManaCost,
+} from '../../plugins/mana/pricing.ts';
 import {
   MANA_CAPACITY,
   MANA_PER_BAND_CELL,
@@ -19,6 +29,7 @@ import {
   Scenario,
   sculptMessage,
   type ChunkRef,
+  type ScenarioStep,
   type TranscriptEntry,
 } from './support/scenario.ts';
 
@@ -69,6 +80,23 @@ function chargedIn(entries: readonly TranscriptEntry[]): number {
   return MANA_CAPACITY - (pushes[0]!.payload as { balance: number }).balance;
 }
 
+/**
+ * Sends a stamp and prices what it actually moved. A stamp fills its disc to the
+ * clicked band plus one (52a10901), so on terraced ground it outmoves the nominal.
+ */
+function sendPricingDisplacement(
+  scenario: Scenario,
+  message: unknown,
+): { step: ScenarioStep; displacementCost: number } {
+  const { map } = scenario.world;
+  const measure = strokeSolidMeasure('stamp');
+  const before = snapshotSolidUnits(map, 0, 0, map.size - 1, map.size - 1, measure);
+  const step = scenario.send(SCULPTOR, message);
+  const diff = step.outcome?.applied === true ? step.outcome.diff : [];
+  const units = displacementOf(before, map, diff, measure);
+  return { step, displacementCost: displacementManaCost(units, MANA_PER_BAND_CELL, 'stamp') };
+}
+
 describe('a frontier stroke pays displacement plus a flat fee per chunk it opens', () => {
   beforeEach(() => {
     resetManaState();
@@ -77,16 +105,17 @@ describe('a frontier stroke pays displacement plus a flat fee per chunk it opens
   it('charges both halves, and the balance push tells the client the same number', () => {
     const scenario = frontierScenario();
 
-    const step = scenario.send(
-      SCULPTOR,
+    const { step, displacementCost } = sendPricingDisplacement(
+      scenario,
       sculptMessage({ ...FRONTIER_CELL, radius: STROKE_RADIUS, profile: 'hard', seq: 1 }),
     );
 
     expect(step.outcome?.applied).toBe(true);
+    expect(displacementCost).toBeGreaterThan(0);
     const opened = openedChunksIn(step.entries);
     expect(opened).toBeGreaterThan(0);
 
-    const expected = STAMP_DISPLACEMENT + opened * CHUNK_UNLOCK_MANA;
+    const expected = displacementCost + opened * CHUNK_UNLOCK_MANA;
     expect(chargedIn(step.entries)).toBe(expected);
     expect(manaBalanceOf(SCULPTOR.id)).toBe(MANA_CAPACITY - expected);
   });
@@ -112,14 +141,15 @@ describe('a frontier stroke pays displacement plus a flat fee per chunk it opens
   it('charges displacement only once the land is already owned', () => {
     const scenario = frontierScenario(EVERY_CHUNK);
 
-    const step = scenario.send(
-      SCULPTOR,
+    const { step, displacementCost } = sendPricingDisplacement(
+      scenario,
       sculptMessage({ ...FRONTIER_CELL, radius: STROKE_RADIUS, profile: 'hard', seq: 3 }),
     );
 
     expect(step.outcome?.applied).toBe(true);
+    expect(displacementCost).toBeGreaterThan(0);
     expect(openedChunksIn(step.entries)).toBe(0);
-    expect(chargedIn(step.entries)).toBe(STAMP_DISPLACEMENT);
+    expect(chargedIn(step.entries)).toBe(displacementCost);
   });
 
   it('bills the frontier once: the second stroke on the same ground pays displacement only', () => {

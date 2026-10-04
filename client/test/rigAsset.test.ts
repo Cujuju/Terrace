@@ -44,10 +44,29 @@ const PIXEL_PNG =
   'data:image/png;base64,' +
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
+// Plain typed arrays: node's Buffer typings no longer satisfy Uint8Array under this TS lib.
+function bytesOf(view: ArrayBufferView): Uint8Array {
+  return new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+}
+
+function concatBytes(parts: readonly Uint8Array[]): Uint8Array<ArrayBuffer> {
+  const out = new Uint8Array(parts.reduce((total, part) => total + part.byteLength, 0));
+  let offset = 0;
+  for (const part of parts) {
+    out.set(part, offset);
+    offset += part.byteLength;
+  }
+  return out;
+}
+
+function utf8(text: string): Uint8Array {
+  return new TextEncoder().encode(text);
+}
+
 function texturedTriangle(withUv: boolean): ArrayBuffer {
   const positions = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
   const uvs = new Float32Array([0, 0, 1, 0, 0, 1]);
-  const bytes = Buffer.concat([Buffer.from(positions.buffer), Buffer.from(uvs.buffer)]);
+  const bytes = concatBytes([bytesOf(positions), bytesOf(uvs)]);
   const gltf = {
     asset: { version: '2.0' },
     scenes: [{ nodes: [0] }],
@@ -76,7 +95,7 @@ function texturedTriangle(withUv: boolean): ArrayBuffer {
     ],
     buffers: [{ byteLength: bytes.byteLength }],
   };
-  return packGlb(Buffer.from(JSON.stringify(gltf), 'utf8'), bytes);
+  return packGlb(utf8(JSON.stringify(gltf)), bytes);
 }
 
 const GLB_MAGIC = 0x46546c67;
@@ -87,42 +106,39 @@ const GLB_CHUNK_ALIGNMENT = 4;
 const GLB_JSON_PAD = 0x20;
 const GLB_BIN_PAD = 0x00;
 
-function packGlb(json: Buffer, bin: Buffer): ArrayBuffer {
-  const pad = (chunk: Buffer, filler: number): Buffer => {
+function packGlb(json: Uint8Array, bin: Uint8Array): ArrayBuffer {
+  const pad = (chunk: Uint8Array, filler: number): Uint8Array => {
     const short = (GLB_CHUNK_ALIGNMENT - (chunk.byteLength % GLB_CHUNK_ALIGNMENT)) % GLB_CHUNK_ALIGNMENT;
-    return short === 0 ? chunk : Buffer.concat([chunk, Buffer.alloc(short, filler)]);
+    return short === 0 ? chunk : concatBytes([chunk, new Uint8Array(short).fill(filler)]);
   };
   const jsonChunk = pad(json, GLB_JSON_PAD);
   const binChunk = pad(bin, GLB_BIN_PAD);
-  const header = Buffer.alloc(12);
-  const chunkHeader = (length: number, type: number): Buffer => {
-    const head = Buffer.alloc(8);
-    head.writeUInt32LE(length, 0);
-    head.writeUInt32LE(type, 4);
+  const header = new Uint8Array(12);
+  const chunkHeader = (length: number, type: number): Uint8Array => {
+    const head = new Uint8Array(8);
+    const view = new DataView(head.buffer);
+    view.setUint32(0, length, true);
+    view.setUint32(4, type, true);
     return head;
   };
-  const body = Buffer.concat([
+  const body = concatBytes([
     chunkHeader(jsonChunk.byteLength, GLB_CHUNK_JSON),
     jsonChunk,
     chunkHeader(binChunk.byteLength, GLB_CHUNK_BIN),
     binChunk,
   ]);
-  header.writeUInt32LE(GLB_MAGIC, 0);
-  header.writeUInt32LE(GLB_VERSION, 4);
-  header.writeUInt32LE(header.byteLength + body.byteLength, 8);
-  const glb = Buffer.concat([header, body]);
-  return glb.buffer.slice(glb.byteOffset, glb.byteOffset + glb.byteLength) as ArrayBuffer;
+  const headerView = new DataView(header.buffer);
+  headerView.setUint32(0, GLB_MAGIC, true);
+  headerView.setUint32(4, GLB_VERSION, true);
+  headerView.setUint32(8, header.byteLength + body.byteLength, true);
+  return concatBytes([header, body]).buffer;
 }
 
 function skinnedTriangle(): ArrayBuffer {
   const positions = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
   const joints = new Uint16Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
   const weights = new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]);
-  const bytes = Buffer.concat([
-    Buffer.from(positions.buffer),
-    Buffer.from(joints.buffer),
-    Buffer.from(weights.buffer),
-  ]);
+  const bytes = concatBytes([bytesOf(positions), bytesOf(joints), bytesOf(weights)]);
   const jointsOffset = positions.byteLength;
   const weightsOffset = jointsOffset + joints.byteLength;
   const gltf = {
@@ -147,7 +163,7 @@ function skinnedTriangle(): ArrayBuffer {
     ],
     buffers: [{ byteLength: bytes.byteLength }],
   };
-  return packGlb(Buffer.from(JSON.stringify(gltf), 'utf8'), bytes);
+  return packGlb(utf8(JSON.stringify(gltf)), bytes);
 }
 
 function assetOfSize(size: Vector3): RigAsset {

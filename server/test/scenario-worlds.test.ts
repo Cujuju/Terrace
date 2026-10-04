@@ -22,13 +22,16 @@ const SCULPTOR: Player = { id: 'session-1', token: 'token-1', name: 'Sculptor' }
 const RAISING = 1;
 const LOWERING = -1;
 
-/** Cells each world's wire-legal script writes; an ack without terrain fails here. */
+/**
+ * Cells each world's wire-legal script writes; an ack without terrain fails here.
+ * Repinned for the signed-off brush redesign (06776661..3bae0111).
+ */
 const CELLS_WRITTEN: Record<GoldenWorldName, number> = {
-  'genesis-noise': 1388,
-  arch: 982,
-  terrace: 981,
-  shoreline: 849,
-  played: 812,
+  'genesis-noise': 1398,
+  arch: 832,
+  terrace: 847,
+  shoreline: 688,
+  played: 498,
 };
 
 /** `anchor: 'free'` and `spill: 'free'` are library paths; no intent can ask for them. */

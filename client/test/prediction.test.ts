@@ -198,7 +198,8 @@ describe('reconciliation', () => {
 
   it('does not confirm a prediction the server has not corroborated', () => {
     const { store } = createClient([chunkPayload(0, 0, 0)]);
-    store.predict(raise(1, 1, 4), 0);
+    // Hard: a soft stamp's mound flanks (52a10901) sweep past the one chunk sent.
+    store.predict({ ...raise(1, 1, 4), profile: 'hard' }, 0);
     expect(store.pendingCount()).toBe(1);
 
     store.applyAuthoritative(() => new Set<number>(), 10);
@@ -309,7 +310,8 @@ describe('authoritative state seeding', () => {
   it('takes chunks streamed in mid-session into the authoritative copy', () => {
     const { mirror, store } = createClient([chunkPayload(0, 0, 0)]);
 
-    store.predict(raise(4, 4, 2), 0);
+    // Hard: a soft stamp's mound flanks (52a10901) sweep past the one chunk sent.
+    store.predict({ ...raise(4, 4, 2), profile: 'hard' }, 0);
     const predictedCentre = heightAt(mirror.map, 4, 4);
 
     store.applyAuthoritative(
@@ -386,8 +388,8 @@ function rowInOwnChunk(cells: Int16Array | Heightmap['cells']): number[] {
   return out;
 }
 
-// A terraced ramp: every riser is a whole band over one cell, which is exactly
-// the gradient relaxation cascades along. A smooth on it reaches far past its brush.
+// A terraced ramp: a whole-band riser every tread. A nudge on a riser moves it
+// and reads past its brush (9ba4767e gave nudge smooth's old cascade reach).
 const RAMP_TREAD_CELLS = WORLD_UNIT_CELLS;
 
 function rampChunk(cx: number, cy: number): ChunkPayload {
@@ -408,22 +410,25 @@ function rampWorld(): ChunkPayload[] {
   return out;
 }
 
-function smoothAt(x: number, y: number, seq: number): SculptIntent {
-  return { type: 'sculpt', x, y, radius: MIN_BRUSH_RADIUS, dir: 1, tool: 'smooth', seq };
+function nudgeAt(x: number, y: number, seq: number): SculptIntent {
+  return { type: 'sculpt', x, y, radius: MIN_BRUSH_RADIUS, dir: 1, tool: 'nudge', seq };
 }
 
-describe('a relaxing tool is judged by the reach it had, not the brush it used', () => {
-  // Close enough that the cascade crosses the frontier even though the brush
+describe('a tool that reads past its brush is judged by the reach it had, not the brush it used', () => {
+  // Close enough that the reach crosses the frontier even though the brush
   // and its halo do not: the reach guard is the only thing that can catch it.
   const OVER_THE_FRONTIER_X =
-    FRONTIER_EDGE_X + 1 - sculptReachCells(MIN_BRUSH_RADIUS, 'hard', 'smooth', 'clicked');
+    FRONTIER_EDGE_X + 1 - sculptReachCells(MIN_BRUSH_RADIUS, 'hard', 'nudge', 'clicked');
+  // The riser one tread back: same stroke, reach inside the chunk.
+  const SHORT_OF_THE_FRONTIER_X = OVER_THE_FRONTIER_X - RAMP_TREAD_CELLS;
 
-  it('refuses a smooth whose cascade runs into ground it was never sent', () => {
+  it('refuses a nudge whose reach runs into ground it was never sent', () => {
     const { mirror, store } = createClient([rampChunk(0, 0)]);
     const before = Array.from(mirror.map.cells);
+    expect(OVER_THE_FRONTIER_X % RAMP_TREAD_CELLS).toBe(0);
     expect(OVER_THE_FRONTIER_X + MIN_BRUSH_RADIUS).toBeLessThanOrEqual(FRONTIER_EDGE_X);
 
-    const dirty = store.predict(smoothAt(OVER_THE_FRONTIER_X, FRONTIER_Y, 1), 0);
+    const dirty = store.predict(nudgeAt(OVER_THE_FRONTIER_X, FRONTIER_Y, 1), 0);
 
     expect(dirty.size).toBe(0);
     expect(store.pendingCount()).toBe(0);
@@ -431,21 +436,21 @@ describe('a relaxing tool is judged by the reach it had, not the brush it used',
     expect(Array.from(mirror.map.cells)).toEqual(before);
   });
 
-  it('predicts a smooth whose cascade stops short of the frontier', () => {
+  it('predicts a nudge whose reach stops short of the frontier', () => {
     const { store } = createClient([rampChunk(0, 0)]);
 
-    const dirty = store.predict(smoothAt(OVER_THE_FRONTIER_X - 1, FRONTIER_Y, 1), 0);
+    const dirty = store.predict(nudgeAt(SHORT_OF_THE_FRONTIER_X, FRONTIER_Y, 1), 0);
 
     expect(store.ghostSeqs()).toEqual([]);
     expect(store.pendingCount()).toBe(1);
     expect(dirty.size).toBeGreaterThan(0);
   });
 
-  it('still predicts the same smooth once the world around it is known', () => {
+  it('still predicts the refused nudge once the world around it is known', () => {
     const { mirror, store } = createClient(rampWorld());
     const before = Array.from(mirror.map.cells);
 
-    const dirty = store.predict(smoothAt(FRONTIER_EDGE_X - 4, FRONTIER_Y, 1), 0);
+    const dirty = store.predict(nudgeAt(OVER_THE_FRONTIER_X, FRONTIER_Y, 1), 0);
 
     expect(dirty.size).toBeGreaterThan(0);
     expect(store.pendingCount()).toBe(1);
@@ -456,7 +461,7 @@ describe('a relaxing tool is judged by the reach it had, not the brush it used',
   it('leaves the refused stroke with nothing for the next diff to undo', () => {
     const { mirror, store } = createClient([rampChunk(0, 0)]);
     const before = Array.from(mirror.map.cells);
-    store.predict(smoothAt(OVER_THE_FRONTIER_X, FRONTIER_Y, 1), 0);
+    store.predict(nudgeAt(OVER_THE_FRONTIER_X, FRONTIER_Y, 1), 0);
     expect(Array.from(mirror.map.cells)).toEqual(before);
 
     store.resolveSeq(1);
@@ -512,7 +517,7 @@ describe('frontier sculpts (issue #21)', () => {
     expect(rowInOwnChunk(mirror.map.cells).every((h) => h === FRONTIER_GROUND)).toBe(true);
   });
 
-  it('refuses the level-fill brush at the frontier, where unseen cells poison the fill', () => {
+  it('refuses a stamp whose footprint writes cells it was never sent', () => {
     const { mirror, store, server } = frontierFixture();
     const intent: SculptIntent = {
       type: 'sculpt',
@@ -541,14 +546,9 @@ describe('frontier sculpts (issue #21)', () => {
     const serverDiff = serverSculpt(server, intent);
     const visible = (cell: { x: number }): boolean => cell.x <= FRONTIER_EDGE_X;
     expect(localDiff.filter(visible)).toEqual(serverDiff.cells.filter(visible));
-    const phantomLocal = localDiff.filter((cell) => !visible(cell));
-    expect(phantomLocal.length).toBeGreaterThan(0);
-    const serverByCell = new Map(
-      serverDiff.cells.map((cell) => [`${cell.x},${cell.y}`, cell.h]),
-    );
-    expect(
-      phantomLocal.some((cell) => serverByCell.get(`${cell.x},${cell.y}`) !== cell.h),
-    ).toBe(true);
+    // The mound's level is the clicked spot's (52a10901), so unseen ground no
+    // longer skews it; the footprint reaching past the frontier is the refusal.
+    expect(localDiff.filter((cell) => !visible(cell)).length).toBeGreaterThan(0);
 
     store.applyAuthoritative(
       (m) => applyTerrainDiff(m, filterToUnlocked(serverDiff, new Set([chunkIndex(WORLD, 0, 0)]))),

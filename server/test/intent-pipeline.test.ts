@@ -926,18 +926,18 @@ describe('a contained sculpt fault leaves no client diverged', () => {
     ]);
   });
 
-  it('covers a faulted smooth\'s bounded reach, which a stamp never needs', () => {
-    // Each tool's own reach, plus the seam halo, and no further.
+  it('covers a faulted nudge\'s bounded cascade, which a stamp never needs', () => {
+    // Each tool's own reach, plus the seam halo, and no further. Nudge took smooth's cascade (9ba4767e).
     const WIDE_WORLD_SIZE = CHUNK_SIZE * 8;
     const OUT_OF_REACH_CHUNK = WIDE_WORLD_SIZE / CHUNK_SIZE - 1;
     const RADIUS = MAX_BRUSH_RADIUS;
     const chunkAt = (cell: number): number => Math.floor(cell / CHUNK_SIZE) + MESH_SEAM_HALO_CHUNKS;
     const STAMPED_CHUNK = chunkAt(UNLOCKED_CELL.x + RADIUS);
-    const SMOOTHED_CHUNK = chunkAt(UNLOCKED_CELL.x + RADIUS + smoothCascadeReachCells(RADIUS));
+    const NUDGED_CHUNK = chunkAt(UNLOCKED_CELL.x + RADIUS + smoothCascadeReachCells(RADIUS));
     const world = worldWithUnlockedChunks(WIDE_WORLD_SIZE, [
       [0, 0],
       [STAMPED_CHUNK, STAMPED_CHUNK],
-      [SMOOTHED_CHUNK, SMOOTHED_CHUNK],
+      [NUDGED_CHUNK, NUDGED_CHUNK],
       [OUT_OF_REACH_CHUNK, OUT_OF_REACH_CHUNK],
     ]);
     const sink = new RecordingSink();
@@ -955,14 +955,14 @@ describe('a contained sculpt fault leaves no client diverged', () => {
     ]);
     sink.clear();
 
-    refuseFaultedSculpt(world, sculptMessage({ ...press, tool: 'smooth' }), () => {});
-    const smoothed = sink.ofType('chunkUnlock')[0]!.payload as ChunkUnlockMessage;
-    expect(STAMPED_CHUNK).toBeLessThan(SMOOTHED_CHUNK);
-    expect(SMOOTHED_CHUNK).toBeLessThan(OUT_OF_REACH_CHUNK);
-    expect(smoothed.chunks.map((chunk) => [chunk.cx, chunk.cy])).toEqual([
+    refuseFaultedSculpt(world, sculptMessage({ ...press, tool: 'nudge' }), () => {});
+    const nudged = sink.ofType('chunkUnlock')[0]!.payload as ChunkUnlockMessage;
+    expect(STAMPED_CHUNK).toBeLessThan(NUDGED_CHUNK);
+    expect(NUDGED_CHUNK).toBeLessThan(OUT_OF_REACH_CHUNK);
+    expect(nudged.chunks.map((chunk) => [chunk.cx, chunk.cy])).toEqual([
       [0, 0],
       [STAMPED_CHUNK, STAMPED_CHUNK],
-      [SMOOTHED_CHUNK, SMOOTHED_CHUNK],
+      [NUDGED_CHUNK, NUDGED_CHUNK],
     ]);
   });
 

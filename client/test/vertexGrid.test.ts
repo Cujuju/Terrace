@@ -1175,33 +1175,20 @@ describe('buffers', () => {
 });
 
 describe('deep strata sculpting (2026-08-19) — the digs that recalibrated the budgets', () => {
+  // Reads the sculpt the draw tests render, not a re-run at another scale.
   function fixtureFloor(strokes: readonly Stroke[], base: number): number {
-    const map = createHeightmap(WORLD);
-    map.cells.fill(base);
-    for (const stroke of strokes) {
-      for (let c = 0; c < stroke.clicks; c++) {
-        applySculpt(
-          map,
-          SCULPT_CENTRE + stroke.dx,
-          SCULPT_CENTRE + stroke.dy,
-          stroke.radius,
-          stroke.up ? DEFAULT_SCULPT_AMOUNT : -DEFAULT_SCULPT_AMOUNT,
-          { tool: 'stamp', profile: stroke.profile ?? 'soft', anchor: stroke.anchor ?? 'free' },
-        );
-      }
-    }
+    const mirror = mirrorWith(sculptedWorld(strokes, base));
     let min = Infinity;
     for (let j = 0; j < CHUNK_SIZE; j++) {
       for (let i = 0; i < CHUNK_SIZE; i++) {
-        min = Math.min(min, heightAt(map, FIXTURE_ORIGIN + i, FIXTURE_ORIGIN + j));
+        min = Math.min(min, heightAt(mirror.map, FIXTURE_ORIGIN + i, FIXTURE_ORIGIN + j));
       }
     }
     return min;
   }
 
   it('the deep fixtures provably bottom out on the world floor', () => {
-    expect(fixtureFloor(DEEP_PIT_STROKES, SHELF_BASE)).toBe(MIN_HEIGHT);
-    expect(fixtureFloor(DEEP_CRATER_STROKES, SHELF_BASE)).toBe(MIN_HEIGHT);
+    // Stamped rings store in-band edge heights (52a10901): a floor-band cell need not sit at MIN_HEIGHT.
     expect(quantizeToBand(fixtureFloor(DEEP_PIT_STROKES, SHELF_BASE))).toBe(MIN_HEIGHT);
     expect(quantizeToBand(fixtureFloor(DEEP_CRATER_STROKES, SHELF_BASE))).toBe(MIN_HEIGHT);
   });
