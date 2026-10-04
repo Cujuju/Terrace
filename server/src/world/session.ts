@@ -35,7 +35,9 @@ export interface SnapshotOptions {
 
 export function snapshotIfDirty(session: WorldSession, options?: SnapshotOptions): boolean {
   const { world, host, store } = session;
-  if (!world.dirty) return false;
+  const blocking = options?.defer !== true;
+  // A blocking save also covers background saves whose outcome is still unknown.
+  if (!world.dirty && !(blocking && world.hasUnconfirmedSnapshot)) return false;
   const input = {
     worldSize: world.size,
     name: world.name,
@@ -47,18 +49,26 @@ export function snapshotIfDirty(session: WorldSession, options?: SnapshotOptions
     simMillis: world.simMillis,
     genesisMillis: world.genesisMillis,
   };
-  if (options?.defer === true) {
-    store.saveSnapshotDeferred(input, (error) => {
-      if (error === null) return;
-      logError(`snapshot of world "${session.id}" failed to write: ${error}`);
-      world.markSnapshotFailed();
-    });
-  } else {
-    store.saveSnapshot({
-      ...input,
-      thumbnail: buildThumbnail(world.map.cells, world.size),
-    });
+  if (!blocking) {
+    // Queued first: the store settles synchronously when it falls back to an inline write.
+    world.markSnapshotQueued();
+    let settled = false;
+    try {
+      store.saveSnapshotDeferred(input, (error) => {
+        settled = true;
+        world.markSnapshotSettled(error === null);
+        if (error !== null) logError(`snapshot of world "${session.id}" failed to write: ${error}`);
+      });
+    } catch (error) {
+      if (!settled) world.markSnapshotSettled(false);
+      throw error;
+    }
+    return true;
   }
+  store.saveSnapshot({
+    ...input,
+    thumbnail: buildThumbnail(world.map.cells, world.size),
+  });
   world.markSnapshotted();
   return true;
 }

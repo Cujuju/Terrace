@@ -233,8 +233,22 @@ export class World {
     this.changedSinceSnapshot = false;
   }
 
-  markSnapshotFailed(): void {
-    this.changedSinceSnapshot = true;
+  // Background saves queued but not yet confirmed: their failure reports arrive
+  // on the event loop, which a synchronous close never yields to.
+  private backgroundSavesInFlight = 0;
+
+  markSnapshotQueued(): void {
+    this.changedSinceSnapshot = false;
+    this.backgroundSavesInFlight++;
+  }
+
+  markSnapshotSettled(ok: boolean): void {
+    this.backgroundSavesInFlight--;
+    if (!ok) this.changedSinceSnapshot = true;
+  }
+
+  get hasUnconfirmedSnapshot(): boolean {
+    return this.backgroundSavesInFlight > 0;
   }
 
   rewindTo(
