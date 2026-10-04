@@ -13,15 +13,26 @@ import { watchReducedMotion } from '../../../client/src/plugins/kit/reducedMotio
 const interpolator = new DayNightInterpolator();
 let reducedMotion: { matches(): boolean; stop(): void } | null = null;
 let hasPushedInitialSky = false;
+let hasReceivedClock = false;
 let calendarDay: number | null = null;
 let calendarGenesisDay: number | null = null;
 let unsubscribeMessages: (() => void) | null = null;
 let unsubscribeFrames: (() => void) | null = null;
+let unsubscribeReset: (() => void) | null = null;
 let unpublishPhase: (() => void) | null = null;
 
 const PHASE_GAUGE_KEY = 'phase';
 
 const DAYNIGHT_DRAW_OBJECTS = 0;
+
+function resetClock(): void {
+  interpolator.clear();
+  hasReceivedClock = false;
+  hasPushedInitialSky = false;
+  calendarDay = null;
+  calendarGenesisDay = null;
+  setWorldClock(null);
+}
 
 export const clientPlugin: TerraceClientPlugin = {
   name: DAYNIGHT_PLUGIN_NAME,
@@ -29,21 +40,22 @@ export const clientPlugin: TerraceClientPlugin = {
   drawBudget: DAYNIGHT_DRAW_OBJECTS,
 
   attach(ctx: ClientPluginCtx): void {
+    resetClock();
     unpublishPhase = ctx.publishGauge(PHASE_GAUGE_KEY, () => interpolator.samplePhase());
     reducedMotion = watchReducedMotion();
-    hasPushedInitialSky = false;
-    calendarDay = null;
-    calendarGenesisDay = null;
+    unsubscribeReset = ctx.onWorldReset(resetClock);
 
     unsubscribeMessages = ctx.onMessage(DAYNIGHT_CLOCK_MESSAGE, (payload) => {
       const clock = parseClockPayload(payload);
       if (clock === null) return;
       interpolator.receive(clock.phase);
+      hasReceivedClock = true;
       calendarDay = clock.day;
       calendarGenesisDay = clock.genesisDay;
     });
 
     unsubscribeFrames = ctx.onFrame((dt) => {
+      if (!hasReceivedClock) return;
       interpolator.advance(dt);
 
       setWorldClock(
@@ -63,14 +75,11 @@ export const clientPlugin: TerraceClientPlugin = {
     unpublishPhase = null;
     unsubscribeMessages?.();
     unsubscribeFrames?.();
+    unsubscribeReset?.();
     unsubscribeMessages = null;
     unsubscribeFrames = null;
-
-    interpolator.clear();
-    hasPushedInitialSky = false;
-    calendarDay = null;
-    calendarGenesisDay = null;
-    setWorldClock(null);
+    unsubscribeReset = null;
+    resetClock();
 
     reducedMotion?.stop();
     reducedMotion = null;

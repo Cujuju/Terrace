@@ -11,6 +11,8 @@ import {
   parseSkillsPayload,
   type RelicView,
   RELIC_COUNT,
+  SKILL_IDS,
+  type SkillId,
 } from '../protocol.ts';
 import {
   CELL_WORLD_SIZE,
@@ -46,58 +48,58 @@ import {
 
 const PRIMARY_BUTTON = 0;
 
-interface GemEntry {
+interface GemMeshes {
   readonly mesh: Mesh;
   readonly spire: Mesh;
+}
+
+interface GemEntry extends GemMeshes {
   readonly phaseS: number;
   readonly relic: RelicView;
 }
 
 let spireShape: BufferGeometry | null = null;
 
-function sharedSpireGeometry(): BufferGeometry {
-  spireShape ??= spireGeometry();
-  return spireShape;
-}
-
 let elapsedS = 0;
 
 const gems = new Map<string, GemEntry>();
+const gemPool = new Map<SkillId, GemMeshes>();
 
-function disposeGem(entry: GemEntry): void {
-  for (const mesh of [entry.mesh, entry.spire]) {
-    mesh.removeFromParent();
-    (mesh.material as NodeMaterial).dispose();
+function createGemPool(ctx: ClientPluginCtx): void {
+  spireShape = spireGeometry();
+  for (const skill of SKILL_IDS) {
+    const geometry = relicGeometry(skill);
+    const mesh = new Mesh(geometry, createGemMaterial(geometry.boundingSphere!.radius));
+    mesh.name = `relic:${skill}`;
+    mesh.visible = false;
+    const spire = new Mesh(spireShape, createSpireMaterial(new Color(relicColor(skill))));
+    spire.name = `relic-spire:${skill}`;
+    spire.renderOrder = SPIRE_RENDER_ORDER;
+    spire.visible = false;
+    ctx.layer.add(mesh, spire);
+    gemPool.set(skill, { mesh, spire });
   }
 }
 
-function createGem(relic: RelicView): GemEntry {
-  const geometry = relicGeometry(relic.skill);
-  const mesh = new Mesh(geometry, createGemMaterial(geometry.boundingSphere!.radius));
-  mesh.name = `relic:${relic.id}`;
-  const spire = new Mesh(
-    sharedSpireGeometry(),
-    createSpireMaterial(new Color(relicColor(relic.skill))),
-  );
-  spire.name = `relic-spire:${relic.id}`;
-  spire.renderOrder = SPIRE_RENDER_ORDER;
-  return { mesh, spire, phaseS: gemPhaseFor(relic.id), relic };
-}
-
-function syncGems(ctx: ClientPluginCtx, next: readonly RelicView[]): void {
+function syncGems(next: readonly RelicView[]): void {
   const wanted = new Set(next.map((relic) => relic.id));
 
   for (const [id, entry] of gems) {
     if (wanted.has(id)) continue;
-    disposeGem(entry);
+    entry.mesh.visible = false;
+    entry.spire.visible = false;
     gems.delete(id);
   }
 
+  const occupiedSkills = new Set(Array.from(gems.values(), (entry) => entry.relic.skill));
   for (const relic of next) {
-    if (gems.has(relic.id)) continue;
-    const entry = createGem(relic);
-    ctx.layer.add(entry.mesh, entry.spire);
-    gems.set(relic.id, entry);
+    if (gems.has(relic.id) || occupiedSkills.has(relic.skill)) continue;
+    const meshes = gemPool.get(relic.skill);
+    if (meshes === undefined) continue;
+    meshes.mesh.name = `relic:${relic.id}`;
+    meshes.spire.name = `relic-spire:${relic.id}`;
+    gems.set(relic.id, { ...meshes, phaseS: gemPhaseFor(relic.id), relic });
+    occupiedSkills.add(relic.skill);
   }
 }
 
@@ -176,11 +178,12 @@ export const clientPlugin: TerraceClientPlugin = {
 
   attach(ctx: ClientPluginCtx): void {
     resetRelicsClientState();
+    createGemPool(ctx);
 
     ctx.onMessage(RELICS_MESSAGE, (payload) => {
       const next = parseRelicsPayload(payload);
       setRelics(next);
-      syncGems(ctx, next);
+      syncGems(next);
     });
 
     ctx.onMessage(SKILLS_MESSAGE, (payload) => {
@@ -208,8 +211,14 @@ export const clientPlugin: TerraceClientPlugin = {
   },
 
   dispose(): void {
-    for (const entry of gems.values()) disposeGem(entry);
+    for (const entry of gemPool.values()) {
+      for (const mesh of [entry.mesh, entry.spire]) {
+        mesh.removeFromParent();
+        (mesh.material as NodeMaterial).dispose();
+      }
+    }
     gems.clear();
+    gemPool.clear();
     disposeRelicGeometries();
     spireShape?.dispose();
     spireShape = null;

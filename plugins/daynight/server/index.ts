@@ -1,4 +1,5 @@
 import type {
+  Player,
   TerracePlugin,
   WorldApi,
 } from '../../../server/src/plugins/types.ts';
@@ -24,6 +25,15 @@ export function currentPhase(): number {
   return wrapPhase(elapsedSeconds / DAY_LENGTH_SECONDS);
 }
 
+function clockPayload(world: WorldApi) {
+  const phase = wrapPhase(world.simMillis / MILLISECONDS_PER_SECOND / DAY_LENGTH_SECONDS);
+  return {
+    phase: roundBroadcastPhase(phase),
+    day: worldAgeDays(world.simMillis, world.genesisMillis),
+    genesisDay: dayOfSimMillis(world.genesisMillis),
+  };
+}
+
 function simulate(world: WorldApi, dt: number): void {
   elapsedSeconds = world.simMillis / MILLISECONDS_PER_SECOND;
   sinceBroadcast += dt;
@@ -32,11 +42,7 @@ function simulate(world: WorldApi, dt: number): void {
   }
   sinceBroadcast -= DAYNIGHT_BROADCAST_INTERVAL_SECONDS;
 
-  world.broadcast(DAYNIGHT_CLOCK_MESSAGE, {
-    phase: roundBroadcastPhase(currentPhase()),
-    day: worldAgeDays(world.simMillis, world.genesisMillis),
-    genesisDay: dayOfSimMillis(world.genesisMillis),
-  });
+  world.broadcast(DAYNIGHT_CLOCK_MESSAGE, clockPayload(world));
 }
 
 export const plugin: TerracePlugin = {
@@ -49,6 +55,10 @@ export const plugin: TerracePlugin = {
 
   onTick(world: WorldApi, dt: number): void {
     simulate(world, dt);
+  },
+
+  onPlayerJoin(world: WorldApi, player: Player): void {
+    world.sendTo(player.id, DAYNIGHT_CLOCK_MESSAGE, clockPayload(world));
   },
 };
 

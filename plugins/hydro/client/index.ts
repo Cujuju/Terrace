@@ -193,7 +193,8 @@ export const clientPlugin: TerraceClientPlugin = {
     ];
 
     unsubscribeTerrain = ctx.onTerrainChanged(() => {
-      if (pendingGround > 0) resolveGround(ctx);
+      for (const patch of patches.values()) patch.drawnY = null;
+      resolveGround(ctx);
     });
 
     unsubscribeFrames = ctx.onFrame((dt) => {

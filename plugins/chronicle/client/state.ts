@@ -1,5 +1,5 @@
 import { createSignal } from 'solid-js';
-import type { ChronicleEntry } from '../protocol.ts';
+import { CHRONICLE_MAX_ENTRIES, type ChronicleEntry } from '../protocol.ts';
 
 const [entriesSignal, setEntriesSignal] = createSignal<readonly ChronicleEntry[]>([]);
 
@@ -11,7 +11,7 @@ export function replaceEntries(next: readonly ChronicleEntry[]): void {
 
 export function appendEntries(added: readonly ChronicleEntry[]): void {
   if (added.length === 0) return;
-  setEntriesSignal((current) => [...current, ...added]);
+  setEntriesSignal((current) => [...current, ...added].slice(-CHRONICLE_MAX_ENTRIES));
 }
 
 const [genesisDaySignal, setGenesisDaySignal] = createSignal(0);
