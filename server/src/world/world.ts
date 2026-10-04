@@ -286,6 +286,10 @@ export class World {
     this.sink = sink;
   }
 
+  get messageSink(): MessageSink {
+    return this.sink;
+  }
+
   broadcast(message: ServerMessage): void {
     this.sink.broadcast(message.type, message);
   }

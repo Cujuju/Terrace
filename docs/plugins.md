@@ -69,7 +69,7 @@ read them before relying on any subtlety here.
 | Hook | When it fires |
 |---|---|
 | `onWorldCreate(world)` | Once per world session, after your slice is restored. Re-runs on a rollback or reopen, so assign fresh state, never append. |
-| `onWorldClose(world)` | The world is unloading, after the final snapshot. Fires for every installed plugin, enabled or not. `world` is dead once it returns. |
+| `onWorldClose(world)` | The world is unloading, after the final snapshot, and before a rollback restores its slices. Fires for every installed plugin, enabled or not. Reset all module state here; after a rollback, `onPlayerJoin` re-runs for every connected player. |
 | `onTick(world, dt)` | Every simulation tick; `dt` is the fixed tick period in seconds. |
 | `onIntent(intent, ctx)` | Before a sculpt applies. Return `{kind:'deny', reason}`, `{kind:'modify', intent}`, or nothing. Verdict only — no side effects, because a later plugin can still deny. |
 | `onIntentApplied(intent, ctx, diff)` | After every interceptor allowed and the edit landed. Charge here. `intent` is the effective one after any `modify`. |

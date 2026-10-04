@@ -10,6 +10,7 @@ import {
   OPERATOR_MAX_FAILED_ATTEMPTS,
 } from './operator-gate.ts';
 import { buildJoinSnapshot } from '../net/join-snapshot.ts';
+import { NULL_SINK } from '../net/message-sink.ts';
 import { buildThumbnail } from '../persistence/thumbnail.ts';
 import { applyInitialUnlockForToken } from './initial-unlock.ts';
 import type { SnapshotStore } from '../persistence/snapshot-store.ts';
@@ -103,8 +104,17 @@ export class RollbackService {
       applyInitialUnlockForToken(world, player.token);
     }
 
-    host.restorePersistence(target.pluginSlices);
-    host.worldCreate();
+    // Replay boot from fresh plugin state, muted: clients reset on the snapshot,
+    // then each player rejoins the plugins, exactly as after a world switch.
+    const sink = world.messageSink;
+    world.setSink(NULL_SINK);
+    try {
+      host.closeWorld();
+      host.restorePersistence(target.pluginSlices);
+      host.worldCreate();
+    } finally {
+      world.setSink(sink);
+    }
 
     try {
       this.saveCurrent();
@@ -114,6 +124,7 @@ export class RollbackService {
     }
 
     this.announceToAll();
+    for (const player of world.players()) host.playerJoined(player);
 
     logInfo(
       `world rolled back to restore point #${toId} ` +
