@@ -1,7 +1,7 @@
 import { CA_SEED_PATTERNS_PER_ARRIVAL, attemptSeed, stepGeneration } from '../../server/life.ts';
 import type { LiveCellRecord, PhantomWallWeight } from '../../server/life.ts';
 import { isBuildableCell, type StructuresWorld } from '../../server/suitability.ts';
-import { structureKey } from '../../protocol.ts';
+import { structureKey, type StructureCell } from '../../protocol.ts';
 import { createStructuresRng } from '../../server/rng.ts';
 import { BAND_HEIGHT, CHUNK_SIZE, SEA_LEVEL } from '@terrace/shared';
 
@@ -55,13 +55,13 @@ interface Run {
 
 function run(
   world: StructuresWorld,
-  seedCells: ReadonlyArray<readonly [number, number]>,
+  seedCells: readonly StructureCell[],
   phantom: PhantomWallWeight,
   buildable: number,
   generations: number,
 ): Run {
   let live: ReadonlyMap<number, LiveCellRecord> = new Map(
-    seedCells.map(([x, y]) => [structureKey(x, y), { age: 0, tier: 0 }] as const),
+    seedCells.map(({ x, y, tier, kind }) => [structureKey(x, y), { age: 0, tier, kind }] as const),
   );
   let total = 0;
   let max = 0;
@@ -101,11 +101,11 @@ export function lonePlateau(): StructuresWorld {
 
 const SWEEP_ARRIVALS = 8;
 
-function arrival(world: StructuresWorld, index: number): Array<readonly [number, number]> {
+function arrival(world: StructuresWorld, index: number): StructureCell[] {
   const rng = createStructuresRng(SWEEP_SEED + index);
   const planted = attemptSeed(world, new Map<number, LiveCellRecord>(), rng) ?? [];
   if (planted.length === 0) throw new Error('fixture seeded nothing — the sweep would measure noise');
-  return planted.map((c) => [c.x, c.y] as const);
+  return planted;
 }
 
 const FRACTIONS: readonly PhantomWallWeight[] = [

@@ -3,11 +3,8 @@ import './support/headlessCanvas.ts';
 import { describe, expect, it } from 'vitest';
 import { InstancedMesh, Matrix4, Vector3 } from 'three';
 import {
-  MAX_STRUCTURE_TIER,
+  STRUCTURE_LEGACY_SURVEYED_GROUND_RADIUS,
   STRUCTURE_SCALE_MAX,
-  STRUCTURE_SURVEYED_GROUND_RADIUS,
-  STRUCTURE_TIERS,
-  STRUCTURE_TIER_COUNT,
   type SettlerRace,
 } from '../protocol.ts';
 import {
@@ -15,19 +12,39 @@ import {
   createStructureModels,
   type StructurePlacement,
 } from '../client/models.ts';
-import { isDurandsCell } from '../client/durands.ts';
-import { FISHING_HUT_BUILDERS, FISHING_HUT_NAMES, fishingHutVariantIndex } from '../client/fishingHuts.ts';
+import { FISHING_HUT_BUILDERS, FISHING_HUT_NAMES } from '../client/fishingHuts.ts';
 import { mergeParts, partsReach } from '../client/parts.ts';
 import type { SiteKind } from '../client/site.ts';
+import { baseModelOf } from '../buildingKinds.ts';
+import {
+  BUILDING_KIND_COUNT,
+  buildingIdOf,
+  buildingKindOf,
+  isLandmarkKind,
+  tierOfKind,
+} from '../settlementRules.ts';
 
-function placementAt(
-  cellX: number,
-  cellY: number,
-  tier: number,
-  site: SiteKind,
-  race: SettlerRace = 'rudy',
-): StructurePlacement {
-  return { x: 0, z: 0, cellX, cellY, groundY: 0, tier, scale: 1, yaw: 0, race, site };
+function placementOf(kind: number, site: SiteKind = 'inland', race: SettlerRace = 'rudy'): StructurePlacement {
+  return { x: 0, z: 0, cellX: 1, cellY: 1, groundY: 0, tier: tierOfKind(kind), kind, scale: 1, yaw: 0, race, site };
+}
+
+const ALL_KINDS: readonly number[] = Array.from({ length: BUILDING_KIND_COUNT }, (_, kind) => kind);
+
+// client/models.ts has no procedural stand-in for these; only the GLB kit draws them.
+const KIT_ONLY_BUILDINGS: ReadonlySet<string> = new Set(['ricks', 'flipper-shrimp']);
+
+const PROCEDURAL_KINDS = ALL_KINDS.filter((kind) => !KIT_ONLY_BUILDINGS.has(buildingIdOf(kind)));
+
+function isFishingHut(kind: number): boolean {
+  return FISHING_HUT_NAMES.includes(baseModelOf(buildingIdOf(kind)));
+}
+
+/** Standard buildings: neither a fishing hut nor a landmark. */
+const LADDER_KINDS = ALL_KINDS.filter((kind) => !isFishingHut(kind) && !isLandmarkKind(kind));
+
+/** The building kind each fishing-hut builder draws. */
+function hutKind(variant: number): number {
+  return buildingKindOf(FISHING_HUT_NAMES[variant]!)!;
 }
 
 interface Extent {
@@ -65,44 +82,18 @@ function measureDrawn(root: { traverse(cb: (o: unknown) => void): void }): Exten
 
 const HUT_LIT_PART_ALLOWANCE = 1;
 
-function cellRollingVariant(variant: number): { x: number; y: number } {
-  for (let y = 0; y < 64; y++) {
-    for (let x = 0; x < 64; x++) {
-      if (fishingHutVariantIndex(x, y) === variant) return { x, y };
-    }
-  }
-  throw new Error(`no cell in the search window rolls fishing-hut variant ${variant}`);
-}
-
 describe('the footprint bound, measured rather than asserted', () => {
-  it('every standard tier draws inside STRUCTURE_FOOTPRINT_RADIUS', () => {
+  it('every standard building and fishing hut draws inside STRUCTURE_FOOTPRINT_RADIUS', () => {
     const models = createStructureModels();
     try {
-      for (let tier = 0; tier < STRUCTURE_TIER_COUNT; tier++) {
-        models.apply([placementAt(1, 1, tier, 'inland')]);
+      for (const kind of ALL_KINDS.filter((k) => !isLandmarkKind(k))) {
+        const id = buildingIdOf(kind);
+        models.apply([placementOf(kind)]);
         const extent = measureDrawn(models.root);
-        expect(extent.drawCalls, `${STRUCTURE_TIERS[tier]} drew nothing`).toBeGreaterThan(0);
+        expect(extent.drawCalls, `${id} drew nothing`).toBeGreaterThan(0);
         expect(
           extent.axis,
-          `tier ${tier} (${STRUCTURE_TIERS[tier]}) reaches ${extent.axis.toFixed(3)} wu, bound ${STRUCTURE_FOOTPRINT_RADIUS.toFixed(3)}`,
-        ).toBeLessThanOrEqual(STRUCTURE_FOOTPRINT_RADIUS);
-      }
-    } finally {
-      models.dispose();
-    }
-  });
-
-  it('every fishing-hut variant draws inside STRUCTURE_FOOTPRINT_RADIUS — fish, drying racks and all', () => {
-    const models = createStructureModels();
-    try {
-      for (let variant = 0; variant < FISHING_HUT_BUILDERS.length; variant++) {
-        const cell = cellRollingVariant(variant);
-        models.apply([placementAt(cell.x, cell.y, MAX_STRUCTURE_TIER, 'coastal')]);
-        const extent = measureDrawn(models.root);
-        expect(extent.drawCalls, `${FISHING_HUT_NAMES[variant]} drew nothing`).toBeGreaterThan(0);
-        expect(
-          extent.axis,
-          `${FISHING_HUT_NAMES[variant]} reaches ${extent.axis.toFixed(3)} wu, bound ${STRUCTURE_FOOTPRINT_RADIUS.toFixed(3)}`,
+          `${id} reaches ${extent.axis.toFixed(3)} wu, bound ${STRUCTURE_FOOTPRINT_RADIUS.toFixed(3)}`,
         ).toBeLessThanOrEqual(STRUCTURE_FOOTPRINT_RADIUS);
       }
     } finally {
@@ -122,36 +113,18 @@ describe('the footprint bound, measured rather than asserted', () => {
     }
   });
 
-  it('no model can sweep past the ground the server surveyed, at ANY yaw or scale', () => {
-    const maxRadial = STRUCTURE_SURVEYED_GROUND_RADIUS / STRUCTURE_SCALE_MAX;
+  it('no procedural model can sweep past the ground the server surveyed, at ANY yaw or scale', () => {
+    const maxRadial = STRUCTURE_LEGACY_SURVEYED_GROUND_RADIUS / STRUCTURE_SCALE_MAX;
     const models = createStructureModels();
     try {
-      const cases: Array<{ name: string; placement: StructurePlacement }> = [];
-      for (let tier = 0; tier < STRUCTURE_TIER_COUNT; tier++) {
-        cases.push({ name: `tier ${tier} (${STRUCTURE_TIERS[tier]})`, placement: placementAt(1, 1, tier, 'inland') });
-      }
-      for (let variant = 0; variant < FISHING_HUT_BUILDERS.length; variant++) {
-        const cell = cellRollingVariant(variant);
-        cases.push({
-          name: FISHING_HUT_NAMES[variant],
-          placement: placementAt(cell.x, cell.y, MAX_STRUCTURE_TIER, 'coastal'),
-        });
-      }
-      let durands: { x: number; y: number } | null = null;
-      for (let y = 0; y < 64 && durands === null; y++) {
-        for (let x = 0; x < 64; x++) {
-          if (isDurandsCell(MAX_STRUCTURE_TIER, x, y)) { durands = { x, y }; break; }
-        }
-      }
-      expect(durands, 'no Durand’s cell in the search window').not.toBeNull();
-      cases.push({ name: "Durand's", placement: placementAt(durands!.x, durands!.y, MAX_STRUCTURE_TIER, 'inland') });
-
-      for (const { name, placement } of cases) {
-        models.apply([placement]);
+      for (const kind of PROCEDURAL_KINDS) {
+        const id = buildingIdOf(kind);
+        models.apply([placementOf(kind)]);
         const extent = measureDrawn(models.root);
+        expect(extent.drawCalls, `${id} drew nothing`).toBeGreaterThan(0);
         expect(
           extent.radial,
-          `${name} sweeps ${extent.radial.toFixed(3)} wu when yawed; the server only surveys ${maxRadial.toFixed(3)} (× scale ${STRUCTURE_SCALE_MAX})`,
+          `${id} sweeps ${extent.radial.toFixed(3)} wu when yawed; the server only surveys ${maxRadial.toFixed(3)} (× scale ${STRUCTURE_SCALE_MAX})`,
         ).toBeLessThanOrEqual(maxRadial);
       }
     } finally {
@@ -161,40 +134,6 @@ describe('the footprint bound, measured rather than asserted', () => {
 
   it('a building at maximum variation scale is still no wider than its own world unit', () => {
     expect(STRUCTURE_FOOTPRINT_RADIUS * STRUCTURE_SCALE_MAX * 2).toBeCloseTo(1, 10);
-  });
-});
-
-describe('the fishing-hut variant roll', () => {
-  it('is deterministic and independent of the yaw/scale/Durand rolls it shares a cell hash with', () => {
-    for (let i = 0; i < 50; i++) {
-      const first = fishingHutVariantIndex(i, i * 7);
-      expect(fishingHutVariantIndex(i, i * 7)).toBe(first);
-      expect(first).toBeGreaterThanOrEqual(0);
-      expect(first).toBeLessThan(FISHING_HUT_BUILDERS.length);
-    }
-  });
-
-  it('spreads reasonably evenly across the ten models', () => {
-    const counts = new Array<number>(FISHING_HUT_BUILDERS.length).fill(0);
-    for (let y = 0; y < 64; y++) {
-      for (let x = 0; x < 64; x++) counts[fishingHutVariantIndex(x, y)]++;
-    }
-    const expected = (64 * 64) / FISHING_HUT_BUILDERS.length;
-    for (let variant = 0; variant < counts.length; variant++) {
-      expect(counts[variant], `${FISHING_HUT_NAMES[variant]} rolled ${counts[variant]} of 4096`).toBeGreaterThan(expected * 0.65);
-      expect(counts[variant], `${FISHING_HUT_NAMES[variant]} rolled ${counts[variant]} of 4096`).toBeLessThan(expected * 1.35);
-    }
-  });
-
-  it('neighbouring cells do not share a model, so a shoreline is not a row of clones', () => {
-    let matches = 0;
-    const samples = 64 * 63;
-    for (let y = 0; y < 64; y++) {
-      for (let x = 0; x < 63; x++) {
-        if (fishingHutVariantIndex(x, y) === fishingHutVariantIndex(x + 1, y)) matches++;
-      }
-    }
-    expect(matches / samples).toBeLessThan(0.2);
   });
 });
 
@@ -216,8 +155,7 @@ describe('merging: the authored part list is not the drawn part list', () => {
     const models = createStructureModels();
     try {
       for (let variant = 0; variant < FISHING_HUT_BUILDERS.length; variant++) {
-        const cell = cellRollingVariant(variant);
-        models.apply([placementAt(cell.x, cell.y, MAX_STRUCTURE_TIER, 'coastal')]);
+        models.apply([placementOf(hutKind(variant), 'coastal')]);
         const drawn = measureDrawn(models.root);
         const built = partsReach(FISHING_HUT_BUILDERS[variant]());
         expect(drawn.axis).toBeCloseTo(built, 5);
@@ -227,23 +165,22 @@ describe('merging: the authored part list is not the drawn part list', () => {
     }
   });
 
-  it('no hut costs meaningfully more draw calls than the priciest standard tier it stands beside', () => {
+  it('no hut costs meaningfully more draw calls than the priciest standard building it stands beside', () => {
     const models = createStructureModels();
     try {
-      let tierCeiling = 0;
-      for (let tier = 0; tier < STRUCTURE_TIER_COUNT; tier++) {
-        models.apply([placementAt(1, 1, tier, 'inland')]);
-        tierCeiling = Math.max(tierCeiling, measureDrawn(models.root).drawCalls);
+      let ladderCeiling = 0;
+      for (const kind of LADDER_KINDS) {
+        models.apply([placementOf(kind)]);
+        ladderCeiling = Math.max(ladderCeiling, measureDrawn(models.root).drawCalls);
       }
 
       for (let variant = 0; variant < FISHING_HUT_BUILDERS.length; variant++) {
-        const cell = cellRollingVariant(variant);
-        models.apply([placementAt(cell.x, cell.y, MAX_STRUCTURE_TIER, 'coastal')]);
+        models.apply([placementOf(hutKind(variant), 'coastal')]);
         const extent = measureDrawn(models.root);
-        const ceiling = tierCeiling + HUT_LIT_PART_ALLOWANCE;
+        const ceiling = ladderCeiling + HUT_LIT_PART_ALLOWANCE;
         expect(
           extent.drawCalls,
-          `${FISHING_HUT_NAMES[variant]} draws in ${extent.drawCalls} calls; the priciest standard tier draws in ${tierCeiling}, allowance ${HUT_LIT_PART_ALLOWANCE}`,
+          `${FISHING_HUT_NAMES[variant]} draws in ${extent.drawCalls} calls; the priciest standard building draws in ${ladderCeiling}, allowance ${HUT_LIT_PART_ALLOWANCE}`,
         ).toBeLessThanOrEqual(ceiling);
       }
     } finally {
@@ -254,14 +191,12 @@ describe('merging: the authored part list is not the drawn part list', () => {
   it('a whole shoreline of one variant still costs one hut’s worth of draw calls', () => {
     const models = createStructureModels();
     try {
-      const cell = cellRollingVariant(0);
-      models.apply([placementAt(cell.x, cell.y, MAX_STRUCTURE_TIER, 'coastal')]);
+      const hut = placementOf(hutKind(0), 'coastal');
+      models.apply([hut]);
       const one = measureDrawn(models.root).drawCalls;
 
       const shoreline: StructurePlacement[] = [];
-      for (let i = 0; i < 40; i++) {
-        shoreline.push({ ...placementAt(cell.x, cell.y, MAX_STRUCTURE_TIER, 'coastal'), x: i * 0.25 });
-      }
+      for (let i = 0; i < 40; i++) shoreline.push({ ...hut, x: i * 0.25 });
       models.apply(shoreline);
       expect(measureDrawn(models.root).drawCalls).toBe(one);
     } finally {
@@ -274,52 +209,34 @@ describe('merging: the authored part list is not the drawn part list', () => {
   });
 });
 
-describe('site variants replace the top tier, and only the top tier', () => {
-  it('a coastal settlement below the top tier renders its ordinary tier model', () => {
+describe('the client draws the building the server chose', () => {
+  it('site never changes the model: one kind draws alike on the coast and inland', () => {
     const models = createStructureModels();
     try {
-      const cell = cellRollingVariant(0);
-      models.apply([placementAt(cell.x, cell.y, MAX_STRUCTURE_TIER - 1, 'coastal')]);
-      const coastal = measureDrawn(models.root);
-      models.apply([placementAt(cell.x, cell.y, MAX_STRUCTURE_TIER - 1, 'inland')]);
-      const inland = measureDrawn(models.root);
-      expect(coastal.axis).toBeCloseTo(inland.axis, 10);
-      expect(coastal.top).toBeCloseTo(inland.top, 10);
-    } finally {
-      models.dispose();
-    }
-  });
-
-  it('a coastal top-tier settlement is a hut, not the watchtower', () => {
-    const models = createStructureModels();
-    try {
-      const cell = cellRollingVariant(3);
-      models.apply([placementAt(cell.x, cell.y, MAX_STRUCTURE_TIER, 'coastal')]);
-      const coastal = measureDrawn(models.root);
-      models.apply([placementAt(cell.x, cell.y, MAX_STRUCTURE_TIER, 'inland')]);
-      const inland = measureDrawn(models.root);
-      expect(coastal.top).toBeLessThan(inland.top);
-    } finally {
-      models.dispose();
-    }
-  });
-
-  it('site wins over the Durand’s roll on a cell that rolled both', () => {
-    let conflicted: { x: number; y: number } | null = null;
-    for (let y = 0; y < 64 && conflicted === null; y++) {
-      for (let x = 0; x < 64; x++) {
-        if (isDurandsCell(MAX_STRUCTURE_TIER, x, y)) { conflicted = { x, y }; break; }
+      for (const kind of ALL_KINDS) {
+        models.apply([placementOf(kind, 'coastal')]);
+        const coastal = measureDrawn(models.root);
+        models.apply([placementOf(kind, 'inland')]);
+        const inland = measureDrawn(models.root);
+        expect(coastal, buildingIdOf(kind)).toEqual(inland);
       }
+    } finally {
+      models.dispose();
     }
-    expect(conflicted, 'no Durand’s cell in the search window').not.toBeNull();
+  });
+
+  it('the kind, not the tier, picks the model: two tier-1 buildings draw differently', () => {
+    const hut = buildingKindOf('hut')!;
+    const aFrame = buildingKindOf('lashed-a-frame')!;
+    expect(tierOfKind(hut)).toBe(tierOfKind(aFrame));
 
     const models = createStructureModels();
     try {
-      models.apply([placementAt(conflicted!.x, conflicted!.y, MAX_STRUCTURE_TIER, 'coastal')]);
-      const asCoastal = measureDrawn(models.root);
-      models.apply([placementAt(conflicted!.x, conflicted!.y, MAX_STRUCTURE_TIER, 'inland')]);
-      const asDurands = measureDrawn(models.root);
-      expect(asCoastal.top).toBeLessThan(asDurands.top);
+      models.apply([placementOf(hut)]);
+      const ladderHut = measureDrawn(models.root);
+      models.apply([placementOf(aFrame)]);
+      const fishingHut = measureDrawn(models.root);
+      expect(fishingHut).not.toEqual(ladderHut);
     } finally {
       models.dispose();
     }

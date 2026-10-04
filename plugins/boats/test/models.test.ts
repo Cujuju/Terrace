@@ -13,6 +13,7 @@ import {
 } from 'three';
 import { readFile } from 'node:fs/promises';
 import {
+  BOAT_FOOTPRINT_WORLD_UNITS,
   BOAT_SHAPE,
   HULL_MESH_NAME,
   SAIL_MESH_NAME,
@@ -25,6 +26,7 @@ import {
   parseRigAsset,
   type RigAsset,
 } from '../../../client/src/render/rigAsset.ts';
+import { BOAT_DRAW_SCALE } from '../protocol.ts';
 
 function stubImageLoading(): void {
   const scope = globalThis as unknown as { document?: unknown; self?: unknown };
@@ -82,16 +84,18 @@ function drawnBox(models: BoatModels): Box3 {
 }
 
 describe('the boat model', () => {
-  it('fits inside one cell, so "five cells away" looks like five cells', () => {
+  it('fits its authored footprint scaled to the 8 m canoe', () => {
     const models = createBoatModels();
     models.beginFrame();
     const boat = models.create();
     boat.draw(0, 0, 0, 0, 0, 0, 0, false);
     models.commitFrame();
 
+    const drawnReachX = BOAT_FOOTPRINT_WORLD_UNITS.x * BOAT_DRAW_SCALE;
+    const drawnReachZ = BOAT_FOOTPRINT_WORLD_UNITS.z * BOAT_DRAW_SCALE;
     const size = drawnBox(models).getSize(new Vector3());
-    expect(size.x).toBeLessThanOrEqual(1);
-    expect(size.z).toBeLessThanOrEqual(1);
+    expect(size.x).toBeLessThanOrEqual(drawnReachX);
+    expect(size.z).toBeLessThanOrEqual(drawnReachZ);
 
     boat.dispose();
     models.dispose();

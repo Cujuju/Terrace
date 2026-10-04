@@ -15,6 +15,7 @@ import {
   resetStructuresBridge,
 } from '../../flora/server/structures-bridge.ts';
 import { STRUCTURES_CHANGES_MESSAGE, STRUCTURES_PLUGIN_NAME, structureKey } from '../protocol.ts';
+import { buildingKindOf, tierOfKind } from '../settlementRules.ts';
 import {
   STRUCTURES_MODEL_LIFE,
   STRUCTURES_MODEL_POPULOUS,
@@ -44,6 +45,7 @@ const DT = 0.1;
 const CHANGES_WIRE_TYPE = `${STRUCTURES_PLUGIN_NAME}:${STRUCTURES_CHANGES_MESSAGE}`;
 const OPEN_TERRAIN = (): number => OPEN_BAND * BAND_HEIGHT;
 const RESTORED_HOUSE = { x: 20, y: 20 } as const;
+const RESTORED_HOUSE_KIND = buildingKindOf('hut')!;
 const GHOST_HOUSE = { x: 30, y: 30 } as const;
 const RESTORED_GENERATION = 5;
 const SLICE_RNG_SEED = 1;
@@ -56,7 +58,10 @@ interface Session {
 
 function sliceWithOneHouse(): unknown {
   const board = new Map<number, BoardCellRecord>([
-    [structureKey(RESTORED_HOUSE.x, RESTORED_HOUSE.y), { age: 3, tier: 1 }],
+    [
+      structureKey(RESTORED_HOUSE.x, RESTORED_HOUSE.y),
+      { age: 3, tier: tierOfKind(RESTORED_HOUSE_KIND), kind: RESTORED_HOUSE_KIND },
+    ],
   ]);
   return saveStructures(board, RESTORED_GENERATION, createStructuresRng(SLICE_RNG_SEED), -1);
 }

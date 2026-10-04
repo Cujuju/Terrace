@@ -21,6 +21,7 @@ import {
   WILDLIFE_HABITAT_SPECIES,
   WILDLIFE_SIZE_CLASSES,
   WILDLIFE_SPECIES,
+  WHALE_BODIES,
   type WildlifeSizeClass,
   isWildlifeHabitatSpecies,
 } from '../protocol.ts';
@@ -543,9 +544,12 @@ describe('whale pods', () => {
     for (const species of WILDLIFE_HABITAT_SPECIES) {
       if (profileOf(species).groupSize === 1) continue;
       for (const size of WILDLIFE_SIZE_CLASSES) {
-        const entity = { species, size } as WildlifeEntity;
-        const comfort = SCHOOL_COMFORT_RADIUS_CELLS * schoolLoosenessOf(entity);
-        expect(comfort).toBeGreaterThan(personalSpaceCellsOf(entity) * 2);
+        // The id picks the whale body, so every body is checked.
+        for (let id = 0; id < WHALE_BODIES.length; id++) {
+          const entity = { id, species, size } as WildlifeEntity;
+          const comfort = SCHOOL_COMFORT_RADIUS_CELLS * schoolLoosenessOf(entity);
+          expect(comfort).toBeGreaterThan(personalSpaceCellsOf(entity) * 2);
+        }
       }
     }
   });

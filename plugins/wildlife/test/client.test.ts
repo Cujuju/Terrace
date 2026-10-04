@@ -13,6 +13,7 @@ import {
   WILDLIFE_SIZE_CLASSES,
   WILDLIFE_SIZE_MODEL_SCALE,
   WILDLIFE_SPECIES,
+  WHALE_BODIES,
   parseEntitiesPayload,
   sizeClassAt,
   sizeClassIndex,
@@ -41,6 +42,10 @@ import {
   swimmerWorldY,
   BODY_COLUMNS,
 } from '../client/placement.ts';
+import { modelScaleFor } from '../client/modelScale.ts';
+
+// Only whales vary by seed; seed 0 picks the first whale body.
+const ANY_VARIANT_SEED = 0;
 
 function entity(
   id: number,
@@ -256,9 +261,9 @@ describe('vertical placement', () => {
     expect(swimmerSeabedY(x => x > centerX ? SEA_SURFACE_WORLD_Y + 1 : deep, centerX, centerY, 0, profile, 1)).toBeNull();
   });
   it('stands land species on the rendered ground, and on band 0 before the first snapshot arrives', () => {
-    expect(creatureWorldY('grazer', 4, DEFAULT_SIZE_CLASS)).toBe(4);
-    expect(creatureWorldY('grazer', -1.5, DEFAULT_SIZE_CLASS)).toBe(-1.5);
-    expect(creatureWorldY('grazer', null, DEFAULT_SIZE_CLASS)).toBe(UNKNOWN_TERRAIN_WORLD_Y);
+    expect(creatureWorldY('grazer', 4, DEFAULT_SIZE_CLASS, ANY_VARIANT_SEED)).toBe(4);
+    expect(creatureWorldY('grazer', -1.5, DEFAULT_SIZE_CLASS, ANY_VARIANT_SEED)).toBe(-1.5);
+    expect(creatureWorldY('grazer', null, DEFAULT_SIZE_CLASS, ANY_VARIANT_SEED)).toBe(UNKNOWN_TERRAIN_WORLD_Y);
   });
 
   it('keeps every swimmer inside the water column, stacked surface → mid → seabed', () => {
@@ -266,46 +271,54 @@ describe('vertical placement', () => {
 
     for (const seabedY of [-20, -8, -3, -1.5, -0.9]) {
       for (const species of ['fish', 'whale', 'deepsea'] as const) {
-        const y = creatureWorldY(species, seabedY, DEFAULT_SIZE_CLASS);
+        const y = creatureWorldY(species, seabedY, DEFAULT_SIZE_CLASS, ANY_VARIANT_SEED);
         expect(y).toBeGreaterThanOrEqual(seabedY);
         expect(y).toBeLessThanOrEqual(SEA_SURFACE_WORLD_Y);
       }
     }
 
     const seabedY = -8;
-    const fish = creatureWorldY('fish', seabedY, DEFAULT_SIZE_CLASS);
-    const whale = creatureWorldY('whale', seabedY, DEFAULT_SIZE_CLASS);
-    const deepsea = creatureWorldY('deepsea', seabedY, DEFAULT_SIZE_CLASS);
+    const fish = creatureWorldY('fish', seabedY, DEFAULT_SIZE_CLASS, ANY_VARIANT_SEED);
+    const whale = creatureWorldY('whale', seabedY, DEFAULT_SIZE_CLASS, ANY_VARIANT_SEED);
+    const deepsea = creatureWorldY('deepsea', seabedY, DEFAULT_SIZE_CLASS, ANY_VARIANT_SEED);
     expect(fish).toBeGreaterThan(whale);
     expect(whale).toBeGreaterThan(deepsea);
   });
 
-  it('honours each species clearance when the water is deep enough, scaled by the creature size class', () => {
+  it('honours each species clearance when the water is deep enough, scaled by the creature size class and body', () => {
     const seabedY = -20;
     for (const species of ['fish', 'whale', 'deepsea'] as const) {
       const profile = SWIM_PROFILES[species];
       expect(profile).not.toBeNull();
       for (const sizeClass of WILDLIFE_SIZE_CLASSES) {
-        const scale = WILDLIFE_SIZE_MODEL_SCALE[sizeClass];
-        const y = creatureWorldY(species, seabedY, sizeClass);
-        expect(y).toBeGreaterThanOrEqual(seabedY + profile!.minClearance * scale);
-        expect(y).toBeLessThanOrEqual(SEA_SURFACE_WORLD_Y - profile!.minSubmergence * scale);
+        for (let variantSeed = 0; variantSeed < WHALE_BODIES.length; variantSeed++) {
+          const scale = modelScaleFor(species, sizeClass, variantSeed);
+          const y = creatureWorldY(species, seabedY, sizeClass, variantSeed);
+          expect(y).toBeGreaterThanOrEqual(seabedY + profile!.minClearance * scale);
+          expect(y).toBeLessThanOrEqual(SEA_SURFACE_WORLD_Y - profile!.minSubmergence * scale);
+        }
       }
     }
   });
 
   it('submerges a large creature deeper than a small one of the same species', () => {
-    const seabedY = -1.5;
+    const profile = SWIM_PROFILES.fish!;
     const [small, , large] = WILDLIFE_SIZE_CLASSES;
-    expect(creatureWorldY('fish', seabedY, large)).toBeLessThan(
-      creatureWorldY('fish', seabedY, small),
+    const largeScale = modelScaleFor('fish', large, ANY_VARIANT_SEED);
+    // Shallowest water that fits the large fish's clearances, so both sizes press against the surface.
+    const seabedY = SEA_SURFACE_WORLD_Y - (profile.minClearance + profile.minSubmergence) * largeScale;
+    expect(creatureWorldY('fish', seabedY, large, ANY_VARIANT_SEED)).toBeLessThan(
+      creatureWorldY('fish', seabedY, small, ANY_VARIANT_SEED),
     );
   });
 
   it('splits the difference when the water is too shallow for both clearances', () => {
-    const seabedY = -1;
+    const profile = SWIM_PROFILES.whale!;
+    const scale = modelScaleFor('whale', DEFAULT_SIZE_CLASS, ANY_VARIANT_SEED);
+    // Half the column both clearances need.
+    const seabedY = SEA_SURFACE_WORLD_Y - ((profile.minClearance + profile.minSubmergence) * scale) / 2;
     const midWater = (seabedY + SEA_SURFACE_WORLD_Y) / 2;
-    expect(creatureWorldY('whale', seabedY, DEFAULT_SIZE_CLASS)).toBeCloseTo(midWater, 6);
+    expect(creatureWorldY('whale', seabedY, DEFAULT_SIZE_CLASS, ANY_VARIANT_SEED)).toBeCloseTo(midWater, 6);
   });
 });
 
@@ -340,7 +353,7 @@ describe('birds fly overhead', () => {
     expect(BIRD_ALTITUDE_HEADROOM_WORLD_UNITS).toBeGreaterThanOrEqual(MAX_TERRAIN_WORLD_Y / 2);
 
     for (const terrainY of [null, -20, 0, 4, MAX_TERRAIN_WORLD_Y]) {
-      expect(creatureWorldY('bird', terrainY, DEFAULT_SIZE_CLASS)).toBe(BIRD_FLIGHT_WORLD_Y);
+      expect(creatureWorldY('bird', terrainY, DEFAULT_SIZE_CLASS, ANY_VARIANT_SEED)).toBe(BIRD_FLIGHT_WORLD_Y);
     }
   });
 

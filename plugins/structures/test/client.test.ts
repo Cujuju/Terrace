@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
 import {
-  MAX_STRUCTURE_TIER,
   SETTLER_DISTRICT_CELLS,
   STRUCTURES_CAP,
   STRUCTURE_SCALE_MAX,
@@ -22,7 +21,8 @@ import {
   type StructureCell,
 } from '../protocol.ts';
 import { placementsFor, type GroundLookup } from '../client/placement.ts';
-import { DURANDS_SHARE_OF_256, isDurandsCell } from '../client/durands.ts';
+import { MAX_BUILDING_TIER } from '../buildingKinds.ts';
+import { BUILDING_KIND_COUNT, buildingKindOf, tierOfKind } from '../settlementRules.ts';
 import {
   COASTAL_MIN_WATER_CELLS,
   COASTAL_SEARCH_RADIUS_CELLS,
@@ -38,9 +38,16 @@ import {
 
 const TWO_PI = Math.PI * 2;
 
-function cells(...triples: Array<readonly [number, number, number]>): StructureCell[] {
-  return triples.map(([x, y, tier]) => ({ x, y, tier }));
+/** Structures named by building id; tier and kind follow from spawn-bands.json. */
+function cells(...entries: Array<readonly [number, number, string]>): StructureCell[] {
+  return entries.map(([x, y, building]) => {
+    const kind = buildingKindOf(building)!;
+    return { x, y, tier: tierOfKind(kind), kind };
+  });
 }
+
+const CAMP = cells([0, 0, 'camp'])[0]!;
+const TIMBER_HOUSE = cells([0, 0, 'timber-house'])[0]!;
 
 describe('cell keys', () => {
   it('round-trips every corner of the largest world', () => {
@@ -60,21 +67,22 @@ describe('cell keys', () => {
 });
 
 describe('the wire format', () => {
-  it('round-trips a structure list through the flat triple encoding', () => {
-    const list = cells([0, 0, 0], [5, 9, 3], [511, 320, 5]);
-    expect(packStructureCells(list)).toEqual([0, 0, 0, 5, 9, 3, 511, 320, 5]);
+  it('round-trips a structure list through the flat x, y, tier, kind encoding', () => {
+    const list = cells([0, 0, 'camp'], [5, 9, 'prehistoric-granary'], [511, 320, 'timber-house']);
+    expect(packStructureCells(list)).toEqual(list.flatMap((cell) => [cell.x, cell.y, cell.tier, cell.kind]));
     expect(parseStructureCells(packStructureCells(list))).toEqual(list);
   });
 
-  it('drops malformed triples individually and keeps the rest', () => {
+  it('drops malformed quads individually and keeps the rest', () => {
     const parsed = parseStructureCells([
-      1, 2, 0,
-      -1, 4, 0,
-      5, 1.5, 0,
-      7, 8, 99,
-      9, 9, 5,
+      1, 2, CAMP.tier, CAMP.kind,
+      -1, 4, CAMP.tier, CAMP.kind,
+      5, 1.5, CAMP.tier, CAMP.kind,
+      7, 8, 99, CAMP.kind,
+      8, 8, TIMBER_HOUSE.tier, BUILDING_KIND_COUNT,
+      9, 9, TIMBER_HOUSE.tier, TIMBER_HOUSE.kind,
     ]);
-    expect(parsed).toEqual(cells([1, 2, 0], [9, 9, 5]));
+    expect(parsed).toEqual(cells([1, 2, 'camp'], [9, 9, 'timber-house']));
   });
 
   it('rejects a payload that is not a list at all', () => {
@@ -87,13 +95,15 @@ describe('the wire format', () => {
 
   it('never lets a payload exceed the cap the client allocated for', () => {
     const flat: number[] = [];
-    for (let n = 0; n < STRUCTURES_CAP + 50; n++) flat.push(n % 512, Math.floor(n / 512), 0);
+    for (let n = 0; n < STRUCTURES_CAP + 50; n++) flat.push(n % 512, Math.floor(n / 512), CAMP.tier, CAMP.kind);
     expect(parseStructureCells(flat)).toHaveLength(STRUCTURES_CAP);
   });
 
   it('reads a delta, treating an absent field as empty', () => {
-    expect(parseChangesPayload({ founded: [1, 2, 0], upgraded: [], demolished: [3, 4] })).toEqual({
-      founded: cells([1, 2, 0]),
+    expect(
+      parseChangesPayload({ founded: [1, 2, CAMP.tier, CAMP.kind], upgraded: [], demolished: [3, 4] }),
+    ).toEqual({
+      founded: cells([1, 2, 'camp']),
       upgraded: [],
       demolished: [{ x: 3, y: 4 }],
     });
@@ -184,9 +194,8 @@ function isCoastMooring(dx: number): boolean {
 const COAST_FIXTURE_MOORINGS = 1;
 
 describe('tier table', () => {
-  it('has at least four and at most six tiers, as the brief asks for', () => {
-    expect(STRUCTURE_TIER_COUNT).toBeGreaterThanOrEqual(4);
-    expect(STRUCTURE_TIER_COUNT).toBeLessThanOrEqual(6);
+  it('names one tier per building complexity rank, camp through landmark', () => {
+    expect(STRUCTURE_TIER_COUNT).toBe(MAX_BUILDING_TIER + 1);
   });
 });
 
@@ -197,9 +206,10 @@ describe('placement', () => {
   ]);
   const groundAt = (x: number, y: number): number | null => groundOf.get(`${x},${y}`) ?? null;
 
-  it('puts a building on the rendered surface at its own cell, carrying its tier', () => {
+  it('puts a building on the rendered surface at its own cell, carrying its tier and kind', () => {
+    const [yard] = cells([3, 4, 'twin-hut-yard']);
     const { placements, pendingGround } = placementsFor(
-      cells([3, 4, 2]),
+      [yard!],
       drawnAsLattice(groundAt),
     );
     expect(pendingGround).toBe(0);
@@ -212,7 +222,8 @@ describe('placement', () => {
       cellX: 3,
       cellY: 4,
       groundY: 5,
-      tier: 2,
+      tier: yard!.tier,
+      kind: yard!.kind,
       scale: variation.scale,
       yaw: variation.yaw,
       race: settlementRace(3, 4),
@@ -222,7 +233,7 @@ describe('placement', () => {
 
   it('omits a building whose ground this client has not been sent', () => {
     const { placements, pendingGround } = placementsFor(
-      cells([3, 4, 0], [50, 50, 0], [60, 1, 0]),
+      cells([3, 4, 'camp'], [50, 50, 'camp'], [60, 1, 'camp']),
       drawnAsLattice(groundAt),
     );
     expect(placements).toHaveLength(1);
@@ -233,7 +244,7 @@ describe('placement', () => {
     const groundAt = coastGroundAt(100);
 
     const { placements, skiffs, pendingSite } = placementsFor(
-      cells([100, 100, 2]),
+      cells([100, 100, 'upturned-hull']),
       drawnAsLattice(groundAt),
     );
     expect(pendingSite).toBe(0);
@@ -406,60 +417,6 @@ describe('skiffs (card 33)', () => {
   });
 });
 
-describe("Durand's variant selection", () => {
-  it('is a pure function of tier and cell, so every client renders the same choice', () => {
-    for (const [x, y] of [
-      [0, 0],
-      [17, 4],
-      [511, 300],
-    ] as const) {
-      expect(isDurandsCell(MAX_STRUCTURE_TIER, x, y)).toBe(isDurandsCell(MAX_STRUCTURE_TIER, x, y));
-    }
-  });
-
-  it('never fires below the top tier, whatever the cell', () => {
-    for (let tier = 0; tier < MAX_STRUCTURE_TIER; tier++) {
-      for (let x = 0; x < 40; x++) {
-        for (let y = 0; y < 40; y++) {
-          expect(isDurandsCell(tier, x, y)).toBe(false);
-        }
-      }
-    }
-  });
-
-  it('only ever returns true at the top tier, and only for its declared share of cells', () => {
-    let durandsCount = 0;
-    let sampleCount = 0;
-    for (let x = 0; x < 100; x++) {
-      for (let y = 0; y < 100; y++) {
-        sampleCount++;
-        if (isDurandsCell(MAX_STRUCTURE_TIER, x, y)) durandsCount++;
-      }
-    }
-    const expectedShare = DURANDS_SHARE_OF_256 / 256;
-    expect(durandsCount / sampleCount).toBeGreaterThan(expectedShare - 0.05);
-    expect(durandsCount / sampleCount).toBeLessThan(expectedShare + 0.05);
-  });
-
-  it('does not correlate with the yaw/scale roll structureVariation reads from the same hash', () => {
-    let sawDurandsWithMinScale = false;
-    let sawDurandsWithMaxScale = false;
-    for (let x = 0; x < 200; x++) {
-      for (let y = 0; y < 200; y++) {
-        if (!isDurandsCell(MAX_STRUCTURE_TIER, x, y)) continue;
-        const { scale } = structureVariation(x, y);
-        if (scale < STRUCTURE_SCALE_MIN + (STRUCTURE_SCALE_MAX - STRUCTURE_SCALE_MIN) * 0.5) {
-          sawDurandsWithMinScale = true;
-        } else {
-          sawDurandsWithMaxScale = true;
-        }
-      }
-    }
-    expect(sawDurandsWithMinScale).toBe(true);
-    expect(sawDurandsWithMaxScale).toBe(true);
-  });
-});
-
 describe('settler races', () => {
   it('is deterministic and matches the pinned golden vectors', () => {
     for (const [districtX, districtY, race] of [
@@ -513,7 +470,7 @@ describe('settler races', () => {
     const other: readonly [number, number] = [SETTLER_DISTRICT_CELLS, SETTLER_DISTRICT_CELLS];
     expect(settlementRace(0, 0)).not.toBe(settlementRace(other[0], other[1]));
 
-    const result = placementsFor(cells([0, 0, 0], [other[0], other[1], 2]), () => 5);
+    const result = placementsFor(cells([0, 0, 'camp'], [other[0], other[1], 'twin-hut-yard']), () => 5);
     expect(result.placements.map((p) => p.race)).toEqual([
       settlementRace(0, 0),
       settlementRace(other[0], other[1]),

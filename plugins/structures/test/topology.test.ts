@@ -17,7 +17,8 @@ import {
   type LandmassLabels,
 } from '../server/topology.ts';
 import { isBuildableCell, type StructuresWorld } from '../server/suitability.ts';
-import { worldWithTerrain } from './support/world.ts';
+import { categoryAt, tierOfKind } from '../settlementRules.ts';
+import { foundedAt, worldWithTerrain } from './support/world.ts';
 
 const NO_SKIP = -1;
 
@@ -61,18 +62,23 @@ function unlockableWorld(size: number, locked: ReadonlySet<number>): StructuresW
   };
 }
 
-function boardOf(cells: ReadonlyArray<readonly [number, number]>): Map<number, LiveCellRecord> {
-  const live = new Map<number, LiveCellRecord>();
-  for (const [x, y] of cells) live.set(structureKey(x, y), { age: 0, tier: 0 });
-  return live;
+function boardOf(
+  world: StructuresWorld,
+  cells: ReadonlyArray<readonly [number, number]>,
+): Map<number, LiveCellRecord> {
+  return agedBoardOf(world, cells, 0);
 }
 
 function agedBoardOf(
+  world: StructuresWorld,
   cells: ReadonlyArray<readonly [number, number]>,
   age: number,
 ): Map<number, LiveCellRecord> {
   const live = new Map<number, LiveCellRecord>();
-  for (const [x, y] of cells) live.set(structureKey(x, y), { age, tier: 0 });
+  for (const [x, y] of cells) {
+    const { tier, kind } = foundedAt(world, x, y);
+    live.set(structureKey(x, y), { age, tier, kind });
+  }
   return live;
 }
 
@@ -93,7 +99,7 @@ describe('phantom wall neighbours (scaled neighbour arithmetic)', () => {
   it('counts a live neighbour as exactly one denominator unit', () => {
     const world = rectWorld(SIZE, [PLATEAU]);
     const labels = computeLandmassLabels(world);
-    const live = boardOf([[11, 12], [13, 12]]);
+    const live = boardOf(world, [[11, 12], [13, 12]]);
     expect(scaledNeighborCount(live, labels, 12, 12)).toBe(2 * WALL_PHANTOM_DENOMINATOR);
   });
 
@@ -110,7 +116,7 @@ describe('phantom wall neighbours (scaled neighbour arithmetic)', () => {
   it('counts a live cell reached THROUGH a wrap as a full live neighbour, not a phantom', () => {
     const world = rectWorld(SIZE, [PLATEAU]);
     const labels = computeLandmassLabels(world);
-    const live = boardOf([[19, 4]]);
+    const live = boardOf(world, [[19, 4]]);
     expect(scaledNeighborCount(live, labels, 4, 4)).toBe(
       WALL_PHANTOM_DENOMINATOR + 4 * WALL_PHANTOM_NUMERATOR,
     );
@@ -131,13 +137,13 @@ describe('phantom wall neighbours (scaled neighbour arithmetic)', () => {
 
   it('leaves open-ground B3/S23 exactly as it was', () => {
     const world = rectWorld(48, [[4, 4, 35, 35]]);
-    const blinker = boardOf([[19, 20], [20, 20], [21, 20]]);
+    const blinker = boardOf(world, [[19, 20], [20, 20], [21, 20]]);
     const next = stepGeneration(world, blinker).nextLive;
     expect(new Set(next.keys())).toEqual(
       new Set([structureKey(20, 19), structureKey(20, 20), structureKey(20, 21)]),
     );
 
-    const block = boardOf([[20, 20], [21, 20], [20, 21], [21, 21]]);
+    const block = boardOf(world, [[20, 20], [21, 20], [20, 21], [21, 21]]);
     const afterBlock = stepGeneration(world, block).nextLive;
     expect(new Set(afterBlock.keys())).toEqual(new Set(block.keys()));
   });
@@ -204,7 +210,7 @@ describe('landmass labelling', () => {
     const locked = new Set<number>([structureKey(11, 11)]);
     const world = unlockableWorld(SIZE, locked);
 
-    let live: ReadonlyMap<number, LiveCellRecord> = boardOf([[10, 10], [11, 10], [10, 11]]);
+    let live: ReadonlyMap<number, LiveCellRecord> = boardOf(world, [[10, 10], [11, 10], [10, 11]]);
 
     const first = stepGeneration(world, live);
     expect(first.born).toEqual([]);
@@ -214,7 +220,7 @@ describe('landmass labelling', () => {
     locked.clear();
 
     const second = stepGeneration(world, live);
-    expect(second.born).toEqual([{ x: 11, y: 11, tier: 0 }]);
+    expect(second.born).toEqual([foundedAt(world, 11, 11)]);
   });
 });
 
@@ -286,7 +292,8 @@ function stepClassic(
     const key = structureKey(x, y);
     const current = live.get(key);
     if (current !== undefined ? n === 2 || n === 3 : n === 3) {
-      next.set(key, { age: current === undefined ? 0 : current.age + 1, tier: 0 });
+      const { tier, kind } = current ?? foundedAt(world, x, y);
+      next.set(key, { age: current === undefined ? 0 : current.age + 1, tier, kind });
     }
   }
   return next;
@@ -303,7 +310,7 @@ describe('a lone plateau under the new topology', () => {
   it('dies out under hard-walled B3/S23 (the control)', () => {
     const world = rectWorld(SIZE, [ISLAND]);
     const buildable = buildableCells(world);
-    let live: ReadonlyMap<number, LiveCellRecord> = boardOf(SEED);
+    let live: ReadonlyMap<number, LiveCellRecord> = boardOf(world, SEED);
     let died = false;
     for (let g = 0; g < GENERATIONS; g++) {
       live = stepClassic(world, live, buildable);
@@ -317,7 +324,7 @@ describe('a lone plateau under the new topology', () => {
 
   it('stays alive for all 50 with phantom walls and per-landmass wrap', () => {
     const world = rectWorld(SIZE, [ISLAND]);
-    let live: ReadonlyMap<number, LiveCellRecord> = boardOf(SEED);
+    let live: ReadonlyMap<number, LiveCellRecord> = boardOf(world, SEED);
     for (let g = 0; g < GENERATIONS; g++) {
       live = stepGeneration(world, live).nextLive;
       expect(live.size).toBeGreaterThan(0);
@@ -335,14 +342,14 @@ describe('the tier gate counts real live Moore neighbours, not phantoms', () => 
   it('refuses a teepee with 2 live neighbours and 3 wall slots', () => {
     const world = rectWorld(SIZE, [PLATEAU]);
     const labels = computeLandmassLabels(world);
-    const live = agedBoardOf([[4, 11], [4, 12], [4, 13]], OLD_ENOUGH);
+    const live = agedBoardOf(world, [[4, 11], [4, 12], [4, 13]], OLD_ENOUGH);
     expect(scaledNeighborCount(live, labels, 4, 12)).toBe(
       2 * WALL_PHANTOM_DENOMINATOR + 3 * WALL_PHANTOM_NUMERATOR,
     );
 
     const outcome = stepGeneration(world, live);
     expect(outcome.upgraded).toEqual([]);
-    expect(outcome.nextLive.get(structureKey(4, 12))!.tier).toBe(0);
+    expect(outcome.nextLive.get(structureKey(4, 12))!.kind).toBe(foundedAt(world, 4, 12).kind);
   });
 
   it('advances a teepee with 3 live neighbours even though it is on a coastline', () => {
@@ -352,13 +359,15 @@ describe('the tier gate counts real live Moore neighbours, not phantoms', () => 
     expect(isBuildableCell(world, 3, 13)).toBe(false);
 
     const labels = computeLandmassLabels(world);
-    const live = agedBoardOf([[4, 11], [4, 12], [4, 13], [5, 12]], OLD_ENOUGH);
+    const live = agedBoardOf(world, [[4, 11], [4, 12], [4, 13], [5, 12]], OLD_ENOUGH);
     expect(scaledNeighborCount(live, labels, 4, 12)).toBe(
       3 * WALL_PHANTOM_DENOMINATOR + 2 * WALL_PHANTOM_NUMERATOR,
     );
 
+    // A camp advances to the next step of its ground's category chain.
+    const nextKind = categoryAt(world, 4, 12)!.chain[1]!;
     const outcome = stepGeneration(world, live);
-    expect(outcome.upgraded).toContainEqual({ x: 4, y: 12, tier: 1 });
+    expect(outcome.upgraded).toContainEqual({ x: 4, y: 12, tier: tierOfKind(nextKind), kind: nextKind });
   });
 });
 

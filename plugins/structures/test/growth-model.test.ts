@@ -11,10 +11,17 @@ import type { Player } from '../../../server/src/player.ts';
 import {
   STRUCTURES_CHANGES_MESSAGE,
   STRUCTURES_PLUGIN_NAME,
-  STRUCTURE_SEPARATION_CELLS,
+  lotSeparationCells,
   parseStructureCells,
   structureKey,
 } from '../protocol.ts';
+import {
+  buildingKindOf,
+  categoryAt,
+  kindForTier,
+  tierOfKind,
+  type SettlementWorld,
+} from '../settlementRules.ts';
 import {
   STRUCTURES_MODEL_ENV,
   STRUCTURES_MODEL_LIFE,
@@ -23,6 +30,7 @@ import {
   readStructuresModel,
   setGrowthModel,
   type BoardCellRecord,
+  type GrowthCellRecord,
   type GrowthContext,
   type GrowthModel,
   type GrowthStepResult,
@@ -45,6 +53,12 @@ const OPEN_BAND = 4;
 const DT = 0.1;
 const CHANGES_WIRE_TYPE = `${STRUCTURES_PLUGIN_NAME}:${STRUCTURES_CHANGES_MESSAGE}`;
 const PLAYER: Player = { id: 'session-1', token: 'token-1', name: 'Tester' };
+const RANKED_TIER = 1;
+
+/** The building structures draws for a tier-only ranking: its category's step for that tier. */
+function rankedKindAt(world: SettlementWorld, x: number, y: number, tier: number): number {
+  return kindForTier(categoryAt(world, x, y)!, tier);
+}
 
 describe(`${STRUCTURES_MODEL_ENV} validation`, () => {
   it('is read from the environment ONCE, at module load, and never re-read', () => {
@@ -125,14 +139,15 @@ function stubModel(): GrowthModel & {
   return {
     name: 'stub',
     calls,
-    step(_world, live, ctx: GrowthContext): GrowthStepResult {
+    step(world, live, ctx: GrowthContext): GrowthStepResult {
       calls.push({ live: live.size, buildableHere: ctx.isBuildable(20, 20) });
-      const nextLive = new Map<number, BoardCellRecord>(live);
+      const nextLive = new Map<number, GrowthCellRecord>(live);
       const born = [];
       const key = structureKey(20, 20);
       if (!nextLive.has(key)) {
-        nextLive.set(key, { age: 0, tier: 1, population: 7 });
-        born.push({ x: 20, y: 20, tier: 1 });
+        // Ranks by tier alone; structures fills in the kind.
+        nextLive.set(key, { age: 0, tier: RANKED_TIER, population: 7 });
+        born.push({ x: 20, y: 20, tier: RANKED_TIER, kind: rankedKindAt(world, 20, 20, RANKED_TIER) });
       }
       return { nextLive, born, upgraded: [], died: [], emitted: [] };
     },
@@ -176,27 +191,36 @@ describe('STRUCTURES_MODEL=populous', () => {
     const harness = boot();
     advance(harness, CA_GENERATION_INTERVAL_SECONDS * 1.5);
 
-    expect(currentLive().get(structureKey(20, 20))).toEqual({ age: 0, tier: 1, population: 7 });
+    const kind = rankedKindAt(
+      { worldSize: harness.world.size, heightAt: (x, y) => harness.world.heightAt(x, y) },
+      20,
+      20,
+      RANKED_TIER,
+    );
+    expect(currentLive().get(structureKey(20, 20))).toEqual({ age: 0, tier: RANKED_TIER, kind, population: 7 });
 
     const changes = harness.sink.ofType(CHANGES_WIRE_TYPE);
     expect(changes.length).toBeGreaterThan(0);
     const founded = parseStructureCells(
       (changes[changes.length - 1].payload as { founded: number[] }).founded,
     );
-    expect(founded).toContainEqual({ x: 20, y: 20, tier: 1 });
+    expect(founded).toContainEqual({ x: 20, y: 20, tier: RANKED_TIER, kind });
   });
 
   it('hands the model this plugin’s own keep-clear predicate', () => {
     let answered: { near: boolean; far: boolean } | null = null;
     setGrowthModel({
       name: 'clearance-probe',
-      step(_world, live, ctx: GrowthContext): GrowthStepResult {
+      step(world, live, ctx: GrowthContext): GrowthStepResult {
+        const kind = rankedKindAt(world, 20, 20, RANKED_TIER);
         const board = new Map<number, BoardCellRecord>([
-          [structureKey(20, 20), { age: 0, tier: 1 }],
+          [structureKey(20, 20), { age: 0, tier: RANKED_TIER, kind }],
         ]);
+        // Both footprints are the open ground's building for that tier.
+        const separation = lotSeparationCells(kind, kind);
         answered = {
-          near: ctx.hasBuildingWithinSeparation(board, 20 + STRUCTURE_SEPARATION_CELLS - 1, 20),
-          far: ctx.hasBuildingWithinSeparation(board, 20 + STRUCTURE_SEPARATION_CELLS, 20),
+          near: ctx.hasBuildingWithinSeparation(board, 20 + separation - 1, 20, RANKED_TIER),
+          far: ctx.hasBuildingWithinSeparation(board, 20 + separation, 20, RANKED_TIER),
         };
         return { nextLive: new Map(live), born: [], upgraded: [], died: [], emitted: [] };
       },
@@ -212,11 +236,11 @@ describe('STRUCTURES_MODEL=populous', () => {
     setGrowthModel({
       name: 'emitter',
       step(_world, live): GrowthStepResult {
-        const nextLive = new Map<number, BoardCellRecord>(live);
+        const nextLive = new Map<number, GrowthCellRecord>(live);
         nextLive.set(CELL, { age: 0, tier: 2, population: 0 });
         return {
           nextLive,
-          born: [{ x: 21, y: 21, tier: 2 }],
+          born: [{ x: 21, y: 21, tier: 2, kind: rankedKindAt(_world, 21, 21, 2) }],
           upgraded: [],
           died: [],
           emitted: [{ x: 21, y: 21 }],
@@ -251,28 +275,36 @@ describe('STRUCTURES_MODEL=populous', () => {
 });
 
 describe('population persistence', () => {
+  const GRANARY = buildingKindOf('prehistoric-granary')!;
+  const GRANARY_TIER = tierOfKind(GRANARY);
+
   it('survives a restart', () => {
     const live = new Map<number, BoardCellRecord>([
-      [structureKey(9, 9), { age: 2, tier: 3, population: 5 }],
+      [structureKey(9, 9), { age: 2, tier: GRANARY_TIER, kind: GRANARY, population: 5 }],
     ]);
     const slice = saveStructures(live, 4, createStructuresRng(1), -1);
     const restored = loadStructures(slice);
-    expect(restored.live.get(structureKey(9, 9))).toEqual({ age: 2, tier: 3, population: 5 });
+    expect(restored.live.get(structureKey(9, 9))).toEqual({
+      age: 2,
+      tier: GRANARY_TIER,
+      kind: GRANARY,
+      population: 5,
+    });
   });
 
   it('reads a slice written before populations existed as zero', () => {
     const legacy = saveStructures(
-      new Map<number, BoardCellRecord>([[structureKey(9, 9), { age: 2, tier: 3 }]]),
+      new Map<number, BoardCellRecord>([[structureKey(9, 9), { age: 2, tier: GRANARY_TIER, kind: GRANARY }]]),
       4,
       createStructuresRng(1),
       -1,
     );
     const withoutPopulation = {
       ...legacy,
-      live: legacy.live.map(({ x, y, age, tier }) => ({ x, y, age, tier })),
+      live: legacy.live.map(({ x, y, age, tier, building }) => ({ x, y, age, tier, building })),
     };
     const restored = loadStructures(withoutPopulation);
-    expect(restored.live.get(structureKey(9, 9))).toEqual({ age: 2, tier: 3 });
+    expect(restored.live.get(structureKey(9, 9))).toEqual({ age: 2, tier: GRANARY_TIER, kind: GRANARY });
     expect(restored.live.get(structureKey(9, 9))!.population ?? 0).toBe(0);
   });
 });

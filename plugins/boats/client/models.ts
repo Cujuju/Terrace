@@ -67,7 +67,7 @@ export const BOAT_SHAPE: {
   },
 });
 
-const BOAT_FOOTPRINT_WORLD_UNITS: AssetFootprint = { x: 1, z: 1 };
+export const BOAT_FOOTPRINT_WORLD_UNITS: AssetFootprint = { x: 1, z: 1 };
 
 const SAIL_COLOR = 0xe8e0cf;
 const SAIL_FIGHTING_COLOR = 0xb03a2e;

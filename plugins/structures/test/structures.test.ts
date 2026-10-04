@@ -6,6 +6,7 @@ import {
   CHUNK_SIZE,
   MAX_BRUSH_RADIUS,
   SEA_LEVEL,
+  TERRACE_BAND_COUNT,
   bandOf,
   drawnBandOfSample,
 } from '@terrace/shared';
@@ -26,6 +27,7 @@ import {
   STRUCTURES_PLUGIN_NAME,
   STRUCTURE_TIERS,
   cellOfKey,
+  lotSeparationCells,
   parseStructureCells,
   structureKey,
 } from '../protocol.ts';
@@ -42,8 +44,20 @@ import {
 import {
   CA_GENERATIONS_PER_TIER,
   STRUCTURE_UPGRADE_MIN_NEIGHBORS,
-  maybeAdvanceTier,
+  isReadyToUpgrade,
 } from '../server/tiers.ts';
+import { MAX_BUILDING_TIER } from '../buildingKinds.ts';
+import {
+  BUILDING_KIND_COUNT,
+  SETTLEMENT_RULES,
+  bandAt,
+  buildingKindOf,
+  categoryAt,
+  landmarksFor,
+  nextKindInChain,
+  tierOfKind,
+  type LandmarkRule,
+} from '../settlementRules.ts';
 import {
   blessedStructureCellCount,
   isBlessedStructureCell,
@@ -51,7 +65,8 @@ import {
   setBlessedStructureCells,
 } from '../server/blessings.ts';
 import {
-  FOOTPRINT_CHECK_RADIUS_CELLS,
+  FOUNDING_FOOTPRINT_RADIUS_CELLS,
+  foundingKindAt,
   hasClearFootprint,
   isBuildableCell,
   isFlatEnough,
@@ -68,12 +83,38 @@ import {
 } from '../server/index.ts';
 import { STRUCTURES_SLICE_VERSION, loadStructures, saveStructures } from '../server/persistence.ts';
 import { createStructuresRng } from '../server/rng.ts';
-import { worldWithTerrain } from './support/world.ts';
+import { foundedAt, worldWithTerrain } from './support/world.ts';
 
-function boardOf(cells: ReadonlyArray<readonly [number, number]>): Map<number, LiveCellRecord> {
+function viewOf(world: World): StructuresWorld {
+  return {
+    worldSize: world.size,
+    chunksPerEdge: world.chunksPerEdge,
+    heightAt: (x, y) => world.heightAt(x, y),
+    isChunkUnlocked: (cx, cy) => world.isChunkUnlocked(cx, cy),
+    isCellUnlocked: (x, y) => world.isCellUnlocked(x, y),
+  };
+}
+
+/** Camps as the server founds them: each cell's ground picks its kind. */
+function boardOf(world: StructuresWorld, cells: ReadonlyArray<readonly [number, number]>): Map<number, LiveCellRecord> {
   const live = new Map<number, LiveCellRecord>();
-  for (const [x, y] of cells) live.set(structureKey(x, y), { age: 0, tier: 0 });
+  for (const [x, y] of cells) {
+    const { tier, kind } = foundedAt(world, x, y);
+    live.set(structureKey(x, y), { age: 0, tier, kind });
+  }
   return live;
+}
+
+/** A camp's first upgrade: the second step of its ground's category chain. */
+function firstUpgradeAt(world: StructuresWorld, x: number, y: number): { x: number; y: number; tier: number; kind: number } {
+  const kind = categoryAt(world, x, y)!.chain[1]!;
+  return { x, y, tier: tierOfKind(kind), kind };
+}
+
+/** The record of a camp founded on (x, y), for filling boards by hand. */
+function campAt(world: StructuresWorld, x: number, y: number): LiveCellRecord {
+  const { tier, kind } = foundedAt(world, x, y);
+  return { age: 0, tier, kind };
 }
 
 function keysOf(live: ReadonlyMap<number, LiveCellRecord>): Set<number> {
@@ -130,7 +171,7 @@ describe('suitability (terrain as walls)', () => {
     const world = view(worldWithTerrain(160, plateauHeight));
     expect(isFlatEnough(world, PLATEAU_MIN, 79)).toBe(false);
     expect(isBuildableCell(world, PLATEAU_MIN, 79)).toBe(false);
-    expect(isBuildableCell(world, PLATEAU_MIN + FOOTPRINT_CHECK_RADIUS_CELLS, 79)).toBe(true);
+    expect(isBuildableCell(world, PLATEAU_MIN + FOUNDING_FOOTPRINT_RADIUS_CELLS, 79)).toBe(true);
   });
 
   it('reads the terrace the player sees: a soft-stamp edge is a different band', () => {
@@ -221,7 +262,7 @@ describe('footprint fit (the model cannot overhang a terrace edge or the waterli
     expect(isBuildableCell(view, CX, CY)).toBe(false);
   });
 
-  it('tier-growth: a footprint that fits at birth is re-validated every generation for free, so no separate check is needed as a structure advances tiers', () => {
+  it('chain-growth: a footprint that fits at birth is re-validated every generation, so a settlement that has advanced still falls when its ground stops fitting', () => {
     const good = worldWithTerrain(FOOTPRINT_WORLD_SIZE, () => CENTER_BAND * BAND_HEIGHT);
     const goodView: StructuresWorld = {
       worldSize: good.size,
@@ -230,11 +271,11 @@ describe('footprint fit (the model cannot overhang a terrace edge or the waterli
       isChunkUnlocked: (cx, cy) => good.isChunkUnlocked(cx, cy),
       isCellUnlocked: (x, y) => good.isCellUnlocked(x, y),
     };
-    let board = boardOf([[CX, CY], [CX + 1, CY], [CX, CY + 1], [CX + 1, CY + 1]]);
+    let board = boardOf(goodView, [[CX, CY], [CX + 1, CY], [CX, CY + 1], [CX + 1, CY + 1]]);
     for (let i = 0; i < CA_GENERATIONS_PER_TIER; i++) board = stepGeneration(goodView, board).nextLive;
     const grown = board.get(structureKey(CX, CY));
     expect(grown).toBeDefined();
-    expect(grown!.tier).toBeGreaterThan(0);
+    expect(grown!.kind).toBe(firstUpgradeAt(goodView, CX, CY).kind);
 
     const spoiled = worldWithTerrain(FOOTPRINT_WORLD_SIZE, (x, y) => {
       if (x === CX - 1 && y === CY - 1) return SEA_LEVEL;
@@ -255,9 +296,9 @@ describe('footprint fit (the model cannot overhang a terrace edge or the waterli
 });
 
 describe('B3/S23 correctness on open ground', () => {
-  it('a block holds as an ordinary still life until its first cell earns tier 1, which founds a building and demolishes the rest', () => {
+  it('a block holds as an ordinary still life until its first cell earns its first upgrade, which founds a building and demolishes the rest', () => {
     const world = openWorld();
-    let live = boardOf([[10, 10], [11, 10], [10, 11], [11, 11]]);
+    let live = boardOf(world, [[10, 10], [11, 10], [10, 11], [11, 11]]);
     const before = keysOf(live);
 
     for (let gen = 1; gen < CA_GENERATIONS_PER_TIER; gen++) {
@@ -270,10 +311,11 @@ describe('B3/S23 correctness on open ground', () => {
     expect(keysOf(live)).toEqual(before);
 
     const outcome = stepGeneration(world, live);
-    expect(outcome.upgraded).toEqual([{ x: 10, y: 10, tier: 1 }]);
+    const upgrade = firstUpgradeAt(world, 10, 10);
+    expect(outcome.upgraded).toEqual([upgrade]);
     expect(outcome.died.map((c) => `${c.x},${c.y}`).sort()).toEqual(['10,11', '11,10', '11,11']);
     expect(keysOf(outcome.nextLive)).toEqual(new Set([structureKey(10, 10)]));
-    expect(outcome.nextLive.get(structureKey(10, 10))!.tier).toBe(1);
+    expect(outcome.nextLive.get(structureKey(10, 10))!.kind).toBe(upgrade.kind);
     live = outcome.nextLive;
 
     for (let gen = 0; gen < 5; gen++) {
@@ -287,8 +329,8 @@ describe('B3/S23 correctness on open ground', () => {
 
   it('a blinker oscillates with period 2', () => {
     const world = openWorld();
-    const horizontal = boardOf([[9, 10], [10, 10], [11, 10]]);
-    const vertical = boardOf([[10, 9], [10, 10], [10, 11]]);
+    const horizontal = boardOf(world, [[9, 10], [10, 10], [11, 10]]);
+    const vertical = boardOf(world, [[10, 9], [10, 10], [10, 11]]);
 
     const step1 = stepGeneration(world, horizontal);
     expect(keysOf(step1.nextLive)).toEqual(keysOf(vertical));
@@ -301,16 +343,16 @@ describe('B3/S23 correctness on open ground', () => {
 
   it('a glider translates by pure B3/S23 only until one of its cells is old enough to found a building', () => {
     const world = openWorld();
-    let live = boardOf([[11, 10], [12, 11], [10, 12], [11, 12], [12, 12]]);
+    let live = boardOf(world, [[11, 10], [12, 11], [10, 12], [11, 12], [12, 12]]);
 
     for (let step = 0; step < CA_GENERATIONS_PER_TIER - 1; step++) {
       live = stepGeneration(world, live).nextLive;
     }
-    const midFlight = boardOf([[12, 11], [10, 12], [12, 12], [11, 13], [12, 13]]);
+    const midFlight = boardOf(world, [[12, 11], [10, 12], [12, 12], [11, 13], [12, 13]]);
     expect(keysOf(live)).toEqual(keysOf(midFlight));
 
     const outcome = stepGeneration(world, live);
-    expect(outcome.upgraded).toEqual([{ x: 12, y: 12, tier: 1 }]);
+    expect(outcome.upgraded).toEqual([firstUpgradeAt(world, 12, 12)]);
     expect(outcome.born).toHaveLength(0);
     expect(outcome.died).toHaveLength(4);
     expect(keysOf(outcome.nextLive)).toEqual(new Set([structureKey(12, 12)]));
@@ -318,7 +360,7 @@ describe('B3/S23 correctness on open ground', () => {
 
   it('an isolated single cell dies of underpopulation', () => {
     const world = openWorld();
-    const live = boardOf([[20, 20]]);
+    const live = boardOf(world, [[20, 20]]);
     const outcome = stepGeneration(world, live);
     expect(outcome.nextLive.size).toBe(0);
     expect(outcome.died).toEqual([{ x: 20, y: 20 }]);
@@ -328,7 +370,7 @@ describe('B3/S23 correctness on open ground', () => {
     const world = openWorld();
     const cells: Array<[number, number]> = [];
     for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) cells.push([20 + dx, 20 + dy]);
-    const live = boardOf(cells);
+    const live = boardOf(world, cells);
     const outcome = stepGeneration(world, live);
     expect(outcome.nextLive.has(structureKey(20, 20))).toBe(false);
   });
@@ -347,7 +389,7 @@ describe('terrain as walls', () => {
       };
     })();
 
-    const live = boardOf([[29, 10], [30, 10], [29, 11], [30, 11]]);
+    const live = boardOf(world, [[29, 10], [30, 10], [29, 11], [30, 11]]);
     const outcome = stepGeneration(world, live);
 
     expect(outcome.nextLive.has(structureKey(30, 10))).toBe(false);
@@ -369,32 +411,42 @@ describe('terrain as walls', () => {
       isChunkUnlocked: (cx, cy) => w.isChunkUnlocked(cx, cy),
       isCellUnlocked: (x, y) => w.isCellUnlocked(x, y),
     };
-    const live = boardOf([[9, 15], [10, 15 - 1], [11, 15]]);
+    const live = boardOf(world, [[9, 15], [10, 15 - 1], [11, 15]]);
     const outcome = stepGeneration(world, live);
     expect(outcome.nextLive.has(structureKey(10, 15))).toBe(false);
   });
 });
 
-describe('tier progression: age AND neighbour density', () => {
+describe('chain progression: age AND neighbour density', () => {
   it('never advances before its age threshold, whatever the neighbour count', () => {
-    expect(maybeAdvanceTier(CA_GENERATIONS_PER_TIER - 1, 0, 8)).toBe(0);
+    expect(isReadyToUpgrade(CA_GENERATIONS_PER_TIER - 1, 0, 8)).toBe(false);
   });
 
-  it('never advances below the neighbour threshold, however old', () => {
-    expect(maybeAdvanceTier(1_000_000, 0, STRUCTURE_UPGRADE_MIN_NEIGHBORS - 1)).toBe(0);
+  it('never leaves camp below the neighbour threshold, however old', () => {
+    expect(isReadyToUpgrade(1_000_000, 0, STRUCTURE_UPGRADE_MIN_NEIGHBORS - 1)).toBe(false);
   });
 
-  it('advances exactly one tier when both conditions hold', () => {
-    expect(maybeAdvanceTier(CA_GENERATIONS_PER_TIER, 0, STRUCTURE_UPGRADE_MIN_NEIGHBORS)).toBe(1);
+  it('takes the next chain step once both conditions hold', () => {
+    expect(isReadyToUpgrade(CA_GENERATIONS_PER_TIER, 0, STRUCTURE_UPGRADE_MIN_NEIGHBORS)).toBe(true);
   });
 
-  it('never advances past the top tier', () => {
-    expect(maybeAdvanceTier(1_000_000, MAX_STRUCTURE_TIER, 8)).toBe(MAX_STRUCTURE_TIER);
+  it('needs neighbours only to leave camp; later steps wait on age alone', () => {
+    expect(isReadyToUpgrade(2 * CA_GENERATIONS_PER_TIER - 1, 1, 8)).toBe(false);
+    expect(isReadyToUpgrade(2 * CA_GENERATIONS_PER_TIER, 1, 0)).toBe(true);
+  });
+
+  it('never advances past the end of a chain, nor past a landmark', () => {
+    for (const category of SETTLEMENT_RULES.categories) {
+      expect(nextKindInChain(category, category.chain[category.chain.length - 1]!)).toBeNull();
+      for (const landmark of category.landmarks) {
+        expect(nextKindInChain(category, landmark)).toBeNull();
+      }
+    }
   });
 
   it('a dense core founds a building that out-ages an equally old, sparser oscillator', () => {
     const world = openWorld();
-    let live = boardOf([
+    let live = boardOf(world, [
       [10, 10], [11, 10], [10, 11], [11, 11],
       [40, 10], [41, 10], [42, 10],
     ]);
@@ -402,7 +454,7 @@ describe('tier progression: age AND neighbour density', () => {
     const generations = CA_GENERATIONS_PER_TIER * 2 + 1;
     for (let gen = 0; gen < generations; gen++) live = stepGeneration(world, live).nextLive;
 
-    expect(live.get(structureKey(10, 10))!.tier).toBeGreaterThan(0);
+    expect(live.get(structureKey(10, 10))!.kind).not.toBe(foundedAt(world, 10, 10).kind);
     for (const [x, y] of [[11, 10], [10, 11], [11, 11]] as const) {
       expect(live.has(structureKey(x, y))).toBe(false);
     }
@@ -412,7 +464,70 @@ describe('tier progression: age AND neighbour density', () => {
       .map((key) => live.get(key))
       .find((record) => record !== undefined);
     expect(survivingCentre).toBeDefined();
-    expect(survivingCentre!.tier).toBe(0);
+    expect(survivingCentre!.kind).toBe(foundedAt(world, 41, 10).kind);
+  });
+});
+
+describe('landmarks: a finished chain may become one its band allows, never near its own kind', () => {
+  const LANDMARK_WORLD_SIZE = 256;
+  const CENTRE = LANDMARK_WORLD_SIZE / 2;
+  const CENTRE_KEY = structureKey(CENTRE, CENTRE);
+  const BLOCKER_DIRECTIONS: ReadonlyArray<readonly [number, number]> = [[1, 0], [0, 1], [-1, 0], [0, -1]];
+
+  /** Flat ground on the lowest band whose category offers at least two landmarks. */
+  function landmarkGround(): { world: StructuresWorld; eligible: LandmarkRule[]; finished: LiveCellRecord } {
+    for (let band = 0; band < TERRACE_BAND_COUNT; band++) {
+      const world = viewOf(worldWithTerrain(LANDMARK_WORLD_SIZE, () => band * BAND_HEIGHT));
+      const category = categoryAt(world, CENTRE, CENTRE);
+      if (category === null) continue;
+      const eligible = landmarksFor(category, bandAt(world, CENTRE, CENTRE));
+      if (eligible.length < 2) continue;
+      const kind = category.chain[category.chain.length - 1]!;
+      // One generation short of the age its last chain step needs to move on.
+      const age = category.chain.length * CA_GENERATIONS_PER_TIER - 1;
+      return { world, eligible, finished: { age, tier: tierOfKind(kind), kind } };
+    }
+    throw new Error('no band offers two landmarks; the fixture needs spawn-bands.json to');
+  }
+
+  function widestLotSeparationCells(): number {
+    const kinds = Array.from({ length: BUILDING_KIND_COUNT }, (_, kind) => kind);
+    return Math.max(...kinds.map((kind) => lotSeparationCells(kind, kind)));
+  }
+
+  /** The settlement plus one standing landmark of each blocked kind, inside its spacing. */
+  function boardWithBlockers(finished: LiveCellRecord, blocked: readonly LandmarkRule[]): Map<number, LiveCellRecord> {
+    const board = new Map<number, LiveCellRecord>([[CENTRE_KEY, finished]]);
+    blocked.forEach((rule, i) => {
+      const distance = Math.floor(rule.spacingCells / 2);
+      // Beyond the widest upgrade survey, so only the spacing rule can refuse the landmark.
+      expect(distance).toBeGreaterThan(widestLotSeparationCells());
+      const [dx, dy] = BLOCKER_DIRECTIONS[i]!;
+      board.set(structureKey(CENTRE + dx * distance, CENTRE + dy * distance), {
+        age: 0,
+        tier: tierOfKind(rule.kind),
+        kind: rule.kind,
+      });
+    });
+    return board;
+  }
+
+  it('turns a settlement that has finished its chain into a landmark allowed on its band', () => {
+    const { world, eligible, finished } = landmarkGround();
+    const next = stepGeneration(world, boardWithBlockers(finished, [])).nextLive.get(CENTRE_KEY)!;
+    expect(eligible.map((rule) => rule.kind)).toContain(next.kind);
+    expect(next.tier).toBe(tierOfKind(next.kind));
+  });
+
+  it('picks only a landmark kind with none of its own within its spacing', () => {
+    const { world, eligible, finished } = landmarkGround();
+    for (const free of eligible) {
+      const blocked = eligible.filter((rule) => rule !== free);
+      const next = stepGeneration(world, boardWithBlockers(finished, blocked)).nextLive.get(CENTRE_KEY)!;
+      expect(next.kind).toBe(free.kind);
+    }
+    const allBlocked = stepGeneration(world, boardWithBlockers(finished, eligible)).nextLive.get(CENTRE_KEY)!;
+    expect(allBlocked.kind).toBe(finished.kind);
   });
 });
 
@@ -425,6 +540,7 @@ describe('seeding', () => {
     expect(placed!.length).toBeGreaterThan(0);
     for (const cell of placed!) {
       expect(cell.tier).toBe(0);
+      expect(cell.kind).toBe(foundingKindAt(world, cell.x, cell.y));
       expect(isBuildableCell(world, cell.x, cell.y)).toBe(true);
     }
   });
@@ -433,7 +549,7 @@ describe('seeding', () => {
     const world = openWorld();
     const rng = createStructuresRng(1);
     const live = new Map<number, LiveCellRecord>();
-    for (let y = 0; y < 40; y++) for (let x = 0; x < 40; x++) live.set(structureKey(x, y), { age: 0, tier: 0 });
+    for (let y = 0; y < 40; y++) for (let x = 0; x < 40; x++) live.set(structureKey(x, y), campAt(world, x, y));
     const placed = attemptSeed(world, live, rng);
     if (placed !== null) {
       for (const cell of placed) expect(live.has(structureKey(cell.x, cell.y))).toBe(false);
@@ -477,7 +593,7 @@ describe('seeding', () => {
 
   it('prefers settlement-free chunks, so new colonies appear in OTHER places', () => {
     const world = partiallyUnlockedWorld([[0, 0], [3, 3]]);
-    const live = boardOf([[2, 2], [3, 2], [2, 3], [3, 3]]);
+    const live = boardOf(world, [[2, 2], [3, 2], [2, 3], [3, 3]]);
     const rng = createStructuresRng(11);
     let placements = 0;
     for (let roll = 0; roll < 12; roll++) {
@@ -494,7 +610,7 @@ describe('seeding', () => {
 
   it('falls back to occupied chunks only when every unlocked chunk is occupied', () => {
     const world = partiallyUnlockedWorld([[1, 1]]);
-    const live = boardOf([[20, 20], [21, 20], [20, 21], [21, 21]]);
+    const live = boardOf(world, [[20, 20], [21, 20], [20, 21], [21, 21]]);
     const rng = createStructuresRng(3);
     const placed = attemptSeed(world, live, rng);
     if (placed !== null) {
@@ -514,7 +630,7 @@ describe('seeding', () => {
     outer: for (let y = 0; y < OPEN_WORLD_SIZE && placedCount < STRUCTURES_CAP - 2; y += 1) {
       for (let x = 0; x < OPEN_WORLD_SIZE; x += 1) {
         if (placedCount >= STRUCTURES_CAP - 2) break outer;
-        live.set(structureKey(x, y), { age: 0, tier: 0 });
+        live.set(structureKey(x, y), campAt(world, x, y));
         placedCount++;
       }
     }
@@ -532,7 +648,7 @@ describe('seeding', () => {
     const placed = placePatternAt(world, new Map(), 10, 10, block);
     expect(placed).not.toBeNull();
     expect(placed!.length).toBe(block.length);
-    const live = boardOf([[11, 11]]);
+    const live = boardOf(world, [[11, 11]]);
     expect(placePatternAt(world, live, 10, 10, block)).toBeNull();
   });
 });
@@ -564,7 +680,7 @@ describe('stirring', () => {
 
   it('sparks land only on dead, buildable cells Moore-adjacent to a live cell', () => {
     const world = openWorld();
-    const live = boardOf(BLOCK);
+    const live = boardOf(world, BLOCK);
     const rng = createStructuresRng(2);
     let firedAtLeastOnce = false;
 
@@ -576,6 +692,7 @@ describe('stirring', () => {
       expect(sparks.length).toBeLessThanOrEqual(CA_STIR_MAX_SPARKS);
       for (const spark of sparks) {
         expect(spark.tier).toBe(0);
+        expect(spark.kind).toBe(foundingKindAt(world, spark.x, spark.y));
         expect(live.has(structureKey(spark.x, spark.y))).toBe(false);
         expect(isBuildableCell(world, spark.x, spark.y)).toBe(true);
         expect(isMooreAdjacentToLive(live, spark.x, spark.y)).toBe(true);
@@ -592,7 +709,7 @@ describe('stirring', () => {
     outer: for (let y = 0; y < OPEN_WORLD_SIZE && placed < STRUCTURES_CAP - 2; y++) {
       for (let x = 0; x < OPEN_WORLD_SIZE; x++) {
         if (placed >= STRUCTURES_CAP - 2) break outer;
-        live.set(structureKey(x, y), { age: 0, tier: 0 });
+        live.set(structureKey(x, y), campAt(world, x, y));
         placed++;
       }
     }
@@ -609,15 +726,15 @@ describe('stirring', () => {
     const world = openWorld();
     const rng1 = createStructuresRng(9);
     const rng2 = createStructuresRng(9);
-    const sparks1 = attemptStir(world, boardOf(BLOCK), rng1);
-    const sparks2 = attemptStir(world, boardOf(BLOCK), rng2);
+    const sparks1 = attemptStir(world, boardOf(world, BLOCK), rng1);
+    const sparks2 = attemptStir(world, boardOf(world, BLOCK), rng2);
     expect(sparks1).not.toBeNull();
     expect(sparks1).toEqual(sparks2);
   });
 
   it('a lone 2×2 block, stirred at the real simulate() cadence over ~30 generations, ends up different from its original state at least once', () => {
     const world = openWorld();
-    let live = boardOf(BLOCK);
+    let live = boardOf(world, BLOCK);
     const original = keysOf(live);
     const rng = createStructuresRng(3);
 
@@ -627,7 +744,7 @@ describe('stirring', () => {
       if (rng.next() < CA_STIR_PROBABILITY_PER_GENERATION) {
         const sparks = attemptStir(world, live, rng);
         if (sparks !== null) {
-          for (const spark of sparks) live.set(structureKey(spark.x, spark.y), { age: 0, tier: 0 });
+          for (const spark of sparks) live.set(structureKey(spark.x, spark.y), { age: 0, tier: spark.tier, kind: spark.kind });
         }
       }
       if (!setsEqual(keysOf(live), original)) {
@@ -640,9 +757,8 @@ describe('stirring', () => {
 });
 
 describe('world-wide caps', () => {
-  it('STRUCTURE_TIERS has between four and six distinct entries', () => {
-    expect(STRUCTURE_TIERS.length).toBeGreaterThanOrEqual(4);
-    expect(STRUCTURE_TIERS.length).toBeLessThanOrEqual(6);
+  it('STRUCTURE_TIERS names one distinct tier per building complexity rank', () => {
+    expect(STRUCTURE_TIERS.length).toBe(MAX_BUILDING_TIER + 1);
     expect(new Set(STRUCTURE_TIERS).size).toBe(STRUCTURE_TIERS.length);
   });
 
@@ -689,10 +805,8 @@ const SEEDED_BOARD: ReadonlyArray<readonly [number, number]> = [
 
 function bootPopulated(): Harness {
   const rng = createStructuresRng(1);
-  return bootOn(
-    worldWithTerrain(WORLD_SIZE, flatOpenTerrain),
-    saveStructures(boardOf(SEEDED_BOARD), 0, rng, -1),
-  );
+  const world = worldWithTerrain(WORLD_SIZE, flatOpenTerrain);
+  return bootOn(world, saveStructures(boardOf(viewOf(world), SEEDED_BOARD), 0, rng, -1));
 }
 
 function join(harness: Harness): void {
@@ -837,7 +951,7 @@ describe('broadcast model', () => {
     expect(changes).toHaveLength(1);
     const founded =
       parseStructureCells((changes[0].payload as { founded: number[] }).founded) ?? [];
-    expect(founded).toContainEqual({ x: victim!.x, y: victim!.y, tier: victim!.tier });
+    expect(founded).toContainEqual({ x: victim!.x, y: victim!.y, tier: victim!.tier, kind: victim!.kind });
   }, HOST_TEST_TIMEOUT_MS);
 });
 
@@ -877,26 +991,29 @@ describe('persistence', () => {
   });
 
   it('drops individually malformed entries and keeps the rest', () => {
+    const building = 'twin-hut-yard';
+    const kind = buildingKindOf(building)!;
     const restored = loadStructures({
       version: STRUCTURES_SLICE_VERSION,
       rngState: 1,
       generation: 12,
       live: [
-        { x: 5, y: 6, age: 10, tier: 2 },
-        { x: 7, y: 8, age: 10, tier: 99 },
-        { x: -1, y: 0, age: 0, tier: 0 },
+        { x: 5, y: 6, age: 10, tier: tierOfKind(kind), building },
+        { x: 7, y: 8, age: 10, tier: 99, building },
+        { x: -1, y: 0, age: 0, tier: 0, building },
       ],
     });
     expect(restored.generation).toBe(12);
     expect(Array.from(restored.live.entries())).toEqual([
-      [structureKey(5, 6), { age: 10, tier: 2 }],
+      [structureKey(5, 6), { age: 10, tier: tierOfKind(kind), kind }],
     ]);
   });
 
   it('writes a slice this plugin can read back verbatim', () => {
     const rng = createStructuresRng(7);
     rng.next();
-    const live = new Map<number, LiveCellRecord>([[structureKey(10, 11), { age: 5, tier: 2 }]]);
+    const kind = buildingKindOf('twin-hut-yard')!;
+    const live = new Map<number, LiveCellRecord>([[structureKey(10, 11), { age: 5, tier: tierOfKind(kind), kind }]]);
 
     const slice = saveStructures(live, 9, rng, -1);
     expect(slice.version).toBe(STRUCTURES_SLICE_VERSION);
@@ -934,8 +1051,8 @@ describe('persistence', () => {
 });
 
 describe('route blessings (pilgrim routes contract)', () => {
-  function blinkerAt(x: number, y: number): Map<number, LiveCellRecord> {
-    return boardOf([
+  function blinkerAt(world: StructuresWorld, x: number, y: number): Map<number, LiveCellRecord> {
+    return boardOf(world, [
       [x - 1, y],
       [x, y],
       [x + 1, y],
@@ -956,23 +1073,24 @@ describe('route blessings (pilgrim routes contract)', () => {
     resetBlessings();
   });
 
-  it('lets a blessed under-neighboured survivor earn tiers on the age schedule', () => {
+  it('lets a blessed under-neighboured survivor take chain steps on the age schedule', () => {
     const world = openWorld();
     const centre = structureKey(20, 20);
     setBlessedStructureCells([centre]);
+    const chain = categoryAt(world, 20, 20)!.chain;
 
-    const board = runGenerations(world, blinkerAt(20, 20), CA_GENERATIONS_PER_TIER);
-    expect(board.get(centre)?.tier).toBe(1);
+    const board = runGenerations(world, blinkerAt(world, 20, 20), CA_GENERATIONS_PER_TIER);
+    expect(board.get(centre)?.kind).toBe(chain[1]);
 
     const later = runGenerations(world, new Map(board), CA_GENERATIONS_PER_TIER);
-    expect(later.get(centre)?.tier).toBe(2);
+    expect(later.get(centre)?.kind).toBe(chain[2]);
   });
 
   it('changes nothing for the same cell unblessed', () => {
     const world = openWorld();
     const centre = structureKey(20, 20);
-    const board = runGenerations(world, blinkerAt(20, 20), CA_GENERATIONS_PER_TIER * 3);
-    expect(board.get(centre)?.tier).toBe(0);
+    const board = runGenerations(world, blinkerAt(world, 20, 20), CA_GENERATIONS_PER_TIER * 3);
+    expect(board.get(centre)?.kind).toBe(foundedAt(world, 20, 20).kind);
   });
 
   it('never keeps a blessed cell alive — the CA itself is untouched', () => {
@@ -980,7 +1098,7 @@ describe('route blessings (pilgrim routes contract)', () => {
     const a = structureKey(30, 30);
     const b = structureKey(31, 30);
     setBlessedStructureCells([a, b]);
-    const board = runGenerations(world, boardOf([[30, 30], [31, 30]]), 1);
+    const board = runGenerations(world, boardOf(world, [[30, 30], [31, 30]]), 1);
     expect(board.has(a)).toBe(false);
     expect(board.has(b)).toBe(false);
   });
@@ -1002,11 +1120,11 @@ describe('route blessings (pilgrim routes contract)', () => {
     expect(blessedStructureCellCount()).toBe(STRUCTURES_CAP);
   });
 
-  it('waives only the neighbour gate in maybeAdvanceTier, never the age gate', () => {
-    expect(maybeAdvanceTier(CA_GENERATIONS_PER_TIER - 1, 0, 0, true)).toBe(0);
-    expect(maybeAdvanceTier(CA_GENERATIONS_PER_TIER, 0, 0, true)).toBe(1);
-    expect(maybeAdvanceTier(CA_GENERATIONS_PER_TIER, 0, 0, false)).toBe(0);
-    expect(maybeAdvanceTier(CA_GENERATIONS_PER_TIER, 0, STRUCTURE_UPGRADE_MIN_NEIGHBORS, false)).toBe(1);
+  it('waives only the neighbour gate in isReadyToUpgrade, never the age gate', () => {
+    expect(isReadyToUpgrade(CA_GENERATIONS_PER_TIER - 1, 0, 0, true)).toBe(false);
+    expect(isReadyToUpgrade(CA_GENERATIONS_PER_TIER, 0, 0, true)).toBe(true);
+    expect(isReadyToUpgrade(CA_GENERATIONS_PER_TIER, 0, 0, false)).toBe(false);
+    expect(isReadyToUpgrade(CA_GENERATIONS_PER_TIER, 0, STRUCTURE_UPGRADE_MIN_NEIGHBORS, false)).toBe(true);
   });
 });
 
@@ -1032,7 +1150,7 @@ describe('world events (structures:changes)', () => {
     const host = new PluginHost(world, [structuresPlugin, recorder].map(asLoadedPlugin));
     const rng = createStructuresRng(1);
     host.restorePersistence({
-      [STRUCTURES_PLUGIN_NAME]: saveStructures(boardOf(board), 0, rng, -1),
+      [STRUCTURES_PLUGIN_NAME]: saveStructures(boardOf(viewOf(world), board), 0, rng, -1),
     });
     host.worldCreate();
     return { world, host, events };
@@ -1253,7 +1371,7 @@ describe('birth rate near fed towns (card 28) — bounded to exactly one extra n
 
   it('a dead cell with exactly 2 live neighbours near farmland is NOT born — the fed birth is unreachable because the ground beside farmland never passes the footprint check', () => {
     const world = boostWorld(true);
-    const live = boardOf([[19, 19], [19, 21]]);
+    const live = boardOf(world, [[19, 19], [19, 21]]);
     expect(hasNearbyFarmland(world, 20, 20)).toBe(true);
     const outcome = stepGeneration(world, live);
     expect(outcome.nextLive.has(structureKey(20, 20))).toBe(false);
@@ -1262,27 +1380,27 @@ describe('birth rate near fed towns (card 28) — bounded to exactly one extra n
 
   it('the identical board with exactly 2 live neighbours does NOT birth without farmland nearby — the boost, isolated', () => {
     const world = boostWorld(false);
-    const live = boardOf([[19, 19], [19, 21]]);
+    const live = boardOf(world, [[19, 19], [19, 21]]);
     const outcome = stepGeneration(world, live);
     expect(outcome.nextLive.has(structureKey(20, 20))).toBe(false);
   });
 
   it('CEILING: farmland never admits a birth at 1 live neighbour', () => {
     const world = boostWorld(true);
-    const live = boardOf([[19, 19]]);
+    const live = boardOf(world, [[19, 19]]);
     const outcome = stepGeneration(world, live);
     expect(outcome.nextLive.has(structureKey(20, 20))).toBe(false);
   });
 
   it('CEILING: farmland never admits a birth at 4 live neighbours (nor does ordinary B3/S23)', () => {
     const world = boostWorld(true);
-    const live = boardOf([[19, 19], [19, 20], [19, 21], [20, 19]]);
+    const live = boardOf(world, [[19, 19], [19, 20], [19, 21], [20, 19]]);
     const outcome = stepGeneration(world, live);
     expect(outcome.nextLive.has(structureKey(20, 20))).toBe(false);
   });
 
   it('ordinary B3 birth (3 neighbours) is unaffected by the farmland carve — same outcome on carved and uncarved ground, because neither can use the fed-birth path', () => {
-    const live = boardOf([[19, 19], [19, 21], [21, 19]]);
+    const live = boardOf(boostWorld(false), [[19, 19], [19, 21], [21, 19]]);
     const withFarmland = stepGeneration(boostWorld(true), live);
     const without = stepGeneration(boostWorld(false), live);
     expect(withFarmland.nextLive.has(structureKey(20, 20))).toBe(false);
@@ -1296,7 +1414,7 @@ describe('birth rate near fed towns (card 28) — bounded to exactly one extra n
         expect(hasNearbyFarmland(world, x, y)).toBe(false);
       }
     }
-    const live = boardOf([[9, 9], [9, 11]]);
+    const live = boardOf(world, [[9, 9], [9, 11]]);
     const outcome = stepGeneration(world, live);
     expect(outcome.nextLive.has(structureKey(10, 10))).toBe(false);
   });
@@ -1304,7 +1422,7 @@ describe('birth rate near fed towns (card 28) — bounded to exactly one extra n
 
 describe('settlers arrive on Mondays, and only to an empty world', () => {
   const EMPTY = new Map<number, LiveCellRecord>();
-  const INHABITED = new Map<number, LiveCellRecord>([[structureKey(3, 4), { age: 1, tier: 0 }]]);
+  const INHABITED = new Map<number, LiveCellRecord>([[structureKey(3, 4), { ...campAt(openWorld(), 3, 4), age: 1 }]]);
   const NEVER_SEEDED = -1;
 
   it('seeds an empty world on a Monday', () => {

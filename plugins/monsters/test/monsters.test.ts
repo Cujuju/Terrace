@@ -855,8 +855,9 @@ describe('the yeti in the high Alps', () => {
     snowMonster()!.x = MASSIF_CENTER + 0.5;
     snowMonster()!.y = MASSIF_CENTER + 0.5;
 
-    snow.radius = 1;
-    expect(Math.PI * snow.radius * snow.radius).toBeLessThan(YETI_LAIR_COLLAPSE_SNOW_CELLS);
+    // Half a cell keeps only the peak cell snowy, below any collapse threshold.
+    snow.radius = 0.5;
+    expect(countSnowCells(world.heightAt)).toBeLessThan(YETI_LAIR_COLLAPSE_SNOW_CELLS);
     expect(isLairCell(LAND_HABITAT, world, snowMonster()!.x, snowMonster()!.y)).toBe(true);
 
     for (let n = 0; n < LAIR_SURVEY_INTERVAL_SECONDS / TICK_DT + 1; n++) {
