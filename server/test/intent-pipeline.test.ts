@@ -6,7 +6,7 @@ import {
   MAX_HEIGHT,
   MAX_BRUSH_RADIUS,
   SEA_LEVEL,
-  smoothCascadeReachCells,
+  sculptReachCells,
   bandLevelHeight,
   chunkHeightsAsCells,
   drawnBandOfSample,
@@ -926,14 +926,19 @@ describe('a contained sculpt fault leaves no client diverged', () => {
     ]);
   });
 
-  it('covers a faulted nudge\'s bounded cascade, which a stamp never needs', () => {
-    // Each tool's own reach, plus the seam halo, and no further. Nudge took smooth's cascade (9ba4767e).
+  it('covers a faulted nudge\'s read margin, which a stamp never needs', () => {
+    // Each tool's own reach, plus the seam halo, and no further.
     const WIDE_WORLD_SIZE = CHUNK_SIZE * 8;
     const OUT_OF_REACH_CHUNK = WIDE_WORLD_SIZE / CHUNK_SIZE - 1;
-    const RADIUS = MAX_BRUSH_RADIUS;
     const chunkAt = (cell: number): number => Math.floor(cell / CHUNK_SIZE) + MESH_SEAM_HALO_CHUNKS;
-    const STAMPED_CHUNK = chunkAt(UNLOCKED_CELL.x + RADIUS);
-    const NUDGED_CHUNK = chunkAt(UNLOCKED_CELL.x + RADIUS + smoothCascadeReachCells(RADIUS));
+    const reachChunk = (radius: number, tool: 'stamp' | 'nudge'): number =>
+      chunkAt(UNLOCKED_CELL.x + sculptReachCells(radius, 'hard', tool, 'clicked'));
+    // The first radius whose nudge reach crosses a chunk edge its stamp reach does not.
+    const RADIUS = Array.from({ length: MAX_BRUSH_RADIUS }, (_, i) => i + 1).find(
+      (radius) => reachChunk(radius, 'nudge') > reachChunk(radius, 'stamp'),
+    )!;
+    const STAMPED_CHUNK = reachChunk(RADIUS, 'stamp');
+    const NUDGED_CHUNK = reachChunk(RADIUS, 'nudge');
     const world = worldWithUnlockedChunks(WIDE_WORLD_SIZE, [
       [0, 0],
       [STAMPED_CHUNK, STAMPED_CHUNK],

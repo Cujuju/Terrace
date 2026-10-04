@@ -1,5 +1,6 @@
 import { SMOOTH_REACH_MARGIN_CELLS, SMOOTH_SPREAD_CELLS } from '../constants.ts';
 import { EDGE_AWARE_TOOLS, EDGE_REGION_MARGIN_CELLS } from './edges.ts';
+import { NUDGE_READ_MARGIN_CELLS } from './nudge.ts';
 import { LIBRARY_SCULPT_TOOL } from './options.ts';
 import { OUTLINE_SMOOTH_READ_MARGIN_CELLS } from './outlineSmooth.ts';
 import { sculptSweepRadius } from './stamp.ts';
@@ -11,8 +12,8 @@ export function smoothCascadeReachCells(radius: number): number {
 }
 
 /**
- * Every cell one stroke can write, measured from its centre: the brush sweep,
- * plus the relaxation cascade for the two tools that relax.
+ * Every cell one stroke can read or write, measured from its centre: the brush
+ * sweep, a read margin for smooth and nudge, the cascade for settle.
  */
 export function sculptReachCells(
   radius: number,
@@ -22,7 +23,7 @@ export function sculptReachCells(
 ): number {
   // Smooth and nudge write only their disc but read a margin past it.
   if (tool === 'smooth') return radius + OUTLINE_SMOOTH_READ_MARGIN_CELLS;
-  if (tool === 'nudge') return radius + smoothCascadeReachCells(radius);
+  if (tool === 'nudge') return radius + NUDGE_READ_MARGIN_CELLS;
   if (tool === LIBRARY_SCULPT_TOOL) return radius + SMOOTH_SPREAD_CELLS;
   const sweep = sculptSweepRadius(radius, profile, tool, anchor);
   // An edge-aware brush re-encodes the cells just past its disc.

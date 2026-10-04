@@ -108,7 +108,8 @@ Commits 2026-09-23..26 (`06776661`, `52a10901`, `9ba4767e`, `b1d9b4f4`,
   (`nudge.ts`).
 - Smooth and nudge skip walls more than `SMOOTH_LAYER_BAND_REACH` (1) above
   the grasped span.
-- Reach (`sculptReachCells`): smooth `r + OUTLINE_SMOOTH_READ_MARGIN_CELLS`;
-  nudge understated at r 1–3 (#525).
+- Reach (`sculptReachCells`) bounds every cell a stroke reads or writes:
+  smooth `r + OUTLINE_SMOOTH_READ_MARGIN_CELLS`, nudge
+  `r + NUDGE_READ_MARGIN_CELLS` (6).
 - The Laplacian wire fields (`smoothLambda` and seven lab flags) are still
   validated but inert (#518).

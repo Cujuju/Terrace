@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
+  applySculpt,
+  bandLevelHeight,
   bandOf,
   BAND_HEIGHT,
   cellIndex,
   cellX,
   cellY,
   createHeightmap,
+  DEFAULT_SCULPT_AMOUNT,
   DEEP_BASALT_BANDS,
   DEEP_BASALT_DEPTH,
   DEEP_LAVA_BANDS,
@@ -23,6 +26,7 @@ import {
   MIN_HEIGHT,
   quantizeToBand,
   RAMP_CELLS_PER_BAND,
+  sculptOptionsOf,
   sculptReachCells,
   sculptSweepRadius,
   SEA_COLUMN_BANDS,
@@ -31,8 +35,10 @@ import {
   smoothCascadeReachCells,
   SMOOTH_SPREAD_CELLS,
   WORLD_UNIT_CELLS,
+  type SculptIntent,
 } from '../src/index.ts';
 import { EDGE_REGION_MARGIN_CELLS } from '../src/sculpt/edges.ts';
+import { NUDGE_READ_MARGIN_CELLS } from '../src/sculpt/nudge.ts';
 import { OUTLINE_SMOOTH_READ_MARGIN_CELLS } from '../src/sculpt/outlineSmooth.ts';
 
 describe('createHeightmap', () => {
@@ -123,7 +129,7 @@ describe('deep strata constants', () => {
   });
 });
 
-describe('sculptReachCells — one statement of how far a stroke can write', () => {
+describe('sculptReachCells — one statement of how far a stroke can read or write', () => {
   const RADIUS = 4;
 
   it('gives smooth and nudge their read margin, settle its cascade, and the rest their sweep', () => {
@@ -132,7 +138,7 @@ describe('sculptReachCells — one statement of how far a stroke can write', () 
       expect([radius, sculptReachCells(radius, 'hard', 'smooth', 'clicked')])
         .toEqual([radius, radius + OUTLINE_SMOOTH_READ_MARGIN_CELLS]);
       expect([radius, sculptReachCells(radius, 'hard', 'nudge', 'clicked')])
-        .toEqual([radius, radius + smoothCascadeReachCells(radius)]);
+        .toEqual([radius, radius + NUDGE_READ_MARGIN_CELLS]);
     }
     expect(sculptReachCells(RADIUS, 'soft', LIBRARY_SCULPT_TOOL, 'free'))
       .toBe(RADIUS + SMOOTH_SPREAD_CELLS);
@@ -145,6 +151,54 @@ describe('sculptReachCells — one statement of how far a stroke can write', () 
             .toBe(sculptSweepRadius(RADIUS, profile, tool, anchor) + margin);
         }
       }
+    }
+  });
+
+  // The client predicts only strokes whose reach it has received, so reach must
+  // bound every cell a stroke reads, not just those it writes.
+  const READ_WORLD = 64;
+  const READ_CENTRE = READ_WORLD / 2;
+  const BASE_BAND = 8;
+  const KINK_EVERY_ROWS = 4;
+  const WALL_BANDS = 3;
+
+  /** One kinked step through the centre: few outlines, so a wall past reach would be the nearest. */
+  function kinkedStep(): ReturnType<typeof createHeightmap> {
+    const map = createHeightmap(READ_WORLD);
+    for (let y = 0; y < READ_WORLD; y++) {
+      const edge = READ_CENTRE + (y % KINK_EVERY_ROWS === 0 ? 1 : 0);
+      for (let x = 0; x < READ_WORLD; x++) {
+        map.cells[y * READ_WORLD + x] = bandLevelHeight(BASE_BAND + (x >= edge ? 1 : 0));
+      }
+    }
+    return map;
+  }
+
+  it.each([
+    ['stamp', 1],
+    ['stamp', -1],
+    ['smooth', 1],
+    ['nudge', 1],
+    ['nudge', -1],
+  ] as const)('a %s (dir %i) reads no cell past its reach', (tool, dir) => {
+    for (const radius of [1, 2, 3, 4, 8]) {
+      const intent: SculptIntent = { type: 'sculpt', x: READ_CENTRE, y: READ_CENTRE, radius, dir, tool };
+      const options = sculptOptionsOf(intent);
+      const reach = sculptReachCells(radius, options.profile, tool, options.anchor);
+      const inside = kinkedStep();
+      const outside = kinkedStep();
+      for (let y = 0; y < READ_WORLD; y++) {
+        for (let x = 0; x < READ_WORLD; x++) {
+          const beyond = Math.max(Math.abs(x - READ_CENTRE), Math.abs(y - READ_CENTRE)) > reach;
+          if (beyond) outside.cells[y * READ_WORLD + x] = bandLevelHeight(BASE_BAND + WALL_BANDS);
+        }
+      }
+
+      const amount = DEFAULT_SCULPT_AMOUNT * dir;
+      const expected = applySculpt(inside, READ_CENTRE, READ_CENTRE, radius, amount, options);
+      const actual = applySculpt(outside, READ_CENTRE, READ_CENTRE, radius, amount, options);
+      expect(expected.length).toBeGreaterThan(0);
+      expect([radius, actual]).toEqual([radius, expected]);
     }
   });
 });

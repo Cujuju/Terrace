@@ -27,6 +27,9 @@ const TREAD_RAMP_CELLS = 4;
 /** Cells past the footprint the window holds: the 3x3 bound, and outlines a cell's edge can reach. */
 const WINDOW_MARGIN_CELLS = 2;
 
+/** Cells past the footprint a nudge reads: its window plus the tread ramp traced around it. */
+export const NUDGE_READ_MARGIN_CELLS = WINDOW_MARGIN_CELLS + TREAD_RAMP_CELLS;
+
 interface NudgeCell {
   readonly x: number;
   readonly y: number;
@@ -67,7 +70,7 @@ export function applyNudge(
 ): void {
   const size = map.size;
   const reach = radius + WINDOW_MARGIN_CELLS;
-  const traceReach = reach + TREAD_RAMP_CELLS;
+  const traceReach = radius + NUDGE_READ_MARGIN_CELLS;
   const tx0 = Math.max(0, cx - traceReach);
   const ty0 = Math.max(0, cy - traceReach);
   const tx1 = Math.min(size - 1, cx + traceReach);

@@ -389,7 +389,7 @@ function rowInOwnChunk(cells: Int16Array | Heightmap['cells']): number[] {
 }
 
 // A terraced ramp: a whole-band riser every tread. A nudge on a riser moves it
-// and reads past its brush (9ba4767e gave nudge smooth's old cascade reach).
+// and reads past its brush (`NUDGE_READ_MARGIN_CELLS`).
 const RAMP_TREAD_CELLS = WORLD_UNIT_CELLS;
 
 function rampChunk(cx: number, cy: number): ChunkPayload {
@@ -415,10 +415,13 @@ function nudgeAt(x: number, y: number, seq: number): SculptIntent {
 }
 
 describe('a tool that reads past its brush is judged by the reach it had, not the brush it used', () => {
-  // Close enough that the reach crosses the frontier even though the brush
-  // and its halo do not: the reach guard is the only thing that can catch it.
+  // The first riser close enough that the reach crosses the frontier though the
+  // brush and its halo do not: the reach guard is the only thing that can catch it.
   const OVER_THE_FRONTIER_X =
-    FRONTIER_EDGE_X + 1 - sculptReachCells(MIN_BRUSH_RADIUS, 'hard', 'nudge', 'clicked');
+    Math.ceil(
+      (FRONTIER_EDGE_X + 1 - sculptReachCells(MIN_BRUSH_RADIUS, 'hard', 'nudge', 'clicked')) /
+        RAMP_TREAD_CELLS,
+    ) * RAMP_TREAD_CELLS;
   // The riser one tread back: same stroke, reach inside the chunk.
   const SHORT_OF_THE_FRONTIER_X = OVER_THE_FRONTIER_X - RAMP_TREAD_CELLS;
 

@@ -253,9 +253,8 @@ export function applySculpt(
   const relaxes = tool === 'smooth' || tool === LIBRARY_SCULPT_TOOL;
   const deposits = tool === 'stamp' || tool === LIBRARY_SCULPT_TOOL;
   const anchoredSmooth = relaxes && anchor !== 'free' && amount !== 0;
-  // Smooth names its net effect: Lower removes, Raise builds. Every other
-  // tool reads the stroke direction straight.
-  const meltRaising = tool === 'smooth' ? amount < 0 : amount > 0;
+  // Anchored smooth returned above, so the stroke direction reads straight.
+  const meltRaising = amount > 0;
   const anchorTarget = anchoredSmooth
     ? anchoredTargetHeight(map, cx, cy, meltRaising, targetBand, spanBand)
     : 0;
