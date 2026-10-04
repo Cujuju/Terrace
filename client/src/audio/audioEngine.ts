@@ -50,7 +50,8 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
 
   const plugins = new Map<string, PluginAudioState>();
 
-  let musicClaimant: string | null = null;
+  // Held by mount identity, not name: a stale mount's release must not free a remount's claim.
+  let musicClaimant: PluginAudioState | null = null;
   const musicRefusals = new Set<string>();
 
   let disposed = false;
@@ -84,14 +85,14 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
     if (musicRefusals.has(name)) return;
     musicRefusals.add(name);
     console.warn(
-      `music bus already claimed by "${String(musicClaimant)}"; ignoring updates from "${name}"`,
+      `music bus already claimed by "${String(musicClaimant?.name)}"; ignoring updates from "${name}"`,
     );
   }
 
-  function claimMusic(name: string): boolean {
-    if (musicClaimant === null) musicClaimant = name;
-    if (musicClaimant === name) return true;
-    refuseMusic(name);
+  function claimMusic(state: PluginAudioState): boolean {
+    if (musicClaimant === null) musicClaimant = state;
+    if (musicClaimant === state) return true;
+    refuseMusic(state.name);
     return false;
   }
 
@@ -169,13 +170,13 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
 
       setMusic(url: string | null): void {
         if (state.released) return;
-        if (!claimMusic(state.name)) return;
+        if (!claimMusic(state)) return;
         activeVoices.setMusic(url);
       },
 
       setMusicGenerator(start: ((outlet: MusicOutlet) => MusicGenerator) | null): void {
         if (state.released) return;
-        if (!claimMusic(state.name)) return;
+        if (!claimMusic(state)) return;
         activeVoices.setMusicGenerator(start);
       },
     };
@@ -186,12 +187,12 @@ export function createAudioEngine(viewport: Viewport): AudioEngine {
     state.released = true;
     for (const layer of state.ambience.values()) activeVoices.releaseAmbience(layer);
     state.ambience.clear();
-    if (musicClaimant === state.name) {
+    if (musicClaimant === state) {
       musicClaimant = null;
       musicRefusals.clear();
       activeVoices.releaseMusic();
     }
-    plugins.delete(state.name);
+    if (plugins.get(state.name) === state) plugins.delete(state.name);
   }
 
   function registerPlugin(name: string): PluginAudioState {
