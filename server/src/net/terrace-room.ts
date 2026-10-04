@@ -63,6 +63,8 @@ const HITCH_PREFIX = '[hitch]';
 const HITCH_MS_DECIMALS = 1;
 /** Hitch lines share the main perf-stamp cadence; per-event would flood. */
 const HITCH_REPORT_INTERVAL_MS = 10_000;
+/** The switch is flipped by hand; anything faster is a client spamming disk writes. */
+const PERF_LOGGING_MIN_CHANGE_INTERVAL_MS = 1_000;
 
 interface HitchSummary {
   count: number;
@@ -78,6 +80,7 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
   private readonly hitchByPlayer = new Map<string, HitchSummary>();
 
   private hitchReport: ReturnType<typeof setInterval> | undefined;
+  private perfLoggingChangedAtMs = Number.NEGATIVE_INFINITY;
 
   private readonly pluginRewriteLog = new LogThrottle(ROOM_FAILURE_LOG_INTERVAL_MS);
 
@@ -146,6 +149,16 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
       const request = validatePerfLoggingRequest(message);
       if (request === null) return;
       const { perfLogging } = this.context;
+      const now = Date.now();
+      // Unchanged or too soon: answer the requester with the current state, write nothing.
+      if (
+        request.enabled === perfLogging.enabled ||
+        now - this.perfLoggingChangedAtMs < PERF_LOGGING_MIN_CHANGE_INTERVAL_MS
+      ) {
+        client.send(PERF_LOGGING_STATE_MESSAGE_TYPE, this.perfLoggingState());
+        return;
+      }
+      this.perfLoggingChangedAtMs = now;
       try {
         perfLogging.set(request.enabled);
       } catch (error) {
