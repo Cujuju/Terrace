@@ -59,6 +59,8 @@ export class GrassField {
   }
 
   reactToEdit(x: number, y: number): GrassCell | null {
+    // An edited cell is re-judged next sweep, never committed from a pre-edit survey.
+    this.staged.delete(grassKey(x, y));
     if (!this.standing.delete(grassKey(x, y))) return null;
     return { x, y };
   }

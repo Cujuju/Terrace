@@ -46,6 +46,8 @@ export class CropField {
   }
 
   reactToEdit(x: number, y: number): CropCell | null {
+    // An edited cell is re-judged next sweep, never committed from a pre-edit survey.
+    this.staged.delete(cropKey(x, y));
     return this.wither(x, y) ? { x, y } : null;
   }
 

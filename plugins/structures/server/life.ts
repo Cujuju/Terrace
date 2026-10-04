@@ -1,5 +1,6 @@
 import { CHUNK_SIZE, isSettlingDay } from '@terrace/shared';
 import {
+  MAX_FOOTPRINT_RADIUS_CELLS,
   STRUCTURES_CAP,
   cellOfKey,
   footprintRadiusOfKind,
@@ -169,6 +170,20 @@ export class GenerationSurvey {
   evict(key: number): void {
     this.staged.delete(key);
     this.demolishedThisSweep.add(key);
+  }
+
+  /** Drops staged births whose footprint covers an edited cell; the next sweep re-judges that ground. */
+  forgetStagedBirthsAt(x: number, y: number): void {
+    for (let dy = -MAX_FOOTPRINT_RADIUS_CELLS; dy <= MAX_FOOTPRINT_RADIUS_CELLS; dy++) {
+      for (let dx = -MAX_FOOTPRINT_RADIUS_CELLS; dx <= MAX_FOOTPRINT_RADIUS_CELLS; dx++) {
+        const key = structureKey(x + dx, y + dy);
+        const record = this.staged.get(key);
+        if (record === undefined || this.board?.has(key) === true) continue;
+        const radius = footprintRadiusOfKind(record.kind);
+        if (Math.abs(dx) > radius || Math.abs(dy) > radius) continue;
+        this.staged.delete(key);
+      }
+    }
   }
 
   private resetSweep(): void {

@@ -86,6 +86,8 @@ export class FringeField {
   }
 
   reactToEdit(x: number, y: number): FringeCell | null {
+    // An edited cell is re-judged next sweep, never committed from a pre-edit survey.
+    this.staged.delete(fringeKey(x, y));
     if (!this.standing.delete(fringeKey(x, y))) return null;
     return { x, y };
   }

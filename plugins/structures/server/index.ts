@@ -386,6 +386,7 @@ function reactToTerrain(world: WorldApi, diff: readonly CellDiff[]): void {
   // A building falls when an edit knocks any cell under it off its resting band or floods it.
   const broken = new Set<number>();
   for (const cell of diff) {
+    survey.forgetStagedBirthsAt(cell.x, cell.y);
     const height = world.heightAt(cell.x, cell.y);
     const flooded = isWater(height);
     const band = drawnBandOfSample(height);
