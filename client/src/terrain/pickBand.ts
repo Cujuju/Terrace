@@ -30,14 +30,11 @@ export function resolvePick(map: Heightmap, pick: TerrainRayPick): ResolvedPick 
   const span = spanAt(map, pick.x, pick.y, pick.spanIndex);
   if (!isSpanDrawn(span)) return null;
   const capY = drawnSpanCapHeight(span) * HEIGHT_WORLD_SCALE;
-  // F4: the underside cue snaps to the drawn ceiling, matching terrainHitInCell.
-  const undersideY = drawnSpanCapHeight(span) * HEIGHT_WORLD_SCALE;
   // Underside hits report hitY at the drawn ceiling; tread/riser at or below.
   // Its reject bound clamps to the drawn bottom, so a riser entry at the
   // blocky underside passes.
   const drawnBottomY = drawnBandCapY(span.floorBand - 1);
   if (pick.hitY < drawnBottomY || pick.hitY > capY) return null;
-  void undersideY;
 
   // The pick named its band where the hit was decided; this only clamps it to
   // the span it landed on, which the caller may not have checked.

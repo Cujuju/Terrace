@@ -165,6 +165,7 @@ export function createFrontierFog(
   const segments = new Map<string, FogSegment>();
   const superMeshes = new Map<number, FogSuperMesh>();
   const dirtySupers = new Set<FogSuperMesh>();
+  let segmentChunkCols: number | null = null;
 
   let elapsedS = 0;
   const stopAnimating = onFrame((dt: number) => {
@@ -348,6 +349,11 @@ export function createFrontierFog(
 
     sync(mirror: TerrainMirror): void {
       const chunkCols = chunksPerEdge(mirror.map.size);
+      if (segmentChunkCols !== null && segmentChunkCols !== chunkCols) {
+        for (const segment of segments.values()) removeSegment(segment);
+        segments.clear();
+      }
+      segmentChunkCols = chunkCols;
       const superCols = Math.ceil(chunkCols / SUPER_MESH_SPAN_CHUNKS);
       const nextEdges = frontierEdges(mirror.received, chunkCols);
       const nextKeys = new Set(nextEdges.map(frontierEdgeKey));

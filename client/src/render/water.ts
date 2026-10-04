@@ -128,12 +128,14 @@ export function createWater(
   const { texture: curveTexture, buffer: initialCurveBuffer } =
     createCurveTexture(initialWorldSize);
   let curveBuffer = initialCurveBuffer;
+  let curveUploadPending = true;
+  curveTexture.onUpdate = () => { curveUploadPending = false; };
   const worldSizeCells = uniform(initialWorldSize);
   const dirtyChunkScratch: number[] = [];
 
   const writeDirtyRegions = (worldSize: number): boolean => {
     const renderer = options.renderer;
-    if (renderer === undefined) return false;
+    if (renderer === undefined || curveUploadPending) return false;
     const chunkCols = chunksPerEdge(worldSize);
     for (const chunkIdx of dirtyChunkScratch) {
       const region = {
@@ -161,7 +163,7 @@ export function createWater(
   applyGroundShade(material, 'water');
   makeBanded(material);
 
-  const geometry = new BufferGeometry();
+  let geometry = new BufferGeometry();
   const mesh = new Mesh(geometry, material);
   mesh.visible = false;
   parent.add(mesh);
@@ -193,15 +195,20 @@ export function createWater(
       indices[i + 4] = v + 2;
       indices[i + 5] = v + 3;
     }
-    geometry.dispose();
+    const previousGeometry = geometry;
+    geometry = new BufferGeometry();
     geometry.setAttribute('position', new BufferAttribute(positions, 3));
     geometry.setAttribute('normal', new BufferAttribute(normals, 3));
     geometry.setIndex(new BufferAttribute(indices, 1));
+    mesh.geometry = geometry;
+    previousGeometry.dispose();
   };
 
   const setWorldSize = (worldSize: number): void => {
+    if (worldSize !== worldSizeCells.value) curveTexture.dispose();
     curveBuffer = createWaterCurveBuffer(worldSize);
     curveTexture.image = { data: curveBuffer, width: worldSize, height: worldSize };
+    curveUploadPending = true;
     curveTexture.clearUpdateRanges();
     curveTexture.needsUpdate = true;
     worldSizeCells.value = worldSize;
@@ -263,6 +270,7 @@ export function createWater(
       writeWaterCurveTexels(curveBuffer, worldSize, mirror, dirtyChunkScratch);
       if (dirtyChunkScratch.length <= MAX_RANGED_REFRESH_CHUNKS && writeDirtyRegions(worldSize)) return;
       curveTexture.clearUpdateRanges();
+      curveUploadPending = true;
       curveTexture.needsUpdate = true;
     },
     dispose(): void {

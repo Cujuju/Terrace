@@ -79,7 +79,7 @@ import {
   DEFAULT_CELL_LOOK,
   type CellLook,
 } from './render/layerEdgeOverlay.ts';
-import { createEffect, on } from 'solid-js';
+import { createEffect, createRoot, on } from 'solid-js';
 import { createFrontierFog, type FrontierFog } from './render/frontierFog.ts';
 import { createFrontierLine, type FrontierLine } from './render/frontierLine.ts';
 import { frontierMistMode } from './state/frontierMistPrefs.ts';
@@ -241,10 +241,13 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
   const water: Water = createWater(viewport.scene, DEFAULT_WORLD_SIZE, { renderer: viewport.renderer });
   const fog: FrontierFog = createFrontierFog(viewport.scene, viewport.onFrame);
   const frontierLine: FrontierLine = createFrontierLine(viewport.scene);
-  createEffect(() => {
-    const mode = frontierMistMode();
-    fog.setMode(mode);
-    frontierLine.setVisible(mode === 'line');
+  const disposeMistEffect = createRoot((dispose) => {
+    createEffect(() => {
+      const mode = frontierMistMode();
+      fog.setMode(mode);
+      frontierLine.setVisible(mode === 'line');
+    });
+    return dispose;
   });
   const revealMask: RevealMask = createRevealMask(DEFAULT_WORLD_SIZE);
   const rivers: RiverRig = createRiverRig(viewport.scene, viewport.onFrame, {
@@ -531,7 +534,10 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
   // guard uses moves what is already drawn.
   const stopDeviceLostWatch = gpuMesher?.onDeviceLost((reason) => demoteToCpu(reason));
 
-  createEffect(on(terrainMesher, () => rebuildTerrain(), { defer: true }));
+  const disposeMesherEffect = createRoot((dispose) => {
+    createEffect(on(terrainMesher, () => rebuildTerrain(), { defer: true }));
+    return dispose;
+  });
 
   // Only a snapshot arms it, so sculpts never hold plugins. A chunk whose build never
   // succeeds keeps it armed, and the plugins held, for the rest of that world.
@@ -847,6 +853,8 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
     },
 
     dispose(): void {
+      disposeMistEffect();
+      disposeMesherEffect();
       clearExpiryTimer();
       terrainChangedHandlers.clear();
       stopBuildHoldWatch();

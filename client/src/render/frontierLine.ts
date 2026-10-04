@@ -44,7 +44,7 @@ export function createFrontierLine(parent: Object3D): FrontierLine {
   let positions = new Float32Array(capacity * VERTICES_PER_EDGE * POSITION_COMPONENTS_PER_VERTEX);
   let attribute = new BufferAttribute(positions, POSITION_COMPONENTS_PER_VERTEX);
 
-  const geometry = new BufferGeometry();
+  let geometry = new BufferGeometry();
   geometry.setAttribute('position', attribute);
   geometry.setDrawRange(0, 0);
   geometry.boundingSphere = new Sphere(new Vector3(), 0);
@@ -61,7 +61,11 @@ export function createFrontierLine(parent: Object3D): FrontierLine {
     while (capacity < edges) capacity *= 2;
     positions = new Float32Array(capacity * VERTICES_PER_EDGE * POSITION_COMPONENTS_PER_VERTEX);
     attribute = new BufferAttribute(positions, POSITION_COMPONENTS_PER_VERTEX);
+    const previousGeometry = geometry;
+    geometry = new BufferGeometry();
     geometry.setAttribute('position', attribute);
+    line.geometry = geometry;
+    previousGeometry.dispose();
   };
 
   const groundAt = (mirror: TerrainMirror, edge: FrontierEdge, k: number): number => {
