@@ -106,6 +106,10 @@ export const PLUGIN_FRAME_SKIP_FRAMES = 2;
 /** Single runs past this log immediately; the window max column keeps the rest. */
 export const PLUGIN_SLOW_RUN_MS = 10;
 
+// Bounds memory if a preload never settles. Assumption: plugins send at most a few
+// messages per second, so this covers minutes of loading.
+const HELD_PLUGIN_MESSAGE_LIMIT = 512;
+
 const NO_LAYERS: ReadonlySet<Object3D> = new Set();
 
 type RenderObjectFunction = NonNullable<
@@ -157,6 +161,9 @@ export function createClientPluginHost(
   const mountGenerations = new Map<string, number>();
 
   const pendingMounts = new Set<string>();
+
+  // Messages for a plugin still preloading: it has no handlers until attach runs.
+  const heldMessages = new Map<string, { readonly type: string; readonly payload: unknown }[]>();
 
   const breachStates = new Map<string, DrawBudgetBreachState>();
 
@@ -781,28 +788,49 @@ export function createClientPluginHost(
     const generation = (mountGenerations.get(plugin.name) ?? 0) + 1;
     mountGenerations.set(plugin.name, generation);
     pendingMounts.add(plugin.name);
+    heldMessages.set(plugin.name, []);
     void Promise.resolve()
       .then(() => preload(ctx))
       .then(
         () => {
-          pendingMounts.delete(plugin.name);
+          // A stale preload leaves pendingMounts alone: it may belong to a newer mount.
           if (mountGenerations.get(plugin.name) !== generation) {
             dropUnattached();
             return;
           }
+          pendingMounts.delete(plugin.name);
           finishMount();
+          const held = heldMessages.get(plugin.name) ?? [];
+          heldMessages.delete(plugin.name);
+          for (const { type, payload } of held) deliverMessage(type, payload);
         },
         (error: unknown) => {
-          pendingMounts.delete(plugin.name);
+          if (mountGenerations.get(plugin.name) === generation) {
+            pendingMounts.delete(plugin.name);
+            heldMessages.delete(plugin.name);
+          }
           console.error(`[terrace] client plugin "${plugin.name}" threw in preload`, error);
           dropUnattached();
         },
       );
   };
 
+  const deliverMessage = (type: string, payload: unknown): void => {
+    const set = handlers.get(type);
+    if (set === undefined) return;
+    for (const handler of set) {
+      try {
+        handler(payload);
+      } catch (error) {
+        console.error(`[terrace] plugin handler for "${type}" threw`, error);
+      }
+    }
+  };
+
   const unmountPlugin = (name: string): void => {
     mountGenerations.set(name, (mountGenerations.get(name) ?? 0) + 1);
     pendingMounts.delete(name);
+    heldMessages.delete(name);
     const entry = mounted.get(name);
     if (entry === undefined) return;
     mounted.delete(name);
@@ -941,15 +969,14 @@ export function createClientPluginHost(
     },
 
     routeMessage(type: string, payload: unknown): void {
-      const set = handlers.get(type);
-      if (set === undefined) return;
-      for (const handler of set) {
-        try {
-          handler(payload);
-        } catch (error) {
-          console.error(`[terrace] plugin handler for "${type}" threw`, error);
+      if (!handlers.has(type)) {
+        const held = heldMessages.get(type.slice(0, type.indexOf(':')));
+        if (held !== undefined && held.length < HELD_PLUGIN_MESSAGE_LIMIT) {
+          held.push({ type, payload });
         }
+        return;
       }
+      deliverMessage(type, payload);
     },
 
     // A snapshot from a new plugin world generation restarts every id, so
@@ -998,6 +1025,7 @@ export function createClientPluginHost(
         mountGenerations.set(name, (mountGenerations.get(name) ?? 0) + 1);
       }
       pendingMounts.clear();
+      heldMessages.clear();
       worldResetHandlers.clear();
       canvas.removeEventListener('pointerdown', onCanvasPointerDown, {
         capture: true,
