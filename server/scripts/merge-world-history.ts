@@ -128,9 +128,24 @@ const missing = (
 ).map((row) => row.id);
 
 if (missing.length === 0) {
-  logInfo(`${into} already holds every snapshot in ${from} — nothing to do`);
+  logInfo(`${into} already holds every snapshot in ${from} — nothing to merge`);
+  // A re-run with --pin (as the unpinned warning advises) still pins the source's points.
+  const present = pin
+    ? (db.prepare('SELECT id FROM source.snapshots ORDER BY id').all() as { id: number }[]).map(
+        (row) => row.id,
+      )
+    : [];
   db.exec('DETACH DATABASE source');
   db.close();
+  if (present.length > 0) {
+    const pinning = SnapshotStore.open(into);
+    try {
+      for (const id of present) pinning.setPinned(id, true);
+      logInfo(`pinned ${present.length} restore point(s) from ${from} against retention`);
+    } finally {
+      pinning.close();
+    }
+  }
   process.exit(0);
 }
 
