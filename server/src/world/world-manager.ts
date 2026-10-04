@@ -179,6 +179,8 @@ export class WorldManager {
         this.openInto(id);
       } catch (error) {
         logError(`loading world "${id}" failed`, error);
+        // A failed save keeps the old world live; a failed open has already released it.
+        if (this.session === null) this.announceWorldUnloaded();
         return 'failed';
       }
       return { mode: 'immediate', secondsRemaining: 0 };
@@ -196,6 +198,7 @@ export class WorldManager {
       this.openInto(id);
     } catch (error) {
       logError(`reopening world "${id}" failed`, error);
+      if (this.session === null) this.announceWorldUnloaded();
       return 'failed';
     }
     return true;
@@ -389,7 +392,7 @@ export class WorldManager {
     this.deps.plugins.replace(build);
 
     try {
-      this.openInto(id);
+      this.openInto(id, rollingBack);
     } catch (error) {
       logError(`opening world "${id}" over ${rollingBack ? 'the old' : 'the new'} plugin failed`, error);
       return 'opening the world';
@@ -518,12 +521,13 @@ export class WorldManager {
     return closeSession(closing);
   }
 
-  private openInto(id: string): void {
+  // discardOutgoing: a rejected plugin build's state must not overwrite the last good save.
+  private openInto(id: string, discardOutgoing = false): void {
     const outgoing = this.session;
 
     const players: readonly Player[] = this.bridge?.players() ?? [];
 
-    if (outgoing !== null) {
+    if (outgoing !== null && !discardOutgoing) {
       try {
         snapshotIfDirty(outgoing);
       } catch (error) {

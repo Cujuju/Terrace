@@ -341,6 +341,8 @@ export class WorldAdminService {
     const { manager, registry } = this.deps;
     if (!registry.has(id)) return fail('archive', 'unknownWorld');
     if (manager.activeId === id) return fail('archive', 'worldIsActive');
+    // A countdown's target must still exist when the countdown fires.
+    if (manager.pendingSwitch?.toId === id) return fail('archive', 'switchInProgress');
 
     const { path } = registry.archive(id, Date.now());
     return { type: 'worldAdminResult', action: 'archive', ok: true, id, archivedPath: path };
