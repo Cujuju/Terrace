@@ -88,15 +88,19 @@ describe('the clicked-cell anchor (owner decision 2026-08-19)', () => {
     for (const i of lower) expect(map.cells[i]).toBeGreaterThanOrEqual(floor);
   });
 
-  it('hard + clicked anchors the level fill to the clicked band, not the footprint minimum', () => {
+  it('hard + clicked fills the whole disc to the band above the clicked cell, not one press per cell', () => {
     const { map, lower, higher } = unevenLedge();
     const before = Int16Array.from(map.cells);
-    const target = bandLevelHeight(7);
+    const targetBand = 7;
 
     applySculpt(map, 16, 16, 3, DEFAULT_SCULPT_AMOUNT, STAMP_HARD_ANCHORED);
 
-    for (const i of lower) expect(map.cells[i]).toBe(before[i] + DEFAULT_SCULPT_AMOUNT);
-    expect(heightAt(map, 16, 16)).toBe(target);
+    forEachFootprintOffset(3, (dx, dy) => {
+      expect(drawnBandOfSample(heightAt(map, 16 + dx, 16 + dy))).toBe(targetBand);
+    });
+    for (const i of lower) expect(drawnBandOfSample(before[i]!)).toBe(targetBand - 2);
+    expect(heightAt(map, 16, 16)).toBe(bandLevelHeight(targetBand));
+    // Ground already at the mound's band is past the shape: untouched.
     for (const i of higher) expect(map.cells[i]).toBe(before[i]);
   });
 
@@ -107,34 +111,21 @@ describe('the clicked-cell anchor (owner decision 2026-08-19)', () => {
     anchor: 'clicked',
   };
 
-  it('smooth+soft lowering: the higher terrace under the brush survives the RELAXATION too', () => {
-    const { map, higher } = unevenLedge();
-    const before = Int16Array.from(map.cells);
-    const target = bandLevelHeight(7);
+  it('smooth has no direction: a lowering and a raising press write the same ground, inside the disc', () => {
+    const lowered = unevenLedge().map;
+    const raised = unevenLedge().map;
+    const before = Int16Array.from(lowered.cells);
+    const disc = new Set<number>();
+    forEachFootprintOffset(3, (dx, dy) => disc.add(cellIndex(lowered, 16 + dx, 16 + dy)));
 
-    applySculpt(map, 16, 16, 3, -DEFAULT_SCULPT_AMOUNT, WIRE_SMOOTH_SOFT);
+    const loweredDiff = applySculpt(lowered, 16, 16, 3, -DEFAULT_SCULPT_AMOUNT, WIRE_SMOOTH_SOFT);
+    const raisedDiff = applySculpt(raised, 16, 16, 3, DEFAULT_SCULPT_AMOUNT, WIRE_SMOOTH_SOFT);
 
-    for (const i of higher) expect(map.cells[i]).toBe(before[i]);
-    for (let i = 0; i < map.cells.length; i++) {
-      expect(map.cells[i]).toBeLessThanOrEqual(Math.max(before[i], target));
-    }
-  });
-
-  it('smooth+soft raising mirrors: cells below the anchored floor are byte-untouched', () => {
-    const { map, lower } = unevenLedge();
-    const deepened: number[] = [];
-    for (const i of lower) {
-      map.cells[i] = bandLevelHeight(4) + 8;
-      deepened.push(i);
-    }
-    const before = Int16Array.from(map.cells);
-    const floor = bandLevelHeight(5);
-
-    applySculpt(map, 16, 16, 3, DEFAULT_SCULPT_AMOUNT, WIRE_SMOOTH_SOFT);
-
-    for (const i of deepened) expect(map.cells[i]).toBe(before[i]);
-    for (let i = 0; i < map.cells.length; i++) {
-      expect(map.cells[i]).toBeGreaterThanOrEqual(Math.min(before[i], floor));
+    expect(loweredDiff.length).toBeGreaterThan(0);
+    expect(raisedDiff).toEqual(loweredDiff);
+    expect(raised.cells).toEqual(lowered.cells);
+    for (let i = 0; i < lowered.cells.length; i++) {
+      if (!disc.has(i)) expect(lowered.cells[i]).toBe(before[i]);
     }
   });
 
@@ -147,58 +138,24 @@ describe('the clicked-cell anchor (owner decision 2026-08-19)', () => {
     return map;
   }
 
-  function cellsTotal(map: Heightmap): number {
-    let total = 0;
-    for (let i = 0; i < map.cells.length; i++) total += map.cells[i]!;
-    return total;
-  }
+  it('smoothing a pit beside a wall rounds it inside the disc; bedrock and the wall beyond stand', () => {
+    // Cells reclassify between the pit's and the wall's bands, never past either.
+    for (const pitHeight of [MIN_HEIGHT, MIN_HEIGHT + BAND_HEIGHT]) {
+      const map = pitWithWall(pitHeight);
+      const before = Int16Array.from(map.cells);
+      const disc = new Set<number>();
+      forEachFootprintOffset(3, (dx, dy) => disc.add(cellIndex(map, 16 + dx, 16 + dy)));
+      const wallBand = drawnBandOfSample(MIN_HEIGHT + 4 * BAND_HEIGHT);
 
-  it('lowering beside a floor pit fills at most one band; bedrock and wall stand', () => {
-    // Melt-up targets above the click: floor cells rise toward it, the wall
-    // above target stays frozen, and nothing leaves bedrock range.
-    const map = pitWithWall(MIN_HEIGHT);
-    const before = Int16Array.from(map.cells);
-    const total = cellsTotal(map);
+      const diff = applySculpt(map, 16, 16, 3, -DEFAULT_SCULPT_AMOUNT, WIRE_SMOOTH_SOFT);
 
-    const diff = applySculpt(map, 16, 16, 3, -DEFAULT_SCULPT_AMOUNT, WIRE_SMOOTH_SOFT);
-
-    expect(diff.length).toBeGreaterThan(0);
-    forEachFootprintOffset(3, (dx, dy) => {
-      const i = cellIndex(map, 16 + dx, 16 + dy);
-      if (before[i] === MIN_HEIGHT) {
+      expect(diff.length).toBeGreaterThan(0);
+      for (let i = 0; i < map.cells.length; i++) {
+        if (!disc.has(i)) expect(map.cells[i]).toBe(before[i]);
         expect(map.cells[i]).toBeGreaterThanOrEqual(MIN_HEIGHT);
-        expect(map.cells[i]).toBeLessThanOrEqual(MIN_HEIGHT + BAND_HEIGHT);
-      } else {
-        expect(map.cells[i]).toBe(before[i]);
+        expect(drawnBandOfSample(map.cells[i]!)).toBeGreaterThanOrEqual(drawnBandOfSample(pitHeight));
+        expect(drawnBandOfSample(map.cells[i]!)).toBeLessThanOrEqual(wallBand);
       }
-    });
-    for (let i = 0; i < map.cells.length; i++) {
-      expect(map.cells[i]).toBeGreaterThanOrEqual(MIN_HEIGHT);
-    }
-  });
-
-  it('filling a pit one band above the floor works: the pit rises into it', () => {
-    const map = pitWithWall(MIN_HEIGHT + BAND_HEIGHT);
-    const before = Int16Array.from(map.cells);
-    const total = cellsTotal(map);
-
-    const diff = applySculpt(map, 16, 16, 3, -DEFAULT_SCULPT_AMOUNT, WIRE_SMOOTH_SOFT);
-
-    expect(diff.length).toBeGreaterThan(0);
-    let pitRose = 0;
-    forEachFootprintOffset(3, (dx, dy) => {
-      const i = cellIndex(map, 16 + dx, 16 + dy);
-      if (before[i]! > MIN_HEIGHT + BAND_HEIGHT) {
-        expect(map.cells[i]).toBe(before[i]);
-      } else if (map.cells[i]! > before[i]!) {
-        pitRose++;
-        expect(map.cells[i]).toBeLessThanOrEqual(before[i]! + BAND_HEIGHT);
-      }
-    });
-    expect(pitRose).toBeGreaterThan(0);
-    expect(Math.abs(cellsTotal(map) - total)).toBeLessThanOrEqual(diff.length * 2 * BAND_HEIGHT);
-    for (let i = 0; i < map.cells.length; i++) {
-      expect(map.cells[i]).toBeGreaterThanOrEqual(MIN_HEIGHT);
     }
   });
 

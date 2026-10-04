@@ -45,6 +45,7 @@ import {
   expectPriceMatchesBrushVolume,
   expectSculptDeterministic,
   expectSolidVolumeConserved,
+  expectStrokeWithinFootprint,
   expectStrokeWithinReach,
   graspStableCells,
   makeSpan,
@@ -359,7 +360,6 @@ function runWireStroke(
   const reach = sculptReachCells(intent.radius, options.profile, options.tool, options.anchor);
   const watched = inspected(map, intent, reach);
   const before = snapshotColumns(map, watched);
-  const volumeBefore = options.tool === 'smooth' ? solidVolume(map) : 0;
 
   const replay = index % FUZZ_DETERMINISM_EVERY === 0 ? cloneHeightmap(map) : null;
   const amount = DEFAULT_SCULPT_AMOUNT * intent.dir;
@@ -381,11 +381,11 @@ function runWireStroke(
     context,
   );
 
-  // The wire smooth is anchored Laplacian: net drift stays inside each
-  // touched cell's clamp window, two bands wide. Only the free smooth,
-  // still exact exchange, carries the conservation promise.
-  if (options.tool === 'smooth') {
-    expectSolidVolumeConserved(volumeBefore, map, context, diff.length * 2 * BAND_HEIGHT);
+  // Wire smooth reclassifies cells across smoothed outlines; nudge re-spaces them.
+  // Neither conserves volume; both write only their disc. Free smooth keeps conservation.
+  if (options.tool === 'smooth' || options.tool === 'nudge') {
+    const footprint = footprintCells(map, intent.x, intent.y, intent.radius);
+    expectStrokeWithinFootprint(map, diff, footprint, context);
   }
   if (options.tool === 'carve' && options.spanBand !== null) {
     const [lo, hi] = carvedSlabRange(options.spanBand, options.depthBands);

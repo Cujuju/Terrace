@@ -33,6 +33,7 @@ import {
   WORLD_UNIT_CELLS,
 } from '../src/index.ts';
 import { EDGE_REGION_MARGIN_CELLS } from '../src/sculpt/edges.ts';
+import { OUTLINE_SMOOTH_READ_MARGIN_CELLS } from '../src/sculpt/outlineSmooth.ts';
 
 describe('createHeightmap', () => {
   it('allocates a zeroed size×size grid', () => {
@@ -125,10 +126,13 @@ describe('deep strata constants', () => {
 describe('sculptReachCells — one statement of how far a stroke can write', () => {
   const RADIUS = 4;
 
-  it('gives every relaxing tool its own cascade bound and the rest their sweep', () => {
+  it('gives smooth and nudge their read margin, settle its cascade, and the rest their sweep', () => {
+    // Smooth and nudge write only their disc but read a margin past it (reach.ts).
     for (const radius of [1, RADIUS, MAX_BRUSH_RADIUS]) {
       expect([radius, sculptReachCells(radius, 'hard', 'smooth', 'clicked')])
-        .toEqual([radius, 2 * radius + SMOOTH_REACH_MARGIN_CELLS]);
+        .toEqual([radius, radius + OUTLINE_SMOOTH_READ_MARGIN_CELLS]);
+      expect([radius, sculptReachCells(radius, 'hard', 'nudge', 'clicked')])
+        .toEqual([radius, radius + smoothCascadeReachCells(radius)]);
     }
     expect(sculptReachCells(RADIUS, 'soft', LIBRARY_SCULPT_TOOL, 'free'))
       .toBe(RADIUS + SMOOTH_SPREAD_CELLS);

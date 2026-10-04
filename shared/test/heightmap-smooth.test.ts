@@ -169,12 +169,9 @@ describe('a player stroke is never undone by its own relaxation (2026-08-22)', (
     }
   });
 
-  it('still spills beyond its footprint — smooth has not become stamp', () => {
+  it('writes only its disc: outline vertices past the brush stay pinned', () => {
     for (const radius of LADDER) {
-      const map = createHeightmap(WORLD);
-      for (let y = 0; y < WORLD; y++) {
-        for (let x = 61; x < WORLD; x++) map.cells[y * WORLD + x] = 4 * BAND_HEIGHT;
-      }
+      const map = rollingHills();
       const before = Int16Array.from(map.cells);
       const cx = 61;
       const cy = 47;
@@ -183,13 +180,14 @@ describe('a player stroke is never undone by its own relaxation (2026-08-22)', (
         footprint.add(cellIndex(map, cx + dx, cy + dy));
       });
 
-      applySculpt(map, cx, cy, radius, DEFAULT_SCULPT_AMOUNT, wireSmooth);
+      const diff = applySculpt(map, cx, cy, radius, DEFAULT_SCULPT_AMOUNT, wireSmooth);
 
+      expect(diff.length).toBeGreaterThan(0);
       let movedOutside = 0;
       for (let i = 0; i < map.cells.length; i++) {
         if (map.cells[i] !== before[i] && !footprint.has(i)) movedOutside++;
       }
-      expect(movedOutside).toBeGreaterThan(0);
+      expect([radius, movedOutside]).toEqual([radius, 0]);
     }
   });
 });
@@ -235,39 +233,19 @@ describe('an anchored smooth moves a wall, it never manufactures one', () => {
     return total;
   }
 
-  it('a one-band step melts to a ramp from every click that reaches it', () => {
-    const high = LOW + BAND_HEIGHT;
+  it('a straight one-band step keeps every band: smooth removes kinks, it never spreads a wall', () => {
     for (const cx of REACHING_CLICKS) {
       const map = wall(1);
-      const total = mapTotal(map);
       const before = Int16Array.from(map.cells);
       const footprint = footprintOfPress(map, cx);
 
-      let touched = press(map, cx);
-      expect(touched).toBeGreaterThan(0);
-      let movedUnderBrush = 0;
-      for (const i of footprint) if (map.cells[i] !== before[i]) movedUnderBrush++;
-      expect(movedUnderBrush).toBeGreaterThan(0);
-
       let last = -1;
-      for (let k = 1; k < PRESSES; k++) {
-        last = press(map, cx);
-        touched += last;
-      }
+      for (let k = 0; k < PRESSES; k++) last = press(map, cx);
       expect(last).toBe(0);
 
-      expect(Math.abs(mapTotal(map) - total)).toBeLessThanOrEqual(touched * 2 * BAND_HEIGHT);
-      // Brush tips freeze between target cap and spill clamp.
-      for (let y = ROW - smoothCascadeReachCells(RADIUS); y <= ROW + smoothCascadeReachCells(RADIUS); y++) {
-        for (let x = cx - smoothCascadeReachCells(RADIUS); x <= cx + smoothCascadeReachCells(RADIUS); x++) {
-          expect(Math.abs(heightAt(map, x, y) - heightAt(map, x + 1, y))).toBeLessThanOrEqual(BAND_HEIGHT);
-        }
-      }
-      expectGradientLimitHoldsWithin(map, cx, ROW, smoothCascadeReachCells(RADIUS) - 2);
-      expect(heightAt(map, WALL_X, ROW)).toBeGreaterThan(LOW);
-      for (let x = 0; x < SIZE; x++) {
-        expect(heightAt(map, x, ROW)).toBeGreaterThanOrEqual(LOW);
-        expect(heightAt(map, x, ROW)).toBeLessThanOrEqual(high);
+      for (let i = 0; i < map.cells.length; i++) {
+        expect(drawnBandOfSample(map.cells[i]!)).toBe(drawnBandOfSample(before[i]!));
+        if (!footprint.has(i)) expect(map.cells[i]).toBe(before[i]);
       }
     }
   });

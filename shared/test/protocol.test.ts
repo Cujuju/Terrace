@@ -10,7 +10,9 @@ import {
   LIBRARY_SCULPT_TOOL,
   LOWEST_CARVEABLE_BAND,
   MIN_BAND,
+  NUDGE_STRENGTH_DEFAULT,
   SCULPT_TOOLS,
+  SMOOTH_KINK_HALF_CELLS_DEFAULT,
   sculptOptionsOf,
   TOOLS_WITHOUT_EDGE_PROFILE,
   validateRestorePointsRequest,
@@ -135,7 +137,7 @@ describe('sculptOptionsOf — the normalisation contract', () => {
   const base = { type: 'sculpt', x: 10, y: 20, radius: 2, dir: 1 } as const;
 
   it('resolves an intent that names neither to the wire default (stamp + soft)', () => {
-    const wireDefault = { tool: 'stamp', depthBands: CARVE_DEFAULT_DEPTH_BANDS, profile: 'soft', spill: 'banded', anchor: 'clicked', targetBand: null, runFloorBand: null, dragAlt: false, spanBand: null, sweepFrom: null, smoothLambda: 50, smoothBilateral: false, smoothCooldown: false, smoothFeather: 0, smoothFullSteps: false, smoothKernel: 'cross', smoothRim: 0, smoothUnbiased: false };
+    const wireDefault = { tool: 'stamp', depthBands: CARVE_DEFAULT_DEPTH_BANDS, profile: 'soft', spill: 'banded', anchor: 'clicked', targetBand: null, runFloorBand: null, dragAlt: false, spanBand: null, sweepFrom: null, nudgeStrength: NUDGE_STRENGTH_DEFAULT, smoothKinkHalfCells: SMOOTH_KINK_HALF_CELLS_DEFAULT, smoothWalls: false, smoothLambda: 50, smoothBilateral: false, smoothCooldown: false, smoothFeather: 0, smoothFullSteps: false, smoothKernel: 'cross', smoothRim: 0, smoothUnbiased: false };
     expect(sculptOptionsOf(base)).toEqual(wireDefault);
     expect(WIRE_DEFAULT_SCULPT_OPTIONS).toEqual(wireDefault);
   });
@@ -152,11 +154,18 @@ describe('sculptOptionsOf — the normalisation contract', () => {
       dragAlt: false,
       spanBand: null,
       sweepFrom: null,
+      nudgeStrength: NUDGE_STRENGTH_DEFAULT,
+      smoothKinkHalfCells: SMOOTH_KINK_HALF_CELLS_DEFAULT,
+      smoothWalls: false,
       smoothLambda: 50,
       smoothBilateral: false, smoothCooldown: false, smoothFeather: 0, smoothFullSteps: false, smoothKernel: 'cross', smoothRim: 0, smoothUnbiased: false,
     });
     expect(sculptOptionsOf({ ...base, tool: 'smooth', smoothLambda: 80 }).smoothLambda).toBe(80);
     expect(sculptOptionsOf({ ...base, tool: 'stamp', smoothLambda: 80 }).smoothLambda).toBe(50);
+    expect(sculptOptionsOf({ ...base, tool: 'nudge', nudgeStrength: 80 }).nudgeStrength).toBe(80);
+    expect(sculptOptionsOf({ ...base, tool: 'stamp', nudgeStrength: 80 }).nudgeStrength).toBe(NUDGE_STRENGTH_DEFAULT);
+    expect(sculptOptionsOf({ ...base, tool: 'smooth', smoothKinkHalfCells: 4 }).smoothKinkHalfCells).toBe(4);
+    expect(sculptOptionsOf({ ...base, tool: 'nudge', smoothKinkHalfCells: 4 }).smoothKinkHalfCells).toBe(SMOOTH_KINK_HALF_CELLS_DEFAULT);
     expect(sculptOptionsOf({ ...base, profile: 'hard' })).toEqual({
       tool: 'stamp',
       depthBands: CARVE_DEFAULT_DEPTH_BANDS,
@@ -168,6 +177,9 @@ describe('sculptOptionsOf — the normalisation contract', () => {
       dragAlt: false,
       spanBand: null,
       sweepFrom: null,
+      nudgeStrength: NUDGE_STRENGTH_DEFAULT,
+      smoothKinkHalfCells: SMOOTH_KINK_HALF_CELLS_DEFAULT,
+      smoothWalls: false,
       smoothLambda: 50,
       smoothBilateral: false, smoothCooldown: false, smoothFeather: 0, smoothFullSteps: false, smoothKernel: 'cross', smoothRim: 0, smoothUnbiased: false,
     });
@@ -182,6 +194,9 @@ describe('sculptOptionsOf — the normalisation contract', () => {
       dragAlt: false,
       spanBand: null,
       sweepFrom: null,
+      nudgeStrength: NUDGE_STRENGTH_DEFAULT,
+      smoothKinkHalfCells: SMOOTH_KINK_HALF_CELLS_DEFAULT,
+      smoothWalls: false,
       smoothLambda: 50,
       smoothBilateral: false, smoothCooldown: false, smoothFeather: 0, smoothFullSteps: false, smoothKernel: 'cross', smoothRim: 0, smoothUnbiased: false,
     });
@@ -378,8 +393,8 @@ describe('smoothLambda — the smooth strength on the wire', () => {
 describe('the tool set is the wire contract, not a local list', () => {
   const base = { type: 'sculpt', x: 10, y: 20, radius: 2, dir: -1 } as const;
 
-  it('is exactly the four tools, in wire/UI order', () => {
-    expect(SCULPT_TOOLS).toEqual(['stamp', 'smooth', 'drag', 'carve']);
+  it('is exactly the five tools, in wire/UI order', () => {
+    expect(SCULPT_TOOLS).toEqual(['stamp', 'smooth', 'nudge', 'drag', 'carve']);
   });
 
   it('refuses the library-only tool from the wire, whole intent and all', () => {

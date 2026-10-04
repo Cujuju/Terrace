@@ -18,107 +18,107 @@
     },
     {
       "name": "arch-crest-smooth",
-      "changed": 155,
-      "diffHash": "2815e25a",
-      "hash": "ef313285"
+      "changed": 16,
+      "diffHash": "7ff16075",
+      "hash": "16aaff77"
     },
     {
       "name": "carve-click-band",
       "changed": 3,
       "diffHash": "f376cdd8",
-      "hash": "5840f151"
+      "hash": "e205f26b"
     },
     {
       "name": "carve-second-site",
       "changed": 3,
       "diffHash": "7b46c2df",
-      "hash": "1bf821c4"
+      "hash": "05451d66"
     },
     {
       "name": "drag-raise-one-band",
       "changed": 22,
       "diffHash": "61411ab2",
-      "hash": "84610056"
+      "hash": "8b59867c"
     },
     {
       "name": "drag-lower-swept",
-      "changed": 24,
-      "diffHash": "ff5be9e7",
-      "hash": "b30ca57c"
+      "changed": 16,
+      "diffHash": "4c4cf1db",
+      "hash": "307a66f5"
     },
     {
       "name": "stamp-band-anchored",
       "changed": 8,
       "diffHash": "108e9c56",
-      "hash": "c043a938"
+      "hash": "be2fea59"
     },
     {
       "name": "stamp-hard-raise-centre",
       "changed": 53,
       "diffHash": "e161f3ec",
-      "hash": "03584df1"
+      "hash": "143d5030"
     },
     {
       "name": "stamp-soft-raise",
       "changed": 112,
-      "diffHash": "01f57cec",
-      "hash": "e9beacb1"
+      "diffHash": "0e5ae2a5",
+      "hash": "be831939"
     },
     {
       "name": "stamp-soft-lower",
-      "changed": 226,
-      "diffHash": "5bc6db38",
-      "hash": "deb43958"
+      "changed": 317,
+      "diffHash": "873b7fae",
+      "hash": "e4ef3fca"
     },
     {
       "name": "stamp-hard-lower-free",
       "changed": 32,
       "diffHash": "2d1f85f0",
-      "hash": "da4584c9"
+      "hash": "a998597b"
     },
     {
       "name": "smooth-banded-raise",
-      "changed": 84,
-      "diffHash": "950229d5",
-      "hash": "374786df"
+      "changed": 8,
+      "diffHash": "5e021003",
+      "hash": "f1187afd"
     },
     {
       "name": "smooth-free-lower",
       "changed": 515,
-      "diffHash": "47cd13b1",
-      "hash": "b26d474d"
+      "diffHash": "fd97a3ed",
+      "hash": "f770ee6f"
     },
     {
       "name": "edge-stamp-origin-corner",
       "changed": 13,
       "diffHash": "9eff1565",
-      "hash": "de046cbf"
+      "hash": "b57c77f5"
     },
     {
       "name": "edge-stamp-far-column",
-      "changed": 178,
-      "diffHash": "328c8dda",
-      "hash": "abbb2651"
+      "changed": 198,
+      "diffHash": "c9d6b596",
+      "hash": "5ee09c64"
     },
     {
       "name": "edge-smooth-left-edge",
-      "changed": 64,
-      "diffHash": "0f30bdb2",
-      "hash": "9a0d353a"
+      "changed": 8,
+      "diffHash": "94dad129",
+      "hash": "25717d9f"
     },
     {
       "name": "edge-drag-left-edge",
       "changed": 9,
       "diffHash": "b9a49297",
-      "hash": "2181d7e5"
+      "hash": "5edcf7f8"
     },
     {
       "name": "settle-library-tool",
       "changed": 43,
       "diffHash": "d4e3afff",
-      "hash": "d1be6bb5"
+      "hash": "33c95388"
     }
   ],
-  "layeredColumnsAfter": 536,
-  "hashAfter": "d1be6bb5"
+  "layeredColumnsAfter": 537,
+  "hashAfter": "33c95388"
 }

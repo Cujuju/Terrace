@@ -10,6 +10,7 @@ import {
   createSeededRng,
   DEFAULT_SCULPT_AMOUNT,
   drawnBandOfSample,
+  forEachFootprintOffset,
   highestCeilingUnderSpan,
   MAX_BRUSH_RADIUS,
   readSpans,
@@ -21,8 +22,9 @@ import {
   type SculptOptions,
   type SeededRng,
 } from '../src/index.ts';
+import { OUTLINE_SMOOTH_READ_MARGIN_CELLS } from '../src/sculpt/outlineSmooth.ts';
 
-describe('smooth builds the layer view only where the sweep meets a layered column', () => {
+describe('relaxation builds the layer view only where the sweep meets a layered column', () => {
   const SIZE = 64;
   const GROUND_BAND = 10;
   const CARVED_X = 1;
@@ -32,11 +34,12 @@ describe('smooth builds the layer view only where the sweep meets a layered colu
   const FAR_X = 48;
   const FAR_Y = 48;
   const STROKE_RADIUS = 8;
+  // Free smooth runs the relaxation sweep, where the gate lives; player smooth always reads a bounded view.
   const SMOOTH_STROKE: SculptOptions = {
     tool: 'smooth',
     profile: 'soft',
     spill: 'banded',
-    anchor: 'clicked',
+    anchor: 'free',
   };
 
   function flatWorld(carved: boolean): Heightmap {
@@ -129,9 +132,8 @@ describe('an anchored smooth conserves height (2026-09-15)', () => {
   const TOWER_RADIUS = 3;
   const TOWER_PRESSES = 6;
   const TRENCH_DEPTHS = [6, 20, 40];
-  // Measured against the Laplacian melt; the limit below is a hang guard.
-  const CONVERGED_PRESSES = 29;
-  const CONVERGENCE_LIMIT = 40;
+  // Hang guard: the outline smooth settles this trench in 58 presses.
+  const CONVERGENCE_LIMIT = 100;
   const SMOOTH_LOWER = sculptOptionsOf({
     type: 'sculpt', x: CLICK_X, y: ROW, radius: MAX_BRUSH_RADIUS, dir: -1, tool: 'smooth',
   });
@@ -262,7 +264,8 @@ describe('an anchored smooth conserves height (2026-09-15)', () => {
     ['random', noiseMap],
     ['player-built', builtMap],
     ['waterline', shoreMap],
-  ])('no press on %s ground drifts more than two bands per touched cell', (_kind, make) => {
+  ])('no press on %s ground moves a cell off its disc or outside its window\'s bands', (_kind, make) => {
+    // Player smooth reclassifies disc cells between smoothed outlines: no volume bound, no new peak or pit.
     const rng = createSeededRng(RANDOM_SEED);
     const span = RANDOM_SIZE - 2 * RANDOM_MARGIN;
     let pressed = 0;
@@ -275,15 +278,30 @@ describe('an anchored smooth conserves height (2026-09-15)', () => {
         const cy = RANDOM_MARGIN + Math.floor(rng.next() * span);
         const radius = 1 + Math.floor(rng.next() * MAX_BRUSH_RADIUS);
         const dir = rng.next() < 0.5 ? 1 : -1;
-        const before = totalOf(map);
+        const reach = radius + OUTLINE_SMOOTH_READ_MARGIN_CELLS;
+        let lowBand = Infinity;
+        let highBand = -Infinity;
+        for (let y = Math.max(0, cy - reach); y <= Math.min(map.size - 1, cy + reach); y++) {
+          for (let x = Math.max(0, cx - reach); x <= Math.min(map.size - 1, cx + reach); x++) {
+            const band = drawnBandOfSample(map.cells[y * map.size + x]!);
+            lowBand = Math.min(lowBand, band);
+            highBand = Math.max(highBand, band);
+          }
+        }
+        const disc = new Set<number>();
+        forEachFootprintOffset(radius, (dx, dy) => disc.add((cy + dy) * map.size + cx + dx));
         const smoothPress = sculptOptionsOf({
           type: 'sculpt', x: cx, y: cy, radius, dir, tool: 'smooth',
         });
         const diff = applySculpt(map, cx, cy, radius, dir * DEFAULT_SCULPT_AMOUNT, smoothPress);
-        const flux = Math.abs(totalOf(map) - before);
         pressed++;
         if (diff.length > 0) moved++;
-        if (flux > diff.length * 2 * BAND_HEIGHT) breaches.push({ m, cx, cy, radius, dir, flux });
+        for (const cell of diff) {
+          const band = drawnBandOfSample(cell.h);
+          if (!disc.has(cell.y * map.size + cell.x) || band < lowBand || band > highBand) {
+            breaches.push({ m, cx, cy, radius, dir, cell, lowBand, highBand });
+          }
+        }
       }
     }
     expect(pressed).toBe(RANDOM_MAPS * RANDOM_PRESSES_PER_MAP);
@@ -295,7 +313,9 @@ describe('an anchored smooth conserves height (2026-09-15)', () => {
     const map = trenchAndTower(TRENCH_DEPTHS[1]!);
     let presses = 0;
     while (presses < CONVERGENCE_LIMIT && press(map) > 0) presses++;
-    expect(presses).toBe(CONVERGED_PRESSES);
+    expect(presses).toBeLessThan(CONVERGENCE_LIMIT);
+    const settled = Int16Array.from(map.cells);
     expect(press(map)).toBe(0);
+    expect(map.cells).toEqual(settled);
   });
 });

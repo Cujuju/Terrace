@@ -21,7 +21,6 @@ import {
   setColumn,
   smooth,
   SMOOTH_PASS_LIMIT,
-  smoothCascadeReachCells,
   WIRE_DEFAULT_SCULPT_OPTIONS,
   type Heightmap,
   type SculptOptions,
@@ -168,76 +167,40 @@ describe('relaxation conserves height exactly (issue #108)', () => {
 
   const TERRACE_SIZE = 96;
   const TERRACE_CENTRE = 48;
-  const CASCADE_TAIL_PRESSES = 5;
+  /** Hang guard for repeated player smooths on genesis terraces. */
   const CASCADE_TAIL_LIMIT = 40;
 
-  it('the PLAYER smooth tool on genesis terraces: real cascade, pinned', () => {
+  it('the PLAYER smooth on genesis terraces rounds the corners under it, then settles', () => {
     const map = genesisTerraces(TERRACE_SIZE);
-    const total = mapTotal(map);
     const before = Int16Array.from(map.cells);
     const PLAYER_SMOOTH: SculptOptions = { ...WIRE_DEFAULT_SCULPT_OPTIONS, tool: 'smooth' };
+    const press = (): number =>
+      applySculpt(map, TERRACE_CENTRE, TERRACE_CENTRE, 4, -DEFAULT_SCULPT_AMOUNT, PLAYER_SMOOTH).length;
 
-    const diff = applySculpt(
-      map,
-      TERRACE_CENTRE,
-      TERRACE_CENTRE,
-      4,
-      -DEFAULT_SCULPT_AMOUNT,
-      PLAYER_SMOOTH,
-    );
-    let moved = 0;
-    for (let i = 0; i < map.cells.length; i++) {
-      if (map.cells[i] !== before[i]) moved++;
-    }
-    expect(diff.length).toBe(96);
-    expect(moved).toBe(96);
-    expect(Math.abs(mapTotal(map) - total)).toBeLessThanOrEqual(diff.length * 2 * BAND_HEIGHT);
-
-    const counts = [diff.length];
-    for (let stroke = 0; stroke < 3; stroke++) {
-      counts.push(
-        applySculpt(map, TERRACE_CENTRE, TERRACE_CENTRE, 4, -DEFAULT_SCULPT_AMOUNT, PLAYER_SMOOTH)
-          .length,
-      );
-    }
-    // The melt proceeds in waves: each stroke's walking targets free new
-    // cells, so later strokes bite harder before the ground goes quiet.
-    expect(counts).toEqual([96, 152, 119, 129]);
-
+    // The brush sits on a lattice corner: four terrace blocks meet in a kink.
+    expect(press()).toBeGreaterThan(0);
     let tail = 0;
-    while (tail < CASCADE_TAIL_LIMIT) {
-      if (
-        applySculpt(map, TERRACE_CENTRE, TERRACE_CENTRE, 4, -DEFAULT_SCULPT_AMOUNT, PLAYER_SMOOTH)
-          .length === 0
-      ) {
-        break;
-      }
-      tail++;
+    while (tail < CASCADE_TAIL_LIMIT && press() > 0) tail++;
+    expect(tail).toBeLessThan(CASCADE_TAIL_LIMIT);
+
+    const footprint = brushFootprint(map, TERRACE_CENTRE, TERRACE_CENTRE, 4);
+    for (let i = 0; i < map.cells.length; i++) {
+      if (!footprint.has(i)) expect(map.cells[i]).toBe(before[i]);
     }
-    expect(tail).toBe(CASCADE_TAIL_PRESSES);
   });
 
-  it('the player smooth never writes past its footprint plus its cascade reach', () => {
+  it('the player smooth writes only its disc, inside sculptReachCells', () => {
+    let moved = 0;
     for (const radius of [1, 4, MAX_BRUSH_RADIUS]) {
       for (const dir of [1, -1] as const) {
-        const reach = smoothCascadeReachCells(radius);
         const map = genesisTerraces(TERRACE_SIZE);
         const footprint = brushFootprint(map, TERRACE_CENTRE, TERRACE_CENTRE, radius);
-        let minX = TERRACE_SIZE, minY = TERRACE_SIZE, maxX = -1, maxY = -1;
-        for (const i of footprint) {
-          const x = i % TERRACE_SIZE;
-          const y = (i - x) / TERRACE_SIZE;
-          minX = Math.min(minX, x); maxX = Math.max(maxX, x);
-          minY = Math.min(minY, y); maxY = Math.max(maxY, y);
-        }
         const diff = applySculpt(map, TERRACE_CENTRE, TERRACE_CENTRE, radius, dir * DEFAULT_SCULPT_AMOUNT, {
           ...WIRE_DEFAULT_SCULPT_OPTIONS,
           tool: 'smooth',
         });
-        expect(diff.length).toBeGreaterThan(0);
-        const escaped = diff.filter((cell) =>
-          cell.x < minX - reach || cell.x > maxX + reach ||
-          cell.y < minY - reach || cell.y > maxY + reach);
+        moved += diff.length;
+        const escaped = diff.filter((cell) => !footprint.has(cellIndex(map, cell.x, cell.y)));
         expect([radius, dir, escaped]).toEqual([radius, dir, []]);
         // The server resyncs a faulted stroke over exactly this rectangle.
         const bound = sculptReachCells(radius, 'hard', 'smooth', 'clicked');
@@ -247,6 +210,7 @@ describe('relaxation conserves height exactly (issue #108)', () => {
         }
       }
     }
+    expect(moved).toBeGreaterThan(0);
   });
 
   it('settle grades only what its stroke added: terraces it did not raise keep their steps', () => {
@@ -360,25 +324,33 @@ describe('relaxation conserves height exactly (issue #108)', () => {
     expect(mapTotal(map)).toBe(0);
   });
 
-  it('never moves a pair APART when a span cap is already violated (the movePair guard)', () => {
-    const map = createHeightmap(16);
+  it('a span ceiling never drops below its floor band, and a held side stops the pair (the movePair guard)', () => {
+    // The layer view floors a span ceiling at its band floor, where an edge-encoded ceiling may sit.
     const ROOF_BAND = 2;
-    // Drawn, but capped BELOW its own band level, so the layer view's `lo`
-    // already sits above the ceiling it bounds.
-    const ROOF_CEILING = bandFloorHeight(ROOF_BAND) + 1;
-    setColumn(map, 8, 8, [
-      { floorBand: BEDROCK_BAND, ceiling: -100 },
-      { floorBand: ROOF_BAND, ceiling: ROOF_CEILING },
-    ]);
-    const layered = cellIndex(map, 8, 8);
-    const neighbour = cellIndex(map, 9, 8);
-    const before = Int16Array.from(map.cells);
-    const seed = new Set([layered, neighbour]);
+    const roofed = (ceiling: number): Heightmap => {
+      const map = createHeightmap(16);
+      setColumn(map, 8, 8, [
+        { floorBand: BEDROCK_BAND, ceiling: -100 },
+        { floorBand: ROOF_BAND, ceiling },
+      ]);
+      return map;
+    };
+    const floor = bandFloorHeight(ROOF_BAND);
 
-    smooth(map, new Set(), seed);
+    // At the cap: the held side stops the exchange outright.
+    const held = roofed(floor);
+    const layered = cellIndex(held, 8, 8);
+    const neighbour = cellIndex(held, 9, 8);
+    const before = Int16Array.from(held.cells);
+    smooth(held, new Set(), new Set([layered, neighbour]));
+    expect(Array.from(held.cells)).toEqual(Array.from(before));
 
-    expect(map.cells[layered]).toBe(ROOF_CEILING);
-    expect(Array.from(map.cells)).toEqual(Array.from(before));
+    // One unit above it: the ceiling gives exactly that unit, conserved.
+    const above = roofed(floor + 1);
+    const total = mapTotal(above);
+    smooth(above, new Set(), new Set([layered, neighbour]));
+    expect(above.cells[layered]).toBe(floor);
+    expect(mapTotal(above)).toBe(total);
   });
 
   it('invents nothing scouring a head out of steep ground (issue #239)', () => {

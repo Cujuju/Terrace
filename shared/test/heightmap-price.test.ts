@@ -11,6 +11,7 @@ import {
   MIN_BRUSH_RADIUS,
   CARVE_DEFAULT_DEPTH_BANDS,
   MAX_DRAG_SWEEP_CELLS,
+  SCULPT_PROFILES,
   bandLevelHeight,
   drawnBandOfSample,
   displacementOf,
@@ -22,25 +23,30 @@ import {
   strokeReachBox,
   strokeSolidMeasure,
   type SculptIntent,
+  type SculptProfile,
 } from '../src/index.ts';
+import { EDGE_REGION_MARGIN_CELLS } from '../src/sculpt/edges.ts';
 
 function observedDisplacement(
   radius: number,
-  profile: 'soft' | 'hard',
+  profile: SculptProfile,
   amount: number,
 ): number {
-  const size = 64;
+  const sweep = sculptSweepRadius(radius, profile, 'stamp', 'clicked');
+  // The whole sweep and its edge margin stay on the map.
+  const centre = sweep + EDGE_REGION_MARGIN_CELLS;
+  const size = 2 * centre + 1;
   const map = createHeightmap(size);
   const start = bandLevelHeight(8);
   map.cells.fill(start);
 
   const options = { tool: 'stamp', profile, anchor: 'clicked' } as const;
-  applySculpt(map, 32, 32, radius, amount, options);
+  applySculpt(map, centre, centre, radius, amount, options);
 
   // Band crossings only: the edge encoding moves rim heights within their bands.
   let total = 0;
-  forEachFootprintOffset(sculptSweepRadius(radius, profile, 'stamp', 'clicked'), (dx, dy) => {
-    const now = map.cells[(32 + dy) * size + (32 + dx)]!;
+  forEachFootprintOffset(sweep, (dx, dy) => {
+    const now = map.cells[(centre + dy) * size + (centre + dx)]!;
     total += Math.abs(drawnBandOfSample(now) - drawnBandOfSample(start)) * BAND_HEIGHT;
   });
   return total;
@@ -48,19 +54,18 @@ function observedDisplacement(
 
 describe('sculptDisplacementUnits', () => {
   it('covers the volume a press moves, exactly for a fill, for every radius × profile', () => {
-    for (const profile of ['soft', 'hard'] as const) {
+    for (const profile of SCULPT_PROFILES) {
       for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
         const price = sculptDisplacementUnits(radius, 'stamp', profile, CARVE_DEFAULT_DEPTH_BANDS);
         const moved = observedDisplacement(radius, profile, DEFAULT_SCULPT_AMOUNT);
-        // A soft press pays for a sheet flat ground gives it no room to hang.
-        if (profile === 'hard') expect(price).toBe(moved);
-        else expect(price).toBeGreaterThanOrEqual(moved);
+        // Flat ground: the disc rises one band; every flank already stands at its target.
+        expect([profile, radius, price]).toEqual([profile, radius, moved]);
       }
     }
   });
 
   it('prices a lower exactly like the raise that undoes it', () => {
-    for (const profile of ['soft', 'hard'] as const) {
+    for (const profile of SCULPT_PROFILES) {
       for (let radius = MIN_BRUSH_RADIUS; radius <= MAX_BRUSH_RADIUS; radius++) {
         expect(observedDisplacement(radius, profile, -DEFAULT_SCULPT_AMOUNT)).toBe(
           observedDisplacement(radius, profile, DEFAULT_SCULPT_AMOUNT),

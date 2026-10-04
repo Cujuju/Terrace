@@ -214,6 +214,21 @@ export function expectStrokeWithinReach(
   report(violations, context);
 }
 
+/** Smooth and nudge write only their disc. */
+export function expectStrokeWithinFootprint(
+  map: Heightmap,
+  diff: readonly CellDiff[],
+  footprint: ReadonlySet<number>,
+  context = '',
+): void {
+  const violations: string[] = [];
+  for (const cell of diff) {
+    const i = cell.y * map.size + cell.x;
+    if (!footprint.has(i)) violations.push(`${at(map, i)} changed but lies outside the footprint`);
+  }
+  report(violations, context);
+}
+
 /** A rectangle of cells, inclusive on both corners. */
 export type CellBox = readonly [number, number, number, number];
 
@@ -459,7 +474,7 @@ export function expectPriceMatchesBrushVolume(
   if (tool === 'carve') {
     const cut = cells * depthBands * BAND_HEIGHT;
     if (price !== cut) violations.push(`carve over ${cells} cells prices ${price}, cuts ${cut}`);
-  } else if (tool === 'smooth') {
+  } else if (tool === 'smooth' || tool === 'nudge') {
     // Graduated: the centre cell pays the full step, every other cell less.
     const graduated = cells === 1 ? price === fill : price > 0 && price < fill;
     if (!graduated) {
