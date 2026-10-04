@@ -984,6 +984,8 @@ export function createClientPluginHost(
     resetWorld(worldGeneration?: number): void {
       if (worldGeneration !== undefined && worldGeneration === joinedGeneration) return;
       joinedGeneration = worldGeneration;
+      // Held messages describe the old world; the new one's follow this snapshot.
+      for (const held of heldMessages.values()) held.length = 0;
       for (const [handler, name] of worldResetHandlers) {
         try {
           handler();
