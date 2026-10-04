@@ -341,6 +341,7 @@ export class WorldManager {
     const id = this.activeId;
     if (id === null) return 'noWorldLoaded';
 
+    const original = this.session;
     const failure = this.installAndProbe(id, replacement);
     if (failure === null) {
       this.announceBuildIdentity();
@@ -351,7 +352,9 @@ export class WorldManager {
     logError(
       `reloading plugin "${name}" failed at ${failure} — rolling back to build ${previous.version}`,
     );
-    const rolledBack = this.installAndProbe(id, previous, true);
+    // Discard only a probe session the new build opened; the original (e.g. after a
+    // failed save) still holds unsaved edits and must be saved like any switch.
+    const rolledBack = this.installAndProbe(id, previous, this.session !== original);
     if (rolledBack !== null) {
       logError(`rolling plugin "${name}" back to build ${previous.version} also failed at ${rolledBack}`);
     }
@@ -386,15 +389,15 @@ export class WorldManager {
   private installAndProbe(
     id: string,
     build: LoadedPlugin,
-    rollingBack = false,
+    discardProbe = false,
   ): ReloadFailureStep | null {
     const name = build.plugin.name;
     this.deps.plugins.replace(build);
 
     try {
-      this.openInto(id, rollingBack);
+      this.openInto(id, discardProbe);
     } catch (error) {
-      logError(`opening world "${id}" over ${rollingBack ? 'the old' : 'the new'} plugin failed`, error);
+      logError(`opening world "${id}" over build ${build.version} of plugin "${name}" failed`, error);
       return 'opening the world';
     }
 
