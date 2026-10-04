@@ -32,6 +32,10 @@ export const MAX_WORLD_EVENT_DEPTH = 4;
 
 export const SECOND_LOOK_MODIFY_REASON = 'plugin-modified-on-second-look';
 
+// Process-wide, seeded from the wall clock, so no two hosts (world switch,
+// reopen, restart) ever publish the same generation to a connected client.
+let lastWorldGeneration = Date.now();
+
 interface PluginEntry {
   readonly loaded: LoadedPlugin;
   readonly api: WorldApi;
@@ -84,8 +88,8 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
     return this.entries.map((entry) => entry.loaded.plugin.name);
   }
 
-  // Counts onWorldCreate sweeps: plugin ids restart with each, so a client
-  // resets its id-keyed state when the generation it joined under changes.
+  // Identifies the latest onWorldCreate sweep: plugin ids restart with each,
+  // so a client resets its id-keyed state when the generation changes.
   private generation = 0;
 
   get worldGeneration(): number {
@@ -119,7 +123,7 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
   }
 
   worldCreate(): void {
-    this.generation++;
+    this.generation = ++lastWorldGeneration;
     for (const { loaded, api } of this.entries) {
       const { plugin } = loaded;
       if (!plugin.onWorldCreate) continue;
