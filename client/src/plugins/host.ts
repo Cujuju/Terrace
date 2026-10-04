@@ -974,6 +974,11 @@ export function createClientPluginHost(
         if (entry.plugin.clientOnly === true) continue;
         if (!live.has(name)) unmountPlugin(name);
       }
+      // A plugin still preloading when the server drops it must not attach afterwards.
+      for (const plugin of plugins) {
+        if (plugin.clientOnly === true || live.has(plugin.name)) continue;
+        if (pendingMounts.has(plugin.name)) unmountPlugin(plugin.name);
+      }
       for (const plugin of plugins) {
         const wanted = live.has(plugin.name) || plugin.clientOnly === true;
         if (wanted && !mounted.has(plugin.name) && !pendingMounts.has(plugin.name))
