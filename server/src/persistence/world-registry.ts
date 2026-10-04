@@ -339,7 +339,8 @@ export class WorldRegistry {
     if (!existsSync(absolute)) return null;
 
     const stored = readSummary({ id: 'adopted', path: absolute });
-    const name = stored.unreadable === undefined ? stored.name : (preferredName ?? 'adopted');
+    const readable = stored.unreadable === undefined;
+    const name = preferredName ?? (readable ? stored.name : 'adopted');
 
     const base = slugifyWorldName(name);
     if (base.length > 0 && (this.has(base) || this.hasArchived(base))) {
@@ -351,6 +352,15 @@ export class WorldRegistry {
 
     this.checkpoint(absolute);
     copyFileSync(absolute, this.pathFor(id));
+    // The copy carries the name it was imported under, as a duplicate does.
+    if (readable && name !== stored.name) {
+      const store = SnapshotStore.open(this.pathFor(id));
+      try {
+        store.setWorldName(name);
+      } finally {
+        store.close();
+      }
+    }
     logInfo(`adopted "${absolute}" as world "${id}" ("${name}")`);
     return id;
   }
