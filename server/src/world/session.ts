@@ -199,7 +199,7 @@ export function createWorldFile(
   }
 }
 
-/** As `createWorldFile`, with genesis on a worker thread. The store exists first, so the id is taken. */
+/** As `createWorldFile`, with genesis on a worker thread. The world is built in a staged file that takes the id, and appears only once saved. */
 export async function createWorldFileInBackground(
   deps: SessionDeps,
   id: string,
@@ -207,13 +207,18 @@ export async function createWorldFileInBackground(
   worldSize: number,
   difficulty: number,
 ): Promise<void> {
-  const store = deps.registry.createStore(id, deps.config.snapshotRetention);
+  const { registry } = deps;
+  const store = registry.createStagedStore(id, deps.config.snapshotRetention);
   try {
     const cells = await generateFreshGenesisCellsOffThread(worldSize, drawGenesisSeed());
     saveFreshWorld(store, id, World.fromGenesis(cells, worldSize, difficulty, name));
-  } finally {
+  } catch (error) {
     store.close();
+    registry.discardStaged(id);
+    throw error;
   }
+  store.close();
+  registry.publishStaged(id);
 }
 
 function saveFreshWorld(store: SnapshotStore, id: string, world: World): void {

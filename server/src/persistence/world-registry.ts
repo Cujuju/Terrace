@@ -141,6 +141,33 @@ export class WorldRegistry {
     return existsSync(this.pathFor(id, true));
   }
 
+  // A world still being generated: dot-prefixed, so scan() never lists or loads it.
+  private stagedPathFor(id: string): string {
+    return join(this.worldsDir, `.creating-${basename(this.pathFor(id))}`);
+  }
+
+  createStagedStore(id: string, retention: number): SnapshotStore {
+    const staged = this.stagedPathFor(id);
+    if (existsSync(this.pathFor(id)) || existsSync(staged)) {
+      throw new Error(`refusing to create world "${id}": it already exists or is being created`);
+    }
+    return SnapshotStore.open(staged, retention);
+  }
+
+  publishStaged(id: string): void {
+    const staged = this.stagedPathFor(id);
+    const target = this.pathFor(id);
+    if (existsSync(target)) throw new Error(`world "${id}" appeared while it was being created`);
+    this.checkpoint(staged);
+    renameSync(staged, target);
+    this.moveSidecars(staged, target);
+  }
+
+  discardStaged(id: string): void {
+    const staged = this.stagedPathFor(id);
+    for (const suffix of ['', '-wal', '-shm']) rmSync(staged + suffix, { force: true });
+  }
+
   private scan(dir: string): WorldFile[] {
     const files: WorldFile[] = [];
     let names: string[];
@@ -233,12 +260,14 @@ export class WorldRegistry {
   uniqueIdFor(name: string): string | null {
     const base = slugifyWorldName(name);
     if (base.length === 0) return null;
-    if (!this.has(base) && !this.hasArchived(base)) return base;
+    const free = (id: string): boolean =>
+      !this.has(id) && !this.hasArchived(id) && !existsSync(this.stagedPathFor(id));
+    if (free(base)) return base;
 
     for (let suffix = FIRST_UNIQUE_SUFFIX; suffix <= MAX_UNIQUE_SUFFIX; suffix++) {
       const tail = `-${suffix}`;
       const candidate = base.slice(0, MAX_WORLD_ID_LENGTH - tail.length) + tail;
-      if (!this.has(candidate) && !this.hasArchived(candidate)) return candidate;
+      if (free(candidate)) return candidate;
     }
     return null;
   }
