@@ -10,10 +10,10 @@ import type { SculptIntent, SculptTool } from '@terrace/shared';
 import {
   chunkOriginCell,
   chunkUnlockFee,
-  displacementManaCost,
   openedChunkCount,
   sculptIntentCost,
   sculptManaCost,
+  strokeChargeCost,
 } from '../pricing.ts';
 import { dryRunDisplacement } from './quote.ts';
 import { parseManaDeniedPayload, type ManaBalanceMessage, type ManaDeniedMessage } from '../protocol.ts';
@@ -199,9 +199,9 @@ export function currentBrushQuote(): BrushQuote {
   const moved = intent === null || localTerritory === null
     ? null
     : dryRunDisplacement(localTerritory, intent);
-  if (moved !== null) {
+  if (intent !== null && moved !== null) {
     return {
-      cost: displacementManaCost(moved, pool.manaPerBandCell, tool) + unlock,
+      cost: strokeChargeCost(moved, pool.manaPerBandCell, intent) + unlock,
       estimated: false,
     };
   }

@@ -45,16 +45,18 @@ Relaxation: `relaxation.md`. Spans and carve: `overhangs.md`. Picking:
 ## Price (mana plugin)
 
 - Price = displacement + unlock. Gate on nominal (`sculptIntentCost`), charge
-  actual (`displacementOf`). Smooth pays both sides. Actual-without-nominal
-  still denies.
+  actual (`displacementOf`) capped at the nominal (`strokeChargeCost`, owner
+  2026-10-04, #526): a mound stamp can outmove its nominal, and a balance
+  never goes negative. Smooth pays both sides. Actual-without-nominal still
+  denies.
 - Stamp and drag are charged by drawn band (`columnBandUnits`): `BAND_HEIGHT`
   per band crossed per cell; edge encoding is free. A raise out of the sea pays
   a full band. Other tools charge raw height (`columnSolidUnits`).
 - Drag leg = one capsule (`sweep.ts`) for wards, monster ground, reveal,
   unlock, nominal. Max `MAX_DRAG_LEGS_PER_MOVE`/move; tail drops silently.
 - Unlock = `CHUNK_UNLOCK_MANA` per frontier chunk. Flat.
-- Client quotes actual once reach is mirrored (dry run), else nominal as
-  estimated. Gate reserves nominal; server balance push erases the debit.
+- Client quotes the capped actual once reach is mirrored (dry run), else
+  nominal as estimated. Gate reserves nominal; server balance push erases the debit.
 - Zero-effect strokes apply, never deny.
 
 ## Edges

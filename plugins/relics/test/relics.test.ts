@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BAND_HEIGHT, MAX_BRUSH_RADIUS, type SculptIntent } from '@terrace/shared';
 import { handleSculptIntent } from '../../../server/src/intent/pipeline.ts';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
+import { createWorldApi } from '../../../server/src/plugins/world-api.ts';
 import type { Player } from '../../../server/src/player.ts';
 import type { World } from '../../../server/src/world/world.ts';
 import type { SiblingModule } from '../../../server/src/plugins/types.ts';
@@ -15,13 +16,13 @@ import {
 import * as manaModule from '../../mana/server/index.ts';
 import {
   MANA_CAPACITY,
-  MANA_COST_PER_MIN_RADIUS_SCULPT,
   MANA_PER_BAND_CELL,
   NEUTRAL_MANA_MULTIPLIER,
   manaPerBandCellFor,
   manaPerkOf,
   plugin as manaPlugin,
   resetManaState,
+  spendMana,
 } from '../../mana/server/index.ts';
 import {
   CAST_DENIED_COOLDOWN,
@@ -68,6 +69,12 @@ const LOCKED_CHUNK: readonly [number, number] = [3, 3];
 const LOCKED_CELL = { x: 56, y: 56 } as const;
 
 const TARGET_CELL = { x: 24, y: 24 } as const;
+
+const NO_TERRAIN_LISTENER = {
+  notifyTerrainChanged(): void {},
+  notifyChunkUnlockedForToken(): void {},
+  notifyWorldEvent(): void {},
+};
 
 const TICK_DT = 0.1;
 
@@ -441,24 +448,35 @@ describe('relics plugin', () => {
     });
 
     it('buys the holder more sculpts, through the real intent pipeline', async () => {
-      // A stamp is charged what it moved, and repeat presses grow a mound
-      // (52a10901), so the baseline is a perkless player's same presses.
-      const attempts = (MANA_CAPACITY / MANA_COST_PER_MIN_RADIUS_SCULPT) * 2;
+      // A pool kept to two perkless presses, each on fresh flat ground, so every
+      // press pays the same price and mana alone limits the count.
+      const radius = 4;
+      const spots = [8, 20, 32].flatMap((x) => [{ x, y: 10 }, { x, y: 30 }]);
+      const press = (sculptor: Harness, spot: { x: number; y: number }): boolean =>
+        handleSculptIntent({ world: sculptor.world, interceptors: sculptor.host }, PLAYER, {
+          type: 'sculpt',
+          x: spot.x,
+          y: spot.y,
+          radius,
+          dir: 1,
+          tool: 'stamp',
+          profile: 'hard',
+        }).applied;
+
+      const probe = boot();
+      expect(press(probe, spots[0]!)).toBe(true);
+      const perklessPrice = MANA_CAPACITY - (manaModule.manaBalanceOf(PLAYER.id) ?? 0);
+      expect(perklessPrice).toBeGreaterThan(1);
+
+      const budgetPresses = 2;
       const pressesApplied = (sculptor: Harness): number => {
-        let applied = 0;
-        for (let n = 0; n < attempts; n++) {
-          const outcome = handleSculptIntent(
-            { world: sculptor.world, interceptors: sculptor.host },
-            PLAYER,
-            { type: 'sculpt', x: TARGET_CELL.x, y: TARGET_CELL.y, radius: 1, dir: 1 },
-          );
-          if (outcome.applied) applied++;
-        }
-        return applied;
+        const drain = createWorldApi(sculptor.world, NO_TERRAIN_LISTENER, 'test-drain').api;
+        expect(spendMana(drain, PLAYER.id, MANA_CAPACITY - budgetPresses * perklessPrice)).toBe(true);
+        return spots.filter((spot) => press(sculptor, spot)).length;
       };
 
       const standardSculpts = pressesApplied(boot());
-      expect(standardSculpts).toBeLessThan(attempts);
+      expect(standardSculpts).toBe(budgetPresses);
 
       harness = boot();
       collectSkill(harness, 'azure-heart');

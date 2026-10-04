@@ -1,7 +1,7 @@
 import {
   CHUNK_UNLOCK_MANA,
-  displacementManaCost,
   openedChunkCount,
+  strokeChargeCost,
 } from '../../mana/pricing.ts';
 import {
   MAX_DRAG_SWEEP_CELLS,
@@ -132,7 +132,7 @@ describe('a sweep opens every chunk it crosses', () => {
     );
     expect(quoted).toBeGreaterThan(0);
 
-    // The run the drag writes is charged as moved material on top of the fee.
+    // The run the drag writes is charged as moved material, capped at its nominal, on top of the fee.
     const { map } = harness.world;
     const measure = strokeSolidMeasure('drag');
     const solidBefore = snapshotSolidUnits(map, 0, 0, map.size - 1, map.size - 1, measure);
@@ -145,10 +145,10 @@ describe('a sweep opens every chunk it crosses', () => {
 
     expect(outcome.applied).toBe(true);
     const moved = displacementOf(solidBefore, map, outcome.applied ? outcome.diff : [], measure);
-    const displacementCost = displacementManaCost(moved, MANA_PER_BAND_CELL, 'drag');
+    const strokeCost = strokeChargeCost(moved, MANA_PER_BAND_CELL, intent);
     expect(newlyOpened).toBe(quoted);
     expect(MANA_CAPACITY - (manaBalanceOf(PLAYER.id) ?? 0)).toBe(
-      displacementCost + quoted * CHUNK_UNLOCK_MANA,
+      strokeCost + quoted * CHUNK_UNLOCK_MANA,
     );
   });
 });

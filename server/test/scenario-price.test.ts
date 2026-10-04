@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   CHUNK_UNLOCK_MANA,
   displacementManaCost,
+  nominalStrokeCost,
   sculptManaCost,
 } from '../../plugins/mana/pricing.ts';
 import {
@@ -81,20 +82,24 @@ function chargedIn(entries: readonly TranscriptEntry[]): number {
 }
 
 /**
- * Sends a stamp and prices what it actually moved. A stamp fills its disc to the
- * clicked band plus one (52a10901), so on terraced ground it outmoves the nominal.
+ * Sends a stamp; prices what it moved, and its nominal. A stamp fills its disc
+ * to the clicked band plus one, so terraced ground outmoves the nominal.
  */
 function sendPricingDisplacement(
   scenario: Scenario,
   message: unknown,
-): { step: ScenarioStep; displacementCost: number } {
+): { step: ScenarioStep; movedCost: number; nominalCost: number } {
   const { map } = scenario.world;
   const measure = strokeSolidMeasure('stamp');
   const before = snapshotSolidUnits(map, 0, 0, map.size - 1, map.size - 1, measure);
   const step = scenario.send(SCULPTOR, message);
-  const diff = step.outcome?.applied === true ? step.outcome.diff : [];
-  const units = displacementOf(before, map, diff, measure);
-  return { step, displacementCost: displacementManaCost(units, MANA_PER_BAND_CELL, 'stamp') };
+  if (step.outcome?.applied !== true) throw new Error('the pricing stroke was refused');
+  const units = displacementOf(before, map, step.outcome.diff, measure);
+  return {
+    step,
+    movedCost: displacementManaCost(units, MANA_PER_BAND_CELL, 'stamp'),
+    nominalCost: nominalStrokeCost(MANA_PER_BAND_CELL, step.outcome.intent),
+  };
 }
 
 describe('a frontier stroke pays displacement plus a flat fee per chunk it opens', () => {
@@ -102,20 +107,20 @@ describe('a frontier stroke pays displacement plus a flat fee per chunk it opens
     resetManaState();
   });
 
-  it('charges both halves, and the balance push tells the client the same number', () => {
+  it('charges both halves, the stroke capped at its nominal, and the balance push tells the client the same number', () => {
     const scenario = frontierScenario();
 
-    const { step, displacementCost } = sendPricingDisplacement(
+    const { step, movedCost, nominalCost } = sendPricingDisplacement(
       scenario,
       sculptMessage({ ...FRONTIER_CELL, radius: STROKE_RADIUS, profile: 'hard', seq: 1 }),
     );
 
-    expect(step.outcome?.applied).toBe(true);
-    expect(displacementCost).toBeGreaterThan(0);
+    // The ridge stamp outmoves its nominal, so the cap is what this pins.
+    expect(movedCost).toBeGreaterThan(nominalCost);
     const opened = openedChunksIn(step.entries);
     expect(opened).toBeGreaterThan(0);
 
-    const expected = displacementCost + opened * CHUNK_UNLOCK_MANA;
+    const expected = nominalCost + opened * CHUNK_UNLOCK_MANA;
     expect(chargedIn(step.entries)).toBe(expected);
     expect(manaBalanceOf(SCULPTOR.id)).toBe(MANA_CAPACITY - expected);
   });
@@ -141,15 +146,14 @@ describe('a frontier stroke pays displacement plus a flat fee per chunk it opens
   it('charges displacement only once the land is already owned', () => {
     const scenario = frontierScenario(EVERY_CHUNK);
 
-    const { step, displacementCost } = sendPricingDisplacement(
+    const { step, movedCost, nominalCost } = sendPricingDisplacement(
       scenario,
       sculptMessage({ ...FRONTIER_CELL, radius: STROKE_RADIUS, profile: 'hard', seq: 3 }),
     );
 
-    expect(step.outcome?.applied).toBe(true);
-    expect(displacementCost).toBeGreaterThan(0);
+    expect(movedCost).toBeGreaterThan(0);
     expect(openedChunksIn(step.entries)).toBe(0);
-    expect(chargedIn(step.entries)).toBe(displacementCost);
+    expect(chargedIn(step.entries)).toBe(Math.min(movedCost, nominalCost));
   });
 
   it('bills the frontier once: the second stroke on the same ground pays displacement only', () => {

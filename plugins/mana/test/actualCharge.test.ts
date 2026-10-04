@@ -246,3 +246,37 @@ describe('the charge is the material the stroke moved', () => {
     expect(manaBalanceOf(PLAYER.id)).toBe(kept);
   });
 });
+
+const SPIRE_BANDS = 4;
+
+/** A spire at the centre: a stamp fills the whole disc up to one band above it. */
+function bootSpire(): Harness {
+  const harness = boot(bandLevelHeight(GROUND_BAND));
+  const { map } = harness.world;
+  map.cells[CENTRE.y * WORLD_SIZE + CENTRE.x] = bandLevelHeight(GROUND_BAND + SPIRE_BANDS);
+  return harness;
+}
+
+describe('the charge never exceeds the nominal a stroke was admitted at', () => {
+  it('charges a stroke that moved more than its nominal exactly its nominal', () => {
+    const harness = bootSpire();
+    const intent = press(2, 'hard');
+    const nominal = manaCostFor(PLAYER.id, intent);
+
+    const stroke = sculpt(harness, intent);
+    expect(stroke.applied).toBe(true);
+    expect(expectedCharge(stroke.units)).toBeGreaterThan(nominal);
+    expect(stroke.charged).toBe(nominal);
+  });
+
+  it('a player holding exactly the nominal pays it and is left at zero, never below', () => {
+    const harness = bootSpire();
+    const intent = press(2, 'hard');
+    const nominal = manaCostFor(PLAYER.id, intent);
+    expect(spendMana(harness.api, PLAYER.id, MANA_CAPACITY - nominal)).toBe(true);
+
+    const stroke = sculpt(harness, intent);
+    expect(stroke.applied).toBe(true);
+    expect(manaBalanceOf(PLAYER.id)).toBe(0);
+  });
+});

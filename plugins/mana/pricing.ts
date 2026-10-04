@@ -90,24 +90,41 @@ export function displacementManaCost(
   return carveDiscounted(Math.ceil((manaPerBandCell * displacementUnits) / BAND_HEIGHT), tool);
 }
 
-/**
- * What a stroke could cost at worst, from the intent alone. Admission asks
- * this, because the diff the charge measures does not exist yet.
- */
-export function sculptIntentCost(
-  manaPerBandCell: number,
-  intent: SculptIntent,
-  openedChunks: number,
-): number {
+/** The nominal stroke half of a price, from the intent alone. */
+export function nominalStrokeCost(manaPerBandCell: number, intent: SculptIntent): number {
   const options = sculptOptionsOf(intent);
-  const stroke = sculptSweepManaCost(
+  return sculptSweepManaCost(
     manaPerBandCell,
     strokeSweep(intent),
     options.profile,
     options.tool,
     options.depthBands,
   );
-  return stroke + chunkUnlockFee(openedChunks);
+}
+
+/**
+ * The stroke half of a charge: what the stroke moved, capped at its nominal. A
+ * mound stamp can move more than the nominal it was admitted against.
+ */
+export function strokeChargeCost(
+  displacementUnits: number,
+  manaPerBandCell: number,
+  intent: SculptIntent,
+): number {
+  const moved = displacementManaCost(displacementUnits, manaPerBandCell, sculptOptionsOf(intent).tool);
+  return Math.min(moved, nominalStrokeCost(manaPerBandCell, intent));
+}
+
+/**
+ * The price a stroke is admitted against, from the intent alone: the diff the
+ * charge measures does not exist yet. The charge never exceeds it.
+ */
+export function sculptIntentCost(
+  manaPerBandCell: number,
+  intent: SculptIntent,
+  openedChunks: number,
+): number {
+  return nominalStrokeCost(manaPerBandCell, intent) + chunkUnlockFee(openedChunks);
 }
 
 export function openedChunkCount(

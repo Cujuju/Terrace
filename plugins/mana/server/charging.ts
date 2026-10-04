@@ -1,10 +1,10 @@
-import { sculptOptionsOf, strokeSweep } from '@terrace/shared';
-import type { SculptIntent, SculptTool } from '@terrace/shared';
+import { strokeSweep } from '@terrace/shared';
+import type { SculptIntent } from '@terrace/shared';
 import {
   chunkUnlockFee,
-  displacementManaCost,
   openedChunkCount,
   sculptIntentCost,
+  strokeChargeCost,
 } from '../pricing.ts';
 import { MANA_DENIED_MESSAGE } from '../protocol.ts';
 import type {
@@ -26,7 +26,7 @@ import {
 
 export const INSUFFICIENT_MANA_REASON = 'insufficient mana';
 
-/** The nominal worst case a stroke is admitted against. */
+/** The nominal price a stroke is admitted against; its charge never exceeds it. */
 export function manaCostFor(
   playerId: string,
   intent: SculptIntent,
@@ -35,15 +35,15 @@ export function manaCostFor(
   return sculptIntentCost(manaPerBandCellFor(playerId), intent, openedChunks);
 }
 
-/** The charge: the material the stroke moved, plus the frontier it opened. */
+/** The charge: the material the stroke moved, capped at its nominal, plus the frontier it opened. */
 export function manaChargeFor(
   playerId: string,
   displacementUnits: number,
   openedChunks: number,
-  tool: SculptTool,
+  intent: SculptIntent,
 ): number {
   return (
-    displacementManaCost(displacementUnits, manaPerBandCellFor(playerId), tool) +
+    strokeChargeCost(displacementUnits, manaPerBandCellFor(playerId), intent) +
     chunkUnlockFee(openedChunks)
   );
 }
@@ -88,12 +88,7 @@ export function commitCharge(intent: SculptIntent, ctx: AppliedIntentCtx): void 
 
   // Charge follows effect: a stroke that moved nothing displaced nothing.
   // Reveal opens the sweep whatever the diff, so the unlock fee still stands.
-  pool.balance -= manaChargeFor(
-    ctx.player.id,
-    ctx.displacementUnits,
-    opened,
-    sculptOptionsOf(intent).tool,
-  );
+  pool.balance -= manaChargeFor(ctx.player.id, ctx.displacementUnits, opened, intent);
   sendBalance(world, ctx.player.id, pool);
 }
 
