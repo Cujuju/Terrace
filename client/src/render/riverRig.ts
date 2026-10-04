@@ -875,6 +875,7 @@ export function createRiverRig(
   let computingFor: TerrainMirror | null = null;
   let recomputeWhenDone = false;
   let disposed = false;
+  let throttleTimer: ReturnType<typeof setTimeout> | null = null;
 
   const startCompute = (): void => {
     const mirror = pendingMirror;
@@ -892,8 +893,8 @@ export function createRiverRig(
     const finish = (surface: RiverSurface): void => {
       computingFor = null;
       if (disposed) return;
-      if (pendingMirror !== mirror) return;
-      rebuild(mirror, ground, surface, dirty);
+      // A stale answer (world switched) is dropped, but the queued recompute still runs.
+      if (pendingMirror === mirror) rebuild(mirror, ground, surface, dirty);
       if (recomputeWhenDone) {
         recomputeWhenDone = false;
         startCompute();
@@ -905,15 +906,28 @@ export function createRiverRig(
     else finish(answer);
   };
 
+  const startThrottled = (): void => {
+    if (throttleTimer !== null) {
+      clearTimeout(throttleTimer);
+      throttleTimer = null;
+    }
+    if (disposed) return;
+    lastRebuildMs = performance.now();
+    startCompute();
+  };
+
   return {
     refresh(mirror: TerrainMirror, dirty: ReadonlySet<number>, ground: DrawnGround): void {
       pendingMirror = mirror;
       pendingGround = ground;
       for (const chunkIdx of dirty) pendingDirty.add(chunkIdx);
-      const now = performance.now();
-      if (now - lastRebuildMs < RIVER_RECOMPUTE_INTERVAL_MS) return;
-      lastRebuildMs = now;
-      startCompute();
+      const waitMs = lastRebuildMs + RIVER_RECOMPUTE_INTERVAL_MS - performance.now();
+      if (waitMs > 0) {
+        // Throttled, not dropped: the held work starts once the interval has passed.
+        throttleTimer ??= setTimeout(startThrottled, waitMs);
+        return;
+      }
+      startThrottled();
     },
 
     forceRefresh(mirror: TerrainMirror, ground: DrawnGround): void {
@@ -921,12 +935,12 @@ export function createRiverRig(
       pendingGround = ground;
       pendingEverything = true;
       clearPendingTiles();
-      lastRebuildMs = performance.now();
-      startCompute();
+      startThrottled();
     },
 
     dispose(): void {
       disposed = true;
+      if (throttleTimer !== null) clearTimeout(throttleTimer);
       clearPendingTiles();
       networkSource.dispose();
       unregisterFrame();

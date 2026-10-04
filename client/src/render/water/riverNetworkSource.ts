@@ -15,15 +15,17 @@ function receivedChunks(mirror: TerrainMirror): number[] {
   return Array.from(mirror.received);
 }
 
+function computeOnMainThread(mirror: TerrainMirror): RiverSurface {
+  return flattenRiverNetwork(
+    mirror.map,
+    computeRiverNetwork(mirror.map, {
+      isActive: (x, y) => mirror.received.has(chunkIndexOfCell(mirror.map.size, x, y)),
+    }),
+  );
+}
+
 export const directRiverNetworkSource: RiverNetworkSource = {
-  compute(mirror: TerrainMirror): RiverSurface {
-    return flattenRiverNetwork(
-      mirror.map,
-      computeRiverNetwork(mirror.map, {
-        isActive: (x, y) => mirror.received.has(chunkIndexOfCell(mirror.map.size, x, y)),
-      }),
-    );
-  },
+  compute: computeOnMainThread,
   dispose(): void {},
 };
 
@@ -40,17 +42,35 @@ export function createWorkerRiverNetworkSource(): RiverNetworkSource | null {
   }
 
   let nextRequestId = 1;
-  const pending = new Map<number, (surface: RiverSurface) => void>();
+  const pending = new Map<
+    number,
+    { readonly mirror: TerrainMirror; readonly resolve: (surface: RiverSurface) => void }
+  >();
+  let dead = false;
 
-  worker.onmessage = (event: MessageEvent<RiverNetworkResponse>): void => {
-    const resolve = pending.get(event.data.requestId);
-    if (resolve === undefined) return;
-    pending.delete(event.data.requestId);
-    resolve(event.data.surface);
+  // A dead worker answers what it owed on the main thread: slower, never stalled.
+  const killWorker = (cause: string): void => {
+    if (dead) return;
+    dead = true;
+    console.warn(`[terrace] river network worker died (${cause}); computing without it`);
+    worker.terminate();
+    const owed = [...pending.values()];
+    pending.clear();
+    for (const { mirror, resolve } of owed) resolve(computeOnMainThread(mirror));
   };
 
+  worker.onmessage = (event: MessageEvent<RiverNetworkResponse>): void => {
+    const job = pending.get(event.data.requestId);
+    if (job === undefined) return;
+    pending.delete(event.data.requestId);
+    job.resolve(event.data.surface);
+  };
+  worker.onerror = (): void => killWorker('error');
+  worker.onmessageerror = (): void => killWorker('messageerror');
+
   return {
-    compute(mirror: TerrainMirror): Promise<RiverSurface> {
+    compute(mirror: TerrainMirror): RiverSurface | Promise<RiverSurface> {
+      if (dead) return computeOnMainThread(mirror);
       const requestId = nextRequestId++;
       const cells = mirror.map.cells.slice();
       const request: RiverNetworkRequest = {
@@ -60,9 +80,13 @@ export function createWorkerRiverNetworkSource(): RiverNetworkSource | null {
         received: receivedChunks(mirror),
       };
       const answer = new Promise<RiverSurface>((resolve) => {
-        pending.set(requestId, resolve);
+        pending.set(requestId, { mirror, resolve });
       });
-      worker.postMessage(request, [cells.buffer]);
+      try {
+        worker.postMessage(request, [cells.buffer]);
+      } catch {
+        killWorker('postMessage');
+      }
       return answer;
     },
     dispose(): void {
