@@ -1,4 +1,4 @@
-import type { CellDiff } from '@terrace/shared';
+import type { CellDiff, Waypoint, WaypointChainSnapshot } from '@terrace/shared';
 import type {
   PersistenceSlice,
   TerracePlugin,
@@ -65,12 +65,26 @@ function simulate(world: WorldApi, dt: number): void {
     (boat) => ({ x: boat.x, y: boat.y }),
     (visible) => ({ boats: visible }),
   );
-  world.broadcastVisible(
-    BOATS_WAYPOINTS_MESSAGE,
-    fleetWaypointDebug().chains,
-    (chain) => ({ x: chain.anchor.x, y: chain.anchor.y }),
-    (visible) => ({ chains: visible }),
-  );
+  sendWaypointDebug(world);
+}
+
+// Routes cross hidden water, so every hop and sailed cell is clipped to each recipient's view.
+function sendWaypointDebug(world: WorldApi): void {
+  const { chains } = fleetWaypointDebug();
+  const size = world.worldSize;
+  for (const player of world.players()) {
+    const seen = (cell: Waypoint): boolean =>
+      cell.x >= 0 && cell.y >= 0 && cell.x < size && cell.y < size &&
+      world.isCellVisibleTo(player.id, cell.x, cell.y);
+    const visible: WaypointChainSnapshot[] = [];
+    for (const chain of chains) {
+      if (!seen(chain.anchor)) continue;
+      const hops = chain.hops.filter(seen);
+      const cursor = chain.hops.slice(0, chain.cursor).filter(seen).length;
+      visible.push({ ...chain, hops, cursor, sailed: chain.sailed.filter(seen) });
+    }
+    world.sendTo(player.id, BOATS_WAYPOINTS_MESSAGE, { chains: visible });
+  }
 }
 
 const persistence: PersistenceSlice = {
