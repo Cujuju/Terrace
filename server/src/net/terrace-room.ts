@@ -101,6 +101,7 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
     this.context.restart.attachRoom({ sink, clientCount: () => this.clients.length });
 
     this.registerMessages();
+    this.hitchReport = setInterval(() => this.reportHitches(), HITCH_REPORT_INTERVAL_MS);
 
     const session = this.context.manager.current;
     logInfo(
