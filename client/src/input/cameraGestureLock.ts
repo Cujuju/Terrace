@@ -6,6 +6,7 @@ const WHEEL_QUIET_MS = 150;
 export interface CameraGestureLock {
   /** True from gesture start until it completes; the brush stays frozen. */
   active(): boolean;
+  wheelMoved(): void;
   dispose(): void;
 }
 
@@ -35,6 +36,7 @@ export function createCameraGestureLock(
     // The lock disjunct only matters when OrbitControls never started (its
     // start fires synchronously on the same press in the normal flow).
     active: () => pointers > 0 || wheelTimer !== 0 || pointerLocked(),
+    wheelMoved: onWheel,
     dispose(): void {
       controls.removeEventListener('start', onStart);
       controls.removeEventListener('end', onEnd);

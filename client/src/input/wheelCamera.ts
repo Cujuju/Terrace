@@ -149,6 +149,7 @@ export function bindWheelCamera(
   canvas: HTMLCanvasElement,
   controls: OrbitControls,
   stepBrushRadius: (rungs: number) => void,
+  onCameraWheel: () => void = () => {},
 ): WheelCameraGestures {
   const camera = controls.object;
   // Sub-notch travel carries over, so a trackpad's small deltas still step the brush.
@@ -189,6 +190,7 @@ export function bindWheelCamera(
     if (controls.enabled === false) return;
     if (gesture === 'pinch') {
       if (controls.enableZoom === false) return;
+      if (event.deltaY !== 0) onCameraWheel();
       const distance = camera.position.distanceTo(controls.target);
       setOrbitDistance(
         camera,
@@ -198,6 +200,7 @@ export function bindWheelCamera(
       return;
     }
     if (gesture === 'orbit') {
+      if (controls.enableRotate !== false && (event.deltaX !== 0 || event.deltaY !== 0)) onCameraWheel();
       orbitBy(
         event.deltaX * TRACKPAD_ORBIT_AZIMUTH_RADIANS_PER_PIXEL,
         event.deltaY * TRACKPAD_ORBIT_POLAR_RADIANS_PER_PIXEL,
@@ -205,6 +208,7 @@ export function bindWheelCamera(
       return;
     }
     if (controls.enablePan === false) return;
+    if (event.deltaX !== 0 || event.deltaY !== 0) onCameraWheel();
     groundPanOffset(
       camera,
       controls.target,

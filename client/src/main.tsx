@@ -168,7 +168,7 @@ viewport.setGroundHeightSampler((worldX, worldZ) => {
   if (cell === null) return null;
   return world.drawnGroundYAt(cell.x, cell.y);
 });
-const cameraBindings = bindCameraControls(canvas, viewport.controls);
+const cameraBindings = bindCameraControls(canvas, viewport.controls, () => cameraGesture.wheelMoved());
 bindKeyCamera(viewport.controls, (handler) => viewport.onFrame(handler, 'pose'));
 const cameraGesture = createCameraGestureLock(canvas, viewport.controls, () =>
   cameraBindings.pointerLocked(),

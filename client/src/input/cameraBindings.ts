@@ -123,6 +123,7 @@ export function createTouchDollyGuard(): TouchDollyGuard {
 export function bindCameraControls(
   canvas: HTMLCanvasElement,
   controls: OrbitControls,
+  onCameraWheel?: () => void,
 ): CameraBindings {
   applyBindings(controls, NO_MODIFIERS);
 
@@ -158,7 +159,7 @@ export function bindCameraControls(
     capture: true,
   });
 
-  const wheelGestures = bindWheelCamera(canvas, controls, stepBrushRadius);
+  const wheelGestures = bindWheelCamera(canvas, controls, stepBrushRadius, onCameraWheel);
   const pointerLock = createCameraPointerLock(canvas, controls);
 
   return {

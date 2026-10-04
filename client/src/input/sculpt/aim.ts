@@ -90,8 +90,11 @@ export const repick = (s: StrokeState): TerrainRayPick | null => {
 export const hoverTarget = (s: StrokeState): TerrainRayPick | null => {
   const p = s.options.camera.position;
   const q = s.options.camera.quaternion;
+  // Backing size and projection, not a layout read: a resize must re-aim, at no per-frame layout cost.
+  const { width, height } = s.options.canvas;
+  const projection = s.options.camera.projectionMatrix.elements.join(',');
   const key = s.havePointer
-    ? `${s.pointerClientX},${s.pointerClientY},${s.options.worldSize()},${p.x.toFixed(2)},${p.y.toFixed(2)},${p.z.toFixed(2)},${q.x.toFixed(3)},${q.y.toFixed(3)},${q.z.toFixed(3)},${q.w.toFixed(3)}`
+    ? `${s.pointerClientX},${s.pointerClientY},${s.options.worldSize()},${width},${height},${projection},${p.x.toFixed(2)},${p.y.toFixed(2)},${p.z.toFixed(2)},${q.x.toFixed(3)},${q.y.toFixed(3)},${q.z.toFixed(3)},${q.w.toFixed(3)}`
     : 'away';
   if (key !== s.hoverKey) {
     s.hoverKey = key;
