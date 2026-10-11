@@ -1,0 +1,26 @@
+{
+  "name": "terrace-monorepo",
+  "private": true,
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "typecheck": "pnpm -r --if-present run typecheck",
+    "test": "pnpm -r --if-present run test",
+    "electron:dev": "pnpm --filter @terrace/client electron:dev",
+    "electron:stage": "node scripts/electron-package.mjs",
+    "electron:pack:dir": "node scripts/electron-package.mjs && pnpm --filter @terrace/client exec electron-builder --config electron-builder.ts --dir",
+    "dist": "node scripts/electron-package.mjs && pnpm --filter @terrace/client exec electron-builder --config electron-builder.ts --win nsis --publish never",
+    "dist:mac": "node scripts/electron-package.mjs && pnpm --filter @terrace/client exec electron-builder --config electron-builder.ts --mac --publish never",
+    "lint": "eslint .",
+    "lint:seed": "comment-budget-seed"
+  },
+  "devDependencies": {
+    "@gltf-transform/cli": "4.5.0",
+    "eslint": "^10.10.0",
+    "eslint-plugin-comment-budget": "git+https://github.com/Cujuju/eslint-plugin-comment-budget.git#v2.4.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "^8.69.0"
+  }
+}

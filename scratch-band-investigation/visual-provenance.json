@@ -1,0 +1,42 @@
+{
+  "matches": [
+    {
+      "name": "stamp",
+      "heightsMatch": true
+    },
+    {
+      "name": "stamp-smooth",
+      "heightsMatch": true
+    },
+    {
+      "name": "integer-paraboloid-control",
+      "heightsMatch": true
+    },
+    {
+      "name": "single-cell-band-control",
+      "heightsMatch": true
+    },
+    {
+      "name": "single-cell-water-hole-control",
+      "heightsMatch": true
+    },
+    {
+      "name": "layered-opening-control",
+      "heightsMatch": true
+    }
+  ],
+  "coordinateRoundingCells": 0.0001,
+  "loopReduction": "production simplifyLoop epsilon",
+  "bezier": {
+    "CORNER_TRIM_CELLS": 0.15,
+    "CORNER_TRIM_FRACTION": 0.25,
+    "BEZIER_STEPS": 8,
+    "scope": "new appearance candidate; no collision/topology guarantee"
+  },
+  "fullBandFields": [
+    "stamp",
+    "stamp-smooth"
+  ],
+  "purpose": "offline appearance rendering, not an application/GPU-port screenshot",
+  "dataBytes": 1822330
+}

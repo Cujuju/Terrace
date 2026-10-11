@@ -1,0 +1,127 @@
+{
+  "profile": "low",
+  "meshes": 1,
+  "materials": 1,
+  "vertices": 548,
+  "triangles": 910,
+  "polygons": 451,
+  "parts": 46,
+  "islands": 451,
+  "texture_size": [
+    1024,
+    1024
+  ],
+  "gap_pixels": 12,
+  "density_pixels_per_game_unit": 282.5428352833003,
+  "dimensions": [
+    0.7652454972267151,
+    0.8600000739097595,
+    0.934670627117157
+  ],
+  "origin": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "palette": {
+    "timber": [
+      0.3,
+      0.245,
+      0.19
+    ],
+    "wall": [
+      0.52,
+      0.455,
+      0.35
+    ],
+    "gable": [
+      0.46,
+      0.385,
+      0.285
+    ],
+    "roof": [
+      0.55,
+      0.335,
+      0.22
+    ],
+    "door": [
+      0.385,
+      0.28,
+      0.185
+    ],
+    "stone": [
+      0.43,
+      0.445,
+      0.42
+    ],
+    "cutstone": [
+      0.51,
+      0.515,
+      0.48
+    ],
+    "iron": [
+      0.16,
+      0.175,
+      0.17
+    ],
+    "dark": [
+      0.085,
+      0.07,
+      0.05
+    ],
+    "carving": [
+      0.32,
+      0.265,
+      0.2
+    ],
+    "thatch": [
+      0.6,
+      0.51,
+      0.33
+    ],
+    "plaster": [
+      0.66,
+      0.6,
+      0.47
+    ],
+    "turf": [
+      0.34,
+      0.42,
+      0.26
+    ],
+    "brick": [
+      0.53,
+      0.32,
+      0.24
+    ],
+    "canvas": [
+      0.65,
+      0.58,
+      0.44
+    ],
+    "fish": [
+      0.5,
+      0.55,
+      0.54
+    ],
+    "paint": [
+      0.4,
+      0.24,
+      0.19
+    ],
+    "slate": [
+      0.32,
+      0.37,
+      0.37
+    ]
+  },
+  "geometry_source": "New original Blender geometry and procedural texture paint; no imported meshes or textures.",
+  "texture_source": "Original procedural texture paint",
+  "image_generator": "Built-in image generator; exact backend model unverified",
+  "placement": {
+    "front_gltf": "+Z",
+    "origin": "Ground under footprint center",
+    "deliberate_difference": "New building: no existing gameplay envelope. Uniform fit inside 0.86 world-unit square; proposed asset only.",
+    "low_alignment": "Low vertices fitted to original bounds before UV packing; shared origin and envelope."
+  }
+}

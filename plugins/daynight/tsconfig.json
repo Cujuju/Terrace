@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // DOM is needed because this plugin's client half is compiled alongside
+    // the browser build (and, transitively, imports client/src/render/
+    // skyRig.ts and scene.ts, which type against DOM/canvas APIs) — same
+    // reason client/tsconfig.json and the weather and monsters plugins carry
+    // it.
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    // tsc 7.0.2 does not auto-discover the pnpm-linked node_modules/@types of
+    // a nested workspace package (it does for server/, one level up), and
+    // the server tests compile server sources that use node: builtins.
+    // Naming the types explicitly is deterministic and costs nothing — same
+    // reasoning as plugins/weather/tsconfig.json.
+    "types": ["node"]
+  },
+  "include": ["protocol.ts", "server", "client", "test"]
+}

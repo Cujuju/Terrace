@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // DOM is needed by the CLIENT half's contract, not by anything in this
+    // plugin directly — same arrangement as wildlife's tsconfig (see its
+    // comment for the tsc 7 nested-workspace @types note too).
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node"]
+  },
+  "include": ["protocol.ts", "server", "client", "test"]
+}

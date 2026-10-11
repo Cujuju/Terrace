@@ -1,0 +1,227 @@
+import { Color, Mesh, Sphere, type BufferGeometry } from 'three';
+import type { NodeMaterial } from 'three/webgpu';
+import type { ClientPluginCtx, TerraceClientPlugin } from '../../../client/src/plugins/types.ts';
+import {
+  CAST_DENIED_MESSAGE,
+  CAST_MESSAGE,
+  COLLECT_MESSAGE,
+  RELICS_MESSAGE,
+  SKILLS_MESSAGE,
+  parseRelicsPayload,
+  parseSkillsPayload,
+  type RelicView,
+  RELIC_COUNT,
+  SKILL_IDS,
+  type SkillId,
+} from '../protocol.ts';
+import {
+  CELL_WORLD_SIZE,
+  GEM_HITBOX_SCALE,
+  GEM_HOVER_CELLS,
+  gemBobOffset,
+  gemGroundY,
+  gemPhaseFor,
+  gemSpinAngle,
+  relicColor,
+  relicOnRay,
+  type GemHitbox,
+} from './gems.ts';
+import { createGemMaterial } from './gemMaterial.ts';
+import {
+  createSpireMaterial,
+  spireAlpha,
+  spireGeometry,
+  SPIRE_RENDER_ORDER,
+} from './relicSpire.ts';
+import { disposeRelicGeometries, relicGeometry } from './relicShapes.ts';
+import { RelicsHeaderLine, RelicsPanel } from './RelicsPanel.tsx';
+import {
+  armSkill,
+  armedSkill,
+  relics,
+  resetRelicsClientState,
+  setCastDenial,
+  setRelics,
+  setSkills,
+  skills,
+} from './state.ts';
+
+const PRIMARY_BUTTON = 0;
+
+interface GemMeshes {
+  readonly mesh: Mesh;
+  readonly spire: Mesh;
+}
+
+interface GemEntry extends GemMeshes {
+  readonly phaseS: number;
+  readonly relic: RelicView;
+}
+
+let spireShape: BufferGeometry | null = null;
+
+let elapsedS = 0;
+
+const gems = new Map<string, GemEntry>();
+const gemPool = new Map<SkillId, GemMeshes>();
+
+function createGemPool(ctx: ClientPluginCtx): void {
+  spireShape = spireGeometry();
+  for (const skill of SKILL_IDS) {
+    const geometry = relicGeometry(skill);
+    const mesh = new Mesh(geometry, createGemMaterial(geometry.boundingSphere!.radius));
+    mesh.name = `relic:${skill}`;
+    mesh.visible = false;
+    const spire = new Mesh(spireShape, createSpireMaterial(new Color(relicColor(skill))));
+    spire.name = `relic-spire:${skill}`;
+    spire.renderOrder = SPIRE_RENDER_ORDER;
+    spire.visible = false;
+    ctx.layer.add(mesh, spire);
+    gemPool.set(skill, { mesh, spire });
+  }
+}
+
+function syncGems(next: readonly RelicView[]): void {
+  const wanted = new Set(next.map((relic) => relic.id));
+
+  for (const [id, entry] of gems) {
+    if (wanted.has(id)) continue;
+    entry.mesh.visible = false;
+    entry.spire.visible = false;
+    gems.delete(id);
+  }
+
+  const occupiedSkills = new Set(Array.from(gems.values(), (entry) => entry.relic.skill));
+  for (const relic of next) {
+    if (gems.has(relic.id) || occupiedSkills.has(relic.skill)) continue;
+    const meshes = gemPool.get(relic.skill);
+    if (meshes === undefined) continue;
+    meshes.mesh.name = `relic:${relic.id}`;
+    meshes.spire.name = `relic-spire:${relic.id}`;
+    gems.set(relic.id, { ...meshes, phaseS: gemPhaseFor(relic.id), relic });
+    occupiedSkills.add(relic.skill);
+  }
+}
+
+function animateGems(ctx: ClientPluginCtx, dt: number): void {
+  elapsedS += dt;
+
+  const sample = (cellX: number, cellY: number): number | null =>
+    ctx.drawnGroundYAt(cellX, cellY);
+  for (const entry of gems.values()) {
+    const ground = gemGroundY(sample, entry.relic.x, entry.relic.y);
+    if (ground === null) {
+      entry.mesh.visible = false;
+      entry.spire.visible = false;
+      continue;
+    }
+
+    entry.mesh.visible = true;
+    entry.mesh.position.set(
+      entry.relic.x * CELL_WORLD_SIZE,
+      ground + GEM_HOVER_CELLS + gemBobOffset(elapsedS, entry.phaseS),
+      entry.relic.y * CELL_WORLD_SIZE,
+    );
+    entry.mesh.rotation.y = gemSpinAngle(elapsedS, entry.phaseS);
+
+    entry.spire.visible = true;
+    entry.spire.position.set(
+      entry.relic.x * CELL_WORLD_SIZE,
+      ground,
+      entry.relic.y * CELL_WORLD_SIZE,
+    );
+    (entry.spire.material as NodeMaterial).opacity = spireAlpha(
+      elapsedS,
+      entry.phaseS,
+    );
+  }
+}
+
+function* shownGemHitboxes(): Generator<GemHitbox> {
+  for (const entry of gems.values()) {
+    if (!entry.mesh.visible) continue;
+    const sphere = new Sphere()
+      .copy(entry.mesh.geometry.boundingSphere!)
+      .applyMatrix4(entry.mesh.matrixWorld);
+    sphere.radius *= GEM_HITBOX_SCALE;
+    yield { relic: entry.relic, sphere };
+  }
+}
+
+function handlePress(ctx: ClientPluginCtx, event: PointerEvent): boolean {
+  if (event.button !== PRIMARY_BUTTON) return false;
+
+  const armed = armedSkill();
+  if (armed !== null) {
+    armSkill(null);
+    const cell = ctx.pickTerrainCell(event.clientX, event.clientY);
+    if (cell !== null) ctx.send(CAST_MESSAGE, { skill: armed, x: cell.x, y: cell.y });
+    return true;
+  }
+
+  const aim = ctx.aimRay(event.clientX, event.clientY);
+  if (aim === null) return false;
+
+  const relic = relicOnRay(aim.ray, shownGemHitboxes(), aim.groundDistance);
+  if (relic === null) return false;
+
+  ctx.send(COLLECT_MESSAGE, { id: relic.id });
+  return true;
+}
+
+const RELIC_DRAW_OBJECTS = 2;
+
+export const clientPlugin: TerraceClientPlugin = {
+  name: 'relics',
+
+  drawBudget: RELIC_COUNT * RELIC_DRAW_OBJECTS,
+
+  attach(ctx: ClientPluginCtx): void {
+    resetRelicsClientState();
+    createGemPool(ctx);
+
+    ctx.onMessage(RELICS_MESSAGE, (payload) => {
+      const next = parseRelicsPayload(payload);
+      setRelics(next);
+      syncGems(next);
+    });
+
+    ctx.onMessage(SKILLS_MESSAGE, (payload) => {
+      const next = parseSkillsPayload(payload);
+      setSkills(next);
+      const armed = armedSkill();
+      if (armed !== null && !next.some((skill) => skill.id === armed)) armSkill(null);
+    });
+
+    ctx.onMessage(CAST_DENIED_MESSAGE, (payload) => {
+      const reason =
+        typeof payload === 'object' && payload !== null
+          ? (payload as { reason?: unknown }).reason
+          : undefined;
+      setCastDenial(typeof reason === 'string' ? reason : null);
+    });
+
+    ctx.onFrame((dt) => animateGems(ctx, dt));
+    ctx.onCanvasPress((event) => handlePress(ctx, event));
+    ctx.registerHudPanel(RelicsPanel, {
+      headerSummary: RelicsHeaderLine,
+      tabSummary: () => `Relics (${relics().length})`,
+      hasBody: () => skills().length > 0,
+    });
+  },
+
+  dispose(): void {
+    for (const entry of gemPool.values()) {
+      for (const mesh of [entry.mesh, entry.spire]) {
+        mesh.removeFromParent();
+        (mesh.material as NodeMaterial).dispose();
+      }
+    }
+    gems.clear();
+    gemPool.clear();
+    disposeRelicGeometries();
+    spireShape?.dispose();
+    spireShape = null;
+    elapsedS = 0;
+  },
+};

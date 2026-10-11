@@ -1,0 +1,319 @@
+import { BufferAttribute, BufferGeometry } from 'three';
+import { CHUNK_SIZE } from '@terrace/shared';
+import { CELL_WORLD_SIZE } from '../../config.ts';
+import type { BrushFootprint } from './brushGeometry.ts';
+import { CELL_TOUCH_EPSILON } from './footprintMark.ts';
+import { OUTLINE_LIFT_WORLD_UNITS, RING_HEM_WORLD_UNITS } from './style.ts';
+
+export interface BrushGround {
+  /** Drawn band cap Y at a cell, or null where the terrain is not drawn yet. */
+  yAt(cellX: number, cellZ: number): number | null;
+  revisionAt(cellX: number, cellZ: number): number;
+}
+
+export interface ConformedGeometry {
+  readonly ring: BufferGeometry;
+  readonly hem: BufferGeometry;
+  readonly extra: BufferGeometry;
+  readonly grid: BufferGeometry;
+  /** Rewrites all three if anything it depends on moved; cheap no-op otherwise.
+   *  capY pins every vertex at or below the selected band (null = off). */
+  syncTo(
+    footprint: BrushFootprint,
+    footprintId: number,
+    aimX: number,
+    aimZ: number,
+    fallbackY: number,
+    ground: BrushGround,
+    capY: number | null,
+  ): void;
+  dispose(): void;
+}
+
+interface LiveGeometry {
+  readonly geometry: BufferGeometry;
+  readonly array: Float32Array;
+  readonly attribute: BufferAttribute;
+}
+
+const POSITION_COMPONENTS = 3;
+
+/** Two triangles hang under each ring edge. */
+const HEM_VERTICES_PER_RING_EDGE = 6;
+
+function makeLive(vertexCapacity: number): LiveGeometry {
+  const geometry = new BufferGeometry();
+  const array = new Float32Array(vertexCapacity * POSITION_COMPONENTS);
+  const attribute = new BufferAttribute(array, POSITION_COMPONENTS);
+  geometry.setAttribute('position', attribute);
+  geometry.setDrawRange(0, 0);
+  return { geometry, array, attribute };
+}
+
+// Buffers are sized for the widest footprint; upload only the drawn head.
+function commit(live: LiveGeometry, vertexCount: number): void {
+  live.geometry.setDrawRange(0, vertexCount);
+  if (vertexCount === 0) return;
+  live.attribute.clearUpdateRanges();
+  live.attribute.addUpdateRange(0, vertexCount * POSITION_COMPONENTS);
+  live.attribute.needsUpdate = true;
+}
+
+/** Mark cells touching x,z in cell space, written into out as dx,dz pairs. */
+const touchInto = (footprint: BrushFootprint, x: number, z: number, out: Int32Array): number => {
+  const x0 = Math.ceil(x - 0.5 - CELL_TOUCH_EPSILON);
+  const x1 = Math.floor(x + 0.5 + CELL_TOUCH_EPSILON);
+  const z0 = Math.ceil(z - 0.5 - CELL_TOUCH_EPSILON);
+  const z1 = Math.floor(z + 0.5 + CELL_TOUCH_EPSILON);
+  const width = 2 * footprint.markExtent + 1;
+  let n = 0;
+  for (let cz = z0; cz <= z1; cz++) {
+    for (let cx = x0; cx <= x1; cx++) {
+      const gx = cx + footprint.markExtent;
+      const gz = cz + footprint.markExtent;
+      if (gx < 0 || gz < 0 || gx >= width || gz >= width) continue;
+      if (footprint.markGrid[gz * width + gx] === 0) continue;
+      out[n * 2] = cx;
+      out[n * 2 + 1] = cz;
+      n++;
+    }
+  }
+  if (n === 0) {
+    out[0] = 0;
+    out[1] = 0;
+    n = 1;
+  }
+  return n;
+};
+
+/** Ground under the mark, read once per rewrite: neighbouring vertices share cells. */
+interface GroundWindow {
+  open(extent: number, aimX: number, aimZ: number, ground: BrushGround): void;
+  /** Drawn Y at an offset from the aim; NaN where the terrain is not drawn yet. */
+  heightAt(dx: number, dz: number): number;
+}
+
+const NO_GROUND: BrushGround = { yAt: () => null, revisionAt: () => 0 };
+
+const MAX_WINDOW_GENERATION = 0xffffffff;
+
+function createGroundWindow(): GroundWindow {
+  let heights = new Float64Array(0);
+  let stamps = new Uint32Array(0);
+  let generation = 0;
+  let extent = 0;
+  let width = 0;
+  let aimX = 0;
+  let aimZ = 0;
+  let source = NO_GROUND;
+  return {
+    open(nextExtent, nextAimX, nextAimZ, ground) {
+      extent = nextExtent;
+      width = 2 * extent + 1;
+      if (width * width > heights.length) {
+        heights = new Float64Array(width * width);
+        stamps = new Uint32Array(width * width);
+        generation = 0;
+      }
+      if (generation === MAX_WINDOW_GENERATION) {
+        stamps.fill(0);
+        generation = 0;
+      }
+      generation++;
+      aimX = nextAimX;
+      aimZ = nextAimZ;
+      source = ground;
+    },
+    heightAt(dx, dz) {
+      const k = (dz + extent) * width + dx + extent;
+      if (stamps[k] !== generation) {
+        heights[k] = source.yAt(aimX + dx, aimZ + dz) ?? NaN;
+        stamps[k] = generation;
+      }
+      return heights[k]!;
+    },
+  };
+}
+
+const sampleHeight = (
+  footprint: BrushFootprint,
+  x: number,
+  z: number,
+  fallbackY: number,
+  capY: number | null,
+  ground: GroundWindow,
+  scratch: Int32Array,
+): number => {
+  // capY pins the footprint to the selected band's cap: the ring never
+  // rides higher than the surface being edited.
+  const touched = touchInto(footprint, x, z, scratch);
+  let y = -Infinity;
+  for (let k = 0; k < touched; k++) {
+    const sample = ground.heightAt(scratch[k * 2]!, scratch[k * 2 + 1]!);
+    if (Number.isNaN(sample)) continue;
+    const capped = capY === null ? sample : Math.min(sample, capY);
+    if (capped > y) y = capped;
+  }
+  const base = y === -Infinity ? fallbackY : y;
+  return (capY === null ? base : Math.min(base, capY)) + OUTLINE_LIFT_WORLD_UNITS;
+};
+
+export function createConformedGeometry(
+  maxRingVerts: number,
+  maxGridSegments: number,
+  maxExtraSegments: number,
+): ConformedGeometry {
+  // Exact draped maxima, computed per footprint at construction: no resizes.
+  const ring = makeLive(maxRingVerts);
+  const hem = makeLive(HEM_VERTICES_PER_RING_EDGE * (maxRingVerts - 1));
+  const grid = makeLive(2 * maxGridSegments);
+  const extra = makeLive(2 * maxExtraSegments);
+  // At most four mark cells touch one point; reused, never reallocated.
+  const touchScratch = new Int32Array(8);
+  const groundWindow = createGroundWindow();
+
+  let lastFootprintId = -1;
+  let lastAimX = Infinity;
+  let lastAimZ = Infinity;
+  let lastFallbackY = NaN;
+  let lastCapY: number | null = null;
+  let lastHash = 0;
+  let hasWritten = false;
+
+  return {
+    ring: ring.geometry,
+    hem: hem.geometry,
+    extra: extra.geometry,
+    grid: grid.geometry,
+    syncTo(footprint, footprintId, aimX, aimZ, fallbackY, ground, capY): void {
+      const reach = footprint.reachCells;
+      const firstChunkX = Math.floor((aimX - reach) / CHUNK_SIZE);
+      const lastChunkX = Math.floor((aimX + reach) / CHUNK_SIZE);
+      const firstChunkZ = Math.floor((aimZ - reach) / CHUNK_SIZE);
+      const lastChunkZ = Math.floor((aimZ + reach) / CHUNK_SIZE);
+      let hash = 0;
+      for (let cz = firstChunkZ; cz <= lastChunkZ; cz++) {
+        for (let cx = firstChunkX; cx <= lastChunkX; cx++) {
+          hash =
+            (Math.imul(hash, 31) + ground.revisionAt(cx * CHUNK_SIZE, cz * CHUNK_SIZE)) | 0;
+        }
+      }
+      // No camera state enters here: a pan or rotate with a steady aim
+      // supplies identical inputs, so orbiting rewrites nothing.
+      if (
+        hasWritten &&
+        footprintId === lastFootprintId &&
+        aimX === lastAimX &&
+        aimZ === lastAimZ &&
+        fallbackY === lastFallbackY &&
+        capY === lastCapY &&
+        hash === lastHash
+      ) {
+        return;
+      }
+
+      groundWindow.open(footprint.markExtent, aimX, aimZ, ground);
+      // Y is absolute world Y, not local: objects carry XZ only. Runs
+      // arrive pre-draped. Live footprints clamp counts to construction
+      // capacity.
+      const ringCount = footprint.ringCount > maxRingVerts ? maxRingVerts : footprint.ringCount;
+      const gridCount =
+        footprint.gridCount > maxGridSegments ? maxGridSegments : footprint.gridCount;
+
+      for (let i = 0; i < ringCount; i++) {
+        const x = footprint.ringPoints[i * 2]!;
+        const z = footprint.ringPoints[i * 2 + 1]!;
+        ring.array[i * 3] = x * CELL_WORLD_SIZE;
+        ring.array[i * 3 + 1] = sampleHeight(
+          footprint, x, z, fallbackY, capY, groundWindow, touchScratch,
+        );
+        ring.array[i * 3 + 2] = z * CELL_WORLD_SIZE;
+      }
+      commit(ring, ringCount);
+
+      for (let s = 0; s < gridCount; s++) {
+        // Each end rides the ground beneath it: one-cell runs hug one step.
+        const ax = footprint.gridPoints[s * 4]!;
+        const az = footprint.gridPoints[s * 4 + 1]!;
+        const bx = footprint.gridPoints[s * 4 + 2]!;
+        const bz = footprint.gridPoints[s * 4 + 3]!;
+        const ya = sampleHeight(
+          footprint, ax, az, fallbackY, capY, groundWindow, touchScratch,
+        );
+        const yb = sampleHeight(
+          footprint, bx, bz, fallbackY, capY, groundWindow, touchScratch,
+        );
+        grid.array[s * 6] = ax * CELL_WORLD_SIZE;
+        grid.array[s * 6 + 1] = ya;
+        grid.array[s * 6 + 2] = az * CELL_WORLD_SIZE;
+        grid.array[s * 6 + 3] = bx * CELL_WORLD_SIZE;
+        grid.array[s * 6 + 4] = yb;
+        grid.array[s * 6 + 5] = bz * CELL_WORLD_SIZE;
+      }
+      commit(grid, gridCount * 2);
+
+      // Loops the ring strip cannot reach: their own segment pairs, draped the
+      // same way, so a disconnected mark still reads as one outline.
+      const extraCount =
+        footprint.extraCount > maxExtraSegments ? maxExtraSegments : footprint.extraCount;
+      for (let s2 = 0; s2 < extraCount; s2++) {
+        const ax = footprint.extraPoints[s2 * 4]!;
+        const az = footprint.extraPoints[s2 * 4 + 1]!;
+        const bx = footprint.extraPoints[s2 * 4 + 2]!;
+        const bz = footprint.extraPoints[s2 * 4 + 3]!;
+        const ya = sampleHeight(footprint, ax, az, fallbackY, capY, groundWindow, touchScratch);
+        const yb = sampleHeight(footprint, bx, bz, fallbackY, capY, groundWindow, touchScratch);
+        extra.array[s2 * 6] = ax * CELL_WORLD_SIZE;
+        extra.array[s2 * 6 + 1] = ya;
+        extra.array[s2 * 6 + 2] = az * CELL_WORLD_SIZE;
+        extra.array[s2 * 6 + 3] = bx * CELL_WORLD_SIZE;
+        extra.array[s2 * 6 + 4] = yb;
+        extra.array[s2 * 6 + 5] = bz * CELL_WORLD_SIZE;
+      }
+      commit(extra, extraCount * 2);
+
+      for (let i = 0; i < ringCount - 1; i++) {
+        const ax = ring.array[i * 3]!;
+        const ya = ring.array[i * 3 + 1]!;
+        const az = ring.array[i * 3 + 2]!;
+        const bx = ring.array[i * 3 + 3]!;
+        const yb = ring.array[i * 3 + 4]!;
+        const bz = ring.array[i * 3 + 5]!;
+        const base = i * 18;
+        hem.array[base] = ax;
+        hem.array[base + 1] = ya;
+        hem.array[base + 2] = az;
+        hem.array[base + 3] = bx;
+        hem.array[base + 4] = yb;
+        hem.array[base + 5] = bz;
+        hem.array[base + 6] = bx;
+        hem.array[base + 7] = yb - RING_HEM_WORLD_UNITS;
+        hem.array[base + 8] = bz;
+        hem.array[base + 9] = ax;
+        hem.array[base + 10] = ya;
+        hem.array[base + 11] = az;
+        hem.array[base + 12] = bx;
+        hem.array[base + 13] = yb - RING_HEM_WORLD_UNITS;
+        hem.array[base + 14] = bz;
+        hem.array[base + 15] = ax;
+        hem.array[base + 16] = ya - RING_HEM_WORLD_UNITS;
+        hem.array[base + 17] = az;
+      }
+      commit(hem, HEM_VERTICES_PER_RING_EDGE * Math.max(0, ringCount - 1));
+
+      lastFootprintId = footprintId;
+      lastAimX = aimX;
+      lastAimZ = aimZ;
+      lastFallbackY = fallbackY;
+      lastCapY = capY;
+      lastHash = hash;
+      hasWritten = true;
+    },
+    dispose(): void {
+      ring.geometry.dispose();
+      hem.geometry.dispose();
+      grid.geometry.dispose();
+      extra.geometry.dispose();
+    },
+  };
+}

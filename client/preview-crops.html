@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Crop preview (throwaway)</title>
+    <style>
+      /* Same neutral studio backdrop as preview.html (structures) — this page
+         exists only to screenshot one crop option at a time in isolation. */
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #808080;
+      }
+      canvas {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- THROWAWAY preview harness for the three wheat variants
+         (wheatVariants.ts), mirroring preview-wildlife.html / the other
+         preview pages. Not part of the shipped app: not linked from
+         index.html, not registered in plugins/registry.ts. Renders ONE
+         option's full plot — the tilled bed with its four stalks — chosen by
+         ?option=<0..2>. See previewCrops.ts for the full contract. -->
+    <canvas id="viewport"></canvas>
+    <script type="module" src="/src/previewCrops.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,338 @@
+import { createEffect } from 'solid-js';
+import { render } from 'solid-js/web';
+import { Raycaster, Vector2 } from 'three';
+import { connect, type ConnectionStatus, type TerrainSink } from './net/connection.ts';
+import { bindCameraControls } from './input/cameraBindings.ts';
+import { createCameraGestureLock } from './input/cameraGestureLock.ts';
+import { bindKeyCamera } from './input/keyCamera.ts';
+import { createSculptInput } from './input/sculptInput.ts';
+import { createClientPluginHost } from './plugins/host.ts';
+import { CLIENT_PLUGINS } from './plugins/registry.ts';
+import { createViewport } from './render/scene.ts';
+import { createCelestialVoid } from './render/celestialVoid.ts';
+import { installHitchLog } from './render/hitchLog.ts';
+import { applyServerPerfLogging, bindPerfLoggingSender } from './state/perfLoggingPrefs.ts';
+import { voidAnchor, voidStyle } from './state/voidPrefs.ts';
+import { creaseLook, layerEdgeStyle, lipHighlight } from './state/layerEdgePrefs.ts';
+import { cellLinesVisible, cellLook } from './state/layerEdgePrefs.ts';
+import { bandGridVisible } from './state/layerEdgePrefs.ts';
+import { smoothLinesEnabled } from './state/layerEdgePrefs.ts';
+import { frameRateTarget, frameRateTargetFps } from './state/frameRatePrefs.ts';
+import { multisampleEnabled, multisampleSetting } from './state/multisamplePrefs.ts';
+import { pointerToNdc, worldPointToCell } from './terrain/picking.ts';
+import type { TerrainRayPick } from './terrain/pick/types.ts';
+import { CELL_WORLD_SIZE } from './config.ts';
+import { createWorld } from './world.ts';
+import {
+  createDirectChunkBuildSource,
+  createWorkerChunkBuildSource,
+} from './render/chunkBuildSource.ts';
+import { createGpuChunkBuildSource } from './render/gpuMesher/gpuChunkBuildSource.ts';
+import { installPerfProbe, installPerfProbeEarly } from './perfProbe.ts';
+import { BOOT_MARKS, markBoot } from './bootMarks.ts';
+import {
+  brushProfile,
+  brushRadius,
+  brushTool,
+  carveDepthBands,
+  effectiveSculptMode,
+  sculptDirection,
+  setConnectionStatus,
+  setHoverPick,
+  showDenialHint,
+} from './state/hudState.ts';
+import { applyRestorePointList, applyRollbackResult } from './state/rollbackState.ts';
+import {
+  applyWorldAdminResult,
+  applyWorldListing,
+  applyWorldPluginListing,
+  applyWorldSwitchNotice,
+  armedAction,
+  setArmedAction,
+  setPendingRestartSeconds,
+  setWorldFeedback,
+  setWorldLoaded,
+  worldAdminKey,
+} from './state/worldsState.ts';
+import { BRUSH_PREVIEW_DRAW_OBJECTS, createBrushPreview } from './render/brushPreview.ts';
+import { createDenialCue } from './render/denialCue.ts';
+import { SCULPT_TOOL_ID, activeToolId } from './plugins/toolbar.ts';
+import {
+  createPickDebugOverlay,
+  PICK_DEBUG_OVERLAY_DRAW_OBJECTS,
+} from './render/pickDebugOverlay.ts';
+import { startFrameRateMeter } from './render/frameRate.ts';
+import { installPerfHandle } from './render/perfHandle.ts';
+import { Hud } from './ui/Hud.tsx';
+import './ui/hud.css';
+
+const canvas = document.querySelector<HTMLCanvasElement>('#viewport');
+const hudRoot = document.querySelector<HTMLElement>('#hud');
+if (canvas === null || hudRoot === null) {
+  throw new Error('index.html must provide #viewport and #hud');
+}
+
+const viewport = await createViewport(canvas, {
+  multisampling: multisampleEnabled(multisampleSetting()),
+});
+markBoot(BOOT_MARKS.viewportReady);
+// Both meshers are world-independent, so the session builds them once. A GPU mesher that
+// cannot compile or bind returns null, and every world then meshes on the workers.
+const chunkBuildSource = createWorkerChunkBuildSource() ?? createDirectChunkBuildSource();
+const gpuMesher = await createGpuChunkBuildSource(viewport.renderer, chunkBuildSource);
+// The join is issued right after the last await, so its round trip overlaps the rest of
+// boot; every callback below reaches its target lazily, and nothing runs before wiring.
+const connection = connect({
+  // Every sculptDenied pulses the red-brush refused hold (releaseStroke);
+  // world.onSculptDenied resolves the prediction and picks the hint text.
+  sink: () => deniedAwareSink,
+  operator: {
+    onRestorePointList: (msg) => applyRestorePointList(msg),
+    onRollbackResult: (msg) => applyRollbackResult(msg),
+  },
+  worldAdmin: {
+    onWorldListing: (msg) => applyWorldListing(msg),
+    onWorldPluginListing: (msg) => applyWorldPluginListing(msg),
+    onWorldAdminResult: (msg) => applyWorldAdminResult(msg),
+    onWorldSwitchNotice: (msg) => applyWorldSwitchNotice(msg),
+    onWorldUnloaded: () => setWorldLoaded(false),
+    onServerRestartNotice: (msg) => setPendingRestartSeconds(msg.secondsRemaining),
+  },
+  onStatus: (status: ConnectionStatus) => setConnectionStatus(status),
+  onPluginMessage: (type, payload) => pluginHost.routeMessage(type, payload),
+  onLivePlugins: (names, worldGeneration) => {
+    pluginHost.resetWorld(worldGeneration);
+    pluginHost.syncLivePlugins(names);
+  },
+  onPerfLoggingState: applyServerPerfLogging,
+});
+bindPerfLoggingSender({
+  setEnabled: (enabled) => connection.sendPerfLogging(enabled),
+  reportHitch: (intervalMs, typicalMs) => connection.sendPerfHitch(intervalMs, typicalMs),
+});
+
+if (import.meta.env.DEV) installPerfProbeEarly(viewport);
+installHitchLog();
+const world = createWorld(viewport, { chunkBuildSource, gpuMesher });
+const celestialVoid = createCelestialVoid(
+  viewport,
+  voidStyle(),
+  voidAnchor(),
+  () => world.worldSize(),
+);
+createEffect(() => celestialVoid.setStyle(voidStyle()));
+createEffect(() => celestialVoid.setAnchor(voidAnchor()));
+
+createEffect(() => world.setLayerEdgeStyle(layerEdgeStyle()));
+createEffect(() => world.setLipHighlight(lipHighlight()));
+createEffect(() => world.setCreaseLook(creaseLook()));
+createEffect(() => world.setCellLinesVisible(cellLinesVisible()));
+createEffect(() => world.setCellLook(cellLook()));
+createEffect(() => world.setBandGridVisible(bandGridVisible()));
+createEffect(() => world.setLipSmoothing(smoothLinesEnabled()));
+createEffect(() => viewport.setFrameRateTarget(frameRateTargetFps(frameRateTarget())));
+createEffect(() => viewport.setMultisampling(multisampleEnabled(multisampleSetting())));
+
+const placementRaycaster = new Raycaster();
+const placementNdc = new Vector2();
+const onPlacementPointerDown = (event: PointerEvent): void => {
+  const armed = armedAction();
+  if (armed === null || event.button !== 0) return;
+  event.stopImmediatePropagation();
+  event.preventDefault();
+  const device = pointerToNdc(event.clientX, event.clientY, canvas.getBoundingClientRect());
+  if (device === null) return;
+  placementNdc.set(device.x, device.y);
+  placementRaycaster.setFromCamera(placementNdc, viewport.camera);
+  const pick = world.pickCell(placementRaycaster.ray.origin, placementRaycaster.ray.direction);
+  if (pick === null) return;
+  setArmedAction(null);
+  setWorldFeedback({ kind: 'working' });
+  connection.sendWorldAdmin({
+    type: 'worldPluginAct',
+    key: worldAdminKey(),
+    plugin: armed.plugin,
+    action: armed.key,
+    x: pick.x,
+    y: pick.y,
+  });
+};
+canvas.addEventListener('pointerdown', onPlacementPointerDown, { capture: true });
+createEffect(() => {
+  canvas.style.cursor = armedAction() === null ? '' : 'crosshair';
+});
+viewport.setGroundHeightSampler((worldX, worldZ) => {
+  const size = world.worldSize();
+  if (size === 0) return null;
+  const cell = worldPointToCell(worldX, worldZ, size);
+  if (cell === null) return null;
+  return world.drawnGroundYAt(cell.x, cell.y);
+});
+const cameraBindings = bindCameraControls(canvas, viewport.controls, () => cameraGesture.wheelMoved());
+bindKeyCamera(viewport.controls, (handler) => viewport.onFrame(handler, 'pose'));
+const cameraGesture = createCameraGestureLock(canvas, viewport.controls, () =>
+  cameraBindings.pointerLocked(),
+);
+
+// `?plugins=off` boots a core-only client (terrain, water, sky) for engine debugging.
+const PLUGINS_QUERY_FLAG = 'plugins';
+const PLUGINS_QUERY_OFF = 'off';
+const clientPluginsRequested =
+  new URLSearchParams(window.location.search).get(PLUGINS_QUERY_FLAG) !== PLUGINS_QUERY_OFF;
+
+const pluginHost = createClientPluginHost(clientPluginsRequested ? CLIENT_PLUGINS : [], {
+  viewport,
+  world,
+  connection: () => connection,
+  coreDrawBudget: () =>
+    world.drawBudget() +
+    BRUSH_PREVIEW_DRAW_OBJECTS +
+    (pickDebug === null ? 0 : PICK_DEBUG_OVERLAY_DRAW_OBJECTS),
+});
+
+
+const PICK_DEBUG_QUERY_FLAG = 'pickdebug';
+
+const litLipSpan = (): number => brushRadius() * CELL_WORLD_SIZE;
+
+const sculptInput = createSculptInput({
+  canvas,
+  camera: viewport.camera,
+  pickCell: (origin, direction) => world.pickCell(origin, direction),
+  pickInColumn: (x, y, origin, direction) => world.pickInColumn(x, y, origin, direction),
+  worldSize: () => world.worldSize(),
+  riserBand: (pick) => world.highlightLayerEdge(pick, { litSpanWorldUnits: litLipSpan() }),
+  runFloorBandAt: (x, y, band) => world.runFloorBandAt(x, y, band),
+  graspSpanBand: (pick, atX, atY) => world.graspSpanBand(pick, atX, atY),
+  carveBand: (pick) => world.carveBand(pick),
+  carveReach: (origin, direction, band) => world.carveReach(origin, direction, band),
+  send: (intent) => {
+    // A local veto pulses red via releaseStroke and reports 'refused' so the
+    // input does not also latch the grey offline cue for it.
+    if (!pluginHost.allowLocalIntent(intent)) {
+      sculptInput.releaseStroke();
+      return 'refused';
+    }
+    if (!connection.sendSculpt(intent)) return 'offline';
+    world.predictSculpt(intent);
+    return 'sent';
+  },
+});
+
+// The sink runs after this module loads, so it can route denials to the world
+// and the input, though both are built after connect().
+const deniedAwareSink: TerrainSink = {
+  onSnapshot: (msg) => world.onSnapshot(msg),
+  onChunkUnlock: (msg) => world.onChunkUnlock(msg),
+  onTerrainDiff: (msg) => world.onTerrainDiff(msg),
+  onSculptDenied: (msg) => {
+    world.onSculptDenied(msg);
+    sculptInput.releaseStroke();
+    showDenialHint(world.denialHint());
+  },
+  onSculptApplied: (msg) => world.onSculptApplied(msg),
+};
+
+// The four brush cues: refused (red), offline (grey/hollow, never red), ghost
+// (the intent left but predicted nothing), flat (posture refusal, crosshair only).
+const denialCue = createDenialCue(() => sculptInput.refusedHold(), {
+  offline: () => sculptInput.offlineHold(),
+  ghost: () => world.ghostSeqs().length > 0,
+  flat: () => sculptInput.dragDescentFrozen(),
+  flatBlinks: () => sculptInput.flatBlinks(),
+});
+const brushPreview = createBrushPreview(
+  viewport.scene,
+  canvas,
+  () => world.worldSize(),
+  denialCue,
+  {
+    yAt: (cellX, cellZ) => world.drawnGroundYAt(cellX, cellZ),
+    revisionAt: (cellX, cellZ) => world.terrainRevisionAt(cellX, cellZ),
+  },
+  (x, y, band, radius) => world.carveCellsAt(x, y, band, radius, carveDepthBands()),
+);
+const pickDebug = new URLSearchParams(window.location.search).has(PICK_DEBUG_QUERY_FLAG)
+  ? createPickDebugOverlay(viewport.scene, canvas)
+  : null;
+let frozenCursorShown = false;
+// The aim the overlays are drawn for; a camera gesture holds it.
+let heldAim: TerrainRayPick | null = null;
+viewport.onFrame(() => {
+  world.setBrushRefused(denialCue.isRed());
+  // While the drag plane is off the ray the stroke is frozen: show a crosshair.
+  // Lane E greys the held highlight via sculptInput.dragDescentFrozen().
+  if (sculptInput.dragDescentFrozen()) {
+    frozenCursorShown = true;
+    canvas.style.cursor = 'crosshair';
+  } else if (frozenCursorShown) {
+    frozenCursorShown = false;
+    canvas.style.cursor = armedAction() === null ? '' : 'crosshair';
+  }
+  // A camera gesture holds the aim: the pointer is still while the world slides
+  // under it, so the overlays keep the aim they already drew and repaint nothing.
+  if (!cameraGesture.active()) {
+    // A held drag lands on its band's plane, not the ground under the pointer.
+    heldAim = activeToolId() === SCULPT_TOOL_ID ? (sculptInput.dragAim() ?? sculptInput.hoverTarget()) : null;
+  }
+  const pick = heldAim;
+  const tool = brushTool();
+  const grabbedBand = world.highlightLayerEdge(pick, {
+    litSpanWorldUnits: litLipSpan(),
+    heldBand: tool === 'carve' ? sculptInput.carveHeldBand() : sculptInput.heldBand(),
+  });
+  brushPreview.update(
+    pick === null
+      ? null
+      : {
+          ...pick,
+          grabbable: grabbedBand !== null && brushTool() === 'drag',
+          band: grabbedBand,
+          aimBand: world.aimBand(pick),
+          carveBand: world.carveBand(pick),
+        },
+    {
+      radius: brushRadius(),
+      tool: brushTool(),
+      profile: brushProfile(),
+      dir: sculptDirection(effectiveSculptMode()),
+    },
+  );
+  pickDebug?.update(pick, grabbedBand, world.aimBand(pick));
+  setHoverPick(
+    pick === null ? null : { x: pick.x, y: pick.y, face: pick.face, band: grabbedBand },
+  );
+});
+
+startFrameRateMeter(viewport.onFrame);
+installPerfHandle();
+
+// Last: start() draws a frame synchronously, and that frame bakes shader constants the
+// plugin host is still configuring — nothing may render until the scene is fully wired.
+viewport.start();
+
+render(
+  () => (
+    <Hud
+      chartSource={() => world.chartSource()}
+      rollback={{
+        list: (key) => connection.requestRestorePoints(key),
+        apply: (key, toId) => connection.requestRollback(key, toId),
+      }}
+      worlds={{
+        send: (message) => connection.sendWorldAdmin(message),
+      }}
+      restartStack={() => connection.sendStackRestart()}
+    />
+  ),
+  hudRoot,
+);
+
+if (import.meta.env.DEV) {
+  (window as unknown as { __terrace?: unknown }).__terrace = {
+    viewport,
+    world,
+    connection,
+  };
+  installPerfProbe({ viewport, world, connection, pluginHost });
+}

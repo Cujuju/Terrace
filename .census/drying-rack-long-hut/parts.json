@@ -1,0 +1,27 @@
+[
+  {
+    "name": "Preserved original Terrace procedural base, coplanar merge and bevel improvements",
+    "first_face": 0,
+    "face_count": 496
+  },
+  {
+    "name": "Closed gable",
+    "first_face": 496,
+    "face_count": 5
+  },
+  {
+    "name": "Closed gable",
+    "first_face": 501,
+    "face_count": 5
+  },
+  {
+    "name": "Closed ridge end",
+    "first_face": 506,
+    "face_count": 6
+  },
+  {
+    "name": "Closed ridge end",
+    "first_face": 512,
+    "face_count": 6
+  }
+]

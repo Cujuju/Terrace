@@ -1,0 +1,167 @@
+[
+  {
+    "name": "timber polygonal course",
+    "first_face": 0,
+    "face_count": 10
+  },
+  {
+    "name": "stone polygonal course",
+    "first_face": 10,
+    "face_count": 10
+  },
+  {
+    "name": "timber polygonal course",
+    "first_face": 20,
+    "face_count": 10
+  },
+  {
+    "name": "stone polygonal course",
+    "first_face": 30,
+    "face_count": 10
+  },
+  {
+    "name": "timber polygonal course",
+    "first_face": 40,
+    "face_count": 10
+  },
+  {
+    "name": "stone polygonal course",
+    "first_face": 50,
+    "face_count": 10
+  },
+  {
+    "name": "timber polygonal course",
+    "first_face": 60,
+    "face_count": 10
+  },
+  {
+    "name": "stone polygonal course",
+    "first_face": 70,
+    "face_count": 10
+  },
+  {
+    "name": "Raised platform",
+    "first_face": 80,
+    "face_count": 6
+  },
+  {
+    "name": "Wattle grain store",
+    "first_face": 86,
+    "face_count": 6
+  },
+  {
+    "name": "Store post",
+    "first_face": 92,
+    "face_count": 6
+  },
+  {
+    "name": "Store post",
+    "first_face": 98,
+    "face_count": 6
+  },
+  {
+    "name": "Store post",
+    "first_face": 104,
+    "face_count": 6
+  },
+  {
+    "name": "Store post",
+    "first_face": 110,
+    "face_count": 6
+  },
+  {
+    "name": "Hipped roof course",
+    "first_face": 116,
+    "face_count": 6
+  },
+  {
+    "name": "Hipped roof course",
+    "first_face": 122,
+    "face_count": 6
+  },
+  {
+    "name": "Hipped roof course",
+    "first_face": 128,
+    "face_count": 6
+  },
+  {
+    "name": "Hipped roof course",
+    "first_face": 134,
+    "face_count": 6
+  },
+  {
+    "name": "Hipped roof course",
+    "first_face": 140,
+    "face_count": 6
+  },
+  {
+    "name": "Recessed opening",
+    "first_face": 146,
+    "face_count": 6
+  },
+  {
+    "name": "Inset door",
+    "first_face": 152,
+    "face_count": 6
+  },
+  {
+    "name": "Door jamb",
+    "first_face": 158,
+    "face_count": 6
+  },
+  {
+    "name": "Door jamb",
+    "first_face": 164,
+    "face_count": 6
+  },
+  {
+    "name": "Lintel",
+    "first_face": 170,
+    "face_count": 6
+  },
+  {
+    "name": "Ladder rail",
+    "first_face": 176,
+    "face_count": 6
+  },
+  {
+    "name": "Flat ladder foot",
+    "first_face": 182,
+    "face_count": 6
+  },
+  {
+    "name": "Ladder rail",
+    "first_face": 188,
+    "face_count": 6
+  },
+  {
+    "name": "Flat ladder foot",
+    "first_face": 194,
+    "face_count": 6
+  },
+  {
+    "name": "Ladder rung",
+    "first_face": 200,
+    "face_count": 6
+  },
+  {
+    "name": "Ladder rung",
+    "first_face": 206,
+    "face_count": 6
+  },
+  {
+    "name": "Ladder rung",
+    "first_face": 212,
+    "face_count": 6
+  },
+  {
+    "name": "Ladder rung",
+    "first_face": 218,
+    "face_count": 6
+  },
+  {
+    "name": "Ladder rung",
+    "first_face": 224,
+    "face_count": 6
+  }
+]

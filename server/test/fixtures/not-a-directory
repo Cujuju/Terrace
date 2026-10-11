@@ -1,0 +1,4 @@
+This is a regular file, not a plugins directory. discoverPlugins() must not
+treat this the same as a missing directory: readdir() on a file fails with
+ENOTDIR, which is a real I/O error and must propagate instead of being
+silently swallowed as "no plugins directory".

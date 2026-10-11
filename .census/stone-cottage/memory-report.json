@@ -1,0 +1,94 @@
+{
+  "assumptions": {
+    "png_gpu_format": "RGBA8 with complete mip chain",
+    "compressed_gpu_format": "BC7 or ASTC 4x4, 16 bytes per 4x4 block, complete mip chain",
+    "excluded": "CPU decoded images, loader buffers, driver allocation overhead, shaders, framebuffer and instance buffers",
+    "sharing": "Terrace draws repeated structures with InstancedMesh; mesh and textures are shared, not duplicated per house."
+  },
+  "variants": {
+    "original": {
+      "triangles": 3688,
+      "exported_vertices": 7472,
+      "geometry_gpu_bytes": 380784,
+      "textures": [
+        {
+          "name": "stone-cottage-normal",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 2284133
+        },
+        {
+          "name": "stone-cottage-basecolor",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 2786487
+        },
+        {
+          "name": "stone-cottage-metallicRoughness",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 1129430
+        }
+      ],
+      "png_gpu_total_bytes": 67489644,
+      "ktx2_bc7_astc_gpu_total_bytes": 17158080,
+      "png_glb_file_bytes": 5194696,
+      "ktx2_glb_file_bytes": 6582960,
+      "png_glb_sha256": "468194ed93b02a7695d753ed50441d5c17467a3c18bfd1223819fbab2ddfa2b1",
+      "ktx2_glb_sha256": "93cdb326de95a97a402ac2c6c42ac6e235b1b9c661097550b4746dd216a81c54",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    },
+    "low": {
+      "triangles": 1572,
+      "exported_vertices": 3154,
+      "geometry_gpu_bytes": 160824,
+      "textures": [
+        {
+          "name": "stone-cottage-normal",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 536062
+        },
+        {
+          "name": "stone-cottage-basecolor",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 821123
+        },
+        {
+          "name": "stone-cottage-metallicRoughness",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 195558
+        }
+      ],
+      "png_gpu_total_bytes": 16938036,
+      "ktx2_bc7_astc_gpu_total_bytes": 4355208,
+      "png_glb_file_bytes": 1299384,
+      "ktx2_glb_file_bytes": 1715688,
+      "png_glb_sha256": "6f1d22bc7fe5fc14792f80d1c41ba456ef8cbd2888b468228ed99260c195cc8f",
+      "ktx2_glb_sha256": "8b74770941c0163e37341723d402a2fe6c5bcdfbe8dc0ad50f4cbda4335f9d12",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    }
+  }
+}

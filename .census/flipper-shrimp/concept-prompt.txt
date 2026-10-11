@@ -1,0 +1,34 @@
+Generated with Codex CLI 0.156.1 image generation (ChatGPT account); exact backend model not selectable or verified.
+The selected concept (variant-c3) was made in three steps. Each prompt is below, in order.
+
+=== Step 1: variant-c (references: .census/durands/durands-45deg.png, .census/ricks/ricks-concept.png) ===
+Use your image generation tool to create ONE image and save it as variant-c.png in the current directory. Reply with the saved path only.
+
+The two attached images are style references: a saloon and a research building from the same game. Match their footprint, detail density, exaggerated proportions, camera (elevated 3/4 isometric view, neutral grey background, single building centered), and polished stylized game-art look.
+
+Create a compact, stylized 3D aquatic clubhouse matching the reference saloon and research building in footprint, detail density, exaggerated proportions, and polished game-art style.
+This is the shared home of Flipper, a playful dolphin, and Shrimp, a cheerful shrimp. Both are the same size and equally important. Give them equally scaled seating, platforms, and attractions - never miniature shrimp amenities.
+Build a colorful seaside funhouse around a central turquoise pool, with two curved water slides, bubbling jets, stepping stones, and shallow channels connecting the shared spaces. Combine weathered wood, pale stone, nautical railings, porthole windows, and aqua glass. Accent with shells, coral, ropes, buoys, and a few tropical plants.
+Above the entrance, place a large, readable sign: "FLIPPER & SHRIMP'S PLACE", flanked by equally sized dolphin and shrimp mascots. Add two smaller signs: "NO FISHING" and "WATER WIGGLERS WELCOME."
+Balance dolphin-inspired waves and curved ramps with shrimp-inspired shell canopies and bubbly fountains. Keep the layout unified, playful, and absurd, with the building as the focal point.
+
+Variant direction: Boardwalk pier composition: a raised weathered-wood pier building on stilts over the pool, with a lighthouse-like tower on one corner, more nautical rope, buoys and railings, slides dropping from the upper deck.
+
+=== Step 2: variant-c2 (inputs: variant-c.png, variant-a.png) ===
+Use your image generation tool to create ONE image and save it as variant-c2.png in the current directory. Reply with the saved path only.
+
+Attached image 1 (variant-c.png) is the BASE design: a pier clubhouse on stilts with a lighthouse, "FLIPPER & SHRIMP'S PLACE" sign with dolphin and shrimp mascots on top, "NO FISHING" and "WATER WIGGLERS WELCOME." signs, lounges, pool, buoys and ropes. Keep everything about it the same: layout, camera angle, footprint, lighthouse, pier, signs, mascots, materials, colors, lighting, grey background, and stylized game-art look.
+
+Attached image 2 (variant-a.png) is the reference for ONE change only: the water slides. Replace the two slides in the base design with slides in the style of image 2: each slide launches out of the open mouth of a large sculpted character head: a smiling blue dolphin head for the left slide and a smiling orange shrimp head with long antennae for the right slide. Both heads and slides are the same size. The slides are long, glossy, sweeping curved open flumes (blue on the dolphin side, orange-coral on the shrimp side) with water running down and splashing into the pool. Mount the heads on the upper pier deck where the current slides start.
+
+Do not change anything else.
+
+=== Step 3: variant-c3 (inputs: variant-c2.png, variant-a.png) ===
+Use your image generation tool to create ONE image and save it as variant-c3.png in the current directory. Reply with the saved path only.
+
+Attached image 1 (variant-c2.png) is the BASE design. Keep everything about it the same: layout, camera angle, footprint, lighthouse, pier, stilts, signs and their text, mascots, the dolphin head and shrimp head at the top of the two slides, lounges, materials, colors, lighting, grey background, and stylized game-art look.
+
+Attached image 2 (variant-a.png) is the reference for ONE change only: the shape of the slide flumes. In the base, the slides run straight down. Make them like image 2: each flume leaves the character head's mouth and sweeps in a long curved arc (a gentle S / banana curve bending toward the center of the pool) before splashing into the pool. Blue flume from the dolphin head on the left, orange-coral flume from the shrimp head on the right, mirrored and equal in size.
+
+Do not change anything else.
+

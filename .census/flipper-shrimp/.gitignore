@@ -1,0 +1,3 @@
+*.log
+.review/
+__pycache__/

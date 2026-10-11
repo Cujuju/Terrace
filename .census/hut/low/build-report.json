@@ -1,0 +1,144 @@
+{
+  "profile": "low",
+  "meshes": 1,
+  "materials": 1,
+  "vertices": 381,
+  "triangles": 548,
+  "polygons": 268,
+  "parts": 1,
+  "islands": 268,
+  "texture_size": [
+    1024,
+    1024
+  ],
+  "gap_pixels": 12,
+  "density_pixels_per_game_unit": 399.97774603473385,
+  "dimensions": [
+    0.7770689129829407,
+    0.7770689129829407,
+    0.8500000238418579
+  ],
+  "origin": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "palette": {
+    "timber": [
+      0.3,
+      0.245,
+      0.19
+    ],
+    "wall": [
+      0.52,
+      0.455,
+      0.35
+    ],
+    "gable": [
+      0.46,
+      0.385,
+      0.285
+    ],
+    "roof": [
+      0.55,
+      0.335,
+      0.22
+    ],
+    "door": [
+      0.385,
+      0.28,
+      0.185
+    ],
+    "stone": [
+      0.43,
+      0.445,
+      0.42
+    ],
+    "cutstone": [
+      0.51,
+      0.515,
+      0.48
+    ],
+    "iron": [
+      0.16,
+      0.175,
+      0.17
+    ],
+    "dark": [
+      0.085,
+      0.07,
+      0.05
+    ],
+    "carving": [
+      0.32,
+      0.265,
+      0.2
+    ],
+    "thatch": [
+      0.6,
+      0.51,
+      0.33
+    ],
+    "plaster": [
+      0.66,
+      0.6,
+      0.47
+    ],
+    "turf": [
+      0.34,
+      0.42,
+      0.26
+    ],
+    "brick": [
+      0.53,
+      0.32,
+      0.24
+    ],
+    "canvas": [
+      0.65,
+      0.58,
+      0.44
+    ],
+    "fish": [
+      0.5,
+      0.55,
+      0.54
+    ],
+    "paint": [
+      0.4,
+      0.24,
+      0.19
+    ],
+    "slate": [
+      0.32,
+      0.37,
+      0.37
+    ]
+  },
+  "geometry_source": "Improved original first-party Terrace procedural model from plugins/structures/client/models.ts (original procedural base); not third-party geometry. New UVs and all texture maps authored in Blender pipeline.",
+  "texture_source": "Original procedural texture paint",
+  "image_generator": "Built-in image generator; exact backend model unverified",
+  "placement": {
+    "front_gltf": "+Z",
+    "origin": "Original placement origin retained; ground contact corrected to zero",
+    "original_bounds": {
+      "min": [
+        -0.38853445751377663,
+        -5.364418020903372e-09,
+        -0.38853445751377663
+      ],
+      "max": [
+        0.38853445751377663,
+        0.8500000059604645,
+        0.38853445751377663
+      ],
+      "dimensions": [
+        0.7770689150275533,
+        0.8500000113248826,
+        0.7770689150275533
+      ]
+    },
+    "deliberate_difference": "Original silhouette and horizontal extents preserved. Broad edges chamfered in original; low uses coplanar simplification. Sub-ground source slivers corrected to Y=0.",
+    "low_alignment": "Low vertices fitted to original bounds before UV packing; shared origin and envelope."
+  }
+}

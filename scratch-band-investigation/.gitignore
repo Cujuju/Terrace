@@ -1,0 +1,12 @@
+dense-contours.ts
+fine-contours.ts
+measurements.json
+.visual-model.mjs
+comparison-preview.html
+*-review.png
+visual-data.json
+protected-preview.html
+protected-build.log
+pick-probe/run/
+clamped-preview.html
+brush-preview.html

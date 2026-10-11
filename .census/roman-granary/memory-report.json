@@ -1,0 +1,94 @@
+{
+  "assumptions": {
+    "png_gpu_format": "RGBA8 with complete mip chain",
+    "compressed_gpu_format": "BC7 or ASTC 4x4, 16 bytes per 4x4 block, complete mip chain",
+    "excluded": "CPU decoded images, loader buffers, driver allocation overhead, shaders, framebuffer and instance buffers",
+    "sharing": "Terrace draws repeated structures with InstancedMesh; mesh and textures are shared, not duplicated per house."
+  },
+  "variants": {
+    "original": {
+      "triangles": 1140,
+      "exported_vertices": 2252,
+      "geometry_gpu_bytes": 114936,
+      "textures": [
+        {
+          "name": "roman-granary-normal",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 1757592
+        },
+        {
+          "name": "roman-granary-basecolor",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 2150284
+        },
+        {
+          "name": "roman-granary-metallicRoughness",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 630173
+        }
+      ],
+      "png_gpu_total_bytes": 67223796,
+      "ktx2_bc7_astc_gpu_total_bytes": 16892232,
+      "png_glb_file_bytes": 3257776,
+      "ktx2_glb_file_bytes": 4655108,
+      "png_glb_sha256": "41f279199c1c1184cf6e103af54af70fc1b9c8a304e2fe082e97b8d7935c5093",
+      "ktx2_glb_sha256": "2e3ad1c8d302c6dc45fab3beefb85464b4f749506f2884a27a4f7d47e987ac8e",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    },
+    "low": {
+      "triangles": 836,
+      "exported_vertices": 1676,
+      "geometry_gpu_bytes": 85464,
+      "textures": [
+        {
+          "name": "roman-granary-normal",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 648486
+        },
+        {
+          "name": "roman-granary-basecolor",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 795431
+        },
+        {
+          "name": "roman-granary-metallicRoughness",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 283521
+        }
+      ],
+      "png_gpu_total_bytes": 16862676,
+      "ktx2_bc7_astc_gpu_total_bytes": 4279848,
+      "png_glb_file_bytes": 1299104,
+      "ktx2_glb_file_bytes": 1815016,
+      "png_glb_sha256": "f91ee754e07178c7ad1931e4ef674f22a94dd1ebb9cfbfc09506fa092d17c2b7",
+      "ktx2_glb_sha256": "4c8692c6cf88917bada2c005410d35ee45f16e8ccf981eb5d01d223ecf2fadcd",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    }
+  }
+}

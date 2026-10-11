@@ -1,0 +1,103 @@
+{
+  "glb_sha256": "ab582ee1f8c27021fe6fd6684c8d5d9bfbde96ac250f263257f965a09e187463",
+  "mesh_count": 1,
+  "primitive_count": 1,
+  "material_count": 1,
+  "triangles": 1040,
+  "exported_vertices": 2084,
+  "nodes": [
+    {
+      "mesh": 0,
+      "name": "timber-house"
+    },
+    {
+      "children": [
+        0
+      ],
+      "name": "RootNode"
+    }
+  ],
+  "dimensions_gltf_y_up": [
+    0.5852236151695251,
+    0.5389819741249084,
+    0.9090909361839294
+  ],
+  "uv_islands": 522,
+  "uv_min_max": [
+    0.005859375,
+    0.993293285369873
+  ],
+  "uv_overlap_pairs": [],
+  "uv_candidate_pairs_checked": 518,
+  "minimum_island_bounds_gap_pixels": 12.0,
+  "texel_density_min_max": [
+    289.9089666145131,
+    289.91287386570673
+  ],
+  "zero_area_triangles": 0,
+  "normal_length_error_max": 9.307961734705827e-08,
+  "tangent_normal_dot_max": 6.0343327051848306e-05,
+  "compression_extensions": [],
+  "textures": {
+    "timber-house-normal": {
+      "format": "image/png",
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "matches_external_bytes": true
+    },
+    "timber-house-basecolor": {
+      "format": "image/png",
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "matches_external_bytes": true
+    },
+    "timber-house-metallicRoughness": {
+      "format": "image/png",
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "matches_external_bytes": true
+    }
+  },
+  "roughness_range": [
+    0.7803922295570374,
+    0.9803922176361084
+  ],
+  "metalness_range": [
+    0.0,
+    0.0
+  ],
+  "normal_map_length_error_max": 0.005108237266540527,
+  "blend": {
+    "mesh_count": 1,
+    "material_count": 1,
+    "vertices": 644,
+    "triangles": 1040,
+    "uv_layers": [
+      "UVMap"
+    ],
+    "images_packed": true,
+    "objects": [
+      "RootNode",
+      "timber-house"
+    ]
+  },
+  "bounds_gltf_y_up": {
+    "min": [
+      -0.2926118075847626,
+      0.0,
+      -0.4545454680919647
+    ],
+    "max": [
+      0.2926118075847626,
+      0.5389819741249084,
+      0.4545454680919647
+    ]
+  },
+  "passed": true
+}

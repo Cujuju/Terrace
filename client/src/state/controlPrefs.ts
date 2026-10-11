@@ -1,0 +1,355 @@
+import { createSignal } from 'solid-js';
+import { oppositeSculptMode, sculptMode } from './hudBrushState.ts';
+import { resetCameraKeyPrefs } from './cameraKeyPrefs.ts';
+import { resetFrameRatePrefs } from './frameRatePrefs.ts';
+import { resetFrontierMistPrefs } from './frontierMistPrefs.ts';
+import { resetLayerEdgePrefs } from './layerEdgePrefs.ts';
+import { resetMultisamplePrefs } from './multisamplePrefs.ts';
+import { resetTerrainMesherPrefs } from './terrainMesherPrefs.ts';
+import { resetVoidPrefs } from './voidPrefs.ts';
+
+export type MouseButtonName = 'left' | 'middle' | 'right';
+export type BindingModifier = 'none' | 'shift' | 'ctrl' | 'alt';
+
+export type SculptAction = 'raise' | 'lower';
+export type CameraAction = 'orbit' | 'pan';
+export type AltAction = 'alt';
+export type ControlAction = SculptAction | AltAction | CameraAction;
+
+export interface ControlBinding {
+  readonly button: MouseButtonName;
+  readonly modifier: BindingModifier;
+}
+
+export type ControlBindings = Readonly<Record<ControlAction, ControlBinding>>;
+
+export const ACTION_PRECEDENCE: readonly ControlAction[] = [
+  'raise',
+  'lower',
+  'alt',
+  'orbit',
+  'pan',
+];
+
+export const DEFAULT_BINDINGS: ControlBindings = {
+  raise: { button: 'left', modifier: 'none' },
+  lower: { button: 'left', modifier: 'shift' },
+  alt: { button: 'left', modifier: 'ctrl' },
+  orbit: { button: 'right', modifier: 'none' },
+  pan: { button: 'middle', modifier: 'none' },
+};
+
+const STORAGE_KEY = 'terrace.controlBindings.v1';
+
+const BUTTON_NAMES: readonly MouseButtonName[] = ['left', 'middle', 'right'];
+const MODIFIER_NAMES: readonly BindingModifier[] = [
+  'none',
+  'shift',
+  'ctrl',
+  'alt',
+];
+
+export function buttonName(eventButton: number): MouseButtonName | null {
+  switch (eventButton) {
+    case 0:
+      return 'left';
+    case 1:
+      return 'middle';
+    case 2:
+      return 'right';
+    default:
+      return null;
+  }
+}
+
+export interface ModifierState {
+  readonly shiftKey: boolean;
+  readonly ctrlKey: boolean;
+  readonly altKey: boolean;
+}
+
+export function modifierOf(mods: ModifierState): BindingModifier | null {
+  const held = [mods.shiftKey, mods.ctrlKey, mods.altKey].filter(Boolean).length;
+  if (held === 0) return 'none';
+  if (held > 1) return null;
+  if (mods.shiftKey) return 'shift';
+  if (mods.ctrlKey) return 'ctrl';
+  return 'alt';
+}
+
+function isBinding(value: unknown): value is ControlBinding {
+  if (typeof value !== 'object' || value === null) return false;
+  const b = value as { button?: unknown; modifier?: unknown };
+  return (
+    BUTTON_NAMES.includes(b.button as MouseButtonName) &&
+    MODIFIER_NAMES.includes(b.modifier as BindingModifier)
+  );
+}
+
+function loadBindings(): ControlBindings {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw === null) return DEFAULT_BINDINGS;
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null) return DEFAULT_BINDINGS;
+    const record = parsed as Record<string, unknown>;
+    // Missing or invalid actions fall back individually, so a partial
+    // stored config still keeps its other valid rows.
+    const read = (action: ControlAction): ControlBinding =>
+      isBinding(record[action])
+        ? (record[action] as ControlBinding)
+        : DEFAULT_BINDINGS[action];
+    return {
+      raise: read('raise'),
+      lower: read('lower'),
+      alt: read('alt'),
+      orbit: read('orbit'),
+      pan: read('pan'),
+    };
+  } catch {
+    return DEFAULT_BINDINGS;
+  }
+}
+
+const [controlBindings, setControlBindingsSignal] =
+  createSignal<ControlBindings>(loadBindings());
+
+export { controlBindings };
+
+export function setBinding(
+  action: ControlAction,
+  binding: ControlBinding,
+): void {
+  const next: ControlBindings = { ...controlBindings(), [action]: binding };
+  setControlBindingsSignal(next);
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+  } catch {
+  }
+}
+
+export function resetBindings(): void {
+  setControlBindingsSignal(DEFAULT_BINDINGS);
+  setTwoFingerGestureSignal(DEFAULT_TWO_FINGER_GESTURE);
+  setWheelBehaviourSignal(DEFAULT_WHEEL_BEHAVIOUR);
+  setPointerLockSignal(DEFAULT_POINTER_LOCK);
+  resetCameraKeyPrefs();
+  resetVoidPrefs();
+  resetFrontierMistPrefs();
+  resetLayerEdgePrefs();
+  resetFrameRatePrefs();
+  resetMultisamplePrefs();
+  resetTerrainMesherPrefs();
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(TOUCH_STORAGE_KEY);
+    localStorage.removeItem(WHEEL_STORAGE_KEY);
+    localStorage.removeItem(POINTER_LOCK_STORAGE_KEY);
+  } catch {
+  }
+}
+
+export type TwoFingerGesture = 'pan' | 'orbit';
+
+export const DEFAULT_TWO_FINGER_GESTURE: TwoFingerGesture = 'pan';
+
+const TOUCH_STORAGE_KEY = 'terrace.touchControls.v1';
+
+function loadTwoFingerGesture(): TwoFingerGesture {
+  try {
+    const raw = localStorage.getItem(TOUCH_STORAGE_KEY);
+    if (raw === null) return DEFAULT_TWO_FINGER_GESTURE;
+    const parsed: unknown = JSON.parse(raw);
+    const g = (parsed as { twoFinger?: unknown } | null)?.twoFinger;
+    return g === 'pan' || g === 'orbit' ? g : DEFAULT_TWO_FINGER_GESTURE;
+  } catch {
+    return DEFAULT_TWO_FINGER_GESTURE;
+  }
+}
+
+const [twoFingerGesture, setTwoFingerGestureSignal] =
+  createSignal<TwoFingerGesture>(loadTwoFingerGesture());
+
+export { twoFingerGesture };
+
+export function setTwoFingerGesture(gesture: TwoFingerGesture): void {
+  setTwoFingerGestureSignal(gesture);
+  try {
+    localStorage.setItem(TOUCH_STORAGE_KEY, JSON.stringify({ twoFinger: gesture }));
+  } catch {
+  }
+}
+
+export type WheelBehaviour = 'pan' | 'zoom';
+
+export const DEFAULT_WHEEL_BEHAVIOUR: WheelBehaviour = 'zoom';
+
+const WHEEL_STORAGE_KEY = 'terrace.wheelControls.v1';
+
+function loadWheelBehaviour(): WheelBehaviour {
+  try {
+    const raw = localStorage.getItem(WHEEL_STORAGE_KEY);
+    if (raw === null) return DEFAULT_WHEEL_BEHAVIOUR;
+    const parsed: unknown = JSON.parse(raw);
+    const b = (parsed as { wheel?: unknown } | null)?.wheel;
+    return b === 'pan' || b === 'zoom' ? b : DEFAULT_WHEEL_BEHAVIOUR;
+  } catch {
+    return DEFAULT_WHEEL_BEHAVIOUR;
+  }
+}
+
+const [wheelBehaviour, setWheelBehaviourSignal] = createSignal<WheelBehaviour>(
+  loadWheelBehaviour(),
+);
+
+export { wheelBehaviour };
+
+export function setWheelBehaviour(behaviour: WheelBehaviour): void {
+  setWheelBehaviourSignal(behaviour);
+  try {
+    localStorage.setItem(WHEEL_STORAGE_KEY, JSON.stringify({ wheel: behaviour }));
+  } catch {
+  }
+}
+
+export const DEFAULT_POINTER_LOCK = false;
+
+const POINTER_LOCK_STORAGE_KEY = 'terrace.pointerLock.v1';
+
+function loadPointerLock(): boolean {
+  try {
+    const raw = localStorage.getItem(POINTER_LOCK_STORAGE_KEY);
+    if (raw === null) return DEFAULT_POINTER_LOCK;
+    const parsed: unknown = JSON.parse(raw);
+    const v = (parsed as { pointerLock?: unknown } | null)?.pointerLock;
+    return v === true;
+  } catch {
+    return DEFAULT_POINTER_LOCK;
+  }
+}
+
+const [pointerLock, setPointerLockSignal] = createSignal<boolean>(loadPointerLock());
+
+export { pointerLock };
+
+export function setPointerLock(enabled: boolean): void {
+  setPointerLockSignal(enabled);
+  try {
+    localStorage.setItem(POINTER_LOCK_STORAGE_KEY, JSON.stringify({ pointerLock: enabled }));
+  } catch {
+  }
+}
+
+export function resolvePress(
+  eventButton: number,
+  mods: ModifierState,
+): ControlAction | null {
+  const button = buttonName(eventButton);
+  const modifier = modifierOf(mods);
+  if (button === null || modifier === null) return null;
+  const bindings = controlBindings();
+  for (const action of ACTION_PRECEDENCE) {
+    const b = bindings[action];
+    if (b.button === button && b.modifier === modifier) return action;
+  }
+  return null;
+}
+
+/**
+ * Which way a press sculpts: the toggle, inverted when chorded. Alt
+ * sculpts the toggle; it narrows the drag, never the direction.
+ */
+export function resolveSculptPress(
+  eventButton: number,
+  mods: ModifierState,
+): SculptAction | null {
+  const action = resolvePress(eventButton, mods);
+  if (action === 'raise' || action === 'lower' || action === 'alt') {
+    const toggle = sculptMode();
+    if (action === 'alt') return toggle;
+    return controlBindings()[action].modifier === 'none'
+      ? toggle
+      : oppositeSculptMode(toggle);
+  }
+  // Alt composes with the raise and lower chords: one band either way.
+  if (isAltLowerPress(eventButton, mods)) return oppositeSculptMode(sculptMode());
+  if (isAltRaisePress(eventButton, mods)) return sculptMode();
+  return null;
+}
+
+/** True when the press names the alt sculpt: a drag of one band only. */
+export function isAltSculptPress(eventButton: number, mods: ModifierState): boolean {
+  return (
+    resolvePress(eventButton, mods) === 'alt' ||
+    isAltLowerPress(eventButton, mods) ||
+    isAltRaisePress(eventButton, mods)
+  );
+}
+
+/** Whether the held modifiers are a sculpt chord, which inverts the toggle. */
+export function sculptChordHeld(mods: ModifierState): boolean {
+  const modifier = modifierOf(mods);
+  if (modifier === null || modifier === 'none') return false;
+  const bindings = controlBindings();
+  return bindings.raise.modifier === modifier || bindings.lower.modifier === modifier;
+}
+
+/** Whether a non-none modifier matching the alt binding is held. */
+export function sculptAltHeld(mods: ModifierState): boolean {
+  if (altLowerChordHeld(mods) || altRaiseChordHeld(mods)) return true;
+  const modifier = modifierOf(mods);
+  if (modifier === null || modifier === 'none') return false;
+  return controlBindings().alt.modifier === modifier;
+}
+
+/** Mods held right now, minus 'none'. */
+const heldSet = (mods: ModifierState): readonly BindingModifier[] => {
+  const held: BindingModifier[] = [];
+  if (mods.shiftKey) held.push('shift');
+  if (mods.ctrlKey) held.push('ctrl');
+  if (mods.altKey) held.push('alt');
+  return held;
+};
+
+/** One row's chord as a set: 'none' holds nothing. */
+const rowSet = (modifier: BindingModifier): readonly BindingModifier[] =>
+  modifier === 'none' ? [] : [modifier];
+
+const sameSet = (a: readonly BindingModifier[], b: readonly BindingModifier[]): boolean =>
+  a.length === b.length && a.every((m) => b.includes(m));
+
+/** Alt riding the lower chord: one band the other way. */
+export function altLowerChordHeld(mods: ModifierState): boolean {
+  const bindings = controlBindings();
+  if (bindings.alt.modifier === 'none') return false;
+  return sameSet(heldSet(mods), [...rowSet(bindings.lower.modifier), bindings.alt.modifier]);
+}
+
+/** Alt riding the raise chord: one band the HUD way. */
+export function altRaiseChordHeld(mods: ModifierState): boolean {
+  const bindings = controlBindings();
+  if (bindings.alt.modifier === 'none') return false;
+  return sameSet(heldSet(mods), [...rowSet(bindings.raise.modifier), bindings.alt.modifier]);
+}
+
+/** True when the press is alt+lower on the lower button. */
+export function isAltLowerPress(eventButton: number, mods: ModifierState): boolean {
+  return altLowerChordHeld(mods) && buttonName(eventButton) === controlBindings().lower.button;
+}
+
+/** True when the press is alt+raise on the raise button. */
+export function isAltRaisePress(eventButton: number, mods: ModifierState): boolean {
+  return altRaiseChordHeld(mods) && buttonName(eventButton) === controlBindings().raise.button;
+}
+
+export function shadowedActions(bindings: ControlBindings): ControlAction[] {
+  const seen = new Map<string, ControlAction>();
+  const shadowed: ControlAction[] = [];
+  for (const action of ACTION_PRECEDENCE) {
+    const b = bindings[action];
+    const key = `${b.button}+${b.modifier}`;
+    if (seen.has(key)) shadowed.push(action);
+    else seen.set(key, action);
+  }
+  return shadowed;
+}

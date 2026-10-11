@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Grass preview (throwaway)</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #9fc7e8;
+      }
+      canvas {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- THROWAWAY preview harness for the grass meadow (grassModels.ts),
+         mirroring preview-crops.html. Draws a PATCH of ground at real cell
+         size with tufts at real density, plus one wheat plot for scale, framed
+         the way the game's camera frames the world. See previewGrass.ts. -->
+    <canvas id="viewport"></canvas>
+    <script type="module" src="/src/previewGrass.ts"></script>
+  </body>
+</html>

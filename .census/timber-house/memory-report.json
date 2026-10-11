@@ -1,0 +1,94 @@
+{
+  "assumptions": {
+    "png_gpu_format": "RGBA8 with complete mip chain",
+    "compressed_gpu_format": "BC7 or ASTC 4x4, 16 bytes per 4x4 block, complete mip chain",
+    "excluded": "CPU decoded images, loader buffers, driver allocation overhead, shaders, framebuffer and instance buffers",
+    "sharing": "Terrace draws repeated structures with InstancedMesh; mesh and textures are shared, not duplicated per house."
+  },
+  "variants": {
+    "original": {
+      "triangles": 1632,
+      "exported_vertices": 3092,
+      "geometry_gpu_bytes": 158208,
+      "textures": [
+        {
+          "name": "timber-house-normal",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 2150483
+        },
+        {
+          "name": "timber-house-basecolor",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 2355651
+        },
+        {
+          "name": "timber-house-metallicRoughness",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 1074032
+        }
+      ],
+      "png_gpu_total_bytes": 67267068,
+      "ktx2_bc7_astc_gpu_total_bytes": 16935504,
+      "png_glb_file_bytes": 4338524,
+      "ktx2_glb_file_bytes": 5740492,
+      "png_glb_sha256": "4d1aea6051a4fa05536780e0da2a4e0b8a19ac5041a90de97b7cb4a9ac0ec4c2",
+      "ktx2_glb_sha256": "160d3aba70feb7bcc9ffdcd2bcc192112419f303c886638916a1986c1166c4f0",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    },
+    "low": {
+      "triangles": 1040,
+      "exported_vertices": 2084,
+      "geometry_gpu_bytes": 106272,
+      "textures": [
+        {
+          "name": "timber-house-normal",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 669577
+        },
+        {
+          "name": "timber-house-basecolor",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 775576
+        },
+        {
+          "name": "timber-house-metallicRoughness",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 376444
+        }
+      ],
+      "png_gpu_total_bytes": 16883484,
+      "ktx2_bc7_astc_gpu_total_bytes": 4300656,
+      "png_glb_file_bytes": 1404144,
+      "ktx2_glb_file_bytes": 1929980,
+      "png_glb_sha256": "ab582ee1f8c27021fe6fd6684c8d5d9bfbde96ac250f263257f965a09e187463",
+      "ktx2_glb_sha256": "bc8451127427235458e1cdf62b3564f57a6fb017646262ad06322fc764f4c581",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    }
+  }
+}

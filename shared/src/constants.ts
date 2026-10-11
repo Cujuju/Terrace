@@ -1,0 +1,147 @@
+export const WORLD_UNIT_CELLS = 4;
+
+export const CELL_WORLD_SIZE = 1 / WORLD_UNIT_CELLS;
+
+export const DEFAULT_WORLD_SPAN = 512;
+
+export const DEFAULT_WORLD_SIZE = DEFAULT_WORLD_SPAN * WORLD_UNIT_CELLS;
+
+export const CHUNK_SPAN = 4;
+
+export const CHUNK_SIZE = CHUNK_SPAN * WORLD_UNIT_CELLS;
+
+export const NEIGHBOURHOOD_CELLS = 16 * WORLD_UNIT_CELLS;
+
+export function cellsAcross(worldUnits: number): number {
+  return worldUnits * WORLD_UNIT_CELLS;
+}
+
+export function cellsOverArea(squareWorldUnits: number): number {
+  return squareWorldUnits * WORLD_UNIT_CELLS * WORLD_UNIT_CELLS;
+}
+
+export function worldUnitsAcross(cells: number): number {
+  return cells * CELL_WORLD_SIZE;
+}
+
+export const SEA_LEVEL = 0;
+
+/** The first dry height. Band 0 starts here: a sea sample never rounds up to the waterline. */
+export const DRAWN_SHORE_HEIGHT = SEA_LEVEL + 1;
+
+export const MAX_HEIGHT = 1024;
+
+export const TERRACE_BAND_COUNT = 64;
+
+export const BAND_HEIGHT = MAX_HEIGHT / TERRACE_BAND_COUNT;
+
+export const SEA_COLUMN_DEPTH = MAX_HEIGHT;
+export const DEEP_STRATA_DEPTH = MAX_HEIGHT / 2;
+export const DEEP_BASALT_DEPTH = DEEP_STRATA_DEPTH / 2;
+export const DEEP_OBSIDIAN_DEPTH = (DEEP_STRATA_DEPTH * 3) / 8;
+export const DEEP_LAVA_DEPTH = DEEP_STRATA_DEPTH / 8;
+
+export const SEA_COLUMN_BANDS = SEA_COLUMN_DEPTH / BAND_HEIGHT;
+export const DEEP_BASALT_BANDS = DEEP_BASALT_DEPTH / BAND_HEIGHT;
+export const DEEP_OBSIDIAN_BANDS = DEEP_OBSIDIAN_DEPTH / BAND_HEIGHT;
+export const DEEP_LAVA_BANDS = DEEP_LAVA_DEPTH / BAND_HEIGHT;
+
+export const DEEP_STRATA_BANDS =
+  DEEP_BASALT_BANDS + DEEP_OBSIDIAN_BANDS + DEEP_LAVA_BANDS;
+
+export const MIN_HEIGHT = -(SEA_COLUMN_DEPTH + DEEP_STRATA_DEPTH);
+
+export const LEGACY_MIN_HEIGHT = -1536;
+
+export const MAX_STEP = BAND_HEIGHT / WORLD_UNIT_CELLS;
+
+export const SOFT_APRON_MAX_BANDS = 4;
+
+/** Treads double outward from a one-cell first tread, so four bands end here. */
+export const SOFT_APRON_MAX_REACH_CELLS = 2 ** SOFT_APRON_MAX_BANDS - 1;
+
+/** How far past the core the sheet may reach before the tread cap takes over. */
+export const SOFT_APRON_REACH_PER_RADIUS = 2;
+
+/** A tread narrower than this draws ragged: a cell stores one edge (1 cell measured ragged, 1.5 clean). */
+export const MIN_DRAWN_TREAD_HALF_CELLS = 3;
+
+/** A stepped stamp's tread: each band below the target reaches this much further out. */
+export const STEPPED_RING_WIDTH_CELLS = 2;
+
+/** Stepped treads stay within the soft apron's reach, so no stroke reaches further. */
+export const STEPPED_MAX_RINGS = Math.floor(SOFT_APRON_MAX_REACH_CELLS / STEPPED_RING_WIDTH_CELLS);
+
+/** Soft stamp strength at the footprint's outermost ring, as a fraction of the centre. */
+export const SOFT_EDGE_STRENGTH_NUMERATOR = 1;
+export const SOFT_EDGE_STRENGTH_DENOMINATOR = 5;
+
+export const RELAX_SLACK = 1;
+
+export const DEFAULT_SCULPT_AMOUNT = BAND_HEIGHT;
+
+export const MIN_BRUSH_RADIUS = 1;
+export const MAX_BRUSH_RADIUS = 4 * WORLD_UNIT_CELLS;
+
+export const FULL_BRUSH_RADIUS = 2 * WORLD_UNIT_CELLS;
+
+export const REVEAL_REACH_BASE_CELLS = CHUNK_SIZE / 2;
+
+export const REVEAL_REACH_PER_BRUSH_CELL = CHUNK_SIZE / 8;
+
+export const MAX_DRAG_SWEEP_CELLS = CHUNK_SIZE;
+
+export const SMOOTH_SPREAD_CELLS = Math.floor((MAX_HEIGHT - MIN_HEIGHT) / MAX_STEP);
+
+export const RAMP_CELLS_PER_BAND = BAND_HEIGHT / MAX_STEP;
+
+/** A stamp edge converges at radius + 2 cells, every radius. */
+export const SMOOTH_REACH_MARGIN_CELLS = 2;
+
+export const SMOOTH_PASSES_PER_SPREAD_CELL = 4;
+
+export const SMOOTH_PASS_LIMIT = SMOOTH_SPREAD_CELLS * SMOOTH_PASSES_PER_SPREAD_CELL;
+
+/** Jacobi passes of Laplacian smoothing per smooth stroke. Bounds reach. */
+export const SMOOTH_LAPLACIAN_PASSES = 3;
+
+/** Drawn bands apart that two surfaces still share a layer; farther is another layer's cliff, roof or floor. */
+export const SMOOTH_LAYER_BAND_REACH = 1;
+
+export const CONTOUR_CELL_CENTRE_GUARD = 1 / 8;
+
+export const MAX_RELIEF_WORLD_UNITS = 16;
+
+export const WORLD_UNITS_PER_BAND = MAX_RELIEF_WORLD_UNITS / (MAX_HEIGHT / BAND_HEIGHT);
+
+export const SNOW_LINE_HEIGHT = 576;
+
+const BAND_ALIGNED_SPANS: readonly number[] = [MAX_HEIGHT, SNOW_LINE_HEIGHT, DEEP_LAVA_DEPTH];
+
+for (const span of BAND_ALIGNED_SPANS) {
+  if (span % BAND_HEIGHT !== 0) {
+    throw new Error(
+      `TERRACE_BAND_COUNT ${TERRACE_BAND_COUNT} makes BAND_HEIGHT ${BAND_HEIGHT}, which does not divide ${span}`,
+    );
+  }
+}
+
+if (BAND_HEIGHT % WORLD_UNIT_CELLS !== 0) {
+  throw new Error(
+    `TERRACE_BAND_COUNT ${TERRACE_BAND_COUNT} makes BAND_HEIGHT ${BAND_HEIGHT}, which is not a whole number of MAX_STEP rises`,
+  );
+}
+
+export const LAND_RAMP_ANCHOR_COUNT = 10;
+
+export const LAND_RAMP_ANCHOR_SPACING = SNOW_LINE_HEIGHT / (LAND_RAMP_ANCHOR_COUNT - 1);
+
+export const LAND_RAMP_FIRST_GRASS_ANCHOR = 3;
+
+export const LAND_RAMP_FIRST_ROCK_ANCHOR = 6;
+
+export const GRASSLAND_MIN_HEIGHT = (LAND_RAMP_FIRST_GRASS_ANCHOR - 0.5) * LAND_RAMP_ANCHOR_SPACING;
+
+export const GRASSLAND_MAX_HEIGHT = LAND_RAMP_FIRST_ROCK_ANCHOR * LAND_RAMP_ANCHOR_SPACING;
+
+export const MOUNTAIN_MIN_HEIGHT = GRASSLAND_MAX_HEIGHT;

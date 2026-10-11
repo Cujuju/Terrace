@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Smooth lab — real integer pipeline + HUD toggles</title>
+<style>
+  body { margin: 0; background: #14171c; color: #dfe4ea; font: 14px/1.45 system-ui, sans-serif; }
+  header, section { max-width: 1180px; margin: 0 auto; padding: 12px 16px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 12px 18px; align-items: end; background: #1b2027; border: 1px solid #2c333d; border-radius: 8px; padding: 12px 14px; }
+  label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #9aa4b2; }
+  label.row { flex-direction: row; align-items: center; gap: 8px; }
+  select, input[type="range"] { accent-color: #6cb2f5; }
+  select, button { background: #262d36; color: #dfe4ea; border: 1px solid #3a434e; border-radius: 6px; padding: 6px 10px; font-size: 14px; }
+  button { cursor: pointer; }
+  button:hover { background: #2f3843; }
+  #ms { font-size: 28px; font-weight: 650; color: #8fd694; }
+  #ms small { font-size: 13px; color: #9aa4b2; font-weight: 400; }
+  #stats { color: #c8d0da; }
+  .maps { display: flex; gap: 16px; flex-wrap: wrap; }
+  figure { margin: 0; }
+  figcaption { font-size: 12px; color: #9aa4b2; margin: 4px 0 8px; }
+  canvas { border: 1px solid #2c333d; border-radius: 6px; image-rendering: pixelated; background: #000; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: right; padding: 5px 10px; border-bottom: 1px solid #2c333d; font-variant-numeric: tabular-nums; }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: #9aa4b2; font-weight: 600; }
+  tr.best td { color: #8fd694; }
+  .note { color: #9aa4b2; font-size: 12.5px; }
+</style>
+</head>
+<body>
+<header>
+  <h1 style="font-size:18px;margin:6px 0;">Smooth lab <span class="note">(real integer pipeline via applySculpt — same code the server runs)</span></h1>
+  <div class="controls">
+    <label>Fixture
+      <select id="fixture">
+        <option value="spike">A · mound + spire</option>
+        <option value="mound">B · tall mound</option>
+        <option value="pit">C · pit</option>
+        <option value="wall">D · step wall</option>
+        <option value="terraces" selected>E · terraced mound</option>
+        <option value="noisyTerraces">F · noisy terraces</option>
+      </select>
+    </label>
+    <label>Kernel
+      <select id="kernel">
+        <option value="cross">4-cross (today)</option>
+        <option value="gauss">Gauss 3×3 (#1)</option>
+        <option value="median">Median 3×3 (new)</option>
+      </select>
+    </label>
+    <label class="row">Bilateral (#4) <input id="bilateral" type="checkbox" /></label>
+    <label class="row">Full steps (#5) <input id="fullSteps" type="checkbox" /></label>
+    <label class="row">Cooldown <input id="cooldown" type="checkbox" /></label>
+    <label class="row">Unbiased <input id="unbiased" type="checkbox" /></label>
+    <label>Feather % (#2) <span id="featherVal">0</span>
+      <input id="feather" type="range" min="0" max="100" value="0" />
+    </label>
+    <label>Rim % (#3) <span id="rimVal">0</span>
+      <input id="rim" type="range" min="0" max="100" value="0" />
+    </label>
+    <label>Strength % <span id="lambdaVal">50</span>
+      <input id="lambda" type="range" min="1" max="100" value="50" />
+    </label>
+    <label>Presses <span id="pressesVal">3</span>
+      <input id="presses" type="range" min="1" max="50" value="3" />
+    </label>
+    <label>Radius <span id="radiusVal">8</span>
+      <input id="radius" type="range" min="2" max="16" value="8" />
+    </label>
+    <label>Direction
+      <select id="dir">
+        <option value="-1">Lower</option>
+        <option value="1">Raise</option>
+      </select>
+    </label>
+    <label>Grid
+      <select id="size">
+        <option value="64">64²</option>
+        <option value="96" selected>96²</option>
+      </select>
+    </label>
+    <button id="apply">Apply</button>
+    <button id="compare">Compare all</button>
+  </div>
+</header>
+<section>
+  <div id="ms">– <small>ms / run</small></div>
+  <div id="stats">–</div>
+  <div class="maps" style="margin-top:10px;">
+    <figure><figcaption>Isolines every 16 units — gray: before, green: after</figcaption><canvas id="contours"></canvas></figure>
+    <figure><figcaption>Before</figcaption><canvas id="before"></canvas></figure>
+    <figure><figcaption>After</figcaption><canvas id="after"></canvas></figure>
+  </div>
+  <figure style="margin-top:12px;"><figcaption>Middle cross-section — gray: before, green: after</figcaption><canvas id="section" style="width:100%;"></canvas></figure>
+  <div id="table"></div>
+  <p class="note">Brush lands dead-centre, anchored + banded spill like the game. Contours darken every 16 height
+  units like the game's terrace bands. ms = compute only (no rendering), median of 7 runs.</p>
+</section>
+<script src="./scratch-smooth-lab-pipeline.js"></script>
+<script>
+'use strict';
+const $ = (id) => document.getElementById(id);
+const BAND = 16, LIM = 5;
+
+function currentOpts(kernel, bilateral) {
+  return {
+    lambda: +$('lambda').value,
+    feather: +$('feather').value,
+    rim: +$('rim').value,
+    kernel: (kernel || $('kernel').value),
+    bilateral: bilateral !== undefined ? bilateral : $('bilateral').checked,
+    fullSteps: $('fullSteps').checked,
+    cooldown: $('cooldown').checked,
+    unbiased: $('unbiased').checked,
+    dir: +$('dir').value,
+    radius: +$('radius').value,
+    presses: +$('presses').value,
+  };
+}
+function refreshLabels() {
+  $('featherVal').textContent = $('feather').value;
+  $('rimVal').textContent = $('rim').value;
+  $('lambdaVal').textContent = $('lambda').value;
+  $('pressesVal').textContent = $('presses').value;
+  $('radiusVal').textContent = $('radius').value;
+}
+
+function stats(orig, next) {
+  let peak = -1e18, opeak = -1e18, ch = 0, vol = 0;
+  for (let i = 0; i < orig.length; i++) {
+    if (orig[i] > opeak) opeak = orig[i];
+    if (next[i] > peak) peak = next[i];
+    vol += next[i] - orig[i];
+    if (next[i] !== orig[i]) ch++;
+  }
+  const N = Math.sqrt(orig.length) | 0;
+  let viol = 0;
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    if (x + 1 < N && Math.abs(next[y*N+x] - next[y*N+x+1]) > LIM) viol++;
+    if (y + 1 < N && Math.abs(next[y*N+x] - next[(y+1)*N+x]) > LIM) viol++;
+  }
+  return { dPeak: peak - opeak, dVol: vol, viol, ch };
+}
+function timeIt(fn) {
+  const times = [];
+  for (let r = 0; r < 7; r++) { const t0 = performance.now(); fn(); times.push(performance.now() - t0); }
+  times.sort((a, b) => a - b);
+  return times[3];
+}
+
+const STOPS = [[43,108,176],[104,211,145],[246,224,94],[156,66,33],[245,245,245]];
+function colorFor(h, lo, hi) {
+  const t = Math.max(0, Math.min(1, (h - lo) / Math.max(1e-9, hi - lo))) * (STOPS.length - 1);
+  const i = Math.min(STOPS.length - 2, Math.floor(t)), f = t - i;
+  return STOPS[i].map((c, k) => Math.round(c + (STOPS[i+1][k] - c) * f));
+}
+function drawMap(cv, data, N, lo, hi, px, view) {
+  const { x0, y0, w } = view;
+  cv.width = w * px; cv.height = w * px;
+  const ctx = cv.getContext('2d'), img = ctx.createImageData(cv.width, cv.height);
+  for (let wy = 0; wy < w; wy++) for (let wx = 0; wx < w; wx++) {
+    const x = x0 + wx, y = y0 + wy;
+    const h = data[y*N+x];
+    let [r, g, b] = colorFor(h, lo, hi);
+    const band = Math.floor(h / BAND);
+    if (x + 1 < N && Math.floor(data[y*N+x+1] / BAND) !== band) { r *= 0.55; g *= 0.55; b *= 0.55; }
+    else if (y + 1 < N && Math.floor(data[(y+1)*N+x] / BAND) !== band) { r *= 0.55; g *= 0.55; b *= 0.55; }
+    for (let j = 0; j < px; j++) for (let i = 0; i < px; i++) {
+      const o = (((wy*px+j) * cv.width) + wx*px+i) * 4;
+      img.data[o] = r; img.data[o+1] = g; img.data[o+2] = b; img.data[o+3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+function contourSegments(data, N, level) {
+  const segs = [];
+  for (let y = 0; y < N - 1; y++) for (let x = 0; x < N - 1; x++) {
+    const a = data[y*N+x] - level, b = data[y*N+x+1] - level;
+    const c = data[(y+1)*N+x+1] - level, d = data[(y+1)*N+x] - level;
+    let idx = 0;
+    if (a > 0) idx |= 8; if (b > 0) idx |= 4; if (c > 0) idx |= 2; if (d > 0) idx |= 1;
+    if (idx === 0 || idx === 15) continue;
+    const T = [x + a / (a - b), y], R = [x + 1, y + b / (b - c)];
+    const B = [x + d / (d - c), y + 1], L = [x, y + a / (a - d)];
+    const m = (a + b + c + d) / 4 > 0;
+    switch (idx) {
+      case 1: case 14: segs.push(L, B); break;
+      case 2: case 13: segs.push(B, R); break;
+      case 3: case 12: segs.push(L, R); break;
+      case 4: case 11: segs.push(T, R); break;
+      case 6: case 9: segs.push(T, B); break;
+      case 7: case 8: segs.push(T, L); break;
+      case 5: if (m) { segs.push(T, L, B, R); } else { segs.push(T, R, L, B); } break;
+      case 10: if (m) { segs.push(T, R, L, B); } else { segs.push(T, L, B, R); } break;
+    }
+  }
+  return segs;
+}
+function contourLength(data, N, levels) {
+  let len = 0;
+  for (const L of levels) {
+    const s = contourSegments(data, N, L);
+    for (let i = 0; i < s.length; i += 2) len += Math.hypot(s[i][0] - s[i+1][0], s[i][1] - s[i+1][1]);
+  }
+  return len;
+}
+function drawContours(cv, before, after, N, levels, px, view) {
+  const { x0, y0, w } = view;
+  const s = px;
+  cv.width = w * s; cv.height = w * s;
+  const ctx = cv.getContext('2d');
+  ctx.lineWidth = 1;
+  const stroke = (data, style) => {
+    ctx.strokeStyle = style; ctx.beginPath();
+    for (const L of levels) {
+      const segs = contourSegments(data, N, L);
+      for (let i = 0; i < segs.length; i += 2) {
+        ctx.moveTo((segs[i][0] - x0) * s, (segs[i][1] - y0) * s);
+        ctx.lineTo((segs[i+1][0] - x0) * s, (segs[i+1][1] - y0) * s);
+      }
+    }
+    ctx.stroke();
+  };
+  stroke(before, '#8a93a0');
+  stroke(after, '#58c472');
+}
+function brushView(N, radius) {
+  const half = radius + (radius + 2) + 6;
+  const w = Math.min(N, half * 2 + 1);
+  const x0 = Math.max(0, Math.min(N - w, (N >> 1) - (w >> 1)));
+  return { x0, y0: x0, w };
+}
+function bandLevels(before, after) {
+  let lo = 1e18, hi = -1e18;
+  for (const v of before) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  for (const v of after) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  const out = [];
+  for (let L = Math.ceil(lo / BAND) * BAND; L <= hi; L += BAND) out.push(L);
+  return out;
+}
+function drawSection(cv, before, after, N) {
+  const Wpx = cv.parentElement.clientWidth || 1100, Hpx = 130;
+  cv.width = Wpx; cv.height = Hpx;
+  const ctx = cv.getContext('2d');
+  let lo = 1e18, hi = -1e18;
+  for (const v of before) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  const mid = (N / 2) | 0;
+  const X = (x) => (x / (N - 1)) * Wpx, Y = (h) => Hpx - 8 - ((h - lo) / Math.max(1e-9, hi - lo)) * (Hpx - 16);
+  ctx.strokeStyle = '#3a434e'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, Hpx - 0.5); ctx.lineTo(Wpx, Hpx - 0.5); ctx.stroke();
+  const line = (data, style, width) => {
+    ctx.strokeStyle = style; ctx.lineWidth = width; ctx.beginPath();
+    for (let x = 0; x < N; x++) { const px = X(x), py = Y(data[mid*N+x]); x ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }
+    ctx.stroke();
+  };
+  line(before, '#8a93a0', 2);
+  line(after, '#58c472', 2);
+}
+
+function run(o, N) {
+  const before = SmoothLab.makeFixture($('fixture').value, N);
+  const r = SmoothLab.runSmooth(before, N, o);
+  return { before, after: r.cells, touched: r.touched };
+}
+function kernelLabel(o) {
+  return o.kernel + (o.bilateral ? '+bilat' : '') + (o.fullSteps ? '+full' : '') + (o.cooldown ? '+cool' : '') + (o.unbiased ? '+unbias' : '');
+}
+function apply() {
+  const N = +$('size').value, o = currentOpts();
+  const ms = timeIt(() => run(o, N));
+  const { before, after } = run(o, N);
+  let lo = 1e18, hi = -1e18;
+  for (const v of before) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  const px = Math.max(2, Math.round(384 / brushView(N, o.radius).w));
+  const view = brushView(N, o.radius);
+  drawMap($('before'), before, N, lo, hi, px, view);
+  drawMap($('after'), after, N, lo, hi, px, view);
+  drawSection($('section'), before, after, N);
+  const levels = bandLevels(before, after);
+  drawContours($('contours'), before, after, N, levels, px, view);
+  const st = stats(before, after);
+  const clB = Math.round(contourLength(before, N, levels));
+  const clA = Math.round(contourLength(after, N, levels));
+  $('ms').innerHTML = `${ms.toFixed(2)} <small>ms / run · ${kernelLabel(o)} · feather ${o.feather} · rim ${o.rim}</small>`;
+  const f = (v) => (v >= 0 ? '+' : '') + (Math.round(v * 10) / 10);
+  $('stats').textContent =
+    `peak ${f(st.dPeak)} · volume ${f(st.dVol)} · gradient violations ${st.viol} · cells touched ${st.ch} · contours ${clB}→${clA} · grid ${N}²`;
+  $('table').innerHTML = '';
+}
+function compare() {
+  apply();
+  const N = +$('size').value;
+  const base = { lambda: +$('lambda').value, feather: +$('feather').value, rim: +$('rim').value,
+    dir: +$('dir').value, radius: +$('radius').value, presses: +$('presses').value };
+  const combos = [
+    { ...base, kernel: 'cross', bilateral: false },
+    { ...base, kernel: 'gauss', bilateral: false },
+    { ...base, kernel: 'median', bilateral: false },
+    { ...base, kernel: 'cross', bilateral: true },
+    { ...base, kernel: 'gauss', bilateral: true },
+    { ...base, kernel: 'median', bilateral: true },
+  ];
+  const rows = combos.map((o) => {
+    const ms = timeIt(() => run(o, N));
+    const { before, after } = run(o, N);
+    const st = stats(before, after);
+    const levels = bandLevels(before, after);
+    const r1 = (v) => Math.round(v * 10) / 10;
+    return { label: kernelLabel(o), ms, dPeak: r1(st.dPeak), dVol: r1(st.dVol), viol: st.viol, ch: st.ch,
+      ctr: r1(contourLength(after, N, levels) / Math.max(1, contourLength(before, N, levels))) };
+  });
+  rows.sort((a, b) => a.ms - b.ms);
+  $('table').innerHTML = '<h3 style="font-size:14px;">Kernel × bilateral at current sliders, fastest first</h3><table><tr><th>Combo</th><th>ms/run</th><th>Δpeak</th><th>Δvol</th><th>viol</th><th>touched</th><th>ctr</th></tr>' +
+    rows.map((r, i) => `<tr class="${i === 0 ? 'best' : ''}"><td>${r.label}</td><td>${r.ms.toFixed(2)}</td><td>${r.dPeak}</td><td>${r.dVol}</td><td>${r.viol}</td><td>${r.ch}</td><td>${r.ctr}</td></tr>`).join('') +
+    '</table>';
+}
+for (const id of ['feather', 'rim', 'lambda', 'presses', 'radius']) $(id).addEventListener('input', refreshLabels);
+$('fixture').addEventListener('change', apply);
+$('kernel').addEventListener('change', apply);
+$('bilateral').addEventListener('change', apply);
+$('fullSteps').addEventListener('change', apply);
+$('cooldown').addEventListener('change', apply);
+$('unbiased').addEventListener('change', apply);
+$('dir').addEventListener('change', apply);
+for (const id of ['feather', 'rim', 'lambda', 'presses', 'radius']) $(id).addEventListener('change', apply);
+$('size').addEventListener('change', () => { apply(); });
+$('apply').addEventListener('click', apply);
+$('compare').addEventListener('click', compare);
+refreshLabels();
+apply();
+</script>
+</body>
+</html>

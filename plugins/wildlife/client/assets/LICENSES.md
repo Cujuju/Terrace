@@ -1,0 +1,170 @@
+# Model assets shipped by the wildlife plugin
+
+Third-party art here is CC0. Sources are downloaded into `.model-import/src/`
+(never committed) and normalised by `tools/blender/import_model.py`; the exact
+command is recorded below so the file can be rebuilt from the source byte for
+byte.
+
+## fish.glb — the fish
+
+Not third-party: built by `tools/blender/build_fish.py` in this repo, so it
+carries no external licence. Listed here only so this file is a complete
+inventory of the directory rather than a grazer-only note.
+
+Licence: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/), author Cuju Ju.
+
+## Detail maps on the built sea creatures
+
+fish, shark, ray, eel, angelfish, humpback, blue-whale, sperm-whale and
+deepsea are built in this repo (`tools/blender/build_*.py`), so they carry no
+external licence either. Each carries three KTX2 maps baked here, no sourced
+imagery. Licence: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/),
+author Cuju Ju. Rebuild, per model (`<profile>` is the name with `_` for `-`):
+
+```
+blender --background --factory-startup --python tools/blender/build_<profile>.py -- <uv.glb>
+blender --background --factory-startup --python tools/blender/bake_detail.py -- <uv.glb> <maps-dir> <profile>
+node tools/attach-detail-maps.mjs <uv.glb> <maps-dir> <name> <png.glb>
+gltf-transform uastc <png.glb> <mid.glb> --slots "{baseColorTexture,metallicRoughnessTexture}" --level 4 --rdo --rdo-lambda 1 --rdo-multithreading false --zstd 18 --vertex-layout separate
+gltf-transform uastc <mid.glb> <name>.glb --slots "normalTexture" --level 4 --rdo --rdo-lambda 0.5 --rdo-multithreading false --zstd 18 --vertex-layout separate
+```
+
+## grazer-deer.glb — the grazer
+
+- Pack page: <https://quaternius.com/packs/ultimateanimatedanimals.html>
+  ("License CC0", linking <https://creativecommons.org/publicdomain/zero/1.0/>)
+- File fetched from a mirror, because the pack itself downloads through a
+  Google Drive folder no headless client can walk:
+  <https://raw.githubusercontent.com/trebeljahr/quaternius-showcase/main/public/glb/animals_pack/Deer.glb>
+- Author: Quaternius
+- Licence: CC0 1.0
+- Size: 283 120 bytes (277 KB). 2 096 triangles, 7 materials, no textures —
+  the colour is a `COLOR_0` vertex attribute, which is why the seven materials
+  bake to a single draw call (see `../index.ts`, `GRAZER_ASSET_DRAW_OBJECTS`).
+  The file keeps the source's ARMATURE as a glTF skin: 46 joints, 4 influences
+  per vertex, 3 457 of 4 316 vertices shared across two bones or more.
+
+Import command (run from the repo root; the Blender binary is a Windows one, so
+its arguments are Windows paths):
+
+```
+"/mnt/e/Program Files/Blender Foundation/Blender 5.2/blender.exe" \
+  --background --python tools/blender/import_model.py -- \
+  E:\Development\Projects\Terrace\.model-import\src\Deer.glb \
+  E:\Development\Projects\Terrace\.model-import\out\grazer-deer.glb \
+  --forward -Y --up +Z --drop Icosphere --origin ground \
+  --footprint 0.62 0.62 --height 0.464 \
+  --rename FrontUpperLeg.L=foreLeft --rename FrontUpperLeg.R=foreRight \
+  --rename BackLeg.L=hindLeft --rename BackLeg.R=hindRight \
+  --rename Head=head \
+  --anchor nose=0.2387,0.3937,0 --anchor tail_tip=-0.2387,0.0404,0 \
+  --anchor crown=0.1331,0.4640,0 --anchor belly=0,0,0 \
+  --anchor flank=0.1317,0.4533,0.0792
+```
+
+Notes on the flags, so nobody has to re-derive them:
+
+- `--forward -Y`: the source stands facing Blender's -Y after a default glTF
+  import. The convention is +X.
+- NO `--rigidify` (dropped 2026-09-04). The armature is kept and exported as a
+  skin, so the artist's weights reach `bakeRig`. `--rigidify` split the deer by
+  dominant weight and opened seams at the shoulder and hip mid-stride; see
+  `../species/grazer.ts` and `docs/model-assets.md`, "Rigid or smooth".
+- `--drop Icosphere`: Blender's glTF importer builds an 80-triangle sphere as
+  the display shape for zero-length bones, and it lands at the origin as a real
+  mesh object. It is not part of the animal and it sets the bounding box, so
+  the footprint fit would otherwise be computed for it. It is an IMPORT
+  artefact: it never appears in the exported file, but `tools/blender/stat_glb.py`
+  re-imports through the same importer and so shows one of its own.
+- `--footprint 0.62 0.62 --height 0.464`: the budget the previous, hand-built
+  grazer occupied — see `../species/grazer.ts`, which derives both numbers and
+  states why the height is the binding one.
+- The `--rename`s put the asset's bones under the names `species/quadruped.ts`'s
+  `poseWalk` already drives, so no runtime name table exists.
+- The `--anchor`s are the five envelope stations
+  `species/assetSpecies.ts` asserts the file against at install
+  (`nose`/`tail_tip`/`crown`/`belly` at the model's own bounding-box extremes,
+  `flank` at its half-width). They are Empties, so they add no geometry and do
+  not move the box they mark. On this deer the widest z is the EAR TIPS, which
+  is where `flank` sits. They moved on 2026-09-04 with the drop of `--rigidify`:
+  a skinned file is measured as its vertex hull (three's Box3.setFromObject
+  calls SkinnedMesh.computeBoundingBox), where a rigidified one was measured as
+  the union of every rotated part's own box — 0.477 x 0.464 x 0.158 against the
+  old 0.505 x 0.464 x 0.175, same animal.
+
+**The source's animation clips are IGNORED and are not in the exported file.**
+The pack ships thirteen (Walk, Gallop, Idle, …); this game poses a creature
+itself, from `poseWalk` against the renamed joints
+(`client/src/render/rigSkin.ts` bakes the pose, it never plays one), so a clip
+would have nothing to play into. Do not go looking for them.
+
+## wolf.glb — the wolf
+
+- Pack page: <https://quaternius.com/packs/ultimateanimatedanimals.html>
+  ("License CC0", linking <https://creativecommons.org/publicdomain/zero/1.0/>)
+- File fetched from the same mirror the deer came from, because the pack itself
+  downloads through a Google Drive folder no headless client can walk:
+  <https://raw.githubusercontent.com/trebeljahr/quaternius-showcase/main/public/glb/animals_pack/Wolf.glb>
+- Author: Quaternius
+- Licence: CC0 1.0
+- Size: 215 608 bytes (211 KB). 1 962 triangles, 4 materials, no textures — the
+  colour is a `COLOR_0` vertex attribute, as on the deer, so the four materials
+  bake to a single draw call (see `../index.ts`, `WOLF_ASSET_DRAW_OBJECTS`).
+  The file keeps the source's ARMATURE as a glTF skin: 51 joints, 4 influences
+  per vertex, 3 500 of 4 030 vertices shared across two bones or more (measured
+  2026-09-04 with a weight probe over the exported file).
+
+Import command (run from the repo root; the Blender binary is a Windows one, so
+its arguments are Windows paths):
+
+```
+"/mnt/e/Program Files/Blender Foundation/Blender 5.2/blender.exe" \
+  --background --python tools/blender/import_model.py -- \
+  E:\Development\Projects\Terrace\.model-import\src\Wolf.glb \
+  E:\Development\Projects\Terrace\.model-import\out\wolf.glb \
+  --forward -Y --up +Z --drop Icosphere --origin ground \
+  --footprint 0.8 0.8 --height 0.348 \
+  --rename FrontUpperLeg.L=foreLeft --rename FrontUpperLeg.R=foreRight \
+  --rename BackLeg.L=hindLeft --rename BackLeg.R=hindRight \
+  --rename Head=head \
+  --anchor nose=0.3604,0.2747,0 --anchor tail_tip=-0.3604,0.2800,0 \
+  --anchor crown=0.3043,0.3480,0.0485 --anchor belly=-0.0643,0,-0.0376 \
+  --anchor flank=0.1663,0.1744,0.0691
+```
+
+Notes on the flags — the deer's entry above argues the ones the two share
+(`--forward -Y`, `--drop Icosphere`, no `--rigidify`, why the renames are made
+at import and not at runtime). What is different here:
+
+- `--height 0.348`, and the height is again the BINDING axis. It is derived
+  from the deer rather than picked: 0.75 x the grazer's 0.464. A grey wolf
+  stands about three quarters of a deer at the shoulder (~0.8 m against
+  ~1.05 m) and both models carry their crown at the ear tips, so the shoulder
+  ratio carries to the crown. That puts the wolf at 0.56 x PILGRIM_HEIGHT
+  (0.62) — the shortest land animal in the plugin, which is what a predator
+  seen beside a deer should be. See `../species/wolf.ts`.
+- `--footprint 0.8 0.8` is a ground BUDGET, not a target, and is deliberately
+  NOT binding: at the height above the model measures 0.721 along X, so 0.8 is
+  the next round number that clears it and leaves the height to bind. Fitting
+  to a footprint instead would make the stated height approximate.
+- `--rename BackLeg.L=hindLeft` (not `BackUpperLeg.L`) — the same choice the
+  deer made, for the same reason: `BackLeg` is the HIP, `BackUpperLeg` the
+  stifle below it, and `species/assetSpecies.ts`'s `modelAxisPivot` re-homes a
+  driven joint under `rig`, so driving the hip swings the whole leg and driving
+  the stifle would swing only the shank. The front chain has no such pair:
+  `FrontUpperLeg` IS the shoulder joint.
+- The `--anchor`s are the five envelope stations, at the model's MEASURED
+  extremes (a per-vertex probe of the fitted file, 2026-09-04): nose on
+  `Wolf_Nose` at x 0.3604, tail tip on `Wolf_Main` at x -0.3604, crown at an
+  ear tip y 0.3480, belly at a hind paw y 0.0000, flank at the ribs z 0.0691.
+  Box: 0.721 x 0.348 x 0.138.
+- The paws, measured the same way, span x -0.1066 to 0.2074 — which is where
+  `WOLF_ENVELOPE.bodyHalfLength` comes from; it is NOT the half-length, because
+  a wolf's tail is a third of its box and probing terrain under the tail would
+  float the animal. See `../species/wolf.ts`.
+- `PoleTarget.L/R` and `PoleTargetBack.L/R` carry NO weight (nothing above
+  1e-4 on any vertex, measured), so unlike the four IK bones they are not
+  adopted; they are pure IK scaffolding. The bones still ship, unweighted.
+
+**The source's animation clips are IGNORED and are not in the exported file**,
+exactly as for the deer above.

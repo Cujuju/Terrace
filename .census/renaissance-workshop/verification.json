@@ -1,0 +1,103 @@
+{
+  "glb_sha256": "27b74b18945a94a40a0430737e5798a5fb682f29f74a33df88e74d44f7dbcb19",
+  "mesh_count": 1,
+  "primitive_count": 1,
+  "material_count": 1,
+  "triangles": 1820,
+  "exported_vertices": 3487,
+  "nodes": [
+    {
+      "mesh": 0,
+      "name": "renaissance-workshop"
+    },
+    {
+      "children": [
+        0
+      ],
+      "name": "RootNode"
+    }
+  ],
+  "dimensions_gltf_y_up": [
+    0.7146620154380798,
+    0.8319347500801086,
+    0.8599999845027924
+  ],
+  "uv_islands": 820,
+  "uv_min_max": [
+    0.0029296875,
+    0.9959798455238342
+  ],
+  "uv_overlap_pairs": [],
+  "uv_candidate_pairs_checked": 1089,
+  "minimum_island_bounds_gap_pixels": 12.0,
+  "texel_density_min_max": [
+    572.254887375887,
+    572.2889799753008
+  ],
+  "zero_area_triangles": 0,
+  "normal_length_error_max": 7.531667445270784e-08,
+  "tangent_normal_dot_max": 0.00010701705777904635,
+  "compression_extensions": [],
+  "textures": {
+    "renaissance-workshop-normal": {
+      "format": "image/png",
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "matches_external_bytes": true
+    },
+    "renaissance-workshop-basecolor": {
+      "format": "image/png",
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "matches_external_bytes": true
+    },
+    "renaissance-workshop-metallicRoughness": {
+      "format": "image/png",
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "matches_external_bytes": true
+    }
+  },
+  "roughness_range": [
+    0.7803922295570374,
+    0.9803922176361084
+  ],
+  "metalness_range": [
+    0.0,
+    0.0
+  ],
+  "normal_map_length_error_max": 0.0054743289947509766,
+  "blend": {
+    "mesh_count": 1,
+    "material_count": 1,
+    "vertices": 1052,
+    "triangles": 1820,
+    "uv_layers": [
+      "UVMap"
+    ],
+    "images_packed": true,
+    "objects": [
+      "renaissance-workshop",
+      "RootNode"
+    ]
+  },
+  "bounds_gltf_y_up": {
+    "min": [
+      -0.3573310077190399,
+      0.0,
+      -0.4014335572719574
+    ],
+    "max": [
+      0.3573310077190399,
+      0.8319347500801086,
+      0.45856642723083496
+    ]
+  },
+  "passed": true
+}

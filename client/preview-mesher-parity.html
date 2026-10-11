@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CPU/GPU mesher parity (throwaway)</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #202020;
+        color: #e0e0e0;
+        font: 13px/1.5 ui-monospace, monospace;
+      }
+      canvas {
+        width: 1px;
+        height: 1px;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- THROWAWAY probe harness, mirroring preview-arch.html. Not part of the
+         shipped app: reached only by navigating here directly. Runs the REAL
+         CPU and GPU meshers over the golden fixture worlds and publishes the
+         per-chunk vertex counts on window.__parityReport. -->
+    <canvas id="viewport"></canvas>
+    <pre id="out">running…</pre>
+    <script type="module" src="/test/mesherParityProbe.ts"></script>
+    <script type="module">
+      const out = document.getElementById('out');
+      const poll = setInterval(() => {
+        if (window.__parityReady !== true) return;
+        clearInterval(poll);
+        out.textContent = JSON.stringify(window.__parityReport, null, 2);
+      }, 100);
+    </script>
+  </body>
+</html>

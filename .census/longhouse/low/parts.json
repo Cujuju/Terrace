@@ -1,0 +1,902 @@
+[
+  {
+    "name": "Stone foundation",
+    "first_face": 0,
+    "face_count": 6
+  },
+  {
+    "name": "Planked hall walls following swept eaves",
+    "first_face": 6,
+    "face_count": 18
+  },
+  {
+    "name": "Gable infill following roof profile",
+    "first_face": 24,
+    "face_count": 13
+  },
+  {
+    "name": "Gable infill following roof profile",
+    "first_face": 37,
+    "face_count": 13
+  },
+  {
+    "name": "Post stone",
+    "first_face": 50,
+    "face_count": 6
+  },
+  {
+    "name": "Upright timber",
+    "first_face": 56,
+    "face_count": 6
+  },
+  {
+    "name": "Post foot",
+    "first_face": 62,
+    "face_count": 6
+  },
+  {
+    "name": "Post stone",
+    "first_face": 68,
+    "face_count": 6
+  },
+  {
+    "name": "Upright timber",
+    "first_face": 74,
+    "face_count": 6
+  },
+  {
+    "name": "Post foot",
+    "first_face": 80,
+    "face_count": 6
+  },
+  {
+    "name": "Post stone",
+    "first_face": 86,
+    "face_count": 6
+  },
+  {
+    "name": "Upright timber",
+    "first_face": 92,
+    "face_count": 6
+  },
+  {
+    "name": "Post foot",
+    "first_face": 98,
+    "face_count": 6
+  },
+  {
+    "name": "Post stone",
+    "first_face": 104,
+    "face_count": 6
+  },
+  {
+    "name": "Upright timber",
+    "first_face": 110,
+    "face_count": 6
+  },
+  {
+    "name": "Post foot",
+    "first_face": 116,
+    "face_count": 6
+  },
+  {
+    "name": "Post stone",
+    "first_face": 122,
+    "face_count": 6
+  },
+  {
+    "name": "Upright timber",
+    "first_face": 128,
+    "face_count": 6
+  },
+  {
+    "name": "Post foot",
+    "first_face": 134,
+    "face_count": 6
+  },
+  {
+    "name": "Long wall rail",
+    "first_face": 140,
+    "face_count": 6
+  },
+  {
+    "name": "Long wall rail",
+    "first_face": 146,
+    "face_count": 6
+  },
+  {
+    "name": "Upper diagonal brace",
+    "first_face": 152,
+    "face_count": 6
+  },
+  {
+    "name": "Upper diagonal brace",
+    "first_face": 158,
+    "face_count": 6
+  },
+  {
+    "name": "Post stone",
+    "first_face": 164,
+    "face_count": 6
+  },
+  {
+    "name": "Upright timber",
+    "first_face": 170,
+    "face_count": 6
+  },
+  {
+    "name": "Post foot",
+    "first_face": 176,
+    "face_count": 6
+  },
+  {
+    "name": "Post stone",
+    "first_face": 182,
+    "face_count": 6
+  },
+  {
+    "name": "Upright timber",
+    "first_face": 188,
+    "face_count": 6
+  },
+  {
+    "name": "Post foot",
+    "first_face": 194,
+    "face_count": 6
+  },
+  {
+    "name": "Post stone",
+    "first_face": 200,
+    "face_count": 6
+  },
+  {
+    "name": "Upright timber",
+    "first_face": 206,
+    "face_count": 6
+  },
+  {
+    "name": "Post foot",
+    "first_face": 212,
+    "face_count": 6
+  },
+  {
+    "name": "Post stone",
+    "first_face": 218,
+    "face_count": 6
+  },
+  {
+    "name": "Upright timber",
+    "first_face": 224,
+    "face_count": 6
+  },
+  {
+    "name": "Post foot",
+    "first_face": 230,
+    "face_count": 6
+  },
+  {
+    "name": "Post stone",
+    "first_face": 236,
+    "face_count": 6
+  },
+  {
+    "name": "Upright timber",
+    "first_face": 242,
+    "face_count": 6
+  },
+  {
+    "name": "Post foot",
+    "first_face": 248,
+    "face_count": 6
+  },
+  {
+    "name": "Long wall rail",
+    "first_face": 254,
+    "face_count": 6
+  },
+  {
+    "name": "Long wall rail",
+    "first_face": 260,
+    "face_count": 6
+  },
+  {
+    "name": "Upper diagonal brace",
+    "first_face": 266,
+    "face_count": 6
+  },
+  {
+    "name": "Upper diagonal brace",
+    "first_face": 272,
+    "face_count": 6
+  },
+  {
+    "name": "Gable tie beam",
+    "first_face": 278,
+    "face_count": 6
+  },
+  {
+    "name": "Gable kingpost",
+    "first_face": 284,
+    "face_count": 6
+  },
+  {
+    "name": "Gable rafter",
+    "first_face": 290,
+    "face_count": 18
+  },
+  {
+    "name": "Gable brace",
+    "first_face": 308,
+    "face_count": 6
+  },
+  {
+    "name": "Gable rafter",
+    "first_face": 314,
+    "face_count": 18
+  },
+  {
+    "name": "Gable brace",
+    "first_face": 332,
+    "face_count": 6
+  },
+  {
+    "name": "Gable tie beam",
+    "first_face": 338,
+    "face_count": 6
+  },
+  {
+    "name": "Gable kingpost",
+    "first_face": 344,
+    "face_count": 6
+  },
+  {
+    "name": "Gable rafter",
+    "first_face": 350,
+    "face_count": 18
+  },
+  {
+    "name": "Gable brace",
+    "first_face": 368,
+    "face_count": 6
+  },
+  {
+    "name": "Gable rafter",
+    "first_face": 374,
+    "face_count": 18
+  },
+  {
+    "name": "Gable brace",
+    "first_face": 392,
+    "face_count": 6
+  },
+  {
+    "name": "Rear post",
+    "first_face": 398,
+    "face_count": 6
+  },
+  {
+    "name": "Rear sill",
+    "first_face": 404,
+    "face_count": 6
+  },
+  {
+    "name": "Door recess",
+    "first_face": 410,
+    "face_count": 6
+  },
+  {
+    "name": "Front plank door",
+    "first_face": 416,
+    "face_count": 6
+  },
+  {
+    "name": "Door jamb",
+    "first_face": 422,
+    "face_count": 6
+  },
+  {
+    "name": "Door jamb",
+    "first_face": 428,
+    "face_count": 6
+  },
+  {
+    "name": "Door lintel",
+    "first_face": 434,
+    "face_count": 6
+  },
+  {
+    "name": "Door strap",
+    "first_face": 440,
+    "face_count": 6
+  },
+  {
+    "name": "Door strap",
+    "first_face": 446,
+    "face_count": 6
+  },
+  {
+    "name": "Door pull ring",
+    "first_face": 452,
+    "face_count": 18
+  },
+  {
+    "name": "Upper entry step",
+    "first_face": 470,
+    "face_count": 6
+  },
+  {
+    "name": "Lower entry step",
+    "first_face": 476,
+    "face_count": 6
+  },
+  {
+    "name": "Porch footing",
+    "first_face": 482,
+    "face_count": 6
+  },
+  {
+    "name": "Porch post",
+    "first_face": 488,
+    "face_count": 6
+  },
+  {
+    "name": "Porch knee brace",
+    "first_face": 494,
+    "face_count": 6
+  },
+  {
+    "name": "Porch footing",
+    "first_face": 500,
+    "face_count": 6
+  },
+  {
+    "name": "Porch post",
+    "first_face": 506,
+    "face_count": 6
+  },
+  {
+    "name": "Porch knee brace",
+    "first_face": 512,
+    "face_count": 6
+  },
+  {
+    "name": "Porch header",
+    "first_face": 518,
+    "face_count": 6
+  },
+  {
+    "name": "Porch kingpost",
+    "first_face": 524,
+    "face_count": 6
+  },
+  {
+    "name": "Porch roof course 1",
+    "first_face": 530,
+    "face_count": 10
+  },
+  {
+    "name": "Porch roof course 2",
+    "first_face": 540,
+    "face_count": 10
+  },
+  {
+    "name": "Porch roof course 3",
+    "first_face": 550,
+    "face_count": 10
+  },
+  {
+    "name": "Porch roof course 1",
+    "first_face": 560,
+    "face_count": 10
+  },
+  {
+    "name": "Porch roof course 2",
+    "first_face": 570,
+    "face_count": 10
+  },
+  {
+    "name": "Porch roof course 3",
+    "first_face": 580,
+    "face_count": 10
+  },
+  {
+    "name": "Porch roof gable fascia",
+    "first_face": 590,
+    "face_count": 18
+  },
+  {
+    "name": "Porch roof gable fascia",
+    "first_face": 608,
+    "face_count": 18
+  },
+  {
+    "name": "Porch roof gable fascia",
+    "first_face": 626,
+    "face_count": 18
+  },
+  {
+    "name": "Porch roof gable fascia",
+    "first_face": 644,
+    "face_count": 18
+  },
+  {
+    "name": "Porch roof eave",
+    "first_face": 662,
+    "face_count": 10
+  },
+  {
+    "name": "Porch roof eave",
+    "first_face": 672,
+    "face_count": 10
+  },
+  {
+    "name": "Porch roof ridge",
+    "first_face": 682,
+    "face_count": 10
+  },
+  {
+    "name": "Window recess",
+    "first_face": 692,
+    "face_count": 6
+  },
+  {
+    "name": "Window shutter",
+    "first_face": 698,
+    "face_count": 6
+  },
+  {
+    "name": "Window sill and lintel",
+    "first_face": 704,
+    "face_count": 6
+  },
+  {
+    "name": "Window sill and lintel",
+    "first_face": 710,
+    "face_count": 6
+  },
+  {
+    "name": "Window side frame",
+    "first_face": 716,
+    "face_count": 6
+  },
+  {
+    "name": "Window side frame",
+    "first_face": 722,
+    "face_count": 6
+  },
+  {
+    "name": "Shutter strap",
+    "first_face": 728,
+    "face_count": 6
+  },
+  {
+    "name": "Shutter strap",
+    "first_face": 734,
+    "face_count": 6
+  },
+  {
+    "name": "Window recess",
+    "first_face": 740,
+    "face_count": 6
+  },
+  {
+    "name": "Window shutter",
+    "first_face": 746,
+    "face_count": 6
+  },
+  {
+    "name": "Window sill and lintel",
+    "first_face": 752,
+    "face_count": 6
+  },
+  {
+    "name": "Window sill and lintel",
+    "first_face": 758,
+    "face_count": 6
+  },
+  {
+    "name": "Window side frame",
+    "first_face": 764,
+    "face_count": 6
+  },
+  {
+    "name": "Window side frame",
+    "first_face": 770,
+    "face_count": 6
+  },
+  {
+    "name": "Shutter strap",
+    "first_face": 776,
+    "face_count": 6
+  },
+  {
+    "name": "Shutter strap",
+    "first_face": 782,
+    "face_count": 6
+  },
+  {
+    "name": "Window recess",
+    "first_face": 788,
+    "face_count": 6
+  },
+  {
+    "name": "Window shutter",
+    "first_face": 794,
+    "face_count": 6
+  },
+  {
+    "name": "Window sill and lintel",
+    "first_face": 800,
+    "face_count": 6
+  },
+  {
+    "name": "Window sill and lintel",
+    "first_face": 806,
+    "face_count": 6
+  },
+  {
+    "name": "Window side frame",
+    "first_face": 812,
+    "face_count": 6
+  },
+  {
+    "name": "Window side frame",
+    "first_face": 818,
+    "face_count": 6
+  },
+  {
+    "name": "Shutter strap",
+    "first_face": 824,
+    "face_count": 6
+  },
+  {
+    "name": "Shutter strap",
+    "first_face": 830,
+    "face_count": 6
+  },
+  {
+    "name": "Window recess",
+    "first_face": 836,
+    "face_count": 6
+  },
+  {
+    "name": "Window shutter",
+    "first_face": 842,
+    "face_count": 6
+  },
+  {
+    "name": "Window sill and lintel",
+    "first_face": 848,
+    "face_count": 6
+  },
+  {
+    "name": "Window sill and lintel",
+    "first_face": 854,
+    "face_count": 6
+  },
+  {
+    "name": "Window side frame",
+    "first_face": 860,
+    "face_count": 6
+  },
+  {
+    "name": "Window side frame",
+    "first_face": 866,
+    "face_count": 6
+  },
+  {
+    "name": "Shutter strap",
+    "first_face": 872,
+    "face_count": 6
+  },
+  {
+    "name": "Shutter strap",
+    "first_face": 878,
+    "face_count": 6
+  },
+  {
+    "name": "Window recess",
+    "first_face": 884,
+    "face_count": 6
+  },
+  {
+    "name": "Window shutter",
+    "first_face": 890,
+    "face_count": 6
+  },
+  {
+    "name": "Window sill and lintel",
+    "first_face": 896,
+    "face_count": 6
+  },
+  {
+    "name": "Window sill and lintel",
+    "first_face": 902,
+    "face_count": 6
+  },
+  {
+    "name": "Window side frame",
+    "first_face": 908,
+    "face_count": 6
+  },
+  {
+    "name": "Window side frame",
+    "first_face": 914,
+    "face_count": 6
+  },
+  {
+    "name": "Shutter strap",
+    "first_face": 920,
+    "face_count": 6
+  },
+  {
+    "name": "Shutter strap",
+    "first_face": 926,
+    "face_count": 6
+  },
+  {
+    "name": "Window recess",
+    "first_face": 932,
+    "face_count": 6
+  },
+  {
+    "name": "Window shutter",
+    "first_face": 938,
+    "face_count": 6
+  },
+  {
+    "name": "Window sill and lintel",
+    "first_face": 944,
+    "face_count": 6
+  },
+  {
+    "name": "Window sill and lintel",
+    "first_face": 950,
+    "face_count": 6
+  },
+  {
+    "name": "Window side frame",
+    "first_face": 956,
+    "face_count": 6
+  },
+  {
+    "name": "Window side frame",
+    "first_face": 962,
+    "face_count": 6
+  },
+  {
+    "name": "Shutter strap",
+    "first_face": 968,
+    "face_count": 6
+  },
+  {
+    "name": "Shutter strap",
+    "first_face": 974,
+    "face_count": 6
+  },
+  {
+    "name": "Window recess",
+    "first_face": 980,
+    "face_count": 6
+  },
+  {
+    "name": "Window shutter",
+    "first_face": 986,
+    "face_count": 6
+  },
+  {
+    "name": "Window sill and lintel",
+    "first_face": 992,
+    "face_count": 6
+  },
+  {
+    "name": "Window sill and lintel",
+    "first_face": 998,
+    "face_count": 6
+  },
+  {
+    "name": "Window side frame",
+    "first_face": 1004,
+    "face_count": 6
+  },
+  {
+    "name": "Window side frame",
+    "first_face": 1010,
+    "face_count": 6
+  },
+  {
+    "name": "Shutter strap",
+    "first_face": 1016,
+    "face_count": 6
+  },
+  {
+    "name": "Shutter strap",
+    "first_face": 1022,
+    "face_count": 6
+  },
+  {
+    "name": "Window recess",
+    "first_face": 1028,
+    "face_count": 6
+  },
+  {
+    "name": "Window shutter",
+    "first_face": 1034,
+    "face_count": 6
+  },
+  {
+    "name": "Window sill and lintel",
+    "first_face": 1040,
+    "face_count": 6
+  },
+  {
+    "name": "Window sill and lintel",
+    "first_face": 1046,
+    "face_count": 6
+  },
+  {
+    "name": "Window side frame",
+    "first_face": 1052,
+    "face_count": 6
+  },
+  {
+    "name": "Window side frame",
+    "first_face": 1058,
+    "face_count": 6
+  },
+  {
+    "name": "Shutter strap",
+    "first_face": 1064,
+    "face_count": 6
+  },
+  {
+    "name": "Shutter strap",
+    "first_face": 1070,
+    "face_count": 6
+  },
+  {
+    "name": "Main roof course 1",
+    "first_face": 1076,
+    "face_count": 18
+  },
+  {
+    "name": "Main roof course 2",
+    "first_face": 1094,
+    "face_count": 18
+  },
+  {
+    "name": "Main roof course 3",
+    "first_face": 1112,
+    "face_count": 18
+  },
+  {
+    "name": "Main roof course 4",
+    "first_face": 1130,
+    "face_count": 18
+  },
+  {
+    "name": "Main roof course 5",
+    "first_face": 1148,
+    "face_count": 18
+  },
+  {
+    "name": "Main roof course 6",
+    "first_face": 1166,
+    "face_count": 18
+  },
+  {
+    "name": "Main roof course 1",
+    "first_face": 1184,
+    "face_count": 18
+  },
+  {
+    "name": "Main roof course 2",
+    "first_face": 1202,
+    "face_count": 18
+  },
+  {
+    "name": "Main roof course 3",
+    "first_face": 1220,
+    "face_count": 18
+  },
+  {
+    "name": "Main roof course 4",
+    "first_face": 1238,
+    "face_count": 18
+  },
+  {
+    "name": "Main roof course 5",
+    "first_face": 1256,
+    "face_count": 18
+  },
+  {
+    "name": "Main roof course 6",
+    "first_face": 1274,
+    "face_count": 18
+  },
+  {
+    "name": "Main roof gable fascia",
+    "first_face": 1292,
+    "face_count": 18
+  },
+  {
+    "name": "Main roof gable fascia",
+    "first_face": 1310,
+    "face_count": 18
+  },
+  {
+    "name": "Main roof gable fascia",
+    "first_face": 1328,
+    "face_count": 18
+  },
+  {
+    "name": "Main roof gable fascia",
+    "first_face": 1346,
+    "face_count": 18
+  },
+  {
+    "name": "Main roof eave",
+    "first_face": 1364,
+    "face_count": 18
+  },
+  {
+    "name": "Main roof eave",
+    "first_face": 1382,
+    "face_count": 18
+  },
+  {
+    "name": "Main roof ridge",
+    "first_face": 1400,
+    "face_count": 18
+  },
+  {
+    "name": "Carved gable head",
+    "first_face": 1418,
+    "face_count": 14
+  },
+  {
+    "name": "Carved lower jaw",
+    "first_face": 1432,
+    "face_count": 6
+  },
+  {
+    "name": "Carved crest",
+    "first_face": 1438,
+    "face_count": 6
+  },
+  {
+    "name": "Carved eye",
+    "first_face": 1444,
+    "face_count": 1
+  },
+  {
+    "name": "Carved eye",
+    "first_face": 1445,
+    "face_count": 1
+  },
+  {
+    "name": "Carved gable head",
+    "first_face": 1446,
+    "face_count": 14
+  },
+  {
+    "name": "Carved lower jaw",
+    "first_face": 1460,
+    "face_count": 6
+  },
+  {
+    "name": "Carved crest",
+    "first_face": 1466,
+    "face_count": 6
+  },
+  {
+    "name": "Carved eye",
+    "first_face": 1472,
+    "face_count": 1
+  },
+  {
+    "name": "Carved eye",
+    "first_face": 1473,
+    "face_count": 1
+  }
+]

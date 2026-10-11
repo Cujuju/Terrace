@@ -1,0 +1,288 @@
+import {
+  BufferAttribute,
+  BufferGeometry,
+  Color,
+  Group,
+  InstancedMesh,
+  Matrix4,
+  MeshLambertMaterial,
+  Quaternion,
+  Vector3,
+} from 'three';
+import { CELL_WORLD_SIZE } from '@terrace/shared';
+import { weldFlatShaded } from '../../../client/src/render/weld.ts';
+import { FLORA_STUMP_CAP, FLORA_TREE_SCALE_MAX, stumpKey, type StumpCell } from '../protocol.ts';
+import {
+  MATRIX_FLOATS_PER_INSTANCE,
+  clearPlacementExtent,
+  createPlacementExtent,
+  geometryReach,
+  includePlacement,
+  scaledReach,
+  uploadAllInstances,
+  uploadInstanceRun,
+  writeInstanceSphere,
+  type InstanceReach,
+} from './instanceBounds.ts';
+import { TRUNK_BOTTOM_RADIUS, TRUNK_COLOR, TRUNK_HEIGHT } from './models.ts';
+import { bakeSolidColor } from '../../../client/src/render/bakeSolidColor.ts';
+
+const STUMP_HEIGHT = TRUNK_HEIGHT / 3;
+
+const SPLINTER_RISE = STUMP_HEIGHT / 4;
+
+const STUMP_TOP_RADIUS_FRACTION = 0.92;
+
+const STUMP_RADIAL_SEGMENTS = 7;
+
+const CHAR_MIX = 0.78;
+
+const CORE_COLOR = 0x8c7a63;
+
+export interface StumpPlacement {
+  readonly x: number;
+  readonly z: number;
+  readonly cellX: number;
+  readonly cellY: number;
+  readonly groundY: number;
+  readonly scale: number;
+  readonly yaw: number;
+}
+
+export interface StumpModels {
+  readonly root: Group;
+  apply(placements: readonly StumpPlacement[]): void;
+  applyDelta(left: readonly StumpPlacement[], rotted: readonly StumpCell[]): void;
+  dispose(): void;
+}
+
+function triangleSoup(positions: number[]): BufferGeometry {
+  const geometry = new BufferGeometry();
+  geometry.setAttribute('position', new BufferAttribute(new Float32Array(positions), 3));
+  return weldFlatShaded(geometry);
+}
+
+interface Rim {
+  readonly cosines: number[];
+  readonly sines: number[];
+  readonly topY: number[];
+}
+
+function buildRim(): Rim {
+  const cosines: number[] = [];
+  const sines: number[] = [];
+  const topY: number[] = [];
+  for (let i = 0; i < STUMP_RADIAL_SEGMENTS; i++) {
+    const angle = (i / STUMP_RADIAL_SEGMENTS) * Math.PI * 2;
+    cosines.push(Math.cos(angle));
+    sines.push(Math.sin(angle));
+    topY.push(STUMP_HEIGHT + (i % 2 === 0 ? SPLINTER_RISE : 0));
+  }
+  return { cosines, sines, topY };
+}
+
+interface StumpGeometries {
+  readonly bark: BufferGeometry;
+  readonly core: BufferGeometry;
+  readonly horizontalReachInCells: number;
+}
+
+function buildStump(): StumpGeometries {
+  const rim = buildRim();
+  const baseRadius = TRUNK_BOTTOM_RADIUS;
+  const topRadius = TRUNK_BOTTOM_RADIUS * STUMP_TOP_RADIUS_FRACTION;
+
+  const bark: number[] = [];
+  const core: number[] = [];
+  const push = (into: number[], ...points: Vector3[]): void => {
+    for (const point of points) into.push(point.x, point.y, point.z);
+  };
+
+  const basePoint = (i: number): Vector3 =>
+    new Vector3(rim.cosines[i]! * baseRadius, 0, rim.sines[i]! * baseRadius);
+  const topPoint = (i: number): Vector3 =>
+    new Vector3(rim.cosines[i]! * topRadius, rim.topY[i]!, rim.sines[i]! * topRadius);
+
+  for (let i = 0; i < STUMP_RADIAL_SEGMENTS; i++) {
+    const j = (i + 1) % STUMP_RADIAL_SEGMENTS;
+    const a = basePoint(i);
+    const b = basePoint(j);
+    const c = topPoint(i);
+    const d = topPoint(j);
+    push(bark, a, c, b);
+    push(bark, b, c, d);
+  }
+
+  const centre = new Vector3(0, STUMP_HEIGHT, 0);
+  for (let i = 0; i < STUMP_RADIAL_SEGMENTS; i++) {
+    const j = (i + 1) % STUMP_RADIAL_SEGMENTS;
+    push(core, centre, topPoint(j), topPoint(i));
+  }
+
+  return {
+    bark: triangleSoup(bark),
+    core: triangleSoup(core),
+    horizontalReachInCells: baseRadius / CELL_WORLD_SIZE,
+  };
+}
+
+// The felled tree's trunk held this ground, so a stump may reach as far and no farther.
+function assertStumpFitsCell(horizontalReachInCells: number): void {
+  const trunkReachInCells = TRUNK_BOTTOM_RADIUS / CELL_WORLD_SIZE;
+  if (horizontalReachInCells > trunkReachInCells) {
+    throw new RangeError(
+      `a stump reaches ${horizontalReachInCells.toFixed(3)} cells from its centre, past its trunk's ${trunkReachInCells.toFixed(3)}`,
+    );
+  }
+}
+
+function lambert(): MeshLambertMaterial {
+  return new MeshLambertMaterial({ vertexColors: true, flatShading: true });
+}
+
+function charred(): number {
+  return new Color(TRUNK_COLOR).multiplyScalar(1 - CHAR_MIX).getHex();
+}
+
+export function createStumpModels(): StumpModels {
+  const built = buildStump();
+  assertStumpFitsCell(built.horizontalReachInCells);
+
+  bakeSolidColor(built.bark, charred());
+  bakeSolidColor(built.core, CORE_COLOR);
+  const sharedMaterial = lambert();
+  const barkMaterial = sharedMaterial;
+  const coreMaterial = sharedMaterial;
+  const bark = new InstancedMesh(built.bark, barkMaterial, FLORA_STUMP_CAP);
+  const core = new InstancedMesh(built.core, coreMaterial, FLORA_STUMP_CAP);
+  bark.name = 'flora:stump-bark';
+  core.name = 'flora:stump-core';
+  bark.count = 0;
+  core.count = 0;
+
+  const root = new Group();
+  root.name = 'flora:stumps';
+  root.add(bark);
+  root.add(core);
+
+  const matrix = new Matrix4();
+  const position = new Vector3();
+  const rotation = new Quaternion();
+  const scale = new Vector3();
+  const up = new Vector3(0, 1, 0);
+
+  const extent = createPlacementExtent();
+  const reaches: readonly InstanceReach[] = [built.bark, built.core].map(
+    (geometry): InstanceReach => scaledReach(geometryReach(geometry), FLORA_TREE_SCALE_MAX),
+  );
+
+  const slotOfCell = new Map<number, number>();
+  const cellOfSlot: number[] = [];
+  let written = 0;
+
+  const moveInstances = (
+    attribute: BufferAttribute,
+    from: number,
+    to: number,
+    count: number,
+  ): void => {
+    attribute.array.copyWithin(
+      to * MATRIX_FLOATS_PER_INSTANCE,
+      from * MATRIX_FLOATS_PER_INSTANCE,
+      (from + count) * MATRIX_FLOATS_PER_INSTANCE,
+    );
+  };
+
+  const writeStump = (slot: number, placement: StumpPlacement): void => {
+    includePlacement(extent, placement.x, placement.groundY, placement.z);
+    position.set(placement.x, placement.groundY, placement.z);
+    rotation.setFromAxisAngle(up, placement.yaw);
+    scale.set(placement.scale, placement.scale, placement.scale);
+    matrix.compose(position, rotation, scale);
+    bark.setMatrixAt(slot, matrix);
+    core.setMatrixAt(slot, matrix);
+  };
+
+  const insertCell = (key: number, placement: StumpPlacement): boolean => {
+    if (written >= FLORA_STUMP_CAP) return false;
+    const slot = written++;
+    writeStump(slot, placement);
+    slotOfCell.set(key, slot);
+    cellOfSlot[slot] = key;
+    return true;
+  };
+
+  const removeCell = (key: number): void => {
+    const slot = slotOfCell.get(key);
+    if (slot === undefined) return;
+    slotOfCell.delete(key);
+
+    const last = written - 1;
+    if (slot !== last) {
+      moveInstances(bark.instanceMatrix, last, slot, 1);
+      moveInstances(core.instanceMatrix, last, slot, 1);
+      const movedKey = cellOfSlot[last]!;
+      cellOfSlot[slot] = movedKey;
+      slotOfCell.set(movedKey, slot);
+      uploadInstanceRun(bark.instanceMatrix, slot, 1, MATRIX_FLOATS_PER_INSTANCE);
+      uploadInstanceRun(core.instanceMatrix, slot, 1, MATRIX_FLOATS_PER_INSTANCE);
+    }
+    written = last;
+    cellOfSlot.length = last;
+  };
+
+  const publish = (): void => {
+    bark.count = written;
+    core.count = written;
+  };
+
+  return {
+    root,
+
+    apply(placements: readonly StumpPlacement[]): void {
+      slotOfCell.clear();
+      cellOfSlot.length = 0;
+      written = 0;
+      clearPlacementExtent(extent);
+      for (const placement of placements) {
+        if (!insertCell(stumpKey(placement.cellX, placement.cellY), placement)) break;
+      }
+
+      publish();
+      const meshes = [bark, core];
+      for (let i = 0; i < meshes.length; i++) {
+        const mesh = meshes[i]!;
+        uploadAllInstances(mesh.instanceMatrix, mesh.count, MATRIX_FLOATS_PER_INSTANCE);
+        writeInstanceSphere(mesh, extent, reaches[i]!);
+      }
+    },
+
+    applyDelta(left: readonly StumpPlacement[], rotted: readonly StumpCell[]): void {
+      for (const cell of rotted) removeCell(stumpKey(cell.x, cell.y));
+      for (const placement of left) {
+        const key = stumpKey(placement.cellX, placement.cellY);
+        if (written >= FLORA_STUMP_CAP && !slotOfCell.has(key)) continue;
+        removeCell(key);
+        if (!insertCell(key, placement)) continue;
+        const slot = slotOfCell.get(key)!;
+        uploadInstanceRun(bark.instanceMatrix, slot, 1, MATRIX_FLOATS_PER_INSTANCE);
+        uploadInstanceRun(core.instanceMatrix, slot, 1, MATRIX_FLOATS_PER_INSTANCE);
+      }
+      publish();
+      const meshes = [bark, core];
+      for (let i = 0; i < meshes.length; i++) {
+        writeInstanceSphere(meshes[i]!, extent, reaches[i]!);
+      }
+    },
+
+    dispose(): void {
+      bark.dispose();
+      core.dispose();
+      built.bark.dispose();
+      built.core.dispose();
+      barkMaterial.dispose();
+      coreMaterial.dispose();
+      root.clear();
+    },
+  };
+}

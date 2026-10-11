@@ -1,0 +1,94 @@
+{
+  "assumptions": {
+    "png_gpu_format": "RGBA8 with complete mip chain",
+    "compressed_gpu_format": "BC7 or ASTC 4x4, 16 bytes per 4x4 block, complete mip chain",
+    "excluded": "CPU decoded images, loader buffers, driver allocation overhead, shaders, framebuffer and instance buffers",
+    "sharing": "Terrace draws repeated structures with InstancedMesh; mesh and textures are shared, not duplicated per house."
+  },
+  "variants": {
+    "original": {
+      "triangles": 2416,
+      "exported_vertices": 5054,
+      "geometry_gpu_bytes": 257088,
+      "textures": [
+        {
+          "name": "net-draped-cone-normal",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 1188963
+        },
+        {
+          "name": "net-draped-cone-basecolor",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 2069918
+        },
+        {
+          "name": "net-draped-cone-metallicRoughness",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 545985
+        }
+      ],
+      "png_gpu_total_bytes": 67365948,
+      "ktx2_bc7_astc_gpu_total_bytes": 17034384,
+      "png_glb_file_bytes": 2815120,
+      "ktx2_glb_file_bytes": 4064092,
+      "png_glb_sha256": "8be2d36b81ab0f62a8eec3ed25e4a6f62c0de699bc16a43b522af82abdb8e917",
+      "ktx2_glb_sha256": "ef9fad0d07c20fbacd6ffca2a89d462f365de12369f85e83116ad8ca67314df0",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    },
+    "low": {
+      "triangles": 1664,
+      "exported_vertices": 3448,
+      "geometry_gpu_bytes": 175488,
+      "textures": [
+        {
+          "name": "net-draped-cone-normal",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 251310
+        },
+        {
+          "name": "net-draped-cone-basecolor",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 670760
+        },
+        {
+          "name": "net-draped-cone-metallicRoughness",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 110804
+        }
+      ],
+      "png_gpu_total_bytes": 16952700,
+      "ktx2_bc7_astc_gpu_total_bytes": 4369872,
+      "png_glb_file_bytes": 750232,
+      "ktx2_glb_file_bytes": 1210488,
+      "png_glb_sha256": "f50457c0669731a25c3bb90fbfc37cc079dbfaf9faacc03a24d99050b3aca1e3",
+      "ktx2_glb_sha256": "3b07a1f44e0bd3b946420c1c7e8bc1bb9696f60d2c6f04b3d00afbcfaf5822ea",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    }
+  }
+}

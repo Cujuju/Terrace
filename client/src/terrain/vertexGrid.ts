@@ -1,0 +1,25 @@
+export { LATTICE_PER_CHUNK } from './contours.ts';
+export { CONTOUR_SIMPLIFY_EPSILON } from './contourSmoothing.ts';
+export {
+  COMPONENTS_PER_COLOR,
+  // COMPONENTS_PER_NORMAL,
+  CHUNK_POLYGON_WORK_BUDGET,
+  CHUNK_TRIANGLE_BUDGET,
+  CHUNK_TRIANGULATION_WORK_BUDGET,
+  COLOR_ALPHA_INDEX,
+  FALLBACK_MAX_TRIANGLES,
+  MAX_MERGED_POLYGON_VERTICES,
+  INITIAL_CHUNK_TRIANGLE_CAPACITY,
+  LIT_BY_SCENE,
+  SEABED_RISER_BORDER_WORLD_HEIGHT,
+  SELF_LIT_ALPHA_BYTE,
+  SKIRT_PICK_INSET,
+  VERTICES_PER_TRIANGLE,
+  chunkCapTriangles,
+  chunkContourLoops,
+  createChunkGeometryBuffers,
+  writeChunkVertexData,
+  type ChunkGeometryBuffers,
+  type ChunkGeometryCounts,
+  type ChunkPalettes,
+} from './capEmission.ts';

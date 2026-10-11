@@ -1,0 +1,29 @@
+{
+  "name": "@terrace/server",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./plugin-api": "./src/plugins/types.ts"
+  },
+  "scripts": {
+    "start": "node src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "rollback": "node scripts/rollback.ts",
+    "import-world": "node scripts/import-world.ts",
+    "merge-world-history": "node scripts/merge-world-history.ts"
+  },
+  "dependencies": {
+    "@colyseus/core": "^0.17.50",
+    "@colyseus/ws-transport": "^0.17.13",
+    "@terrace/shared": "workspace:*",
+    "better-sqlite3": "^13.0.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^24.13.3",
+    "typescript": "7.0.2",
+    "vitest": "4.1.10"
+  }
+}

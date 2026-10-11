@@ -1,0 +1,2237 @@
+/* HUD styling. Plain CSS — no utility framework in the dependency budget. */
+
+:root {
+  --hud-bg: rgba(18, 22, 28, 0.78);
+  /* The GLASS chrome the bottom instruments share (owner, 2026-09-04: "make
+     the modeler HUD gorgeous"): a top-lit gradient, a hairline of light
+     along the top edge and a soft drop shadow, so the panels sit ON the
+     world rather than being cut out of it. */
+  --hud-glass: linear-gradient(180deg, rgba(34, 41, 52, 0.86), rgba(14, 18, 24, 0.9));
+  --hud-glass-edge: inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  --hud-glass-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  --hud-accent-rgb: 111, 191, 115;
+  --hud-lower: #d98a5a;
+  --hud-lower-rgb: 217, 138, 90;
+  /* One easing for every hover/press on the instruments. */
+  --hud-motion: 160ms ease;
+  --hud-border: rgba(255, 255, 255, 0.12);
+  --hud-text: #e8edf2;
+  --hud-muted: #97a3b0;
+  --hud-accent: #6fbf73;
+  --status-connected: #5ac47a;
+  --status-connecting: #e0b64a;
+  --status-reconnecting: #e0b64a;
+  --status-offline: #7d8894;
+  --plugin-on-bg: rgba(90, 196, 122, 0.22);
+  --plugin-on-border: rgba(90, 196, 122, 0.55);
+  --plugin-off-bg: rgba(200, 80, 70, 0.22);
+  --plugin-off-border: rgba(200, 80, 70, 0.55);
+  /* The bottom strip's inset from the viewport edge, and the matching margin
+     the settings column keeps at the top. */
+  --hud-strip-inset: calc(12px + env(safe-area-inset-bottom, 0px));
+  --hud-strip-top-margin: 12px;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #0b0e12;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: var(--hud-text);
+}
+
+/* The renderer sizes its drawing buffer from these CSS pixels. touch-action
+   none is belt-and-suspenders with OrbitControls (which sets it inline): no
+   browser scroll/zoom gesture may ever hijack a sculpt or camera drag. */
+#viewport {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  touch-action: none;
+}
+
+/* While the brush outline is drawn it IS the pointer, so the OS arrow goes
+   away (owner, 2026-08-19). render/brushPreview.ts owns the class and sets it
+   only while an outline is actually on screen — over sky or off-world the
+   arrow comes back rather than leaving the player with no pointer at all.
+   HUD panels are separate elements and inherit their cursor from the document,
+   so a control is never left without one. */
+#viewport.brush-outline-shown {
+  cursor: none;
+}
+
+/* The HUD floats over the canvas; only its own controls take pointer events,
+   so drags anywhere else reach the sculpt/orbit handlers underneath. */
+.hud {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* Panel CHROME only — where a panel sits is its anchor class's business
+   (2026-08-19 layout: three sections in three corners, one chrome). */
+.hud-panel {
+  pointer-events: auto;
+  min-width: 210px;
+  padding: 12px 14px;
+  border: 1px solid var(--hud-border);
+  border-radius: 10px;
+  background: var(--hud-bg);
+  backdrop-filter: blur(6px);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+/* The top-left corner keeps its absolute anchor; the bottom edge is a STRIP
+   (owner refinement 2026-08-19): one grid row holding brush panel, toolbar
+   and the gauge-and-buttons corner. `minmax(0, 1fr)` sides are the
+   load-bearing part — they let the side cells SHRINK below their content's
+   natural width on a phone (plain 1fr would grow to fit and silently
+   overflow the viewport), so the middle cell's toolbar stays visible at
+   every width, dead-centred whenever the sides fit. */
+.hud-anchor-top-left {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  /* The same glass as the modeler dock, the toolbar and the mana gauge
+     (owner, 2026-09-04: the relics panel "should share the same look as the
+     other HUDs") — the corner is where the relics panel lives, so it wears
+     the chrome the other instruments wear, open and collapsed alike. */
+  border-radius: 14px;
+  background: var(--hud-glass);
+  box-shadow: var(--hud-glass-shadow), var(--hud-glass-edge);
+}
+
+.hud-bottom-strip {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  /* Safe-area inset keeps the strip above an iPhone's home indicator. */
+  bottom: var(--hud-strip-inset);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: end;
+  gap: 10px;
+  pointer-events: none; /* sections take their own events, canvas stays free */
+}
+
+/* The strip's RIGHT cell: plugin 'bottom-right' panels (the mana gauge) and
+   the icon-button column, laid out as one end-anchored row so the gauge sits
+   immediately left of the buttons (owner move, 2026-08-25) and both ride the
+   bottom edge together. Pointer-transparent like its sibling cells. */
+.hud-bottom-right {
+  /* NAMED, not auto-placed (2026-09-04): the strip's LEFT cell empties while a
+     plugin tool is held, and grid auto-placement would then slide these two
+     sections up into columns 1 and 2. */
+  grid-column: 3;
+  display: flex;
+  align-items: end;
+  justify-content: flex-end;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.hud-bottom-right > * {
+  pointer-events: auto;
+}
+
+.hud-anchor-bottom-left {
+  /* NAMED, not auto-placed: the modeler leaves the DOM whenever a plugin tool
+     is held, and grid auto-placement would then slide the centre cell into
+     this empty column and take the toolbar off centre. */
+  grid-column: 1;
+  justify-self: start;
+  pointer-events: auto;
+}
+
+/* THE MODELER (owner, 2026-09-04): the brush's settings, in the bottom-left
+   corner where they have always been. It wears the same glass as the toolbar
+   across the strip, so the two read as one instrument; it is icon-only, so it
+   needs neither the panel chrome's 210px min-width — which would defeat the
+   shrinkable cell — nor the row labels the old text panel wore. */
+.hud-modeler {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 14px;
+  background: var(--hud-glass);
+  box-shadow: var(--hud-glass-shadow), var(--hud-glass-edge);
+}
+
+.hud-modeler .hud-row {
+  gap: 10px;
+  margin-bottom: 0;
+}
+
+.hud-anchor-bottom-right {
+  justify-self: end;
+}
+
+/* The collapsed face of the tools panel: same chrome as .hud-panel, shrunk to
+   its content. A real button so it is tabbable and gets the pointer cursor. */
+.hud-panel-tab {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font: inherit;
+  color: var(--hud-text);
+  cursor: pointer;
+}
+
+/* The status row as the collapse control: a button with the chrome stripped,
+   laid out exactly like the .hud-row it replaces. */
+.panel-header {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* Header-only corner (no plugin body): the tab's compact footprint, since
+   one line of text does not earn a panel's width. */
+.hud-panel--compact {
+  min-width: 0;
+  width: max-content;
+  padding: 8px 12px;
+}
+
+.panel-header--static {
+  cursor: default;
+}
+
+.panel-chevron {
+  margin-left: auto;
+  color: var(--hud-muted);
+}
+
+.panel-header:hover .panel-chevron {
+  color: var(--hud-text);
+}
+
+.hud-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.hud-row:last-of-type {
+  margin-bottom: 0;
+}
+
+.hud-label {
+  width: 46px;
+  color: var(--hud-muted);
+}
+
+.status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--status-offline);
+}
+
+.status-connected {
+  background: var(--status-connected);
+}
+
+/* Both in-flight states pulse, so "working on it" is visible without text. */
+.status-connecting,
+.status-reconnecting {
+  background: var(--status-connecting);
+  animation: hud-pulse 1.2s ease-in-out infinite;
+}
+
+.status-offline {
+  background: var(--status-offline);
+}
+
+@keyframes hud-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-connecting,
+  .status-reconnecting {
+    animation: none;
+  }
+
+  /* The instruments' hover lifts and glows settle instantly. */
+  .hud-tool,
+  .hud-tool__icon,
+  .brush-button,
+  .mode-value {
+    transition: none;
+  }
+
+  .hud-tool:hover .hud-tool__icon {
+    transform: none;
+  }
+}
+
+.status-label {
+  color: var(--hud-muted);
+}
+
+/* A SEGMENTED control: one recessed well holding the choices, the chosen one
+   raised out of it in the accent. The well is what makes a row read as ONE
+   setting rather than a scatter of buttons. */
+.brush-picker {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.35);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.55), inset 0 -1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.brush-button {
+  position: relative;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--hud-muted);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    color var(--hud-motion),
+    background var(--hud-motion),
+    box-shadow var(--hud-motion);
+}
+
+/* The modeler's own tiles are the 34px square (owner mockup, 2026-09-04):
+   a 26px icon needs room around it that the 26px button the radius digits
+   used to sit in cannot give. Scoped to the dock rather than widened on
+   .brush-button itself, because the relics plugin reuses that class for a
+   word-labelled button and must keep the size it has. */
+.hud-modeler .brush-button {
+  width: 34px;
+  height: 34px;
+}
+
+/* The 32px toolbar face, shrunk to the 26px one a picker button holds
+   (owner, 2026-09-04: the modeler's rows are icons now). Reusing
+   .hud-tool__icon rather than a second class is what keeps the dock's tiles
+   and the toolbar's tiles the same drawing, drop shadow and reduced-motion
+   behaviour. */
+.brush-button .hud-tool__icon,
+.mode-value .hud-tool__icon {
+  width: 26px;
+  height: 26px;
+}
+
+.brush-button:hover {
+  color: var(--hud-text);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.brush-button.active {
+  color: #f4fff2;
+  background: linear-gradient(
+    180deg,
+    rgba(var(--hud-accent-rgb), 0.55),
+    rgba(var(--hud-accent-rgb), 0.28)
+  );
+  border-color: rgba(var(--hud-accent-rgb), 0.55);
+  box-shadow:
+    0 0 12px rgba(var(--hud-accent-rgb), 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+/* The mode indicator doubles as a toggle button (the only way to switch
+   raise/lower on touch), so it is a <button> with the chrome stripped. A ROUND
+   ICON since 2026-09-04: it holds an arrow rather than the word "Raise", and
+   the pill shape a word needed became a disc the arrow sits in the middle of.
+   The two colour states are unchanged — accent green raising, --hud-lower
+   orange lowering — because the colour is the faster read of the two. */
+.mode-value {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(var(--hud-accent-rgb), 0.55);
+  border-radius: 999px;
+  background: linear-gradient(
+    180deg,
+    rgba(var(--hud-accent-rgb), 0.5),
+    rgba(var(--hud-accent-rgb), 0.22)
+  );
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  color: #f4fff2;
+  box-shadow:
+    0 0 12px rgba(var(--hud-accent-rgb), 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  transition: box-shadow var(--hud-motion), transform var(--hud-motion);
+}
+
+.mode-value:hover {
+  box-shadow:
+    0 0 18px rgba(var(--hud-accent-rgb), 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+
+.mode-value:active {
+  transform: translateY(1px);
+}
+
+/* Lowering trades the accent for earth-orange: the same pill, a different
+   heat, so the direction is legible from the colour alone. */
+.mode-value.lower {
+  border-color: rgba(var(--hud-lower-rgb), 0.6);
+  background: linear-gradient(
+    180deg,
+    rgba(var(--hud-lower-rgb), 0.5),
+    rgba(var(--hud-lower-rgb), 0.22)
+  );
+  color: #fff4ea;
+  box-shadow:
+    0 0 12px rgba(var(--hud-lower-rgb), 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+.mode-value.lower:hover {
+  box-shadow:
+    0 0 18px rgba(var(--hud-lower-rgb), 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+
+.mode-alt-badge {
+  position: absolute;
+  right: 6px;
+  bottom: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  opacity: 0.9;
+  pointer-events: none;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+/* On a 26px tool button the badge tucks into the corner. */
+.brush-button .mode-alt-badge {
+  right: 1px;
+  bottom: 1px;
+  font-size: 9px;
+}
+
+/* ── THE BRUSH-WIDTH SLIDER (owner, 2026-09-04: "turn it into a slider that
+   goes from least to most values with stops for the two center values") ─────
+   A native `input[type=range]` carrying the ladder's INDEX (Hud.tsx), styled
+   down to a hairline rail with the rungs drawn under it. The input itself is
+   transparent except for its thumb: the rail, the fill and the detents are
+   siblings beneath it, which is the only way to draw per-rung art that no
+   vendor track pseudo-element can express.
+
+   EVERY POSITION IS DERIVED FROM ONE NUMBER, --brush-rung, the index Hud.tsx
+   sets on the track. A native thumb travels between its own half-widths, so
+   the rung-to-x mapping used by the fill, the detents and the caption is that
+   same inset — anything drawn on a plain 0–100% scale would drift away from
+   the thumb by half its width at the ends. */
+.brush-slider {
+  /* The thumb's diameter, and therefore the track's travel inset. */
+  --brush-slider-thumb: 18px;
+  /* The rail the thumb rides on. */
+  --brush-slider-rail: 6px;
+  /* The smallest rung's detent ring, and how much each rung adds to it: the
+     ladder doubles in radius, so a linear ring growth reads as "wider" without
+     the largest detent swallowing the rail. */
+  --brush-slider-detent: 6px;
+  --brush-slider-detent-step: 3px;
+  /* The ladder's top index; Hud.tsx sets it from BRUSH_RUNG_MAX. */
+  --brush-slider-rungs: 0;
+  align-items: center;
+  /* Room under the rail for the caption that rides with the thumb. */
+  padding-bottom: 18px;
+}
+
+/* The ladder's first and last width, in world units, captioning the ends.
+   Fixed box so stacked sliders' tracks start at the same x whatever the
+   captions read. */
+.brush-slider__end {
+  min-width: 4ch;
+  text-align: center;
+  color: var(--hud-muted);
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}
+
+.brush-slider__track {
+  position: relative;
+  flex: 1;
+  min-width: 132px;
+  height: var(--brush-slider-thumb);
+}
+
+.brush-slider__rail,
+.brush-slider__fill {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  height: var(--brush-slider-rail);
+  margin-top: calc(var(--brush-slider-rail) / -2);
+  border-radius: calc(var(--brush-slider-rail) / 2);
+}
+
+.brush-slider__rail {
+  right: 0;
+  background: rgba(0, 0, 0, 0.45);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+.brush-slider__fill {
+  width: calc(
+    var(--brush-slider-thumb) / 2 + (100% - var(--brush-slider-thumb)) *
+      var(--brush-rung) / var(--brush-slider-rungs)
+  );
+  background: linear-gradient(
+    90deg,
+    rgba(var(--hud-accent-rgb), 0.35),
+    rgba(var(--hud-accent-rgb), 0.75)
+  );
+}
+
+/* One ring per ANCHOR rung, placed by its ladder index (--brush-detent) and
+   sized by its anchor ordinal (--brush-anchor), so the ring still grows one
+   step per doubling now that the ladder has unmarked stops between them. */
+.brush-slider__detent {
+  position: absolute;
+  top: 50%;
+  left: calc(
+    var(--brush-slider-thumb) / 2 + (100% - var(--brush-slider-thumb)) *
+      var(--brush-detent) / var(--brush-slider-rungs)
+  );
+  width: calc(
+    var(--brush-slider-detent) + var(--brush-slider-detent-step) *
+      var(--brush-anchor)
+  );
+  height: calc(
+    var(--brush-slider-detent) + var(--brush-slider-detent-step) *
+      var(--brush-anchor)
+  );
+  transform: translate(-50%, -50%);
+  border: 1.5px solid rgba(255, 255, 255, 0.35);
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+/* Reached: every rung up to and including the held one lights, so the row of
+   rings reads as a level rather than as five equal marks. */
+.brush-slider__detent.on {
+  border-color: rgba(var(--hud-accent-rgb), 0.9);
+  background: rgba(var(--hud-accent-rgb), 0.35);
+}
+
+/* The live width, riding under the thumb on the same inset scale. */
+.brush-slider__value {
+  position: absolute;
+  top: calc(50% + var(--brush-slider-thumb) / 2 + 2px);
+  left: calc(
+    var(--brush-slider-thumb) / 2 + (100% - var(--brush-slider-thumb)) *
+      var(--brush-rung) / var(--brush-slider-rungs)
+  );
+  transform: translateX(-50%);
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.6);
+  color: var(--hud-text);
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  /* Decoration: the caption must never swallow a drag aimed at the track. */
+  pointer-events: none;
+}
+
+/* The input lies over the art it labels, invisible but for its thumb. Both
+   vendor track pseudo-elements are transparent because .brush-slider__rail
+   below is the rail; both thumb pseudo-elements repeat the same disc, since
+   no shorthand spans them. */
+.brush-slider__input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.brush-slider__input::-webkit-slider-runnable-track {
+  height: 100%;
+  background: transparent;
+}
+
+.brush-slider__input::-moz-range-track {
+  height: 100%;
+  background: transparent;
+}
+
+.brush-slider__input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: var(--brush-slider-thumb);
+  height: var(--brush-slider-thumb);
+  border: 1px solid rgba(var(--hud-accent-rgb), 0.9);
+  border-radius: 50%;
+  background: linear-gradient(180deg, #f4fff2, #a9dca8);
+  box-shadow:
+    0 0 12px rgba(var(--hud-accent-rgb), 0.5),
+    0 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+.brush-slider__input::-moz-range-thumb {
+  width: var(--brush-slider-thumb);
+  height: var(--brush-slider-thumb);
+  border: 1px solid rgba(var(--hud-accent-rgb), 0.9);
+  border-radius: 50%;
+  background: linear-gradient(180deg, #f4fff2, #a9dca8);
+  box-shadow:
+    0 0 12px rgba(var(--hud-accent-rgb), 0.5),
+    0 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+.brush-slider__input:focus-visible {
+  outline: 2px solid var(--hud-text);
+  outline-offset: 2px;
+}
+
+.hud-hint {
+  margin: 10px 0 0;
+  color: var(--hud-muted);
+  font-size: 11px;
+  max-width: 220px;
+}
+
+/* Control-bindings editor — the bottom-right SETTINGS section: a compact
+   button, and the editor as a popup growing UPWARD from it so the button
+   never moves when the popup opens (a control that jumps under the pointer
+   would eat its own second click). */
+
+.hud-settings {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  pointer-events: none; /* only the button/popup take events, like the centre stacks */
+  /* The COLUMN is what must fit, not the popup: the popup is its only
+     shrinkable child, so adding a button never needs a cap rewritten. */
+  max-height: calc(100vh - var(--hud-strip-inset) - var(--hud-strip-top-margin));
+}
+
+.hud-settings > * {
+  pointer-events: auto;
+}
+
+/* Icon-only (owner, 2026-08-19): the gear glyph is the whole face, sized as a
+   square so it reads as a button, with aria-label/title carrying the words. */
+.hud-settings-button {
+  min-width: 0;
+  width: 40px;
+  height: 40px;
+  /* Never squeezed by a tall popup sharing the column. */
+  flex: none;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: inherit;
+  font-size: 19px;
+  line-height: 1;
+  color: var(--hud-muted);
+  cursor: pointer;
+}
+
+.hud-settings-button:hover,
+.hud-settings-button.open {
+  color: var(--hud-text);
+  border-color: var(--hud-accent);
+}
+
+.hud-settings-popup {
+  min-width: 230px;
+  /* Grows upward as far as the column allows (owner 2026-09-05: no locked
+     size). The column carries the cap; this takes whatever the buttons leave
+     and scrolls inside it. min-height 0 is what lets a flex item shrink. */
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* The connection button (owner, 2026-08-19: the link status moved out of the
+   top-left panel into this column). Same 40px square as the gear and the
+   chart — it is one of three peers, not a decoration hung off them — but its
+   face is the status dot rather than a glyph, so it needs the dot grown from
+   the 9px an in-panel row wants to something that reads at arm's length in a
+   40px button. 14px is a third of the button, matching the optical weight of
+   the 19px gear glyph without becoming a traffic light. */
+.hud-connection-button .status-dot {
+  width: 14px;
+  height: 14px;
+  /* The dot is the whole face; never let flex squeeze it. */
+  flex: none;
+}
+
+/* The status colours already carry the meaning, so the button's own border
+   must not fight them: it keeps the muted chrome of its peers and only the
+   dot changes colour. `.open`/`:hover` accent still applies (above), which is
+   what says "this is a button" on a device with no hover at all. */
+.hud-connection-popup {
+  /* One status word and one sentence — narrower than the bindings editor,
+     and with nothing scrollable in it. */
+  min-width: 0;
+  max-width: min(260px, calc(100vw - 24px));
+  max-height: none;
+  overflow-y: visible;
+  flex: none;
+}
+
+/* The invite line inside the connection popup: the URL is long, so let it
+   wrap instead of widening the popup past its narrow-screen cap (the popup
+   itself is capped at min(260px, 100vw - 24px) above). */
+.hud-connection-popup .invite-url {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The desktop app's button and popup (ui/DesktopButton.tsx). The wrapper takes
+   no box, so both are items of the settings column; the popup sorts to the top
+   of it, where the other popups already sit. */
+.desktop-settings {
+  display: contents;
+}
+
+.desktop-settings > * {
+  pointer-events: auto;
+}
+
+.desktop-popup {
+  order: -1;
+  max-width: min(320px, calc(100vw - 24px));
+}
+
+.desktop-heading {
+  margin: 12px 0 4px;
+  color: var(--hud-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.desktop-heading:first-child {
+  margin-top: 0;
+}
+
+.desktop-input {
+  flex: 0 1 14ch;
+}
+
+.desktop-path {
+  margin-top: 2px;
+  max-width: none;
+  overflow-wrap: anywhere;
+}
+
+.desktop-error {
+  color: var(--hud-lower);
+  max-width: none;
+}
+
+/* A failure message can be one long path or URL: it wraps instead of widening the popup. */
+.desktop-status {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.controls-row {
+  gap: 6px;
+}
+
+.controls-label {
+  flex: 1;
+  color: var(--hud-muted);
+}
+
+.controls-select {
+  border: 1px solid var(--hud-border);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--hud-text);
+  font: inherit;
+  font-size: 12px;
+  padding: 2px 4px;
+}
+
+.controls-select:hover {
+  border-color: var(--hud-accent);
+}
+
+.controls-slider {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--hud-accent);
+}
+
+.controls-readout {
+  min-width: 36px;
+  text-align: right;
+  color: var(--hud-muted);
+  font-size: 11px;
+}
+
+.controls-check {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--hud-accent);
+}
+
+.controls-color {
+  width: 44px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--hud-border);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* Native dropdown lists render on the OS layer; dark text on dark panel would
+   be unreadable, so give the options an explicit opaque background. */
+.controls-select option {
+  background: #1a2028;
+  color: var(--hud-text);
+}
+
+.controls-warning {
+  margin: 4px 0;
+  color: #e0b64a;
+  font-size: 11px;
+  max-width: 220px;
+}
+
+.controls-reset {
+  border: 1px solid var(--hud-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--hud-muted);
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+  margin-top: 2px;
+}
+
+.controls-reset:hover {
+  border-color: var(--hud-accent);
+  color: var(--hud-text);
+}
+
+/* Camera keys (ui/CameraKeysPanel.tsx): its own block, like audio. */
+.camera-keys-panel {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--hud-border);
+}
+
+.camera-key {
+  min-width: 44px;
+  cursor: pointer;
+}
+
+.camera-key-armed {
+  border-color: var(--hud-accent);
+}
+
+/* The audio block (ui/AudioSettingsPanel.tsx), beside .controls-panel rather
+   than inside it, so the separating rule goes on the block ONCE. */
+.audio-panel {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--hud-border);
+}
+
+/* Tighter, so the block reads as one control then the mix under it. */
+.audio-panel .audio-row + .audio-row {
+  margin-top: 2px;
+}
+
+/* The slider takes the row's slack; label and readout are fixed. */
+.audio-slider {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--hud-accent);
+}
+
+/* One width for every readout, so the sliders line up and the mute button
+   does not move under the pointer as its number crosses 100%. */
+.audio-mute,
+.audio-readout {
+  min-width: 52px;
+  text-align: center;
+}
+
+.audio-mute {
+  margin-top: 0;
+}
+
+/* Not a button, so muted-label colour rather than the accent. */
+.audio-readout {
+  color: var(--hud-muted);
+  font-size: 11px;
+}
+
+/* Plugin HUD panels stack under the core controls, visually separated. */
+.hud-plugin-panel {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--hud-border);
+}
+
+/* Top-centre plugin stack: floats clear of the corner panel; children take
+   pointer events themselves, the container never blocks the canvas. */
+.hud-top-center {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.hud-top-center > * {
+  pointer-events: auto;
+}
+
+/* Bottom-centre plugin stack: the strip's middle cell (no longer its own
+   absolute anchor — the grid centres it), still a column growing upward. */
+.hud-bottom-center {
+  /* Named for the reason .hud-bottom-right's rule gives. */
+  grid-column: 2;
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.hud-bottom-center > * {
+  pointer-events: auto;
+}
+
+/* ── THE TOOLBAR (owner, 2026-08-24) ────────────────────────────────────────
+   The bottom-centre cell's first child, so `column-reverse` above seats it
+   along the bottom edge. Its chrome is .hud-panel's, tightened to a single
+   row of buttons; it WRAPS rather than overflows, because the tool list is
+   open-ended (any plugin may add one). */
+.hud-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  min-width: 0;
+  /* Never wider than the strip it sits in, whatever the plugin count. */
+  max-width: 100%;
+  /* The same glass as the modeler panel (owner, 2026-09-04). */
+  border-radius: 14px;
+  background: var(--hud-glass);
+  box-shadow: var(--hud-glass-shadow), var(--hud-glass-edge);
+}
+
+/* One tool: a shaded 3D icon alone on a raised glass tile (owner,
+   2026-09-04: "gorgeous 3D icons", then "remove the text" the same day). The
+   tile is the icon plus one ring of padding, so the bar reads as a row of
+   keys the same size as the modeler dock's. */
+.hud-tool {
+  display: inline-grid;
+  place-items: center;
+  padding: 4px;
+  border: 1px solid var(--hud-border);
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.02));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  color: var(--hud-text);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    border-color var(--hud-motion),
+    background var(--hud-motion),
+    box-shadow var(--hud-motion),
+    transform var(--hud-motion);
+}
+
+/* The icon is a full-colour shaded SVG, so it carries its own shadow to lift
+   it off the tile; the hover lifts it a little further. */
+.hud-tool__icon {
+  width: 32px;
+  height: 32px;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.55));
+  transition: transform var(--hud-motion), filter var(--hud-motion);
+}
+
+.hud-tool:hover {
+  border-color: rgba(var(--hud-accent-rgb), 0.6);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.04));
+}
+
+.hud-tool:hover .hud-tool__icon {
+  transform: translateY(-2px) scale(1.08);
+  filter: drop-shadow(0 4px 5px rgba(0, 0, 0, 0.6));
+}
+
+.hud-tool:active {
+  transform: translateY(1px);
+}
+
+/* HELD, not merely hovered: the same accent glow the brush pickers give
+   the selected radius, so "what am I holding" is answered the same way
+   everywhere in the HUD. */
+.hud-tool.active {
+  border-color: rgba(var(--hud-accent-rgb), 0.7);
+  background: linear-gradient(
+    180deg,
+    rgba(var(--hud-accent-rgb), 0.32),
+    rgba(var(--hud-accent-rgb), 0.1)
+  );
+  box-shadow:
+    0 0 18px rgba(var(--hud-accent-rgb), 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+/* ── The narrow-screen collapse (owner, 2026-08-19: brush controls, toolbar
+   and the right corner all usable at once on an iPhone). Below 640px the
+   chrome tightens, which brings the whole strip inside a 390px viewport.
+   Neither the toolbar nor the modeler needs a collapse of its own since
+   2026-09-04: both are icon-only at every width, every control keeping its
+   title and aria-label. ── */
+@media (max-width: 640px) {
+  /* The modeler's slider is the one part of it that can still give ground:
+     its rail shortens rather than pushing the toolbar off the screen. */
+  .hud-modeler {
+    padding: 6px 8px;
+  }
+
+  .brush-slider__track {
+    min-width: 96px;
+  }
+
+  /* One row, asymmetric (owner follow-up, 2026-08-19): the brush cluster
+     sits ALL THE WAY in the bottom-left corner (safe-area insets aside), and
+     the toolbar gives up the centre — it slides into whatever space is free.
+     `auto` left cell = the brush takes exactly what it needs; the middle's
+     `minmax(0,1fr)` cell absorbs the slack with the toolbar centred inside
+     it. (An earlier symmetric 1fr|auto|1fr row overflowed not because the
+     row was too small but because the LEFT cell was.) */
+  .hud-bottom-strip {
+    left: env(safe-area-inset-left, 0px);
+    right: 8px;
+    bottom: env(safe-area-inset-bottom, 0px);
+    gap: 6px;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  /* Centred in the FREE SPACE (owner refinement): the middle cell spans from
+     the brush cluster's right edge to the gauge-and-buttons corner, and the
+     toolbar sits at that span's midpoint — not against either neighbour. */
+  .hud-bottom-center {
+    justify-self: center;
+  }
+
+  /* Seated flush in the corner: square the corner that touches it. */
+  .hud-modeler {
+    border-bottom-left-radius: 0;
+  }
+
+  .hud-settings-popup {
+    /* Right-anchored under a narrow viewport: never wider than the screen. */
+    max-width: calc(100vw - 16px);
+  }
+
+  /* The banner shares the top edge with the collapsed Info tab (left) and
+     the version watermark (right). The book icon widened it just enough to
+     collide at phone widths (caught eyes-on, 2026-08-19), so here the banner
+     gives ground instead of its neighbours: tighter type, padding and gap,
+     and the name yields to ellipsis inside whatever width remains between
+     the tab and the screen edge. */
+  .world-header {
+    padding: 5px 10px;
+    /* DERIVED, not eyeballed: the banner is centred, so an element of width
+       W starts at (100vw − W) / 2. The collapsed Info tab reaches ~110px
+       from the left edge and the watermark ~110px from the right, so the
+       banner clears both exactly when W ≤ 100vw − 2·120 (120 = 110 + 10px
+       breathing room). A long world name pays with its own ellipsis. */
+    max-width: calc(100vw - 240px);
+  }
+
+  .world-header__name {
+    font-size: 15px;
+    max-width: 100%;
+  }
+
+  .world-header__title-row {
+    gap: 6px;
+  }
+}
+
+/* Coarse pointers (touch) get finger-sized targets whatever the width. */
+@media (pointer: coarse) {
+  .brush-button {
+    width: 34px;
+    height: 34px;
+  }
+
+  .mode-value {
+    width: 44px;
+    height: 44px;
+  }
+
+  /* A finger needs a bigger thumb to catch, and the caption and detents ride
+     the thumb's own scale, so widening it moves all three together. */
+  .brush-slider {
+    --brush-slider-thumb: 22px;
+  }
+
+  .hud-tool {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .hud-settings-button {
+    width: 44px;
+    height: 44px;
+    font-size: 22px;
+  }
+}
+
+/* World header: the name of the world and its difficulty rating, above
+   everything else in the top-centre stack. Same chrome as .hud-panel (border,
+   blur, translucent slate) so it reads as part of the HUD rather than as a
+   title card; it takes pointer events like every other top-centre child, which
+   is what lets its tooltips be hit-tested at the cost of a small patch of
+   canvas at the top edge — the same trade the mana gauge already makes. */
+.world-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 16px;
+  border: 1px solid var(--hud-border);
+  border-radius: 10px;
+  background: var(--hud-bg);
+  backdrop-filter: blur(6px);
+  text-align: center;
+  cursor: help;
+  user-select: none;
+}
+
+/* The name is the one thing on this element meant to be read from across the
+   screen, so it is the only oversized type in the HUD. Wide tracking, small
+   caps-ish weight: a title, not a label. */
+.world-header__name {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+  color: var(--hud-text);
+  /* A generated name is short, but the header sits over the play view: cap it
+     rather than let an unexpectedly long one push the stack off-centre. */
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The name and the claimant's icon share one centred row; the icon sits to
+   the RIGHT of the name (owner spec, 2026-08-19) and never wraps away from
+   it. */
+.world-header__title-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  max-width: 100%;
+}
+
+.world-header__icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--hud-muted);
+}
+
+/* A claimed banner is a real button (world-header action registry): same
+   chrome as the inert card, plus the HUD's standard interactive language —
+   pointer cursor, accent border on hover, visible keyboard focus. `font:
+   inherit` neutralises the UA button font so the two states stay visually
+   byte-identical at rest. */
+button.world-header {
+  font: inherit;
+}
+
+.world-header--action {
+  cursor: pointer;
+}
+
+.world-header--action:hover {
+  border-color: var(--hud-accent);
+}
+
+.world-header--action:hover .world-header__icon {
+  color: var(--hud-text);
+}
+
+.world-header--action:active {
+  transform: translateY(1px);
+}
+
+.world-header--action:focus-visible {
+  outline: 2px solid var(--hud-accent);
+  outline-offset: 2px;
+}
+
+/* The rating is a footnote to the name — same muted treatment as the HUD's
+   other secondary readouts, with tabular figures so it does not jitter. Only
+   rendered when there is no name to carry the superscript below. */
+.world-header__rating {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  font-variant-numeric: tabular-nums;
+  color: var(--hud-muted);
+}
+
+/* The difficulty as a superscript on the name (owner move, 2026-09-01): small,
+   muted, tabular, and pulled up rather than relying on the UA's <sup> shift,
+   which also shrinks the line box and would jog the title row. */
+.world-header__difficulty {
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  line-height: 0;
+  vertical-align: baseline;
+  position: relative;
+  top: -0.55em;
+  margin-left: 3px;
+  font-variant-numeric: tabular-nums;
+  color: var(--hud-muted);
+}
+
+/* The almanac clock (AlmanacClock.tsx) paints the WHOLE banner: with a clock
+   present the card drops its padding and its own gap, the SVG becomes the only
+   flow child (so the card is exactly the painting's size), and the title row
+   floats over the SVG's title band. The card's radius clips the painting's
+   corners; the chrome — border, blur, translucent slate — stays underneath, so
+   the sky's 0.8 opacity still shows the world through it as every other HUD
+   surface does. The SVG is drawn in its own 220-wide units and scales DOWN
+   with the banner on narrow screens (max-width, mobile rules above), never
+   up: at its drawn size the text in it is 6.5–7 units, the HUD's smallest
+   legible type. */
+/* The painted banner is a one-cell grid: the clock and the title row share
+   the cell, so the card is as wide as the WIDER of the two — the title row's
+   natural width, or the painting's 220px floor — and the name is never
+   squeezed (owner rule, 2026-09-01: the name always renders in full). The
+   clock stretches to the cell and repaints itself at that width
+   (AlmanacClock.tsx); the title row sits at the cell's top, above it. */
+.world-header--almanac {
+  display: grid;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+/* The frosted chrome for anything that floats over the painting (today, the
+   title band): the sky shows through blurred, so type stays legible over
+   noon without the SVG scrim having to darken the whole band. The time tag
+   went bare on the owner's call, 2026-09-01. */
+.hud-frost {
+  background: var(--hud-bg);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+/* The band under the name and icon, edge to edge (owner ask, 2026-09-01,
+   widened from a pill the same day). The banner's own overflow clip rounds
+   its top corners. */
+.world-header--almanac .world-header__title-row {
+  grid-area: 1 / 1;
+  align-self: start;
+  position: relative;
+  z-index: 1;
+  padding: 5px 12px;
+  box-sizing: border-box;
+}
+
+/* The floor matches AlmanacClock.tsx's STRIP_MIN_WIDTH: below it the arc
+   stops reading as an arc. */
+.world-header__clock {
+  grid-area: 1 / 1;
+  position: relative;
+  display: block;
+  width: 100%;
+  min-width: 220px;
+}
+
+.almanac {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+/* The words over the painting. All three are HTML spans floated over the SVG
+   at the top/left AlmanacClock.tsx sets inline from the strip's geometry, so
+   they render like the title (same font engine, same hinting) rather than as
+   SVG text. Tabular figures on the time so 1:01 and 11:11 are the same width.
+   The day and time are a step larger than the weekday (owner ask,
+   2026-09-01): they are what the player reads, the weekday is a caption. */
+.almanac__weekday,
+.almanac__day,
+.almanac__time {
+  position: absolute;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.almanac__weekday,
+.almanac__day {
+  letter-spacing: 0.08em;
+}
+
+.almanac__weekday {
+  font-size: 6.5px;
+  color: var(--hud-text);
+  opacity: 0.8;
+}
+
+.almanac__day {
+  font-size: 8px;
+  color: var(--hud-muted);
+}
+
+.almanac__time {
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 8.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--hud-text);
+}
+
+/* Invite plugin: the share URL must survive narrow panels intact. */
+.invite-url {
+  font-size: 12px;
+  word-break: break-all;
+  user-select: all; /* one click selects the whole URL for manual copy */
+}
+
+.invite-copy {
+  border: 1px solid var(--hud-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--hud-muted);
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.invite-copy:hover {
+  border-color: var(--hud-accent);
+  color: var(--hud-text);
+}
+
+/* ── The Cartographer (ui/Cartographer.tsx): a modal chart overlay. The chart
+   itself is a parchment canvas; the chrome around it stays HUD chrome so the
+   controls read as the game's, not the document's. ── */
+
+.chart-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: auto;
+  background: rgba(8, 10, 14, 0.6);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Above the rest of the HUD: an open document covers the instruments. */
+  z-index: 10;
+}
+
+.chart-sheet {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 94vw;
+  max-height: 94vh;
+}
+
+.chart-canvas {
+  /* The canvas backing store is large (export quality); on screen it scales
+     to fit. It is square, so one bound per axis keeps the aspect. */
+  max-width: 94vw;
+  max-height: calc(94vh - 56px); /* leave room for the toolbar row */
+  width: auto;
+  height: auto;
+  border-radius: 4px;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.55);
+}
+
+.chart-toolbar {
+  display: flex;
+  gap: 8px;
+}
+
+.chart-button {
+  pointer-events: auto;
+  border: 1px solid var(--hud-border);
+  border-radius: 8px;
+  background: var(--hud-bg);
+  backdrop-filter: blur(6px);
+  color: var(--hud-text);
+  font: inherit;
+  font-size: 13px;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+
+.chart-button:hover {
+  border-color: var(--hud-accent);
+}
+
+.chart-empty {
+  color: var(--hud-text);
+  background: var(--hud-bg);
+  border: 1px solid var(--hud-border);
+  border-radius: 10px;
+  padding: 14px 18px;
+}
+
+/* Build-identity watermark (top right — see VersionWatermark.tsx): quiet
+   chrome while the stack's two halves agree, loud when they don't. It never
+   takes pointer events: nothing diagnostic may steal a corner touch from the
+   camera, so the mismatch state speaks through color and text alone. */
+.hud-version {
+  /* Wide enough for "geometries", the longest label the frame meter prints. */
+  --perf-label-column: 6.5em;
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.3;
+  color: rgb(255 255 255 / 55%);
+  text-shadow: 0 1px 2px rgb(0 0 0 / 45%);
+  pointer-events: none;
+  user-select: none;
+}
+
+.hud-version--mismatch {
+  color: #ff6459;
+  font-weight: 700;
+}
+
+.hud-version__flag {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* The frame-rate readout (owner, 2026-08-20), last line of the same column.
+   It keeps its OWN colour rather than inheriting the block's, so a version
+   skew — which turns .hud-version red — cannot read as a frame-rate alarm:
+   the two diagnostics share a corner, not a meaning. */
+.hud-version__fps {
+  color: rgb(255 255 255 / 55%);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The draw-call budget (part B of
+   docs/plans/frame-budget-growth-and-draw-calls.md), under the frame rate in
+   the same diagnostic column. Quiet by default, like the fps line, and its own
+   colour for the same reason: a version skew must not read as a draw-call
+   alarm. --over is the breach state, which the host makes STICKY (it clears
+   only after two samples well under budget), so this does not flicker with a
+   population sitting on the line. */
+.hud-version__draw {
+  color: rgb(255 255 255 / 55%);
+  font-variant-numeric: tabular-nums;
+}
+
+.hud-version__draw--over {
+  color: rgb(255 138 128 / 90%);
+}
+
+/* The render path (backend · mesher), the same quiet colour as the fps line. */
+.hud-version__path {
+  color: rgb(255 255 255 / 55%);
+}
+
+/* The frame meter's rows (render/frameStats.ts; the pulse button or backquote
+   toggles them). ONE READING PER ROW, LABELS AND VALUES BOTH LEFT-ALIGNED
+   (owner, 2026-09-06). Two fixed grid columns, so every label starts at the
+   block's left edge and every value starts at the same offset after it — the
+   values read as one column top to bottom, which is the whole job here, since
+   what matters is a number CHANGING rather than its absolute size.
+
+   align-self: stretch IS LOAD-BEARING. The parent column is `align-items:
+   flex-end`, so without it a short row shrink-wraps and is pushed right, which
+   moves where its value column begins and destroys the alignment this rule
+   exists to create. Stretching every row to the block's width pins both columns.
+
+   The label column is sized for the longest label ("geometries"); tabular
+   figures stop each new window's digits from re-widthing the value and
+   shuffling the block. */
+/* The frame meter's panel. A flex COLUMN, which is what lets the rows below
+   stretch to a common width and keep their two columns aligned — the parent
+   .hud-version is align-items: flex-end, and a row that shrink-wraps there
+   drifts right and breaks the alignment. */
+.hud-version__perf-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--hud-border);
+  border-radius: 8px;
+  background: var(--hud-bg);
+  /* The same blur the rest of the HUD wears (.hud-panel). -webkit- first for
+     the prefixed-only implementations; both are inert where unsupported, and
+     --hud-bg is opaque enough at 0.78 to carry the panel on its own there. */
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+
+.hud-version__perf {
+  align-self: stretch;
+  display: grid;
+  grid-template-columns: var(--perf-label-column) auto;
+  gap: 0.5em;
+  text-align: left;
+  color: rgb(255 255 255 / 45%);
+  font-variant-numeric: tabular-nums;
+  white-space: pre;
+}
+
+.hud-version__perf-label {
+  color: rgb(255 255 255 / 32%);
+}
+
+.hud-version__perf-rule {
+  align-self: stretch;
+  border: none;
+  border-top: 1px solid var(--hud-border);
+  margin: 3px 0;
+}
+
+.hud-version__perf-gap {
+  height: 6px;
+}
+
+.hud-version__plugin-table {
+  align-self: stretch;
+  display: grid;
+  grid-template-columns: var(--perf-label-column) repeat(6, auto);
+  gap: 1px 0.5em;
+}
+
+.hud-version__plugin-table > span:nth-child(7n + 2),
+.hud-version__plugin-table > span:nth-child(7n + 3),
+.hud-version__plugin-table > span:nth-child(7n + 4),
+.hud-version__plugin-table > span:nth-child(7n + 5),
+.hud-version__plugin-table > span:nth-child(7n + 6),
+.hud-version__plugin-table > span:nth-child(7n) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.hud-version__plugin-head {
+  color: rgb(255 255 255 / 32%);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   RESTORE POINTS (world rollback, 2026-08-21). A scrim overlay like the
+   chart's — an open document covers the instruments — reusing .chart-button so
+   the two panels' controls are one vocabulary rather than two lookalikes.
+   ───────────────────────────────────────────────────────────────────────── */
+
+.restore-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: auto;
+  background: rgba(8, 10, 14, 0.6);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+
+.restore-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(560px, 94vw);
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: 14px 16px;
+  border: 1px solid var(--hud-border);
+  border-radius: 6px;
+  background: var(--hud-bg);
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.55);
+}
+
+.restore-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.restore-key-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.restore-key-input {
+  flex: 1 1 12ch;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--hud-border);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.35);
+  color: inherit;
+  font: inherit;
+}
+
+.restore-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.restore-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* The one row an operator is most likely looking for gets a border, not a
+   different button: the flag is a hint about the data, never a change in what
+   the control does. */
+.restore-row.flagged {
+  border-color: rgba(220, 140, 60, 0.65);
+}
+
+.restore-when {
+  display: flex;
+  flex-direction: column;
+  min-width: 9ch;
+  font-variant-numeric: tabular-nums;
+}
+
+.restore-age,
+.restore-delta {
+  opacity: 0.7;
+  font-size: 0.85em;
+}
+
+.restore-delta {
+  flex: 1 1 16ch;
+  font-variant-numeric: tabular-nums;
+}
+
+.restore-flag {
+  color: rgb(230, 160, 80);
+  opacity: 1;
+}
+
+.restore-confirm {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* The commit half of the two-step. Coloured because it is the one control here
+   that discards live world state. */
+.chart-button.danger {
+  border-color: rgba(200, 80, 70, 0.8);
+  color: rgb(240, 170, 160);
+}
+
+/* Per-world plugin toggles (WorldManager.tsx): the state is the colour, so a
+   row of sixteen reads at a glance without parsing each label's "on"/"off".
+   Translucent so the panel's ground still shows through, and the same green
+   and red the HUD already uses for "connected" and for the discard button. */
+/* The plugin list is a two-column grid: every label shares the widest
+   label's width (max-content), so the control groups line up down the panel.
+   Names are short enough to never need wrapping; the version stamp trails. */
+/* CONTROLS ON THE RIGHT (owner, 2026-09-01): the label column takes the slack
+   and the toggle group sits against the sheet's right edge, so every toggle
+   down the panel lands in one column under the thumb — and the settings'
+   selects below (.plugin-setting) line up with them. */
+.plugin-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 6px;
+}
+
+.plugin-label {
+  font-size: 13px;
+}
+
+/* The toggle and its reload are one control group: flush edges, a shared
+   border, and rounded corners only at the outside. The reload is the same
+   glyph everywhere, so it needs no width for a word. */
+.plugin-controls {
+  display: inline-flex;
+  justify-self: end;
+}
+
+.plugin-controls .plugin-toggle {
+  min-width: 3.25rem;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.plugin-controls .plugin-reload {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: none;
+  padding: 8px 10px;
+}
+
+.plugin-toggle.on {
+  background: var(--plugin-on-bg);
+  border-color: var(--plugin-on-border);
+}
+
+.plugin-toggle.off {
+  background: var(--plugin-off-bg);
+  border-color: var(--plugin-off-border);
+}
+
+/* The build stamp beside a toggle (WorldManager.tsx). It answers "is the code
+   I just edited live?" and is never something to act on, so it is dimmed and
+   set smaller than the plugin name it trails — the on/off colour must stay the
+   thing the eye lands on. Monospace because the tail is a hash and a hash is
+   read character by character. */
+.plugin-version {
+  margin-left: 0.35rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75em;
+  opacity: 0.65;
+}
+
+/* A declared plugin setting (WorldManager.tsx): its label and its select on
+   one line, so a plugin's knob reads as belonging to the toggle row above it
+   rather than as another action of its own. The label carries the plugin and
+   key; the panel knows nothing else about either. */
+.plugin-setting {
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+/* The select itself hugs the right edge under the toggles above it, whatever
+   the label's width — belt and suspenders with the space-between. One shared
+   minimum width, so a column of selects has one left edge as well as one
+   right edge instead of each sizing to its longest option. */
+.plugin-setting .chart-button {
+  margin-left: auto;
+  min-width: 8rem;
+}
+
+.restore-refusal {
+  margin: 0;
+  color: rgb(240, 170, 160);
+}
+
+.restore-done {
+  margin: 0;
+  color: rgb(150, 210, 160);
+}
+
+/* .hud-hint is sized for the 220px-wide corner panels it was written for; in
+   the restore sheet it is a full-width paragraph, so the cap is lifted here
+   rather than removed there — every other user of the class still wants it. */
+.restore-sheet .hud-hint {
+  max-width: none;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   WORLDS (multi-world, 2026-08-22). The world-manager panel reuses the
+   restore sheet wholesale — same scrim, same sheet, same button vocabulary —
+   because they are the same KIND of thing: an operator's document about the
+   world, covering the instruments while it is open. Only the row needs more
+   structure than a restore point does, because a world row carries a name, a
+   line of facts about it, and up to five controls.
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* The row becomes a two-line block rather than the restore point's single
+   line: name and facts stack, controls wrap onto their own line beneath. */
+.restore-row-main {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.restore-row-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* The world you are in. A left border, not a background: the row must still
+   read as one of the list, and a filled row would look like a selection the
+   operator made rather than a fact about the server. */
+.restore-row.current {
+  border-left: 2px solid rgba(120, 200, 255, 0.8);
+}
+
+.restore-row code {
+  opacity: 0.65;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   WORLD BANNER. A switch countdown, or "no world is loaded" — shown to every
+   player, not just an operator.
+
+   TOP CENTRE, and deliberately not in the corner panels: this is the one
+   message that is about to change everything the player is looking at, and it
+   has to be findable by someone who has never opened a HUD panel. It is
+   pointer-transparent so it can never swallow a click meant for the terrain
+   underneath it.
+   ───────────────────────────────────────────────────────────────────────── */
+
+.world-banner {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: none;
+  padding: 6px 14px;
+  border: 1px solid var(--hud-border);
+  border-radius: 4px;
+  background: var(--hud-bg);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  z-index: 11;
+  white-space: nowrap;
+}
+
+/* THE RESTART NOTICE sits in the MIDDLE of the screen, not at the top with
+   the other two (owner, 2026-09-04): a restart is the one banner the player
+   should not miss and cannot do anything about, and while it shows there is
+   no world to look at behind it. It keeps the banner chrome above and adds a
+   frosted backdrop, at the same blur the HUD panels use, so the frozen scene
+   under it reads as "paused" rather than "broken". */
+.world-banner-restart {
+  top: 50%;
+  transform: translate(-50%, -50%);
+  padding: 14px 22px;
+  font-size: 1.05em;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   WORLD THUMBNAIL (2026-08-22). A 64px top-down picture of the world, so a
+   list of five worlds is browsed by SHAPE rather than by reading five names.
+
+   NEAREST-NEIGHBOUR SCALING is deliberate: the source really is 64 pixels
+   across, and smoothing it would imply detail that is not there.
+   ───────────────────────────────────────────────────────────────────────── */
+
+.world-thumb {
+  flex: none;
+  width: 56px;
+  height: 56px;
+  border-radius: 3px;
+  border: 1px solid var(--hud-border);
+  /* Both spellings: `pixelated` is the standard, `crisp-edges` is what older
+     WebKit answers to, and a blurred thumbnail is the failure mode. */
+  image-rendering: crisp-edges;
+  image-rendering: pixelated;
+}
+
+/* A world whose picture has not been drawn yet (its newest snapshot predates
+   thumbnails, and it is the loaded world so the backfill left it alone). A
+   flat panel, not a spinner: it fills in on the next snapshot by itself, and
+   nothing is broken in the meantime. */
+.world-thumb--empty {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+/* The row was a two-line block; with a picture it becomes picture + block, so
+   the text side has to stop demanding the full width. */
+.restore-row .world-thumb + .restore-row-main {
+  flex: 1 1 12rem;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   ADMIN — the debug spawn dialog (AdminPanel.tsx, owner 2026-09-01). The
+   restore sheet's scrim and shell, because it is the same kind of thing (an
+   operator's document laid over the world); its own typography and a card
+   grid inside, because a list of events to FIRE wants to read as a set of
+   buttons, not a table. Every accent is derived from one hue per plugin
+   (--admin-hue, set inline from the plugin's name) so the palette follows
+   the installed plugins rather than a list kept here.
+   ───────────────────────────────────────────────────────────────────────── */
+
+.admin-sheet {
+  width: min(720px, 94vw);
+  gap: 14px;
+  padding: 18px 20px 20px;
+  border-radius: 14px;
+  background:
+    radial-gradient(120% 80% at 0% 0%, rgba(111, 191, 115, 0.08), transparent 60%),
+    var(--hud-bg);
+}
+
+.admin-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 14px;
+}
+
+.admin-title-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* The eyebrow: small, tracked, accent-coloured — the mode you are in. */
+.admin-eyebrow {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--hud-accent);
+}
+
+.admin-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.15;
+}
+
+.admin-close {
+  padding: 6px 10px;
+}
+
+.admin-lede {
+  margin: 0;
+  max-width: 56ch;
+  color: var(--hud-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.admin-key-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  border: 1px dashed var(--hud-border);
+  border-radius: 10px;
+}
+
+.admin-unlock {
+  border-color: var(--hud-accent);
+}
+
+/* The receipt: a strip whose colour IS the outcome, carrying the plugin's
+   own sentence. Three tones — it happened, the plugin found nothing to do,
+   the server refused — because they ask three different things of the
+   operator (look, aim elsewhere, fix the request). */
+.admin-receipt {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid;
+  font-size: 13px;
+  line-height: 1.45;
+  font-variant-numeric: tabular-nums;
+}
+
+.admin-receipt-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.admin-receipt-ok {
+  color: rgb(170, 225, 180);
+  border-color: rgba(90, 196, 122, 0.45);
+  background: rgba(90, 196, 122, 0.12);
+}
+
+.admin-receipt-declined {
+  color: rgb(240, 205, 140);
+  border-color: rgba(224, 182, 74, 0.45);
+  background: rgba(224, 182, 74, 0.12);
+}
+
+.admin-receipt-refused {
+  color: rgb(240, 170, 160);
+  border-color: rgba(200, 80, 70, 0.5);
+  background: rgba(200, 80, 70, 0.12);
+}
+
+.admin-empty {
+  margin: 0;
+  padding: 18px;
+  text-align: center;
+  color: var(--hud-muted);
+  border: 1px dashed var(--hud-border);
+  border-radius: 10px;
+}
+
+.admin-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.admin-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* The archetype's swatch and hover glow tint everything inside it, so the
+   hue is set once on this section and inherited by every card below. */
+
+/* The group name: the plugin, in small caps, with its swatch — a section
+   label, not a heading, so the cards stay the loudest thing on the sheet. */
+.admin-group-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--hud-muted);
+}
+
+.admin-group-name::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--hud-border);
+}
+
+.admin-group-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: hsl(var(--admin-hue) 70% 62%);
+  box-shadow: 0 0 10px hsl(var(--admin-hue) 70% 55% / 0.6);
+}
+
+.admin-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+}
+
+/* A card is one button: label, one line of what it does, and an arrow that
+   brightens on hover. The plugin's hue lives only in the group swatch and
+   the hover glow (owner, 2026-09-01: no accent rail on the cards), so a row
+   of cards reads as a set without any of them shouting. */
+.admin-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  column-gap: 10px;
+  row-gap: 4px;
+  align-items: start;
+  padding: 12px 14px;
+  text-align: left;
+  font: inherit;
+  color: var(--hud-text);
+  border: 1px solid var(--hud-border);
+  border-radius: 12px;
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02));
+  cursor: pointer;
+  transition: border-color 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+}
+
+.admin-card:hover:not(:disabled),
+.admin-card:focus-visible {
+  border-color: hsl(var(--admin-hue) 70% 62% / 0.7);
+  box-shadow: 0 6px 24px hsl(var(--admin-hue) 70% 50% / 0.22);
+  transform: translateY(-1px);
+  outline: none;
+}
+
+.admin-card:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.admin-card.working {
+  border-color: hsl(var(--admin-hue) 70% 62% / 0.7);
+}
+
+.admin-card-label {
+  grid-column: 1;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.admin-card-description {
+  grid-column: 1;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--hud-muted);
+}
+
+.admin-card-go {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  font-size: 18px;
+  color: hsl(var(--admin-hue) 70% 66%);
+  opacity: 0.6;
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.admin-card:hover:not(:disabled) .admin-card-go {
+  opacity: 1;
+  transform: translateX(2px);
+}
+
+/* Phone width: the header stacks and the aim pill goes under the title. */
+@media (max-width: 520px) {
+  .admin-header {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+}
+
+/* THE AIM STRIP (AdminAim.tsx): a pill IN the top-centre stack, under the
+   world header — not the fixed world-banner slot, which sits at the same
+   12px and drew over the world name (owner, 2026-09-01). The receipt reuses
+   the panel's receipt tones so an outcome looks the same wherever it is read. */
+.admin-aim-banner {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px 8px 14px;
+  border: 1px solid var(--hud-border);
+  border-radius: 999px;
+  background: var(--hud-bg);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.admin-aim-banner.admin-receipt {
+  padding: 8px 16px 8px 14px;
+}
+
+.admin-aim-banner .admin-receipt-dot {
+  margin-top: 0;
+}
+
+/* A small crosshair glyph, drawn in CSS so it takes the accent colour. */
+.admin-aim-crosshair {
+  position: relative;
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid var(--hud-accent);
+  border-radius: 50%;
+  flex: none;
+}
+
+.admin-aim-crosshair::before,
+.admin-aim-crosshair::after {
+  content: '';
+  position: absolute;
+  background: var(--hud-accent);
+}
+
+.admin-aim-crosshair::before {
+  left: 50%;
+  top: -4px;
+  bottom: -4px;
+  width: 1.5px;
+  transform: translateX(-50%);
+}
+
+.admin-aim-crosshair::after {
+  top: 50%;
+  left: -4px;
+  right: -4px;
+  height: 1.5px;
+  transform: translateY(-50%);
+}
+
+.admin-aim-cancel {
+  padding: 4px 10px;
+  font-size: 12px;
+}

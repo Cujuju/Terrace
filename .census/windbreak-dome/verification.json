@@ -1,0 +1,103 @@
+{
+  "glb_sha256": "f3cd3090a2208b0534cd0459812e9f5b31c2d9c6cd36a7bb8f83f1f9f44c6d57",
+  "mesh_count": 1,
+  "primitive_count": 1,
+  "material_count": 1,
+  "triangles": 1194,
+  "exported_vertices": 2486,
+  "nodes": [
+    {
+      "mesh": 0,
+      "name": "windbreak-dome"
+    },
+    {
+      "children": [
+        0
+      ],
+      "name": "RootNode"
+    }
+  ],
+  "dimensions_gltf_y_up": [
+    0.6509539783000946,
+    0.2800000011920929,
+    0.6731255650520325
+  ],
+  "uv_islands": 619,
+  "uv_min_max": [
+    0.0029296875,
+    0.9963604807853699
+  ],
+  "uv_overlap_pairs": [],
+  "uv_candidate_pairs_checked": 575,
+  "minimum_island_bounds_gap_pixels": 12.0030517578125,
+  "texel_density_min_max": [
+    1250.9959031558888,
+    1251.046132209079
+  ],
+  "zero_area_triangles": 0,
+  "normal_length_error_max": 1.2852277753161445e-07,
+  "tangent_normal_dot_max": 9.45327104382443e-05,
+  "compression_extensions": [],
+  "textures": {
+    "windbreak-dome-normal": {
+      "format": "image/png",
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "matches_external_bytes": true
+    },
+    "windbreak-dome-basecolor": {
+      "format": "image/png",
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "matches_external_bytes": true
+    },
+    "windbreak-dome-metallicRoughness": {
+      "format": "image/png",
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "matches_external_bytes": true
+    }
+  },
+  "roughness_range": [
+    0.7803922295570374,
+    0.9803922176361084
+  ],
+  "metalness_range": [
+    0.0,
+    0.0
+  ],
+  "normal_map_length_error_max": 0.005414247512817383,
+  "blend": {
+    "mesh_count": 1,
+    "material_count": 1,
+    "vertices": 673,
+    "triangles": 1194,
+    "uv_layers": [
+      "UVMap"
+    ],
+    "images_packed": true,
+    "objects": [
+      "RootNode",
+      "windbreak-dome"
+    ]
+  },
+  "bounds_gltf_y_up": {
+    "min": [
+      -0.3703922927379608,
+      0.0,
+      -0.29499998688697815
+    ],
+    "max": [
+      0.2805616855621338,
+      0.2800000011920929,
+      0.3781255781650543
+    ]
+  },
+  "passed": true
+}

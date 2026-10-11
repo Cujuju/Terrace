@@ -1,0 +1,52 @@
+# Minimal CI: install, typecheck, test across the workspace. Keep under a minute;
+# no build artifacts, no deploy jobs (docker compose is the deployment story).
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        # pnpm version comes from packageManager in package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      # eslint-plugin-comment-budget is a private git dependency. Set the
+      # DEPS_TOKEN secret to a PAT with read access to it, or install fails.
+      - name: authenticate the private git dependency
+        env:
+          DEPS_TOKEN: ${{ secrets.DEPS_TOKEN }}
+        run: |
+          if [ -n "$DEPS_TOKEN" ]; then
+            git config --global url."https://x-access-token:$DEPS_TOKEN@github.com/".insteadOf "https://github.com/"
+          else
+            echo "::error::DEPS_TOKEN is unset; the private git dependency cannot be installed."
+            exit 1
+          fi
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      # The exemption list forgives untouched files, so a bypassed pre-commit
+      # would slip a dirty edit past `pnpm lint`. Changed files answer in full.
+      - name: comment budget on changed files
+        run: |
+          base='${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}'
+          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            base="$(git rev-parse HEAD~1)"
+          fi
+          status=0
+          while IFS= read -r path; do
+            [ -f "$path" ] || continue
+            node node_modules/eslint-plugin-comment-budget/dist/bin/check-file.js "$path" || status=1
+          done < <(git diff --name-only --diff-filter=ACMR "$base" HEAD -- '*.ts' '*.tsx')
+          exit $status
+      - run: pnpm typecheck
+      - run: pnpm test

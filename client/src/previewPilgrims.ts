@@ -1,0 +1,135 @@
+import {
+  ACESFilmicToneMapping,
+  AmbientLight,
+  Box3,
+  CircleGeometry,
+  DirectionalLight,
+  Group,
+  HemisphereLight,
+  Mesh,
+  MeshLambertMaterial,
+  PerspectiveCamera,
+  Scene,
+  SRGBColorSpace,
+  Vector3,
+} from 'three';
+import { WebGPURenderer } from 'three/webgpu';
+import { backgroundRadiance } from './render/skyEnvironment.ts';
+import { MOVER_GAITS, type MoverGait } from './plugins/kit/moverGait.ts';
+import { STRIDE_HZ, createPilgrimModels } from '../../plugins/pilgrims/client/models.ts';
+import { isSettlerRace, type SettlerRace } from '../../plugins/pilgrims/protocol.ts';
+
+const SKY_COLOR = 0x9fc7e8;
+const GROUND_BOUNCE_COLOR = 0x9a948a;
+const HEMISPHERE_LIGHT_INTENSITY = 1.5;
+const SUN_LIGHT_INTENSITY = 1.2;
+const AMBIENT_FLOOR_INTENSITY = 0.9;
+const SUN_DIRECTION = new Vector3(0.7, 0.45, 0.55);
+const TONE_MAPPING_EXPOSURE = 1.25;
+const CAMERA_FOV_DEGREES = 55;
+
+const BACKDROP_COLOR = 0x808080;
+const GROUND_COLOR = 0x6c6c6c;
+const GROUND_RADIUS = 2;
+const CAMERA_FRAMING_PADDING = 1.25;
+const SETTLE_FRAME_COUNT = 3;
+
+const PAIR_SPACING = 0.55;
+
+const CAMERA_VIEWS = {
+  iso: new Vector3(0.6, 0.45, 0.85),
+  side: new Vector3(0.05, 0.12, 1),
+  front: new Vector3(1, 0.25, 0.08),
+} as const;
+
+type CameraView = keyof typeof CAMERA_VIEWS;
+
+function buildScene(): { scene: Scene; camera: PerspectiveCamera; renderer: WebGPURenderer } {
+  const canvas = document.getElementById('viewport') as HTMLCanvasElement;
+
+  const scene = new Scene();
+
+  const ground = new Mesh(
+    new CircleGeometry(GROUND_RADIUS, 32),
+    new MeshLambertMaterial({ color: GROUND_COLOR }),
+  );
+  ground.rotation.x = -Math.PI / 2;
+  scene.add(ground);
+
+  scene.add(new HemisphereLight(SKY_COLOR, GROUND_BOUNCE_COLOR, HEMISPHERE_LIGHT_INTENSITY));
+  scene.add(new AmbientLight(0xffffff, AMBIENT_FLOOR_INTENSITY));
+  const sun = new DirectionalLight(0xffffff, SUN_LIGHT_INTENSITY);
+  sun.position.copy(SUN_DIRECTION).multiplyScalar(20);
+  scene.add(sun);
+
+  const camera = new PerspectiveCamera(CAMERA_FOV_DEGREES, window.innerWidth / window.innerHeight, 0.05, 100);
+
+  const renderer = new WebGPURenderer({ canvas, antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.toneMapping = ACESFilmicToneMapping;
+  renderer.toneMappingExposure = TONE_MAPPING_EXPOSURE;
+  scene.background = backgroundRadiance(BACKDROP_COLOR, renderer);
+  renderer.outputColorSpace = SRGBColorSpace;
+
+  return { scene, camera, renderer };
+}
+
+let ZOOM = 1;
+
+function frameCameraOn(camera: PerspectiveCamera, subject: Group, view: CameraView): void {
+  const box = new Box3().setFromObject(subject);
+  const center = box.getCenter(new Vector3());
+  const size = box.getSize(new Vector3());
+  const radius = Math.max(size.x, size.y, size.z) * 0.5;
+
+  const verticalFovRadians = (CAMERA_FOV_DEGREES * Math.PI) / 180;
+  const distance = (radius * CAMERA_FRAMING_PADDING) / Math.sin(verticalFovRadians / 2) / ZOOM;
+
+  const direction = CAMERA_VIEWS[view].clone().normalize();
+  camera.position.copy(center).addScaledVector(direction, distance);
+  camera.lookAt(center);
+  camera.updateProjectionMatrix();
+}
+
+async function main(): Promise<void> {
+  const query = new URLSearchParams(window.location.search);
+  const raceParam = query.get('race');
+  const races: SettlerRace[] = isSettlerRace(raceParam) ? [raceParam] : ['rudy', 'uno'];
+  const viewParam = query.get('view');
+  const view: CameraView =
+    viewParam !== null && Object.hasOwn(CAMERA_VIEWS, viewParam) ? (viewParam as CameraView) : 'iso';
+  const stride = Number(query.get('stride') ?? '0.25');
+  const gaitParam = query.get('gait');
+  const gait: MoverGait = MOVER_GAITS.find((named) => named === gaitParam) ?? 'walk';
+
+  const { scene, camera, renderer } = buildScene();
+  await renderer.init();
+
+  const models = createPilgrimModels();
+  const subject = new Group();
+  races.forEach((race, index) => {
+    const model = models.create(race);
+    model.animate(stride / STRIDE_HZ, 0, gait);
+    model.root.position.z = (index - (races.length - 1) / 2) * PAIR_SPACING;
+    subject.add(model.root);
+  });
+  scene.add(subject);
+
+  ZOOM = Number(query.get('zoom') ?? '1') || 1;
+  frameCameraOn(camera, subject, view);
+
+  let framesRendered = 0;
+  function renderFrame(): void {
+    renderer.render(scene, camera);
+    framesRendered++;
+    if (framesRendered < SETTLE_FRAME_COUNT) {
+      requestAnimationFrame(renderFrame);
+    } else {
+      (window as unknown as { __previewReady: boolean }).__previewReady = true;
+    }
+  }
+  requestAnimationFrame(renderFrame);
+}
+
+void main();

@@ -1,0 +1,94 @@
+{
+  "assumptions": {
+    "png_gpu_format": "RGBA8 with complete mip chain",
+    "compressed_gpu_format": "BC7 or ASTC 4x4, 16 bytes per 4x4 block, complete mip chain",
+    "excluded": "CPU decoded images, loader buffers, driver allocation overhead, shaders, framebuffer and instance buffers",
+    "sharing": "Terrace draws repeated structures with InstancedMesh; mesh and textures are shared, not duplicated per house."
+  },
+  "variants": {
+    "original": {
+      "triangles": 1236,
+      "exported_vertices": 2400,
+      "geometry_gpu_bytes": 122616,
+      "textures": [
+        {
+          "name": "hut-normal",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 979666
+        },
+        {
+          "name": "hut-basecolor",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 1887319
+        },
+        {
+          "name": "hut-metallicRoughness",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 414560
+        }
+      ],
+      "png_gpu_total_bytes": 67231476,
+      "ktx2_bc7_astc_gpu_total_bytes": 16899912,
+      "png_glb_file_bytes": 2017344,
+      "ktx2_glb_file_bytes": 3406224,
+      "png_glb_sha256": "c8d6e84c2c99799c6b5668fe5ae1102cf5bf882902c96186a56253ebacfb7fe6",
+      "ktx2_glb_sha256": "29139ad61557f4b367ddb0c91c508b2a3f7f8593f0f3befa1c23b32871c8e74b",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    },
+    "low": {
+      "triangles": 548,
+      "exported_vertices": 1084,
+      "geometry_gpu_bytes": 55320,
+      "textures": [
+        {
+          "name": "hut-normal",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 274353
+        },
+        {
+          "name": "hut-basecolor",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 648542
+        },
+        {
+          "name": "hut-metallicRoughness",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 90375
+        }
+      ],
+      "png_gpu_total_bytes": 16832532,
+      "ktx2_bc7_astc_gpu_total_bytes": 4249704,
+      "png_glb_file_bytes": 661368,
+      "ktx2_glb_file_bytes": 1070648,
+      "png_glb_sha256": "6bf6891b00728c2bebcf6c86b5b9ee64b5b929ba796e4f80e7ad00c5b723b8d0",
+      "ktx2_glb_sha256": "4860e62c4945d92d621610e1d4f534b2629794839fe99ad9df3735fd641b3cc7",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    }
+  }
+}

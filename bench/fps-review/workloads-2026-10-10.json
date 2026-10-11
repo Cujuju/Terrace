@@ -1,0 +1,3476 @@
+{
+  "kind": "Diagnostic workloads; no before/after optimization comparison",
+  "protocol": "Wall-time camera oscillation ±30 degrees with 6-second period for 30 seconds; restore pose; near view at 12 units with 5-second warmup; 20-second near idle; 20-second sculpt intents, radius 4 every 120ms, alternating raise/lower every 2 seconds; restore pose.",
+  "limits": [
+    "Discard the first window of each workload because it overlaps its transition.",
+    "This is one evolved copied world, not fresh copies for comparative sculpt arms.",
+    "Intents sent count successful local sends, not confirmed authoritative acceptances.",
+    "A 20-minute decay soak was not run.",
+    "Percentiles are per-window; do not pool them. GPU medians are sparse."
+  ],
+  "world": "Copied Frostwick Hollows",
+  "sourceHead": "e1178cfb",
+  "metadata": {
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+    "dpr": 1,
+    "buffer": {
+      "pixelWidth": 1249,
+      "pixelHeight": 1229,
+      "cameraDistance": 80,
+      "drawCalls": 112,
+      "triangles": 7320374,
+      "geometries": 242,
+      "textures": 191,
+      "programs": 173
+    },
+    "adapter": {
+      "vendor": "nvidia",
+      "architecture": "ampere",
+      "device": "",
+      "description": "",
+      "isFallbackAdapter": false,
+      "features": [
+        "depth32float-stencil8",
+        "rg11b10ufloat-renderable",
+        "texture-formats-tier1",
+        "bgra8unorm-storage",
+        "texture-compression-bc",
+        "dual-source-blending",
+        "core-features-and-limits",
+        "float32-filterable",
+        "indirect-first-instance",
+        "float32-blendable",
+        "depth-clip-control",
+        "texture-compression-bc-sliced-3d",
+        "shader-f16",
+        "timestamp-query",
+        "texture-formats-tier2",
+        "clip-distances",
+        "primitive-index",
+        "texture-component-swizzle",
+        "subgroups"
+      ]
+    },
+    "samples": 4,
+    "backend": "WebGPUBackend",
+    "cameraPosition": [
+      110.21323722716554,
+      45.88611490808369,
+      110.21323722716554
+    ],
+    "cameraTarget": [
+      63.875,
+      0,
+      63.875
+    ],
+    "visibility": "visible",
+    "focus": true,
+    "stars": [
+      {
+        "name": "core:void-stars-0",
+        "count": 479183,
+        "originalMask": 1
+      },
+      {
+        "name": "core:void-stars-1",
+        "count": 359714,
+        "originalMask": 1
+      }
+    ],
+    "frameRatePreference": "unlimited (default)"
+  },
+  "status": "complete",
+  "startedAt": "2026-10-11T05:23:41.115Z",
+  "finishedAt": "2026-10-11T05:25:36.956Z",
+  "pan": {
+    "durationMs": 30000,
+    "amplitudeRad": 0.5235987755982988,
+    "cycleMs": 6000,
+    "samples": [
+      {
+        "sample": {
+          "uptimeS": 260.21780000000075,
+          "frames": 637,
+          "sampledFrames": 637,
+          "windowMs": 5001.300000000745,
+          "frameBudgetMs": 7.142857142857143,
+          "workOverBudgetFrames": 80,
+          "frameMsP50": 5.699999809265137,
+          "frameMsP95": 8.199999809265137,
+          "frameMsP99": 9.399999618530273,
+          "frameMsMax": 12,
+          "renderMsP50": 3.5999999046325684,
+          "renderMsP99": 6,
+          "outsideMsP50": 2.0999999046325684,
+          "unattributedMs": 0.7571428570913941,
+          "intervalMsP50": 8,
+          "intervalMsP95": 9.5,
+          "intervalMsP99": 12.300000190734863,
+          "intervalMsMax": 27.200000762939453,
+          "gpuMsP50": 7.86432,
+          "counters": {
+            "pixelWidth": 1249,
+            "pixelHeight": 1229,
+            "cameraDistance": 80,
+            "drawCalls": 128,
+            "triangles": 7424219,
+            "geometries": 248,
+            "textures": 191,
+            "programs": 176
+          },
+          "plugins": [
+            {
+              "name": "wildlife",
+              "msPerFrame": 0.6835164834673588,
+              "msPerRun": 0.9244161358146658,
+              "asyncMs": 1.8999999947845936,
+              "msMaxRun": 2,
+              "shareOfFrame": 0.11698954778067336
+            },
+            {
+              "name": "pilgrims",
+              "msPerFrame": 0.46703296700372615,
+              "msPerRun": 0.46703296700372615,
+              "asyncMs": 0.7000000029802322,
+              "msMaxRun": 1,
+              "shareOfFrame": 0.0799365881145444
+            },
+            {
+              "name": "relics",
+              "msPerFrame": 0.10612244911643924,
+              "msPerRun": 0.10612244911643924,
+              "asyncMs": 0,
+              "msMaxRun": 0.30000000074505806,
+              "shareOfFrame": 0.018163742399494937
+            },
+            {
+              "name": "mudslides",
+              "msPerFrame": 0.029513343800227722,
+              "msPerRun": 0.03047001620866298,
+              "asyncMs": 0,
+              "msMaxRun": 2.899999998509884,
+              "shareOfFrame": 0.00505145498052801
+            },
+            {
+              "name": "rain",
+              "msPerFrame": 0.017111459983808093,
+              "msPerRun": 0.017111459983808093,
+              "asyncMs": 0.10000000149011612,
+              "msMaxRun": 0.19999999925494194,
+              "shareOfFrame": 0.0029287691135372533
+            },
+            {
+              "name": "daynight",
+              "msPerFrame": 0.015855572983224875,
+              "msPerRun": 0.015855572983224875,
+              "asyncMs": 0,
+              "msMaxRun": 0.19999999925494194,
+              "shareOfFrame": 0.002713813577254457
+            },
+            {
+              "name": "thunderstorm",
+              "msPerFrame": 0.008634222902392668,
+              "msPerRun": 0.008634222902392668,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0014778192731568396
+            },
+            {
+              "name": "snow",
+              "msPerFrame": 0.006122448988948924,
+              "msPerRun": 0.006122448988948924,
+              "asyncMs": 0,
+              "msMaxRun": 0.19999999925494194,
+              "shareOfFrame": 0.0010479082156057181
+            },
+            {
+              "name": "fog",
+              "msPerFrame": 0.006122448983100744,
+              "msPerRun": 0.006122448983100744,
+              "asyncMs": 0.09999999776482582,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0010479082146047534
+            },
+            {
+              "name": "fire",
+              "msPerFrame": 0.005808477224182671,
+              "msPerRun": 0.005808477224182671,
+              "asyncMs": 0,
+              "msMaxRun": 0.20000000298023224,
+              "shareOfFrame": 0.0009941693290326076
+            },
+            {
+              "name": "structures",
+              "msPerFrame": 0.004081632637855958,
+              "msPerRun": 0.004081632637855958,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.000698605473400275
+            },
+            {
+              "name": "tornado",
+              "msPerFrame": 0.0037676609081787817,
+              "msPerRun": 0.0037676609081787817,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0006448665928329524
+            },
+            {
+              "name": "volcanoes",
+              "msPerFrame": 0.003767660902330602,
+              "msPerRun": 0.003767660902330602,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0006448665918319877
+            },
+            {
+              "name": "cyclone",
+              "msPerFrame": 0.0029827315459726744,
+              "msPerRun": 0.0029827315459726744,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0005105193849083755
+            },
+            {
+              "name": "monsters",
+              "msPerFrame": 0.0026687597987509596,
+              "msPerRun": 0.0026687597987509596,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.000456780501338159
+            },
+            {
+              "name": "hydro",
+              "msPerFrame": 0.0018838304540893908,
+              "msPerRun": 0.0018838304540893908,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0003224332964164762
+            },
+            {
+              "name": "apache",
+              "msPerFrame": 0.001726844574630354,
+              "msPerRun": 0.001726844574630354,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0002955638536304032
+            },
+            {
+              "name": "temples",
+              "msPerFrame": 0.0012558869713423203,
+              "msPerRun": 0.0012558869713423203,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00021495553127797237
+            },
+            {
+              "name": "music",
+              "msPerFrame": 0.00031397174722171464,
+              "msPerRun": 0.00031397174722171464,
+              "asyncMs": 0.5999999940395355,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00005373888357021661
+            },
+            {
+              "name": "mana",
+              "msPerFrame": 0.0003139717355253558,
+              "msPerRun": 0.0003139717355253558,
+              "asyncMs": 0.8999999985098839,
+              "msMaxRun": 0.09999999776482582,
+              "shareOfFrame": 0.00005373888156828723
+            },
+            {
+              "name": "invite",
+              "msPerFrame": 0.0001569858677626779,
+              "msPerRun": 0.0001569858677626779,
+              "asyncMs": 0,
+              "msMaxRun": 0.09999999776482582,
+              "shareOfFrame": 0.000026869440784143614
+            },
+            {
+              "name": "flora",
+              "msPerFrame": 0.0001569858677626779,
+              "msPerRun": 0.0001569858677626779,
+              "asyncMs": 0,
+              "msMaxRun": 0.09999999776482582,
+              "shareOfFrame": 0.000026869440784143614
+            },
+            {
+              "name": "chronicle",
+              "msPerFrame": 0.0001569858677626779,
+              "msPerRun": 0.0001569858677626779,
+              "asyncMs": 0,
+              "msMaxRun": 0.09999999776482582,
+              "shareOfFrame": 0.000026869440784143614
+            }
+          ],
+          "duplicateRunners": [],
+          "uploadBytesPerFrame": 215017.87127158555,
+          "uploadCallsPerFrame": 277.55886970172685,
+          "uploadUnparsedCallsPerFrame": 0,
+          "uploadByKind": [
+            {
+              "kind": "writeBuffer",
+              "calls": 222.80533751962324,
+              "bytes": 53777.557299843014
+            },
+            {
+              "kind": "writeTexture",
+              "calls": 54.75353218210361,
+              "bytes": 161240.31397174255
+            }
+          ]
+        },
+        "visibility": "visible",
+        "focus": true,
+        "pending": 0,
+        "held": false
+      },
+      {
+        "sample": {
+          "uptimeS": 265.22040000000226,
+          "frames": 604,
+          "sampledFrames": 604,
+          "windowMs": 5002.60000000149,
+          "frameBudgetMs": 7.142857142857143,
+          "workOverBudgetFrames": 211,
+          "frameMsP50": 6.400000095367432,
+          "frameMsP95": 10.199999809265137,
+          "frameMsP99": 11.699999809265137,
+          "frameMsMax": 14,
+          "renderMsP50": 4.099999904632568,
+          "renderMsP99": 8.300000190734863,
+          "outsideMsP50": 2.299999713897705,
+          "unattributedMs": 0.8923841058985886,
+          "intervalMsP50": 8.199999809265137,
+          "intervalMsP95": 11.199999809265137,
+          "intervalMsP99": 13.899999618530273,
+          "intervalMsMax": 16.200000762939453,
+          "gpuMsP50": 7.340032,
+          "counters": {
+            "pixelWidth": 1249,
+            "pixelHeight": 1229,
+            "cameraDistance": 80,
+            "drawCalls": 124,
+            "triangles": 7354900,
+            "geometries": 248,
+            "textures": 191,
+            "programs": 176
+          },
+          "plugins": [
+            {
+              "name": "wildlife",
+              "msPerFrame": 0.6094370861198531,
+              "msPerRun": 1.0577586207367566,
+              "asyncMs": 1.6999999955296516,
+              "msMaxRun": 2,
+              "shareOfFrame": 0.0897695403045317
+            },
+            {
+              "name": "pilgrims",
+              "msPerFrame": 0.5503311258006767,
+              "msPerRun": 0.5614864864587985,
+              "asyncMs": 1.7000000141561031,
+              "msMaxRun": 1.699999999254942,
+              "shareOfFrame": 0.08106328496176626
+            },
+            {
+              "name": "relics",
+              "msPerFrame": 0.12301324505901692,
+              "msPerRun": 0.12301324505901692,
+              "asyncMs": 0.09999999776482582,
+              "msMaxRun": 1,
+              "shareOfFrame": 0.018119741498870558
+            },
+            {
+              "name": "mudslides",
+              "msPerFrame": 0.040728476817491435,
+              "msPerRun": 0.04212328766740552,
+              "asyncMs": 0,
+              "msMaxRun": 3.5,
+              "shareOfFrame": 0.0059992683813977
+            },
+            {
+              "name": "daynight",
+              "msPerFrame": 0.020198675520125997,
+              "msPerRun": 0.020198675520125997,
+              "asyncMs": 0,
+              "msMaxRun": 0.30000000074505806,
+              "shareOfFrame": 0.00297524692457839
+            },
+            {
+              "name": "rain",
+              "msPerFrame": 0.017384105991103398,
+              "msPerRun": 0.017384105991103398,
+              "asyncMs": 0,
+              "msMaxRun": 0.19999999925494194,
+              "shareOfFrame": 0.0025606633382985553
+            },
+            {
+              "name": "thunderstorm",
+              "msPerFrame": 0.011258278146928905,
+              "msPerRun": 0.011258278146928905,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0016583343496618223
+            },
+            {
+              "name": "snow",
+              "msPerFrame": 0.00877483445682273,
+              "msPerRun": 0.00877483445682273,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0012925253047078732
+            },
+            {
+              "name": "fire",
+              "msPerFrame": 0.006291390717374962,
+              "msPerRun": 0.006291390717374962,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0009267162524859513
+            },
+            {
+              "name": "fog",
+              "msPerFrame": 0.0061258278318390945,
+              "msPerRun": 0.0061258278318390945,
+              "asyncMs": 0.10000000149011612,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0009023289868197398
+            },
+            {
+              "name": "tornado",
+              "msPerFrame": 0.0057947019682518695,
+              "msPerRun": 0.0057947019682518695,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0008535544418598677
+            },
+            {
+              "name": "structures",
+              "msPerFrame": 0.005463576154006238,
+              "msPerRun": 0.005463576154006238,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0008047799041679683
+            },
+            {
+              "name": "volcanoes",
+              "msPerFrame": 0.005463576129335441,
+              "msPerRun": 0.005463576129335441,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0008047799005339818
+            },
+            {
+              "name": "monsters",
+              "msPerFrame": 0.0036423841293975216,
+              "msPerRun": 0.0036423841293975216,
+              "asyncMs": 0,
+              "msMaxRun": 0.19999999925494194,
+              "shareOfFrame": 0.0005365199400487974
+            },
+            {
+              "name": "hydro",
+              "msPerFrame": 0.0033112582843133945,
+              "msPerRun": 0.0033112582843133945,
+              "asyncMs": 0,
+              "msMaxRun": 0.30000000074505806,
+              "shareOfFrame": 0.00048774539781441513
+            },
+            {
+              "name": "cyclone",
+              "msPerFrame": 0.0029801324392292675,
+              "msPerRun": 0.0029801324392292675,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0004389708555800328
+            },
+            {
+              "name": "apache",
+              "msPerFrame": 0.0021523178820282416,
+              "msPerRun": 0.0021523178820282416,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00031703450817054633
+            },
+            {
+              "name": "temples",
+              "msPerFrame": 0.0014900662226984833,
+              "msPerRun": 0.0014900662226984833,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0002194854282442647
+            },
+            {
+              "name": "mana",
+              "msPerFrame": 0.0011589403961174535,
+              "msPerRun": 0.0011589403961174535,
+              "asyncMs": 1.199999999254942,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00017071088873537216
+            },
+            {
+              "name": "invite",
+              "msPerFrame": 0.0006622516531620594,
+              "msPerRun": 0.0006622516531620594,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00009754907901778506
+            },
+            {
+              "name": "flora",
+              "msPerFrame": 0.00016556291637436442,
+              "msPerRun": 0.00016556291637436442,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.000024387270208694563
+            },
+            {
+              "name": "music",
+              "msPerFrame": 0.00016556291020666526,
+              "msPerRun": 0.00016556291020666526,
+              "asyncMs": 1.0999999977648258,
+              "msMaxRun": 0.09999999776482582,
+              "shareOfFrame": 0.000024387269300197968
+            },
+            {
+              "name": "chronicle",
+              "msPerFrame": 0,
+              "msPerRun": 0,
+              "asyncMs": 0,
+              "msMaxRun": 0,
+              "shareOfFrame": 0
+            }
+          ],
+          "duplicateRunners": [],
+          "uploadBytesPerFrame": 190027.68874172185,
+          "uploadCallsPerFrame": 276.4801324503311,
+          "uploadUnparsedCallsPerFrame": 0,
+          "uploadByKind": [
+            {
+              "kind": "writeBuffer",
+              "calls": 226.97019867549668,
+              "bytes": 53898.20529801324
+            },
+            {
+              "kind": "writeTexture",
+              "calls": 49.50993377483444,
+              "bytes": 136129.4834437086
+            }
+          ]
+        },
+        "visibility": "visible",
+        "focus": true,
+        "pending": 0,
+        "held": false
+      },
+      {
+        "sample": {
+          "uptimeS": 270.22290000000226,
+          "frames": 606,
+          "sampledFrames": 606,
+          "windowMs": 5002.5,
+          "frameBudgetMs": 7.142857142857143,
+          "workOverBudgetFrames": 48,
+          "frameMsP50": 5.599999904632568,
+          "frameMsP95": 7.599999904632568,
+          "frameMsP99": 10.899999618530273,
+          "frameMsMax": 19.5,
+          "renderMsP50": 3.4000000953674316,
+          "renderMsP99": 6.5,
+          "outsideMsP50": 2.1000001430511475,
+          "unattributedMs": 0.7825082509467998,
+          "intervalMsP50": 8.199999809265137,
+          "intervalMsP95": 9.5,
+          "intervalMsP99": 13.300000190734863,
+          "intervalMsMax": 82,
+          "gpuMsP50": 7.20896,
+          "counters": {
+            "pixelWidth": 1249,
+            "pixelHeight": 1229,
+            "cameraDistance": 79.99999999999999,
+            "drawCalls": 125,
+            "triangles": 7405959,
+            "geometries": 248,
+            "textures": 191,
+            "programs": 176
+          },
+          "plugins": [
+            {
+              "name": "wildlife",
+              "msPerFrame": 0.7099009901285172,
+              "msPerRun": 0.8888429752435566,
+              "asyncMs": 2.0000000074505806,
+              "msMaxRun": 1.699999999254942,
+              "shareOfFrame": 0.12333008428799348
+            },
+            {
+              "name": "pilgrims",
+              "msPerFrame": 0.4722772277092481,
+              "msPerRun": 0.47384105958908007,
+              "asyncMs": 1.0999999977648258,
+              "msMaxRun": 1.300000000745058,
+              "shareOfFrame": 0.08204804770047847
+            },
+            {
+              "name": "relics",
+              "msPerFrame": 0.09950495039177414,
+              "msPerRun": 0.09950495039177414,
+              "asyncMs": 0,
+              "msMaxRun": 0.20000000298023224,
+              "shareOfFrame": 0.01728685279994955
+            },
+            {
+              "name": "mudslides",
+              "msPerFrame": 0.031848184813563975,
+              "msPerRun": 0.03293515357853203,
+              "asyncMs": 0,
+              "msMaxRun": 2.7999999970197678,
+              "shareOfFrame": 0.005532939624109218
+            },
+            {
+              "name": "daynight",
+              "msPerFrame": 0.015016501615739891,
+              "msPerRun": 0.015016501615739891,
+              "asyncMs": 0,
+              "msMaxRun": 0.30000000074505806,
+              "shareOfFrame": 0.002608795361230185
+            },
+            {
+              "name": "rain",
+              "msPerFrame": 0.013366336648416991,
+              "msPerRun": 0.013366336648416991,
+              "asyncMs": 0.09999999776482582,
+              "msMaxRun": 0.19999999925494194,
+              "shareOfFrame": 0.0023221145601903335
+            },
+            {
+              "name": "thunderstorm",
+              "msPerFrame": 0.008250825076360907,
+              "msPerRun": 0.008250825076360907,
+              "asyncMs": 0.09999999776482582,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00143340404685006
+            },
+            {
+              "name": "snow",
+              "msPerFrame": 0.006270627057788396,
+              "msPerRun": 0.006270627057788396,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.001089387075563327
+            },
+            {
+              "name": "fog",
+              "msPerFrame": 0.005775577582345151,
+              "msPerRun": 0.005775577582345151,
+              "asyncMs": 0.09999999776482582,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0010033828378144974
+            },
+            {
+              "name": "fire",
+              "msPerFrame": 0.0051155115720560845,
+              "msPerRun": 0.0051155115720560845,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0008887105133402736
+            },
+            {
+              "name": "structures",
+              "msPerFrame": 0.0047854785331011606,
+              "msPerRun": 0.0047854785331011606,
+              "asyncMs": 1.3999999985098839,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0008313743452293308
+            },
+            {
+              "name": "cyclone",
+              "msPerFrame": 0.003795379557625295,
+              "msPerRun": 0.003795379557625295,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.000659365865459795
+            },
+            {
+              "name": "tornado",
+              "msPerFrame": 0.003795379520741233,
+              "msPerRun": 0.003795379520741233,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0006593658590519796
+            },
+            {
+              "name": "volcanoes",
+              "msPerFrame": 0.0034653465617017778,
+              "msPerRun": 0.0034653465617017778,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0006020297048246369
+            },
+            {
+              "name": "monsters",
+              "msPerFrame": 0.002475247512457788,
+              "msPerRun": 0.002475247512457788,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0004300212122394703
+            },
+            {
+              "name": "apache",
+              "msPerFrame": 0.00214521451653427,
+              "msPerRun": 0.00214521451653427,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0003726850516043122
+            },
+            {
+              "name": "hydro",
+              "msPerFrame": 0.0014851485123925476,
+              "msPerRun": 0.0014851485123925476,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0002580127281980576
+            },
+            {
+              "name": "temples",
+              "msPerFrame": 0.0014851485123925476,
+              "msPerRun": 0.0014851485123925476,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0002580127281980576
+            },
+            {
+              "name": "mana",
+              "msPerFrame": 0.0004950495061799638,
+              "msPerRun": 0.0004950495061799638,
+              "asyncMs": 0.5999999977648258,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00008600424308867561
+            },
+            {
+              "name": "chronicle",
+              "msPerFrame": 0.0003300330020708613,
+              "msPerRun": 0.0003300330020708613,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00005733616170312732
+            },
+            {
+              "name": "invite",
+              "msPerFrame": 0.00016501649796175878,
+              "msPerRun": 0.00016501649796175878,
+              "asyncMs": 0,
+              "msMaxRun": 0.09999999776482582,
+              "shareOfFrame": 0.00002866808031757904
+            },
+            {
+              "name": "flora",
+              "msPerFrame": 0,
+              "msPerRun": 0,
+              "asyncMs": 68,
+              "msMaxRun": 0,
+              "shareOfFrame": 0
+            },
+            {
+              "name": "music",
+              "msPerFrame": 0,
+              "msPerRun": 0,
+              "asyncMs": 0.7000000029802322,
+              "msMaxRun": 0,
+              "shareOfFrame": 0
+            }
+          ],
+          "duplicateRunners": [],
+          "uploadBytesPerFrame": 246868.3498349835,
+          "uploadCallsPerFrame": 291.1485148514852,
+          "uploadUnparsedCallsPerFrame": 0,
+          "uploadByKind": [
+            {
+              "kind": "writeBuffer",
+              "calls": 232.1171617161716,
+              "bytes": 69254.72607260726
+            },
+            {
+              "kind": "writeTexture",
+              "calls": 59.03135313531353,
+              "bytes": 177613.62376237623
+            }
+          ]
+        },
+        "visibility": "visible",
+        "focus": true,
+        "pending": 0,
+        "held": false
+      },
+      {
+        "sample": {
+          "uptimeS": 275.23,
+          "frames": 658,
+          "sampledFrames": 658,
+          "windowMs": 5007.099999997765,
+          "frameBudgetMs": 7.142857142857143,
+          "workOverBudgetFrames": 32,
+          "frameMsP50": 4.900000095367432,
+          "frameMsP95": 7.099999904632568,
+          "frameMsP99": 8.600000381469727,
+          "frameMsMax": 13.300000190734863,
+          "renderMsP50": 3.0999999046325684,
+          "renderMsP99": 5.199999809265137,
+          "outsideMsP50": 1.8000001907348633,
+          "unattributedMs": 0.5922492401374331,
+          "intervalMsP50": 7.400000095367432,
+          "intervalMsP95": 8.800000190734863,
+          "intervalMsP99": 10.399999618530273,
+          "intervalMsMax": 14,
+          "gpuMsP50": 7.1434239999999996,
+          "counters": {
+            "pixelWidth": 1249,
+            "pixelHeight": 1229,
+            "cameraDistance": 80,
+            "drawCalls": 127,
+            "triangles": 7467122,
+            "geometries": 248,
+            "textures": 191,
+            "programs": 176
+          },
+          "plugins": [
+            {
+              "name": "wildlife",
+              "msPerFrame": 0.7250759878498715,
+              "msPerRun": 0.8311846689986331,
+              "asyncMs": 1.3999999985098839,
+              "msMaxRun": 1.5,
+              "shareOfFrame": 0.1434800914266018
+            },
+            {
+              "name": "pilgrims",
+              "msPerFrame": 0.4142857142936404,
+              "msPerRun": 0.4142857142936404,
+              "asyncMs": 1,
+              "msMaxRun": 0.8000000007450581,
+              "shareOfFrame": 0.08198003127900315
+            },
+            {
+              "name": "relics",
+              "msPerFrame": 0.09604863216675887,
+              "msPerRun": 0.09604863216675887,
+              "asyncMs": 0,
+              "msMaxRun": 0.30000000074505806,
+              "shareOfFrame": 0.01900637554631034
+            },
+            {
+              "name": "mudslides",
+              "msPerFrame": 0.027659574472614336,
+              "msPerRun": 0.02852664577269629,
+              "asyncMs": 0,
+              "msMaxRun": 2.300000000745058,
+              "shareOfFrame": 0.005473354987137312
+            },
+            {
+              "name": "rain",
+              "msPerFrame": 0.013829787264614844,
+              "msPerRun": 0.013829787264614844,
+              "asyncMs": 0,
+              "msMaxRun": 0.30000000074505806,
+              "shareOfFrame": 0.002736677499170259
+            },
+            {
+              "name": "daynight",
+              "msPerFrame": 0.011854103333274283,
+              "msPerRun": 0.011854103333274283,
+              "asyncMs": 0,
+              "msMaxRun": 0.19999999925494194,
+              "shareOfFrame": 0.0023457235635153035
+            },
+            {
+              "name": "fire",
+              "msPerFrame": 0.00547112463931001,
+              "msPerRun": 0.00547112463931001,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.001082641649439189
+            },
+            {
+              "name": "thunderstorm",
+              "msPerFrame": 0.005167173244353486,
+              "msPerRun": 0.005167173244353486,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0010224948859710887
+            },
+            {
+              "name": "snow",
+              "msPerFrame": 0.0047112462085340525,
+              "msPerRun": 0.0047112462085340525,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0009322747519721451
+            },
+            {
+              "name": "fog",
+              "msPerFrame": 0.004255319127422335,
+              "msPerRun": 0.004255319127422335,
+              "asyncMs": 0.10000000149011612,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0008420546090106359
+            },
+            {
+              "name": "volcanoes",
+              "msPerFrame": 0.0033434650501219334,
+              "msPerRun": 0.0033434650501219334,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0006616143398924279
+            },
+            {
+              "name": "structures",
+              "msPerFrame": 0.003343465044460398,
+              "msPerRun": 0.003343465044460398,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0006616143387721073
+            },
+            {
+              "name": "tornado",
+              "msPerFrame": 0.002583586647653652,
+              "msPerRun": 0.002583586647653652,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0005112474480269874
+            },
+            {
+              "name": "cyclone",
+              "msPerFrame": 0.002431610916206177,
+              "msPerRun": 0.002431610916206177,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0004811740595710132
+            },
+            {
+              "name": "monsters",
+              "msPerFrame": 0.0022796352583586625,
+              "msPerRun": 0.0022796352583586625,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00045110068567920776
+            },
+            {
+              "name": "apache",
+              "msPerFrame": 0.001823708205554623,
+              "msPerRun": 0.001823708205554623,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0003608805483193021
+            },
+            {
+              "name": "temples",
+              "msPerFrame": 0.001519756838905775,
+              "msPerRun": 0.001519756838905775,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0003007337904528052
+            },
+            {
+              "name": "hydro",
+              "msPerFrame": 0.0007598784194528875,
+              "msPerRun": 0.0007598784194528875,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0001503668952264026
+            },
+            {
+              "name": "flora",
+              "msPerFrame": 0.0004559270528040396,
+              "msPerRun": 0.0004559270528040396,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00009022013735990569
+            },
+            {
+              "name": "mana",
+              "msPerFrame": 0.0003039513723103833,
+              "msPerRun": 0.0003039513723103833,
+              "asyncMs": 0.8999999985098839,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00006014675898681757
+            },
+            {
+              "name": "chronicle",
+              "msPerFrame": 0.00030395136098731253,
+              "msPerRun": 0.00030395136098731253,
+              "asyncMs": 0,
+              "msMaxRun": 0.09999999776482582,
+              "shareOfFrame": 0.00006014675674617623
+            },
+            {
+              "name": "invite",
+              "msPerFrame": 0.00015197568615519166,
+              "msPerRun": 0.00015197568615519166,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.000030073379493408786
+            },
+            {
+              "name": "music",
+              "msPerFrame": 0,
+              "msPerRun": 0,
+              "asyncMs": 0.4000000022351742,
+              "msMaxRun": 0,
+              "shareOfFrame": 0
+            }
+          ],
+          "duplicateRunners": [],
+          "uploadBytesPerFrame": 236308.62006079027,
+          "uploadCallsPerFrame": 287.66413373860183,
+          "uploadUnparsedCallsPerFrame": 0,
+          "uploadByKind": [
+            {
+              "kind": "writeBuffer",
+              "calls": 228.2340425531915,
+              "bytes": 54756.27963525836
+            },
+            {
+              "kind": "writeTexture",
+              "calls": 59.43009118541033,
+              "bytes": 181552.3404255319
+            }
+          ]
+        },
+        "visibility": "visible",
+        "focus": true,
+        "pending": 0,
+        "held": false
+      },
+      {
+        "sample": {
+          "uptimeS": 280.2311000000015,
+          "frames": 657,
+          "sampledFrames": 657,
+          "windowMs": 5001.10000000149,
+          "frameBudgetMs": 7.142857142857143,
+          "workOverBudgetFrames": 34,
+          "frameMsP50": 5.300000190734863,
+          "frameMsP95": 7.199999809265137,
+          "frameMsP99": 8.600000381469727,
+          "frameMsMax": 11.899999618530273,
+          "renderMsP50": 3.299999952316284,
+          "renderMsP99": 5.199999809265137,
+          "outsideMsP50": 1.999999761581421,
+          "unattributedMs": 0.6086757990334586,
+          "intervalMsP50": 7.5,
+          "intervalMsP95": 9,
+          "intervalMsP99": 10.300000190734863,
+          "intervalMsMax": 13.600000381469727,
+          "gpuMsP50": 7.077888,
+          "counters": {
+            "pixelWidth": 1249,
+            "pixelHeight": 1229,
+            "cameraDistance": 80.00000000000001,
+            "drawCalls": 119,
+            "triangles": 7406293,
+            "geometries": 248,
+            "textures": 191,
+            "programs": 176
+          },
+          "plugins": [
+            {
+              "name": "wildlife",
+              "msPerFrame": 0.7453576865658459,
+              "msPerRun": 0.8606326890575761,
+              "asyncMs": 1.2999999895691872,
+              "msMaxRun": 1.699999999254942,
+              "shareOfFrame": 0.13878025281129483
+            },
+            {
+              "name": "pilgrims",
+              "msPerFrame": 0.4698630137201767,
+              "msPerRun": 0.4698630137201767,
+              "asyncMs": 0.7000000029802322,
+              "msMaxRun": 1,
+              "shareOfFrame": 0.08748512158129126
+            },
+            {
+              "name": "relics",
+              "msPerFrame": 0.09832572296284468,
+              "msPerRun": 0.09832572296284468,
+              "asyncMs": 0,
+              "msMaxRun": 0.30000000074505806,
+              "shareOfFrame": 0.018307544064525384
+            },
+            {
+              "name": "mudslides",
+              "msPerFrame": 0.027245053281522776,
+              "msPerRun": 0.0281004709669709,
+              "asyncMs": 0,
+              "msMaxRun": 2.199999999254942,
+              "shareOfFrame": 0.005072833420002442
+            },
+            {
+              "name": "daynight",
+              "msPerFrame": 0.01461187214271663,
+              "msPerRun": 0.01461187214271663,
+              "asyncMs": 0,
+              "msMaxRun": 0.19999999925494194,
+              "shareOfFrame": 0.002720625743266402
+            },
+            {
+              "name": "rain",
+              "msPerFrame": 0.011872146102845033,
+              "msPerRun": 0.011872146102845033,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0022105084139625486
+            },
+            {
+              "name": "thunderstorm",
+              "msPerFrame": 0.007153729098754023,
+              "msPerRun": 0.007153729098754023,
+              "asyncMs": 0,
+              "msMaxRun": 0.19999999925494194,
+              "shareOfFrame": 0.001331973025518527
+            },
+            {
+              "name": "snow",
+              "msPerFrame": 0.0060882800325320376,
+              "msPerRun": 0.0060882800325320376,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.001133594054679561
+            },
+            {
+              "name": "structures",
+              "msPerFrame": 0.004414003013521206,
+              "msPerRun": 0.004414003013521206,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0008218556877687401
+            },
+            {
+              "name": "fog",
+              "msPerFrame": 0.004109589045632012,
+              "msPerRun": 0.004109589045632012,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0007651759913164253
+            },
+            {
+              "name": "cyclone",
+              "msPerFrame": 0.0030441400134309424,
+              "msPerRun": 0.0030441400134309424,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0005667970268119095
+            },
+            {
+              "name": "tornado",
+              "msPerFrame": 0.0028919330209811168,
+              "msPerRun": 0.0028919330209811168,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0005384571770021396
+            },
+            {
+              "name": "fire",
+              "msPerFrame": 0.0028919330096408113,
+              "msPerRun": 0.0028919330096408113,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0005384571748906561
+            },
+            {
+              "name": "hydro",
+              "msPerFrame": 0.0025875190247411596,
+              "msPerRun": 0.0025875190247411596,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00048177747527111616
+            },
+            {
+              "name": "volcanoes",
+              "msPerFrame": 0.002587519019071007,
+              "msPerRun": 0.002587519019071007,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0004817774742153744
+            },
+            {
+              "name": "apache",
+              "msPerFrame": 0.0024353120096107235,
+              "msPerRun": 0.0024353120096107235,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0004534376212383793
+            },
+            {
+              "name": "monsters",
+              "msPerFrame": 0.0018264840341412677,
+              "msPerRun": 0.0018264840341412677,
+              "asyncMs": 0.10000000149011612,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0003400782209435577
+            },
+            {
+              "name": "invite",
+              "msPerFrame": 0.0003044140075802622,
+              "msPerRun": 0.0003044140075802622,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00005667970384250687
+            },
+            {
+              "name": "temples",
+              "msPerFrame": 0.0003044140075802622,
+              "msPerRun": 0.0003044140075802622,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00005667970384250687
+            },
+            {
+              "name": "flora",
+              "msPerFrame": 0.0003044140019101095,
+              "msPerRun": 0.0003044140019101095,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.000056679702786765134
+            },
+            {
+              "name": "mana",
+              "msPerFrame": 0.00030441399623995686,
+              "msPerRun": 0.00030441399623995686,
+              "asyncMs": 0.6000000014901161,
+              "msMaxRun": 0.09999999776482582,
+              "shareOfFrame": 0.00005667970173102339
+            },
+            {
+              "name": "chronicle",
+              "msPerFrame": 0.00015220699811997843,
+              "msPerRun": 0.00015220699811997843,
+              "asyncMs": 0,
+              "msMaxRun": 0.09999999776482582,
+              "shareOfFrame": 0.000028339850865511695
+            },
+            {
+              "name": "music",
+              "msPerFrame": 0,
+              "msPerRun": 0,
+              "asyncMs": 1.1999999955296516,
+              "msMaxRun": 0,
+              "shareOfFrame": 0
+            }
+          ],
+          "duplicateRunners": [],
+          "uploadBytesPerFrame": 235973.63774733638,
+          "uploadCallsPerFrame": 284.9254185692542,
+          "uploadUnparsedCallsPerFrame": 0,
+          "uploadByKind": [
+            {
+              "kind": "writeBuffer",
+              "calls": 225.2785388127854,
+              "bytes": 54339.884322678845
+            },
+            {
+              "kind": "writeTexture",
+              "calls": 59.6468797564688,
+              "bytes": 181633.75342465754
+            }
+          ]
+        },
+        "visibility": "visible",
+        "focus": true,
+        "pending": 0,
+        "held": false
+      },
+      {
+        "sample": {
+          "uptimeS": 285.23340000000223,
+          "frames": 627,
+          "sampledFrames": 627,
+          "windowMs": 5002.300000000745,
+          "frameBudgetMs": 7.142857142857143,
+          "workOverBudgetFrames": 148,
+          "frameMsP50": 6,
+          "frameMsP95": 9.5,
+          "frameMsP99": 12.5,
+          "frameMsMax": 14.100000381469727,
+          "renderMsP50": 3.5999999046325684,
+          "renderMsP99": 9.199999809265137,
+          "outsideMsP50": 2.200000047683716,
+          "unattributedMs": 0.8349282298076663,
+          "intervalMsP50": 7.699999809265137,
+          "intervalMsP95": 10.300000190734863,
+          "intervalMsP99": 13.300000190734863,
+          "intervalMsMax": 15.600000381469727,
+          "gpuMsP50": 7.012352,
+          "counters": {
+            "pixelWidth": 1249,
+            "pixelHeight": 1229,
+            "cameraDistance": 80,
+            "drawCalls": 124,
+            "triangles": 7343462,
+            "geometries": 248,
+            "textures": 191,
+            "programs": 176
+          },
+          "plugins": [
+            {
+              "name": "wildlife",
+              "msPerFrame": 0.665231260000186,
+              "msPerRun": 0.9167032967475089,
+              "asyncMs": 1.8999999910593033,
+              "msMaxRun": 2.099999997764826,
+              "shareOfFrame": 0.10389836841883354
+            },
+            {
+              "name": "pilgrims",
+              "msPerFrame": 0.5381180222667575,
+              "msPerRun": 0.5433172302113639,
+              "asyncMs": 1.5999999940395355,
+              "msMaxRun": 1.300000000745058,
+              "shareOfFrame": 0.08404533564804219
+            },
+            {
+              "name": "relics",
+              "msPerFrame": 0.11387559801839185,
+              "msPerRun": 0.11423999993205071,
+              "asyncMs": 0,
+              "msMaxRun": 1.0999999977648258,
+              "shareOfFrame": 0.01778552745225256
+            },
+            {
+              "name": "mudslides",
+              "msPerFrame": 0.03556618820489689,
+              "msPerRun": 0.03673805602054423,
+              "asyncMs": 0,
+              "msMaxRun": 3.899999998509884,
+              "shareOfFrame": 0.005554863620457217
+            },
+            {
+              "name": "daynight",
+              "msPerFrame": 0.01722488035425615,
+              "msPerRun": 0.01722488035425615,
+              "asyncMs": 0,
+              "msMaxRun": 0.19999999925494194,
+              "shareOfFrame": 0.0026902478470664975
+            },
+            {
+              "name": "rain",
+              "msPerFrame": 0.014673046268629685,
+              "msPerRun": 0.014673046268629685,
+              "asyncMs": 0,
+              "msMaxRun": 0.20000000298023224,
+              "shareOfFrame": 0.002291692616856658
+            },
+            {
+              "name": "thunderstorm",
+              "msPerFrame": 0.010366826168182745,
+              "msPerRun": 0.010366826168182745,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0016191306532341162
+            },
+            {
+              "name": "snow",
+              "msPerFrame": 0.0065390749862699795,
+              "msPerRun": 0.0065390749862699795,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0010212977995677282
+            },
+            {
+              "name": "structures",
+              "msPerFrame": 0.005901116455951185,
+              "msPerRun": 0.005901116455951185,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0009216589906233302
+            },
+            {
+              "name": "fire",
+              "msPerFrame": 0.005582137137318722,
+              "msPerRun": 0.005582137137318722,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0008718395777995028
+            },
+            {
+              "name": "fog",
+              "msPerFrame": 0.005422647483943942,
+              "msPerRun": 0.005422647483943942,
+              "asyncMs": 0.20000000298023224,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0008469298723155478
+            },
+            {
+              "name": "volcanoes",
+              "msPerFrame": 0.003987240829346092,
+              "msPerRun": 0.003987240829346092,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.000622742558222384
+            },
+            {
+              "name": "tornado",
+              "msPerFrame": 0.003668261558245244,
+              "msPerRun": 0.003668261558245244,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0005729231528222264
+            },
+            {
+              "name": "monsters",
+              "msPerFrame": 0.0027113237568256007,
+              "msPerRun": 0.0027113237568256007,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0004234649384776707
+            },
+            {
+              "name": "apache",
+              "msPerFrame": 0.002392344503549107,
+              "msPerRun": 0.002392344503549107,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00037364553586138915
+            },
+            {
+              "name": "hydro",
+              "msPerFrame": 0.0022328548798815867,
+              "msPerRun": 0.0022328548798815867,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0003487358350172278
+            },
+            {
+              "name": "cyclone",
+              "msPerFrame": 0.001275917072520492,
+              "msPerRun": 0.001275917072520492,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00019927761974471338
+            },
+            {
+              "name": "temples",
+              "msPerFrame": 0.0012759170546961364,
+              "msPerRun": 0.0012759170546961364,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00019927761696083722
+            },
+            {
+              "name": "chronicle",
+              "msPerFrame": 0.0004784689066512733,
+              "msPerRun": 0.0004784689066512733,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00007472910810023656
+            },
+            {
+              "name": "mana",
+              "msPerFrame": 0.00031897927110084885,
+              "msPerRun": 0.00031897927110084885,
+              "asyncMs": 1,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.000049819405400157704
+            },
+            {
+              "name": "invite",
+              "msPerFrame": 0.00031897925921794523,
+              "msPerRun": 0.00031897925921794523,
+              "asyncMs": 0,
+              "msMaxRun": 0.09999999776482582,
+              "shareOfFrame": 0.00004981940354424026
+            },
+            {
+              "name": "flora",
+              "msPerFrame": 0.00031897925921794523,
+              "msPerRun": 0.00031897925921794523,
+              "asyncMs": 0,
+              "msMaxRun": 0.09999999776482582,
+              "shareOfFrame": 0.00004981940354424026
+            },
+            {
+              "name": "music",
+              "msPerFrame": 0.00015948963555042443,
+              "msPerRun": 0.00015948963555042443,
+              "asyncMs": 0.8999999985098839,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.000024909702700078852
+            }
+          ],
+          "duplicateRunners": [],
+          "uploadBytesPerFrame": 207864.10845295055,
+          "uploadCallsPerFrame": 283.8484848484849,
+          "uploadUnparsedCallsPerFrame": 0,
+          "uploadByKind": [
+            {
+              "kind": "writeBuffer",
+              "calls": 230.44019138755982,
+              "bytes": 54231.54704944179
+            },
+            {
+              "kind": "writeTexture",
+              "calls": 53.40829346092504,
+              "bytes": 153632.56140350876
+            }
+          ]
+        },
+        "visibility": "visible",
+        "focus": true,
+        "pending": 0,
+        "held": false
+      }
+    ],
+    "finishedAt": "2026-10-11T05:24:11.187Z"
+  },
+  "nearIdle": {
+    "samples": [
+      {
+        "sample": {
+          "uptimeS": 335.27780000000075,
+          "frames": 682,
+          "sampledFrames": 682,
+          "windowMs": 5000.800000000745,
+          "frameBudgetMs": 7.142857142857143,
+          "workOverBudgetFrames": 114,
+          "frameMsP50": 5.300000190734863,
+          "frameMsP95": 8.800000190734863,
+          "frameMsP99": 11.699999809265137,
+          "frameMsMax": 16.100000381469727,
+          "renderMsP50": 3.200000047683716,
+          "renderMsP99": 7.300000190734863,
+          "outsideMsP50": 2.000000238418579,
+          "unattributedMs": 0.7362170088435371,
+          "intervalMsP50": 7,
+          "intervalMsP95": 9.5,
+          "intervalMsP99": 13,
+          "intervalMsMax": 55.099998474121094,
+          "gpuMsP50": 5.177344,
+          "counters": {
+            "pixelWidth": 1249,
+            "pixelHeight": 1229,
+            "cameraDistance": 12.000000000000005,
+            "drawCalls": 98,
+            "triangles": 6665971,
+            "geometries": 248,
+            "textures": 191,
+            "programs": 176
+          },
+          "plugins": [
+            {
+              "name": "wildlife",
+              "msPerFrame": 0.5700879764642097,
+              "msPerRun": 1.0921348313162669,
+              "asyncMs": 1.5000000037252903,
+              "msMaxRun": 2.399999998509884,
+              "shareOfFrame": 0.09947041214436132
+            },
+            {
+              "name": "pilgrims",
+              "msPerFrame": 0.5112903226724118,
+              "msPerRun": 0.522005988117642,
+              "asyncMs": 1.8999999836087227,
+              "msMaxRun": 1.6000000014901161,
+              "shareOfFrame": 0.08921124672209464
+            },
+            {
+              "name": "relics",
+              "msPerFrame": 0.12140762468368427,
+              "msPerRun": 0.12140762468368427,
+              "asyncMs": 0,
+              "msMaxRun": 0.5999999977648258,
+              "shareOfFrame": 0.02118351370897957
+            },
+            {
+              "name": "monsters",
+              "msPerFrame": 0.04237536655580543,
+              "msPerRun": 0.04237536655580543,
+              "asyncMs": 0,
+              "msMaxRun": 0.20000000298023224,
+              "shareOfFrame": 0.007393762629791186
+            },
+            {
+              "name": "mudslides",
+              "msPerFrame": 0.031231671560806962,
+              "msPerRun": 0.03217522659285551,
+              "asyncMs": 0,
+              "msMaxRun": 2.899999998509884,
+              "shareOfFrame": 0.005449382148661808
+            },
+            {
+              "name": "daynight",
+              "msPerFrame": 0.019794721271067073,
+              "msPerRun": 0.019794721271067073,
+              "asyncMs": 0,
+              "msMaxRun": 0.3999999985098839,
+              "shareOfFrame": 0.0034538337316423148
+            },
+            {
+              "name": "thunderstorm",
+              "msPerFrame": 0.012903225769307957,
+              "msPerRun": 0.012903225769307957,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.002251387923010132
+            },
+            {
+              "name": "snow",
+              "msPerFrame": 0.008944281543498515,
+              "msPerRun": 0.008944281543498515,
+              "asyncMs": 0,
+              "msMaxRun": 0.19999999925494194,
+              "shareOfFrame": 0.0015606211816376672
+            },
+            {
+              "name": "rain",
+              "msPerFrame": 0.006598240474670514,
+              "msPerRun": 0.006598240474670514,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0011512779194428194
+            },
+            {
+              "name": "fog",
+              "msPerFrame": 0.006158357781093141,
+              "msPerRun": 0.006158357781093141,
+              "asyncMs": 0.09999999776482582,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.001074526058972631
+            },
+            {
+              "name": "structures",
+              "msPerFrame": 0.005131964809384164,
+              "msPerRun": 0.005131964809384164,
+              "asyncMs": 1.4000000022351742,
+              "msMaxRun": 0.7000000029802322,
+              "shareOfFrame": 0.0008954383810475776
+            },
+            {
+              "name": "volcanoes",
+              "msPerFrame": 0.004838709700361025,
+              "msPerRun": 0.004838709700361025,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0008442704775620662
+            },
+            {
+              "name": "apache",
+              "msPerFrame": 0.004398826974009838,
+              "msPerRun": 0.004398826974009838,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0007675186113734186
+            },
+            {
+              "name": "tornado",
+              "msPerFrame": 0.00425219942222942,
+              "msPerRun": 0.00425219942222942,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0007419346601072011
+            },
+            {
+              "name": "fire",
+              "msPerFrame": 0.004105571837675187,
+              "msPerRun": 0.004105571837675187,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0007163507031225243
+            },
+            {
+              "name": "cyclone",
+              "msPerFrame": 0.003225806439595838,
+              "msPerRun": 0.003225806439595838,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0005628469802759948
+            },
+            {
+              "name": "temples",
+              "msPerFrame": 0.002052785916106442,
+              "msPerRun": 0.002052785916106442,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0003581753510847239
+            },
+            {
+              "name": "hydro",
+              "msPerFrame": 0.0016129032225290702,
+              "msPerRun": 0.0016129032225290702,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00028142349061453564
+            },
+            {
+              "name": "mana",
+              "msPerFrame": 0.0005865102672070003,
+              "msPerRun": 0.0005865102672070003,
+              "asyncMs": 0.8000000044703484,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00010233581554871195
+            },
+            {
+              "name": "music",
+              "msPerFrame": 0.0005865102508200928,
+              "msPerRun": 0.0005865102508200928,
+              "asyncMs": 0.30000000074505806,
+              "msMaxRun": 0.09999999776482582,
+              "shareOfFrame": 0.00010233581268948232
+            },
+            {
+              "name": "chronicle",
+              "msPerFrame": 0.0002932551363346514,
+              "msPerRun": 0.0002932551363346514,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00005116790825089425
+            },
+            {
+              "name": "invite",
+              "msPerFrame": 0.0002932551254100464,
+              "msPerRun": 0.0002932551254100464,
+              "asyncMs": 0,
+              "msMaxRun": 0.09999999776482582,
+              "shareOfFrame": 0.00005116790634474116
+            },
+            {
+              "name": "flora",
+              "msPerFrame": 0,
+              "msPerRun": 0,
+              "asyncMs": 48.70000000670552,
+              "msMaxRun": 0,
+              "shareOfFrame": 0
+            }
+          ],
+          "duplicateRunners": [],
+          "uploadBytesPerFrame": 175609.21407624634,
+          "uploadCallsPerFrame": 183.02052785923755,
+          "uploadUnparsedCallsPerFrame": 0,
+          "uploadByKind": [
+            {
+              "kind": "writeBuffer",
+              "calls": 142.14956011730206,
+              "bytes": 55696.9560117302
+            },
+            {
+              "kind": "writeTexture",
+              "calls": 40.87096774193548,
+              "bytes": 119912.25806451614
+            }
+          ]
+        },
+        "visibility": "visible",
+        "focus": true,
+        "pending": 0,
+        "held": false
+      },
+      {
+        "sample": {
+          "uptimeS": 340.27819999999923,
+          "frames": 650,
+          "sampledFrames": 650,
+          "windowMs": 5000.39999999851,
+          "frameBudgetMs": 7.142857142857143,
+          "workOverBudgetFrames": 116,
+          "frameMsP50": 5.199999809265137,
+          "frameMsP95": 9.899999618530273,
+          "frameMsP99": 11.699999809265137,
+          "frameMsMax": 39,
+          "renderMsP50": 3.200000047683716,
+          "renderMsP99": 8,
+          "outsideMsP50": 1.999999761581421,
+          "unattributedMs": 0.7410769230643148,
+          "intervalMsP50": 7,
+          "intervalMsP95": 12,
+          "intervalMsP99": 14.5,
+          "intervalMsMax": 41.099998474121094,
+          "gpuMsP50": 5.046272,
+          "counters": {
+            "pixelWidth": 1249,
+            "pixelHeight": 1229,
+            "cameraDistance": 12.000000000000005,
+            "drawCalls": 92,
+            "triangles": 6641521,
+            "geometries": 248,
+            "textures": 191,
+            "programs": 176
+          },
+          "plugins": [
+            {
+              "name": "wildlife",
+              "msPerFrame": 0.5490769230402432,
+              "msPerRun": 1.2566901407611202,
+              "asyncMs": 2.2000000029802322,
+              "msMaxRun": 19.600000001490116,
+              "shareOfFrame": 0.09457060334675267
+            },
+            {
+              "name": "pilgrims",
+              "msPerFrame": 0.4956923076739678,
+              "msPerRun": 0.5163461538270498,
+              "asyncMs": 1.2000000141561031,
+              "msMaxRun": 2.099999997764826,
+              "shareOfFrame": 0.08537587111020416
+            },
+            {
+              "name": "relics",
+              "msPerFrame": 0.12030769232373971,
+              "msPerRun": 0.12030769232373971,
+              "asyncMs": 0,
+              "msMaxRun": 0.5,
+              "shareOfFrame": 0.020721269776398266
+            },
+            {
+              "name": "monsters",
+              "msPerFrame": 0.04261538460277594,
+              "msPerRun": 0.04261538460277594,
+              "asyncMs": 0,
+              "msMaxRun": 0.30000000074505806,
+              "shareOfFrame": 0.0073398871171335926
+            },
+            {
+              "name": "mudslides",
+              "msPerFrame": 0.036615384639455725,
+              "msPerRun": 0.037777777802613044,
+              "asyncMs": 0,
+              "msMaxRun": 3.300000000745058,
+              "shareOfFrame": 0.006306473413512872
+            },
+            {
+              "name": "daynight",
+              "msPerFrame": 0.020769230815080496,
+              "msPerRun": 0.020769230815080496,
+              "asyncMs": 0,
+              "msMaxRun": 0.3999999985098839,
+              "shareOfFrame": 0.003577201311529481
+            },
+            {
+              "name": "thunderstorm",
+              "msPerFrame": 0.011538461572848834,
+              "msPerRun": 0.011538461572848834,
+              "asyncMs": 0,
+              "msMaxRun": 0.20000000298023224,
+              "shareOfFrame": 0.001987334063496342
+            },
+            {
+              "name": "rain",
+              "msPerFrame": 0.011384615405247761,
+              "msPerRun": 0.011384615405247761,
+              "asyncMs": 0.10000000149011612,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0019608362736929404
+            },
+            {
+              "name": "snow",
+              "msPerFrame": 0.00969230768772272,
+              "msPerRun": 0.00969230768772272,
+              "asyncMs": 0,
+              "msMaxRun": 0.20000000298023224,
+              "shareOfFrame": 0.0016693606075721494
+            },
+            {
+              "name": "fog",
+              "msPerFrame": 0.009230769230769232,
+              "msPerRun": 0.009230769230769232,
+              "asyncMs": 0.20000000298023224,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0015898672460589003
+            },
+            {
+              "name": "structures",
+              "msPerFrame": 0.0072307692468166354,
+              "msPerRun": 0.0072307692468166354,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0012453960121767396
+            },
+            {
+              "name": "fire",
+              "msPerFrame": 0.005384615396077816,
+              "msPerRun": 0.005384615396077816,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.000927422562175264
+            },
+            {
+              "name": "tornado",
+              "msPerFrame": 0.0041538461698935585,
+              "msPerRun": 0.0041538461698935585,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0007154402634904397
+            },
+            {
+              "name": "volcanoes",
+              "msPerFrame": 0.003846153823228983,
+              "msPerRun": 0.003846153823228983,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.000662444681909397
+            },
+            {
+              "name": "apache",
+              "msPerFrame": 0.003692307690015206,
+              "msPerRun": 0.003692307690015206,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0006359468980287122
+            },
+            {
+              "name": "cyclone",
+              "msPerFrame": 0.0035384615109517025,
+              "msPerRun": 0.0035384615109517025,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0006094491062510714
+            },
+            {
+              "name": "hydro",
+              "msPerFrame": 0.0015384615499239702,
+              "msPerRun": 0.0015384615499239702,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.000264977876317389
+            },
+            {
+              "name": "temples",
+              "msPerFrame": 0.0007692307692307692,
+              "msPerRun": 0.0007692307692307692,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.000132488937171575
+            },
+            {
+              "name": "music",
+              "msPerFrame": 0.0006153846073609132,
+              "msPerRun": 0.0006153846073609132,
+              "asyncMs": 0.6000000014901161,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00010599114835529269
+            },
+            {
+              "name": "flora",
+              "msPerFrame": 0.00046153846268470473,
+              "msPerRun": 0.00046153846268470473,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00007949336250036891
+            },
+            {
+              "name": "chronicle",
+              "msPerFrame": 0.0003076923065460645,
+              "msPerRun": 0.0003076923065460645,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0000529955746712061
+            },
+            {
+              "name": "mana",
+              "msPerFrame": 0.00015384615613864017,
+              "msPerRun": 0.00015384615613864017,
+              "asyncMs": 1.1999999955296516,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.000026497787829162802
+            },
+            {
+              "name": "invite",
+              "msPerFrame": 0.00015384615613864017,
+              "msPerRun": 0.00015384615613864017,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.000026497787829162802
+            }
+          ],
+          "duplicateRunners": [],
+          "uploadBytesPerFrame": 150440.23384615386,
+          "uploadCallsPerFrame": 178.42153846153846,
+          "uploadUnparsedCallsPerFrame": 0,
+          "uploadByKind": [
+            {
+              "kind": "writeBuffer",
+              "calls": 138.8753846153846,
+              "bytes": 42541.944615384615
+            },
+            {
+              "kind": "writeTexture",
+              "calls": 39.54615384615385,
+              "bytes": 107898.28923076922
+            }
+          ]
+        },
+        "visibility": "visible",
+        "focus": true,
+        "pending": 0,
+        "held": false
+      },
+      {
+        "sample": {
+          "uptimeS": 345.27919999999926,
+          "frames": 720,
+          "sampledFrames": 720,
+          "windowMs": 5001,
+          "frameBudgetMs": 7.142857142857143,
+          "workOverBudgetFrames": 10,
+          "frameMsP50": 4.599999904632568,
+          "frameMsP95": 6.300000190734863,
+          "frameMsP99": 7.5,
+          "frameMsMax": 11.899999618530273,
+          "renderMsP50": 2.700000047683716,
+          "renderMsP99": 4.300000190734863,
+          "outsideMsP50": 1.9000000953674316,
+          "unattributedMs": 0.6156944446265697,
+          "intervalMsP50": 6.900000095367432,
+          "intervalMsP95": 7.199999809265137,
+          "intervalMsP99": 8.300000190734863,
+          "intervalMsMax": 13,
+          "gpuMsP50": 5.373952,
+          "counters": {
+            "pixelWidth": 1249,
+            "pixelHeight": 1229,
+            "cameraDistance": 12.000000000000005,
+            "drawCalls": 92,
+            "triangles": 6623113,
+            "geometries": 248,
+            "textures": 191,
+            "programs": 176
+          },
+          "plugins": [
+            {
+              "name": "wildlife",
+              "msPerFrame": 0.5723611111287028,
+              "msPerRun": 1.030250000031665,
+              "asyncMs": 2.0999999940395355,
+              "msMaxRun": 1.800000000745058,
+              "shareOfFrame": 0.12438877151043047
+            },
+            {
+              "name": "pilgrims",
+              "msPerFrame": 0.4012499999617123,
+              "msPerRun": 0.4012499999617123,
+              "asyncMs": 1.0000000037252903,
+              "msMaxRun": 1,
+              "shareOfFrame": 0.08720193177585493
+            },
+            {
+              "name": "relics",
+              "msPerFrame": 0.09624999985616241,
+              "msPerRun": 0.09624999985616241,
+              "asyncMs": 0,
+              "msMaxRun": 0.30000000074505806,
+              "shareOfFrame": 0.02091759731260812
+            },
+            {
+              "name": "monsters",
+              "msPerFrame": 0.03958333333333333,
+              "msPerRun": 0.03958333333333333,
+              "asyncMs": 0.19999999552965164,
+              "msMaxRun": 0.20000000298023224,
+              "shareOfFrame": 0.00860247509812742
+            },
+            {
+              "name": "mudslides",
+              "msPerFrame": 0.02444444443099201,
+              "msPerRun": 0.02514285712902035,
+              "asyncMs": 0,
+              "msMaxRun": 1.8999999985098839,
+              "shareOfFrame": 0.005312405671709513
+            },
+            {
+              "name": "daynight",
+              "msPerFrame": 0.015000000006208818,
+              "msPerRun": 0.015000000006208818,
+              "asyncMs": 0.09999999776482582,
+              "msMaxRun": 0.19999999925494194,
+              "shareOfFrame": 0.0032598853016923574
+            },
+            {
+              "name": "snow",
+              "msPerFrame": 0.010277777791230215,
+              "msPerRun": 0.010277777791230215,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0022336251161215567
+            },
+            {
+              "name": "rain",
+              "msPerFrame": 0.00749999999275638,
+              "msPerRun": 0.00749999999275638,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0016299426485972862
+            },
+            {
+              "name": "structures",
+              "msPerFrame": 0.007499999972060323,
+              "msPerRun": 0.007499999972060323,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0016299426440995015
+            },
+            {
+              "name": "fog",
+              "msPerFrame": 0.006388888916828566,
+              "msPerRun": 0.006388888916828566,
+              "asyncMs": 0.10000000149011612,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0013884696710329263
+            },
+            {
+              "name": "fire",
+              "msPerFrame": 0.005416666659423046,
+              "msPerRun": 0.005416666659423046,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.001177180801327422
+            },
+            {
+              "name": "volcanoes",
+              "msPerFrame": 0.0027777777726037635,
+              "msPerRun": 0.0027777777726037635,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0006036824619020393
+            },
+            {
+              "name": "tornado",
+              "msPerFrame": 0.0026388888971673116,
+              "msPerRun": 0.0026388888971673116,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0005734983416742752
+            },
+            {
+              "name": "cyclone",
+              "msPerFrame": 0.0023611111100763083,
+              "msPerRun": 0.0023611111100763083,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0005131300933476235
+            },
+            {
+              "name": "apache",
+              "msPerFrame": 0.002222222208769785,
+              "msPerRun": 0.002222222208769785,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0004829459674976283
+            },
+            {
+              "name": "hydro",
+              "msPerFrame": 0.0018055555462423297,
+              "msPerRun": 0.0018055555462423297,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0003923935989432124
+            },
+            {
+              "name": "temples",
+              "msPerFrame": 0.0016666666604578495,
+              "msPerRun": 0.0016666666604578495,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0003622094764665559
+            },
+            {
+              "name": "thunderstorm",
+              "msPerFrame": 0.001527777790195412,
+              "msPerRun": 0.001527777790195412,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00033202535736323797
+            },
+            {
+              "name": "mana",
+              "msPerFrame": 0.0004166666625274552,
+              "msPerRun": 0.0004166666625274552,
+              "asyncMs": 0.5999999940395355,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00009055236855441586
+            },
+            {
+              "name": "flora",
+              "msPerFrame": 0.0002777777819169892,
+              "msPerRun": 0.0002777777819169892,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.000060368247202205526
+            },
+            {
+              "name": "music",
+              "msPerFrame": 0.0001388888909584946,
+              "msPerRun": 0.0001388888909584946,
+              "asyncMs": 0.4000000022351742,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.000030184123601102763
+            },
+            {
+              "name": "chronicle",
+              "msPerFrame": 0.0001388888857844803,
+              "msPerRun": 0.0001388888857844803,
+              "asyncMs": 0,
+              "msMaxRun": 0.09999999776482582,
+              "shareOfFrame": 0.00003018412247665655
+            },
+            {
+              "name": "invite",
+              "msPerFrame": 0,
+              "msPerRun": 0,
+              "asyncMs": 0,
+              "msMaxRun": 0,
+              "shareOfFrame": 0
+            }
+          ],
+          "duplicateRunners": [],
+          "uploadBytesPerFrame": 164639.97222222222,
+          "uploadCallsPerFrame": 169.74722222222223,
+          "uploadUnparsedCallsPerFrame": 0,
+          "uploadByKind": [
+            {
+              "kind": "writeBuffer",
+              "calls": 126.01388888888889,
+              "bytes": 42067.705555555556
+            },
+            {
+              "kind": "writeTexture",
+              "calls": 43.733333333333334,
+              "bytes": 122572.26666666666
+            }
+          ]
+        },
+        "visibility": "visible",
+        "focus": true,
+        "pending": 0,
+        "held": false
+      },
+      {
+        "sample": {
+          "uptimeS": 350.28890000000223,
+          "frames": 690,
+          "sampledFrames": 690,
+          "windowMs": 5009.70000000298,
+          "frameBudgetMs": 7.142857142857143,
+          "workOverBudgetFrames": 111,
+          "frameMsP50": 5.300000190734863,
+          "frameMsP95": 9.100000381469727,
+          "frameMsP99": 11.699999809265137,
+          "frameMsMax": 16,
+          "renderMsP50": 3.200000047683716,
+          "renderMsP99": 7.400000095367432,
+          "outsideMsP50": 1.8999998569488525,
+          "unattributedMs": 0.7733333333732855,
+          "intervalMsP50": 7,
+          "intervalMsP95": 9.600000381469727,
+          "intervalMsP99": 12.300000190734863,
+          "intervalMsMax": 15.5,
+          "gpuMsP50": 5.505024,
+          "counters": {
+            "pixelWidth": 1249,
+            "pixelHeight": 1229,
+            "cameraDistance": 12.000000000000005,
+            "drawCalls": 93,
+            "triangles": 6616233,
+            "geometries": 248,
+            "textures": 191,
+            "programs": 176
+          },
+          "plugins": [
+            {
+              "name": "pilgrims",
+              "msPerFrame": 0.5013043477213469,
+              "msPerRun": 0.5042274051424627,
+              "asyncMs": 1.2000000067055225,
+              "msMaxRun": 1.5999999977648258,
+              "shareOfFrame": 0.08839538982645542
+            },
+            {
+              "name": "wildlife",
+              "msPerFrame": 0.49826086957709514,
+              "msPerRun": 1.3122137404892964,
+              "asyncMs": 2.399999998509884,
+              "msMaxRun": 2.399999998509884,
+              "shareOfFrame": 0.08785873093208858
+            },
+            {
+              "name": "relics",
+              "msPerFrame": 0.13043478265188743,
+              "msPerRun": 0.13043478265188743,
+              "asyncMs": 0,
+              "msMaxRun": 0.5,
+              "shareOfFrame": 0.022999667790337026
+            },
+            {
+              "name": "monsters",
+              "msPerFrame": 0.04768115941813027,
+              "msPerRun": 0.04768115941813027,
+              "asyncMs": 0.10000000149011612,
+              "msMaxRun": 0.20000000298023224,
+              "shareOfFrame": 0.008407656333524981
+            },
+            {
+              "name": "mudslides",
+              "msPerFrame": 0.03391304348150025,
+              "msPerRun": 0.03492537313766444,
+              "asyncMs": 0,
+              "msMaxRun": 3.7000000029802322,
+              "shareOfFrame": 0.005979913624078659
+            },
+            {
+              "name": "daynight",
+              "msPerFrame": 0.01797101439881152,
+              "msPerRun": 0.01797101439881152,
+              "asyncMs": 0,
+              "msMaxRun": 0.30000000074505806,
+              "shareOfFrame": 0.003168843100165562
+            },
+            {
+              "name": "snow",
+              "msPerFrame": 0.010579710167603217,
+              "msPerRun": 0.010579710167603217,
+              "asyncMs": 0,
+              "msMaxRun": 0.19999999925494194,
+              "shareOfFrame": 0.001865528613041345
+            },
+            {
+              "name": "rain",
+              "msPerFrame": 0.009855072486443796,
+              "msPerRun": 0.009855072486443796,
+              "asyncMs": 0.09999999776482582,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0017377526809151172
+            },
+            {
+              "name": "structures",
+              "msPerFrame": 0.009130434778289518,
+              "msPerRun": 0.009130434778289518,
+              "asyncMs": 0,
+              "msMaxRun": 0.20000000298023224,
+              "shareOfFrame": 0.001609976744028865
+            },
+            {
+              "name": "fog",
+              "msPerFrame": 0.008405797080933183,
+              "msPerRun": 0.008405797080933183,
+              "asyncMs": 0.10000000149011612,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0014822008090466226
+            },
+            {
+              "name": "fire",
+              "msPerFrame": 0.006376811597442281,
+              "msPerRun": 0.006376811597442281,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0011244282032820067
+            },
+            {
+              "name": "cyclone",
+              "msPerFrame": 0.004927536202729612,
+              "msPerRun": 0.004927536202729612,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.000868876333317522
+            },
+            {
+              "name": "tornado",
+              "msPerFrame": 0.004347826092355493,
+              "msPerRun": 0.004347826092355493,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.000766655593709371
+            },
+            {
+              "name": "apache",
+              "msPerFrame": 0.003768115933390631,
+              "msPerRun": 0.003768115933390631,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0006644348455331762
+            },
+            {
+              "name": "volcanoes",
+              "msPerFrame": 0.0034782608728046002,
+              "msPerRun": 0.0034782608728046002,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0006133244747770958
+            },
+            {
+              "name": "thunderstorm",
+              "msPerFrame": 0.003043478279226068,
+              "msPerRun": 0.003043478279226068,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.000536658918166973
+            },
+            {
+              "name": "hydro",
+              "msPerFrame": 0.0024637681094632634,
+              "msPerRun": 0.0024637681094632634,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00043443816808676834
+            },
+            {
+              "name": "temples",
+              "msPerFrame": 0.0015942029061092847,
+              "msPerRun": 0.0015942029061092847,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0002811070520105078
+            },
+            {
+              "name": "chronicle",
+              "msPerFrame": 0.0007246376811594203,
+              "msPerRun": 0.0007246376811594203,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0001277759321262277
+            },
+            {
+              "name": "invite",
+              "msPerFrame": 0.000579710148166919,
+              "msPerRun": 0.000579710148166919,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00010222074627218507
+            },
+            {
+              "name": "music",
+              "msPerFrame": 0.0002898550713839738,
+              "msPerRun": 0.0002898550713839738,
+              "asyncMs": 0.7000000067055225,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0000511103726600901
+            },
+            {
+              "name": "flora",
+              "msPerFrame": 0.00014492753839147264,
+              "msPerRun": 0.00014492753839147264,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.000025555186806047493
+            },
+            {
+              "name": "mana",
+              "msPerFrame": 0.0001449275329925012,
+              "msPerRun": 0.0001449275329925012,
+              "asyncMs": 1.1000000014901161,
+              "msMaxRun": 0.09999999776482582,
+              "shareOfFrame": 0.000025555185854042614
+            }
+          ],
+          "duplicateRunners": [],
+          "uploadBytesPerFrame": 131450,
+          "uploadCallsPerFrame": 159.71449275362318,
+          "uploadUnparsedCallsPerFrame": 0,
+          "uploadByKind": [
+            {
+              "kind": "writeBuffer",
+              "calls": 124.68985507246377,
+              "bytes": 41420.921739130434
+            },
+            {
+              "kind": "writeTexture",
+              "calls": 35.02463768115942,
+              "bytes": 90029.07826086956
+            }
+          ]
+        },
+        "visibility": "visible",
+        "focus": true,
+        "pending": 0,
+        "held": false
+      }
+    ],
+    "durationMs": 20000
+  },
+  "sculpt": {
+    "cell": {
+      "x": 303,
+      "y": 304
+    },
+    "radius": 4,
+    "intervalMs": 120,
+    "durationMs": 20000,
+    "sequenceStart": 1000000,
+    "sent": 168,
+    "samples": [
+      {
+        "sample": {
+          "uptimeS": 355.29040000000225,
+          "frames": 562,
+          "sampledFrames": 562,
+          "windowMs": 5001.5,
+          "frameBudgetMs": 7.142857142857143,
+          "workOverBudgetFrames": 252,
+          "frameMsP50": 6.699999809265137,
+          "frameMsP95": 12,
+          "frameMsP99": 14.600000381469727,
+          "frameMsMax": 33,
+          "renderMsP50": 4.099999904632568,
+          "renderMsP99": 10.199999809265137,
+          "outsideMsP50": 2.5,
+          "unattributedMs": 1.4370106762387789,
+          "intervalMsP50": 7.699999809265137,
+          "intervalMsP95": 16,
+          "intervalMsP99": 19.399999618530273,
+          "intervalMsMax": 60.099998474121094,
+          "gpuMsP50": 5.767168,
+          "counters": {
+            "pixelWidth": 1249,
+            "pixelHeight": 1229,
+            "cameraDistance": 12.000000000000005,
+            "drawCalls": 98,
+            "triangles": 6730362,
+            "geometries": 248,
+            "textures": 191,
+            "programs": 176
+          },
+          "plugins": [
+            {
+              "name": "wildlife",
+              "msPerFrame": 0.5274021352352939,
+              "msPerRun": 1.5437500000116415,
+              "asyncMs": 2.700000014156103,
+              "msMaxRun": 3.5,
+              "shareOfFrame": 0.07321953509187007
+            },
+            {
+              "name": "pilgrims",
+              "msPerFrame": 0.4948398576804115,
+              "msPerRun": 0.5130996310265522,
+              "asyncMs": 1.3000000081956387,
+              "msMaxRun": 3.2999999970197678,
+              "shareOfFrame": 0.06869889578304883
+            },
+            {
+              "name": "relics",
+              "msPerFrame": 0.1396797152560907,
+              "msPerRun": 0.14068100353749635,
+              "asyncMs": 0,
+              "msMaxRun": 1.300000000745058,
+              "shareOfFrame": 0.019391813437109003
+            },
+            {
+              "name": "monsters",
+              "msPerFrame": 0.05231316729027818,
+              "msPerRun": 0.05231316729027818,
+              "asyncMs": 0,
+              "msMaxRun": 0.20000000298023224,
+              "shareOfFrame": 0.007262666440416536
+            },
+            {
+              "name": "mudslides",
+              "msPerFrame": 0.04199288256492903,
+              "msPerRun": 0.04354243542710354,
+              "asyncMs": 0,
+              "msMaxRun": 3.7000000029802322,
+              "shareOfFrame": 0.005829895506964266
+            },
+            {
+              "name": "daynight",
+              "msPerFrame": 0.02330960855683398,
+              "msPerRun": 0.02330960855683398,
+              "asyncMs": 0,
+              "msMaxRun": 0.3999999985098839,
+              "shareOfFrame": 0.0032360860673107234
+            },
+            {
+              "name": "snow",
+              "msPerFrame": 0.01583629894961878,
+              "msPerRun": 0.01583629894961878,
+              "asyncMs": 0,
+              "msMaxRun": 0.19999999925494194,
+              "shareOfFrame": 0.0021985622908971525
+            },
+            {
+              "name": "rain",
+              "msPerFrame": 0.013701067594446746,
+              "msPerRun": 0.013701067594446746,
+              "asyncMs": 0,
+              "msMaxRun": 0.6999999992549419,
+              "shareOfFrame": 0.0019021269208174868
+            },
+            {
+              "name": "fog",
+              "msPerFrame": 0.010498220631289312,
+              "msPerRun": 0.010498220631289312,
+              "asyncMs": 0.30000000074505806,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0014574738753606817
+            },
+            {
+              "name": "tornado",
+              "msPerFrame": 0.006583629891912708,
+              "msPerRun": 0.006583629891912708,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0009140090411043304
+            },
+            {
+              "name": "fire",
+              "msPerFrame": 0.005693950176610217,
+              "msPerRun": 0.005693950176610217,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0007904943057950894
+            },
+            {
+              "name": "structures",
+              "msPerFrame": 0.005516014244155527,
+              "msPerRun": 0.005516014244155527,
+              "asyncMs": 3.800000000745058,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0007657913602056517
+            },
+            {
+              "name": "thunderstorm",
+              "msPerFrame": 0.005516014204383745,
+              "msPerRun": 0.005516014204383745,
+              "asyncMs": 0,
+              "msMaxRun": 0.19999999925494194,
+              "shareOfFrame": 0.0007657913546841129
+            },
+            {
+              "name": "volcanoes",
+              "msPerFrame": 0.005160142359360257,
+              "msPerRun": 0.005160142359360257,
+              "asyncMs": 0.19999999925494194,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0007163854662660068
+            },
+            {
+              "name": "cyclone",
+              "msPerFrame": 0.004448398563255194,
+              "msPerRun": 0.004448398563255194,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0006175736747056908
+            },
+            {
+              "name": "hydro",
+              "msPerFrame": 0.003380782915498014,
+              "msPerRun": 0.003380782915498014,
+              "asyncMs": 0.7000000067055225,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00046935599380701224
+            },
+            {
+              "name": "apache",
+              "msPerFrame": 0.002313167261112203,
+              "msPerRun": 0.002313167261112203,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0003211383119880773
+            },
+            {
+              "name": "temples",
+              "msPerFrame": 0.0021352313154002524,
+              "msPerRun": 0.0021352313154002524,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0002964353645581265
+            },
+            {
+              "name": "mana",
+              "msPerFrame": 0.0008896797086738607,
+              "msPerRun": 0.0008896797086738607,
+              "asyncMs": 18.599999982863665,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00012351473438898427
+            },
+            {
+              "name": "music",
+              "msPerFrame": 0.0007117437563332799,
+              "msPerRun": 0.0007117437563332799,
+              "asyncMs": 1.2000000029802322,
+              "msMaxRun": 0.09999999776482582,
+              "shareOfFrame": 0.00009881178603877704
+            },
+            {
+              "name": "flora",
+              "msPerFrame": 0.0001779359457119504,
+              "msPerRun": 0.0001779359457119504,
+              "asyncMs": 186.40000000968575,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.000024702947429950748
+            },
+            {
+              "name": "chronicle",
+              "msPerFrame": 0.0001779359457119504,
+              "msPerRun": 0.0001779359457119504,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.000024702947429950748
+            },
+            {
+              "name": "invite",
+              "msPerFrame": 0.00017793593908331997,
+              "msPerRun": 0.00017793593908331997,
+              "asyncMs": 0,
+              "msMaxRun": 0.09999999776482582,
+              "shareOfFrame": 0.00002470294650969426
+            }
+          ],
+          "duplicateRunners": [],
+          "uploadBytesPerFrame": 169999.85053380782,
+          "uploadCallsPerFrame": 169.98932384341637,
+          "uploadUnparsedCallsPerFrame": 0,
+          "uploadByKind": [
+            {
+              "kind": "writeBuffer",
+              "calls": 131.5017793594306,
+              "bytes": 79055.05338078292
+            },
+            {
+              "kind": "writeTexture",
+              "calls": 38.487544483985765,
+              "bytes": 90944.7971530249
+            }
+          ]
+        },
+        "visibility": "visible",
+        "focus": true,
+        "pending": 12,
+        "held": false
+      },
+      {
+        "sample": {
+          "uptimeS": 360.29740000000226,
+          "frames": 589,
+          "sampledFrames": 589,
+          "windowMs": 5007,
+          "frameBudgetMs": 7.142857142857143,
+          "workOverBudgetFrames": 209,
+          "frameMsP50": 6.400000095367432,
+          "frameMsP95": 9.699999809265137,
+          "frameMsP99": 12.600000381469727,
+          "frameMsMax": 24.399999618530273,
+          "renderMsP50": 3.200000047683716,
+          "renderMsP99": 5.400000095367432,
+          "outsideMsP50": 3.1999998092651367,
+          "unattributedMs": 2.3050933785369727,
+          "intervalMsP50": 7.900000095367432,
+          "intervalMsP95": 13.300000190734863,
+          "intervalMsP99": 17.299999237060547,
+          "intervalMsMax": 25,
+          "gpuMsP50": 5.5705599999999995,
+          "counters": {
+            "pixelWidth": 1249,
+            "pixelHeight": 1229,
+            "cameraDistance": 12.000000000000005,
+            "drawCalls": 96,
+            "triangles": 6801504,
+            "geometries": 248,
+            "textures": 191,
+            "programs": 176
+          },
+          "plugins": [
+            {
+              "name": "wildlife",
+              "msPerFrame": 0.5453310695766188,
+              "msPerRun": 1.1037800686619537,
+              "asyncMs": 2.5,
+              "msMaxRun": 2.899999998509884,
+              "shareOfFrame": 0.08114594648811187
+            },
+            {
+              "name": "pilgrims",
+              "msPerFrame": 0.3179966044661246,
+              "msPerRun": 0.3212692967933917,
+              "asyncMs": 1.199999999254942,
+              "msMaxRun": 1.800000000745058,
+              "shareOfFrame": 0.04731829321487789
+            },
+            {
+              "name": "relics",
+              "msPerFrame": 0.0966044144107247,
+              "msPerRun": 0.0966044144107247,
+              "asyncMs": 0,
+              "msMaxRun": 0.30000000074505806,
+              "shareOfFrame": 0.014374857915897024
+            },
+            {
+              "name": "monsters",
+              "msPerFrame": 0.031239388703490356,
+              "msPerRun": 0.031239388703490356,
+              "asyncMs": 0.09999999776482582,
+              "msMaxRun": 0.20000000298023224,
+              "shareOfFrame": 0.004648460184054478
+            },
+            {
+              "name": "mudslides",
+              "msPerFrame": 0.03089983022577289,
+              "msPerRun": 0.03198594025128336,
+              "asyncMs": 0,
+              "msMaxRun": 2.600000001490116,
+              "shareOfFrame": 0.004597933457081378
+            },
+            {
+              "name": "rain",
+              "msPerFrame": 0.022580645118281877,
+              "msPerRun": 0.022580645118281877,
+              "asyncMs": 0.30000000074505806,
+              "msMaxRun": 0.20000000298023224,
+              "shareOfFrame": 0.003360028288609557
+            },
+            {
+              "name": "daynight",
+              "msPerFrame": 0.020203735135457715,
+              "msPerRun": 0.020272572393159445,
+              "asyncMs": 0,
+              "msMaxRun": 2,
+              "shareOfFrame": 0.0030063411047433364
+            },
+            {
+              "name": "fog",
+              "msPerFrame": 0.007640067924364314,
+              "msPerRun": 0.007640067924364314,
+              "asyncMs": 0.10000000149011612,
+              "msMaxRun": 0.19999999925494194,
+              "shareOfFrame": 0.001136851680644802
+            },
+            {
+              "name": "snow",
+              "msPerFrame": 0.006281833608709086,
+              "msPerRun": 0.006281833608709086,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0009347447125198341
+            },
+            {
+              "name": "fire",
+              "msPerFrame": 0.004074702896367512,
+              "msPerRun": 0.004074702896367512,
+              "asyncMs": 0.10000000149011612,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0006063208968458324
+            },
+            {
+              "name": "structures",
+              "msPerFrame": 0.003735144298479391,
+              "msPerRun": 0.003735144298479391,
+              "asyncMs": 1.7000000067055225,
+              "msMaxRun": 0.19999999925494194,
+              "shareOfFrame": 0.0005557941519911888
+            },
+            {
+              "name": "cyclone",
+              "msPerFrame": 0.003395585757514212,
+              "msPerRun": 0.003395585757514212,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0005052674156067502
+            },
+            {
+              "name": "tornado",
+              "msPerFrame": 0.003225806442758223,
+              "msPerRun": 0.003225806442758223,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0004800040408265936
+            },
+            {
+              "name": "volcanoes",
+              "msPerFrame": 0.003225806436433452,
+              "msPerRun": 0.003225806436433452,
+              "asyncMs": 0.4000000059604645,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00048000403988545976
+            },
+            {
+              "name": "thunderstorm",
+              "msPerFrame": 0.002376910008123249,
+              "msPerRun": 0.002376910008123249,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0003536871876307565
+            },
+            {
+              "name": "apache",
+              "msPerFrame": 0.0022071307376406593,
+              "msPerRun": 0.0022071307376406593,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0003284238194385372
+            },
+            {
+              "name": "temples",
+              "msPerFrame": 0.0020373514418589845,
+              "msPerRun": 0.0020373514418589845,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0003031604474817823
+            },
+            {
+              "name": "hydro",
+              "msPerFrame": 0.0015280135987873595,
+              "msPerRun": 0.0015280135987873595,
+              "asyncMs": 0.6999999955296516,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00022737033819945495
+            },
+            {
+              "name": "invite",
+              "msPerFrame": 0.00033955857891380687,
+              "msPerRun": 0.00033955857891380687,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00005052674203124197
+            },
+            {
+              "name": "mana",
+              "msPerFrame": 0.00033955857258903554,
+              "msPerRun": 0.00033955857258903554,
+              "asyncMs": 22.69999998807907,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00005052674109010807
+            },
+            {
+              "name": "music",
+              "msPerFrame": 0.00016977928945690344,
+              "msPerRun": 0.00016977928945690344,
+              "asyncMs": 0.6000000014901161,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.000025263371015620985
+            },
+            {
+              "name": "flora",
+              "msPerFrame": 0,
+              "msPerRun": 0,
+              "asyncMs": 424.99999994412065,
+              "msMaxRun": 0,
+              "shareOfFrame": 0
+            },
+            {
+              "name": "chronicle",
+              "msPerFrame": 0,
+              "msPerRun": 0,
+              "asyncMs": 0,
+              "msMaxRun": 0,
+              "shareOfFrame": 0
+            }
+          ],
+          "duplicateRunners": [],
+          "uploadBytesPerFrame": 202726.76400679117,
+          "uploadCallsPerFrame": 190.94057724957554,
+          "uploadUnparsedCallsPerFrame": 0,
+          "uploadByKind": [
+            {
+              "kind": "writeBuffer",
+              "calls": 148.99660441426147,
+              "bytes": 77099.1103565365
+            },
+            {
+              "kind": "writeTexture",
+              "calls": 41.94397283531409,
+              "bytes": 125627.65365025467
+            }
+          ]
+        },
+        "visibility": "visible",
+        "focus": true,
+        "pending": 8,
+        "held": false
+      },
+      {
+        "sample": {
+          "uptimeS": 365.29930000000076,
+          "frames": 615,
+          "sampledFrames": 615,
+          "windowMs": 5001.89999999851,
+          "frameBudgetMs": 7.142857142857143,
+          "workOverBudgetFrames": 173,
+          "frameMsP50": 6.099999904632568,
+          "frameMsP95": 9.699999809265137,
+          "frameMsP99": 11.399999618530273,
+          "frameMsMax": 12.800000190734863,
+          "renderMsP50": 3.0999999046325684,
+          "renderMsP99": 5,
+          "outsideMsP50": 3,
+          "unattributedMs": 1.9970731708455862,
+          "intervalMsP50": 7.5,
+          "intervalMsP95": 12.5,
+          "intervalMsP99": 14.800000190734863,
+          "intervalMsMax": 25.899999618530273,
+          "gpuMsP50": 5.963776,
+          "counters": {
+            "pixelWidth": 1249,
+            "pixelHeight": 1229,
+            "cameraDistance": 12.000000000000005,
+            "drawCalls": 102,
+            "triangles": 6766538,
+            "geometries": 248,
+            "textures": 191,
+            "programs": 176
+          },
+          "plugins": [
+            {
+              "name": "wildlife",
+              "msPerFrame": 0.6149593495983419,
+              "msPerRun": 1.0418732782451245,
+              "asyncMs": 2.9000000059604645,
+              "msMaxRun": 3.699999999254942,
+              "shareOfFrame": 0.09637878749513477
+            },
+            {
+              "name": "pilgrims",
+              "msPerFrame": 0.30780487798941814,
+              "msPerRun": 0.31186161443738414,
+              "asyncMs": 0.9999999962747097,
+              "msMaxRun": 2.699999999254942,
+              "shareOfFrame": 0.04824036083862153
+            },
+            {
+              "name": "relics",
+              "msPerFrame": 0.0933333334278285,
+              "msPerRun": 0.0933333334278285,
+              "asyncMs": 0,
+              "msMaxRun": 0.30000000074505806,
+              "shareOfFrame": 0.014627557926436144
+            },
+            {
+              "name": "monsters",
+              "msPerFrame": 0.03300813004011061,
+              "msPerRun": 0.03300813004011061,
+              "asyncMs": 0.09999999776482582,
+              "msMaxRun": 0.20000000298023224,
+              "shareOfFrame": 0.005173160718388032
+            },
+            {
+              "name": "mudslides",
+              "msPerFrame": 0.030243902423275196,
+              "msPerRun": 0.03126050418540209,
+              "asyncMs": 0,
+              "msMaxRun": 2.899999998509884,
+              "shareOfFrame": 0.00473994036610756
+            },
+            {
+              "name": "rain",
+              "msPerFrame": 0.020650406478624032,
+              "msPerRun": 0.020650406478624032,
+              "asyncMs": 0.10000000149011612,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0032364108928360723
+            },
+            {
+              "name": "daynight",
+              "msPerFrame": 0.01495934954988278,
+              "msPerRun": 0.01495934954988278,
+              "asyncMs": 0,
+              "msMaxRun": 0.29999999701976776,
+              "shareOfFrame": 0.002344486627084009
+            },
+            {
+              "name": "fog",
+              "msPerFrame": 0.007479674823400451,
+              "msPerRun": 0.007479674823400451,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0011722433211366944
+            },
+            {
+              "name": "thunderstorm",
+              "msPerFrame": 0.0069918699380828115,
+              "msPerRun": 0.0069918699380828115,
+              "asyncMs": 0.09999999776482582,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.001095792668891429
+            },
+            {
+              "name": "snow",
+              "msPerFrame": 0.0066666666630322375,
+              "msPerRun": 0.0066666666630322375,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.001044825564546577
+            },
+            {
+              "name": "fire",
+              "msPerFrame": 0.005040650414984401,
+              "msPerRun": 0.005040650414984401,
+              "asyncMs": 0.19999999925494194,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0007899900627583765
+            },
+            {
+              "name": "structures",
+              "msPerFrame": 0.004390243895170166,
+              "msPerRun": 0.004390243895170166,
+              "asyncMs": 1.7999999932944775,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0006880558588153532
+            },
+            {
+              "name": "tornado",
+              "msPerFrame": 0.004227642303075247,
+              "msPerRun": 0.004227642303075247,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0006625723137629487
+            },
+            {
+              "name": "apache",
+              "msPerFrame": 0.003089430904000755,
+              "msPerRun": 0.003089430904000755,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0004841874585239963
+            },
+            {
+              "name": "cyclone",
+              "msPerFrame": 0.002926829245274629,
+              "msPerRun": 0.002926829245274629,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0004587039030288934
+            },
+            {
+              "name": "volcanoes",
+              "msPerFrame": 0.0022764227618046894,
+              "msPerRun": 0.0022764227618046894,
+              "asyncMs": 0.3999999910593033,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00035676970478188747
+            },
+            {
+              "name": "hydro",
+              "msPerFrame": 0.0008130081179665356,
+              "msPerRun": 0.0008130081179665356,
+              "asyncMs": 0.10000000149011612,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00012741774994476395
+            },
+            {
+              "name": "temples",
+              "msPerFrame": 0.000650406495584705,
+              "msPerRun": 0.000650406495584705,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0001019342001456784
+            },
+            {
+              "name": "invite",
+              "msPerFrame": 0.0004878048853176396,
+              "msPerRun": 0.0004878048853176396,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00007645065224526533
+            },
+            {
+              "name": "mana",
+              "msPerFrame": 0.0003252032447636612,
+              "msPerRun": 0.0003252032447636612,
+              "asyncMs": 21.39999996870756,
+              "msMaxRun": 0.09999999776482582,
+              "shareOfFrame": 0.00005096709959817109
+            },
+            {
+              "name": "chronicle",
+              "msPerFrame": 0.0001626016284392132,
+              "msPerRun": 0.0001626016284392132,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.000025483550748421772
+            },
+            {
+              "name": "flora",
+              "msPerFrame": 0,
+              "msPerRun": 0,
+              "asyncMs": 395.70000000298023,
+              "msMaxRun": 0,
+              "shareOfFrame": 0
+            },
+            {
+              "name": "music",
+              "msPerFrame": 0,
+              "msPerRun": 0,
+              "asyncMs": 0.4000000059604645,
+              "msMaxRun": 0,
+              "shareOfFrame": 0
+            }
+          ],
+          "duplicateRunners": [],
+          "uploadBytesPerFrame": 222722.77723577234,
+          "uploadCallsPerFrame": 212.6,
+          "uploadUnparsedCallsPerFrame": 0,
+          "uploadByKind": [
+            {
+              "kind": "writeBuffer",
+              "calls": 167.4260162601626,
+              "bytes": 79078.9918699187
+            },
+            {
+              "kind": "writeTexture",
+              "calls": 45.1739837398374,
+              "bytes": 143643.78536585366
+            }
+          ]
+        },
+        "visibility": "visible",
+        "focus": true,
+        "pending": 8,
+        "held": false
+      },
+      {
+        "sample": {
+          "uptimeS": 370.30290000000224,
+          "frames": 645,
+          "sampledFrames": 645,
+          "windowMs": 5003.60000000149,
+          "frameBudgetMs": 7.142857142857143,
+          "workOverBudgetFrames": 145,
+          "frameMsP50": 5.900000095367432,
+          "frameMsP95": 9.100000381469727,
+          "frameMsP99": 11.800000190734863,
+          "frameMsMax": 13.199999809265137,
+          "renderMsP50": 3,
+          "renderMsP99": 5.5,
+          "outsideMsP50": 2.9000000953674316,
+          "unattributedMs": 1.9232558140805525,
+          "intervalMsP50": 7.199999809265137,
+          "intervalMsP95": 11.5,
+          "intervalMsP99": 13.300000190734863,
+          "intervalMsMax": 21.600000381469727,
+          "gpuMsP50": 5.767168,
+          "counters": {
+            "pixelWidth": 1249,
+            "pixelHeight": 1229,
+            "cameraDistance": 12.000000000000005,
+            "drawCalls": 101,
+            "triangles": 6700286,
+            "geometries": 248,
+            "textures": 191,
+            "programs": 176
+          },
+          "plugins": [
+            {
+              "name": "wildlife",
+              "msPerFrame": 0.6559689922214941,
+              "msPerRun": 0.9402222221841415,
+              "asyncMs": 2.4999999925494194,
+              "msMaxRun": 2.600000001490116,
+              "shareOfFrame": 0.10656357041704022
+            },
+            {
+              "name": "pilgrims",
+              "msPerFrame": 0.27379844955118127,
+              "msPerRun": 0.2746500776990854,
+              "asyncMs": 1.0999999903142452,
+              "msMaxRun": 2.199999999254942,
+              "shareOfFrame": 0.04447914566817187
+            },
+            {
+              "name": "relics",
+              "msPerFrame": 0.09658914725909862,
+              "msPerRun": 0.09688958006550327,
+              "asyncMs": 0,
+              "msMaxRun": 1.300000000745058,
+              "shareOfFrame": 0.01569111424094774
+            },
+            {
+              "name": "monsters",
+              "msPerFrame": 0.02945736429488012,
+              "msPerRun": 0.02945736429488012,
+              "asyncMs": 0,
+              "msMaxRun": 0.19999999925494194,
+              "shareOfFrame": 0.004785412041668462
+            },
+            {
+              "name": "mudslides",
+              "msPerFrame": 0.029147286822860555,
+              "msPerRun": 0.030080000001192094,
+              "asyncMs": 0,
+              "msMaxRun": 3.100000001490116,
+              "shareOfFrame": 0.004735039290949878
+            },
+            {
+              "name": "rain",
+              "msPerFrame": 0.013023255800091943,
+              "msPerRun": 0.013023255800091943,
+              "asyncMs": 0.09999999776482582,
+              "msMaxRun": 0.19999999925494194,
+              "shareOfFrame": 0.002115655851067454
+            },
+            {
+              "name": "daynight",
+              "msPerFrame": 0.012558139542969622,
+              "msPerRun": 0.012558139542969622,
+              "asyncMs": 0,
+              "msMaxRun": 0.19999999925494194,
+              "shareOfFrame": 0.0020400967170143176
+            },
+            {
+              "name": "thunderstorm",
+              "msPerFrame": 0.006511627917372903,
+              "msPerRun": 0.006511627917372903,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0010578279283485243
+            },
+            {
+              "name": "snow",
+              "msPerFrame": 0.006046511619821076,
+              "msPerRun": 0.006046511619821076,
+              "asyncMs": 0.20000000298023224,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0009822687877275279
+            },
+            {
+              "name": "fire",
+              "msPerFrame": 0.004961240320473678,
+              "msPerRun": 0.004961240320473678,
+              "asyncMs": 0.29999999701976776,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0008059641362867038
+            },
+            {
+              "name": "fog",
+              "msPerFrame": 0.0043410852551460264,
+              "msPerRun": 0.0043410852551460264,
+              "asyncMs": 0.10000000149011612,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0007052186151459531
+            },
+            {
+              "name": "tornado",
+              "msPerFrame": 0.0037209302071453064,
+              "msPerRun": 0.0037209302071453064,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0006044730968199998
+            },
+            {
+              "name": "apache",
+              "msPerFrame": 0.0032558139557986297,
+              "msPerRun": 0.0032558139557986297,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.0005289139637051293
+            },
+            {
+              "name": "structures",
+              "msPerFrame": 0.003255813938471698,
+              "msPerRun": 0.003255813938471698,
+              "asyncMs": 0.8999999985098839,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.000528913960890332
+            },
+            {
+              "name": "volcanoes",
+              "msPerFrame": 0.002945736443349557,
+              "msPerRun": 0.002945736443349557,
+              "asyncMs": 0.10000000149011612,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00047854120641868404
+            },
+            {
+              "name": "cyclone",
+              "msPerFrame": 0.002635658930900485,
+              "msPerRun": 0.002635658930900485,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00042816844913223887
+            },
+            {
+              "name": "temples",
+              "msPerFrame": 0.0018604651208995848,
+              "msPerRun": 0.0018604651208995848,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00030223655122479714
+            },
+            {
+              "name": "hydro",
+              "msPerFrame": 0.0015503875968992248,
+              "msPerRun": 0.0015503875968992248,
+              "asyncMs": 0.6999999992549419,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00025186379206182044
+            },
+            {
+              "name": "music",
+              "msPerFrame": 0.0006201550480007201,
+              "msPerRun": 0.0006201550480007201,
+              "asyncMs": 0.30000000074505806,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00010074551832595336
+            },
+            {
+              "name": "invite",
+              "msPerFrame": 0.0006201550422250762,
+              "msPerRun": 0.0006201550422250762,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00010074551738768762
+            },
+            {
+              "name": "chronicle",
+              "msPerFrame": 0.0004651162802248962,
+              "msPerRun": 0.0004651162802248962,
+              "asyncMs": 0,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00007555913780619929
+            },
+            {
+              "name": "flora",
+              "msPerFrame": 0.0003100775182247162,
+              "msPerRun": 0.0003100775182247162,
+              "asyncMs": 355.80000001192093,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00005037275822471094
+            },
+            {
+              "name": "mana",
+              "msPerFrame": 0.00015503876200018002,
+              "msPerRun": 0.00015503876200018002,
+              "asyncMs": 20.400000020861626,
+              "msMaxRun": 0.10000000149011612,
+              "shareOfFrame": 0.00002518637958148834
+            }
+          ],
+          "duplicateRunners": [],
+          "uploadBytesPerFrame": 240163.71472868216,
+          "uploadCallsPerFrame": 216.47751937984495,
+          "uploadUnparsedCallsPerFrame": 0,
+          "uploadByKind": [
+            {
+              "kind": "writeBuffer",
+              "calls": 167.7875968992248,
+              "bytes": 82755.26821705427
+            },
+            {
+              "kind": "writeTexture",
+              "calls": 48.689922480620154,
+              "bytes": 157408.4465116279
+            }
+          ]
+        },
+        "visibility": "visible",
+        "focus": true,
+        "pending": 4,
+        "held": false
+      }
+    ],
+    "viewDistance": 12
+  },
+  "postCapture": {
+    "pending": 0,
+    "held": false,
+    "terrainRevisionAtCell": 665,
+    "gpuMesher": {
+      "countMs": 1.900544,
+      "emitMs": 2.162688,
+      "batches": 320,
+      "chunks": 1583
+    }
+  },
+  "historyValidation": {
+    "length": 82,
+    "ordered": true,
+    "invalidSamples": 0,
+    "firstUptimeS": 5.003400000002236,
+    "lastUptimeS": 410.32880000000074
+  }
+}

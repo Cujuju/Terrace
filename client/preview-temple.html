@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Temple preview (throwaway)</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        /* The DAYLIT SKY, not the neutral studio grey the other harnesses use
+           — see previewTemple.ts for why that choice is the whole harness. */
+        background: #9fc7e8;
+      }
+      canvas {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- THROWAWAY preview harness for the temples plugin's model and its
+         celestial crown. Not part of the shipped app: reached only by
+         navigating here directly. See previewTemple.ts for the contract. -->
+    <canvas id="viewport"></canvas>
+    <script type="module" src="/src/previewTemple.ts"></script>
+  </body>
+</html>

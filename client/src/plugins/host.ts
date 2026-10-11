@@ -1,0 +1,1042 @@
+import type { SculptIntent } from '@terrace/shared';
+import { Group, Raycaster, Vector2, type Intersection, type Object3D, type Ray } from 'three';
+import type { Component } from 'solid-js';
+import { FPS_SAMPLE_INTERVAL_MS } from '../config.ts';
+import { BOOT_MARKS, bootMarked } from '../bootMarks.ts';
+import { createAudioEngine } from '../audio/audioEngine.ts';
+import type { Connection } from '../net/connection.ts';
+import type { FramePhase, Viewport } from '../render/scene.ts';
+import { FRAME_DELTA_CAP_S } from '../render/scene.ts';
+import { rendererBackendName } from '../render/rendererBackend.ts';
+import { loadRigAsset } from '../render/rigAsset.ts';
+import { frameStatsSample, recordPluginAsync, recordPluginFrame } from '../render/frameStats.ts';
+import { applySkyRig, skyRigEquals, type SkyRigState } from '../render/skyRig.ts';
+import { warmHiddenDrawables, type SideFlip } from '../render/settleWarmup.ts';
+import {
+  clearGroundShade,
+  configureGroundShade,
+  groundShadeMaxFor,
+  setGroundShade,
+} from '../render/groundShade.ts';
+import { setFrameDraw, setRenderPath } from '../state/hudState.ts';
+import { pointerToNdc, worldPointToCell, type CellOccupancy } from '../terrain/picking.ts';
+import type { World } from '../world.ts';
+import {
+  addPluginHudPanel,
+  claimWorldHeaderAction,
+  releaseWorldHeaderAction,
+  removePluginDrawRow,
+  removePluginHudPanels,
+  setPluginDrawRows,
+  type PluginDrawRow,
+} from './hudPanels.ts';
+import { addPluginTool, removePluginTools } from './toolbar.ts';
+import type {
+  ClientPluginCtx,
+  GroundShadeDisc,
+  MoverPose,
+  TerraceClientPlugin,
+  WorldPosition,
+} from './types.ts';
+
+export function countDrawObjects(root: Object3D): number {
+  if (!root.visible) return 0;
+  const node = root as Object3D & {
+    isMesh?: boolean;
+    isLine?: boolean;
+    isPoints?: boolean;
+    isSprite?: boolean;
+    isInstancedMesh?: boolean;
+    count?: number;
+    geometry?: { drawRange?: { count: number } };
+  };
+  let drawn = 0;
+  if (
+    node.isMesh === true ||
+    node.isLine === true ||
+    node.isPoints === true ||
+    node.isSprite === true
+  ) {
+    const emptyInstances = node.isInstancedMesh === true && (node.count ?? 0) <= 0;
+    const drawRange = node.geometry?.drawRange;
+    const emptyRange = drawRange !== undefined && drawRange.count === 0;
+    if (!emptyInstances && !emptyRange) drawn = 1;
+  }
+  for (const child of root.children) drawn += countDrawObjects(child);
+  return drawn;
+}
+
+export const DRAW_BUDGET_CLEAR_SAMPLES = 2;
+
+export const DRAW_BUDGET_CLEAR_MARGIN = 0.1;
+
+export interface DrawBudgetBreachState {
+  readonly breached: boolean;
+  readonly lowSamples: number;
+}
+
+export const NO_DRAW_BUDGET_BREACH: DrawBudgetBreachState = {
+  breached: false,
+  lowSamples: 0,
+};
+
+export function stepDrawBudgetBreach(
+  state: DrawBudgetBreachState,
+  objects: number,
+  budget: number,
+): DrawBudgetBreachState {
+  if (!Number.isFinite(budget)) return { breached: true, lowSamples: 0 };
+  if (objects > budget) return { breached: true, lowSamples: 0 };
+  if (!state.breached) return NO_DRAW_BUDGET_BREACH;
+  if (objects > budget * (1 - DRAW_BUDGET_CLEAR_MARGIN)) {
+    return { breached: true, lowSamples: 0 };
+  }
+  const lowSamples = state.lowSamples + 1;
+  return lowSamples >= DRAW_BUDGET_CLEAR_SAMPLES
+    ? NO_DRAW_BUDGET_BREACH
+    : { breached: true, lowSamples };
+}
+
+/** Per-plugin frame-time budget: one overrun rests the plugin, protecting the frame. */
+export const PLUGIN_FRAME_BUDGET_MS = 1.0;
+
+/** Frames skipped after one over-budget sample; catch-up dt stays under plugin clamps. */
+export const PLUGIN_FRAME_SKIP_FRAMES = 2;
+
+/** Single runs past this log immediately; the window max column keeps the rest. */
+export const PLUGIN_SLOW_RUN_MS = 10;
+
+// Bounds memory if a preload never settles. Assumption: plugins send at most a few
+// messages per second, so this covers minutes of loading.
+const HELD_PLUGIN_MESSAGE_LIMIT = 512;
+
+const NO_LAYERS: ReadonlySet<Object3D> = new Set();
+
+type RenderObjectFunction = NonNullable<
+  Parameters<Viewport['renderer']['setRenderObjectFunction']>[0]
+>;
+
+interface PluginFrameThrottle {
+  skipRemaining: number;
+  pendingDt: number;
+  breachNotified: boolean;
+  breachLogged: boolean;
+  slowLogged: boolean;
+  lowSamples: number;
+}
+
+export interface ClientPluginHost {
+  routeMessage(type: string, payload: unknown): void;
+  allowLocalIntent(intent: SculptIntent): boolean;
+  syncLivePlugins(liveNames: readonly string[] | undefined): void;
+  resetWorld(worldGeneration?: number): void;
+  frameDrawBudget(): number;
+  dispose(): void;
+}
+
+export function createClientPluginHost(
+  plugins: readonly TerraceClientPlugin[],
+  deps: {
+    viewport: Viewport;
+    world: World;
+    connection: () => Connection;
+    coreDrawBudget: () => number;
+    now?: () => number;
+  },
+): ClientPluginHost {
+  const { viewport, world } = deps;
+
+  const handlers = new Map<string, Set<(payload: unknown) => void>>();
+
+  interface MountedPlugin {
+    readonly plugin: TerraceClientPlugin;
+    readonly layer: Group;
+    readonly undo: (() => void)[];
+  }
+
+  const mounted = new Map<string, MountedPlugin>();
+  const worldResetHandlers = new Map<() => void, string>();
+  let joinedGeneration: number | undefined;
+
+  const mountGenerations = new Map<string, number>();
+
+  const pendingMounts = new Set<string>();
+
+  // Messages for a plugin still preloading: it has no handlers until attach runs.
+  const heldMessages = new Map<string, { readonly type: string; readonly payload: unknown }[]>();
+
+  const breachStates = new Map<string, DrawBudgetBreachState>();
+
+  const canvas = viewport.renderer.domElement;
+
+  const audioEngine = createAudioEngine(viewport);
+
+  const pressHandlers: ((event: PointerEvent) => boolean)[] = [];
+  const localIntentHandlers: ((intent: SculptIntent) => boolean)[] = [];
+
+  let skyRigClaimant: string | null = null;
+
+  const skyRigRefusals = new Set<string>();
+
+  const skyRigModifiers: ((state: SkyRigState) => SkyRigState)[] = [];
+
+  let skyRigBase: SkyRigState | null = null;
+  let skyRigApplied: SkyRigState | null = null;
+
+  // Modifiers run over the last pushed sky every frame, so one that changes on its
+  // own (a storm's gloom) lands even when the claimant pushes once (reduced motion).
+  const refreshSkyRig = (): void => {
+    if (skyRigBase === null) return;
+    let modulated = skyRigBase;
+    for (const modify of skyRigModifiers) {
+      try {
+        modulated = modify(modulated);
+      } catch (error) {
+        console.error('[terrace] plugin sky-rig modifier threw', error);
+      }
+    }
+    if (skyRigApplied !== null && skyRigEquals(skyRigApplied, modulated)) return;
+    skyRigApplied = modulated;
+    applySkyRig(viewport, modulated);
+  };
+
+  const onCanvasPointerDown = (event: PointerEvent): void => {
+    audioEngine.unlock();
+    for (const handler of pressHandlers) {
+      let claimed = false;
+      try {
+        claimed = handler(event);
+      } catch (error) {
+        console.error('[terrace] plugin canvas-press handler threw', error);
+      }
+      if (claimed) {
+        event.stopImmediatePropagation();
+        event.preventDefault();
+        return;
+      }
+    }
+  };
+  canvas.addEventListener('pointerdown', onCanvasPointerDown, { capture: true });
+
+  const pickTerrainCell = (
+    clientX: number,
+    clientY: number,
+  ): { x: number; y: number } | null => {
+    const size = world.worldSize();
+    if (size <= 0) return null;
+    const device = pointerToNdc(clientX, clientY, canvas.getBoundingClientRect());
+    if (device === null) return null;
+    const raycaster = new Raycaster();
+    raycaster.setFromCamera(new Vector2(device.x, device.y), viewport.camera);
+    const hit = world.pickCell(raycaster.ray.origin, raycaster.ray.direction);
+    return hit === null ? null : { x: hit.x, y: hit.y };
+  };
+
+  const pickableObjects: Object3D[] = [];
+
+  const pickableOccupancy: CellOccupancy[] = [];
+
+  const NO_OCCUPANTS: readonly CellOccupancy[] = [];
+
+  const aimRay = (
+    clientX: number,
+    clientY: number,
+  ): { ray: Ray; groundDistance: number } | null => {
+    const device = pointerToNdc(clientX, clientY, canvas.getBoundingClientRect());
+    if (device === null) return null;
+    const raycaster = new Raycaster();
+    raycaster.setFromCamera(new Vector2(device.x, device.y), viewport.camera);
+    const { ray } = raycaster;
+    const ground = world.pickPointedCell(ray.origin, ray.direction, NO_OCCUPANTS);
+    return { ray, groundDistance: ground === null ? Infinity : ground.distance };
+  };
+
+  const cameraScratch = { x: 0, y: 0, z: 0 };
+  const cameraPosition = (): WorldPosition => {
+    const position = viewport.camera.position;
+    cameraScratch.x = position.x;
+    cameraScratch.y = position.y;
+    cameraScratch.z = position.z;
+    return cameraScratch;
+  };
+
+  const pickRaycaster = new Raycaster();
+  const pickNdc = new Vector2();
+
+  const pickWorldCell = (
+    clientX: number,
+    clientY: number,
+  ): { x: number; y: number } | null => {
+    const size = world.worldSize();
+    if (size <= 0) return null;
+
+    const device = pointerToNdc(clientX, clientY, canvas.getBoundingClientRect());
+    if (device === null) return null;
+    pickRaycaster.setFromCamera(pickNdc.set(device.x, device.y), viewport.camera);
+    const ray = pickRaycaster.ray;
+
+    const onCanvas = device.x >= -1 && device.x <= 1 && device.y >= -1 && device.y <= 1;
+
+    const pointed = world.pickPointedCell(
+      ray.origin,
+      ray.direction,
+      onCanvas ? pickableOccupancy : NO_OCCUPANTS,
+    );
+
+    if (onCanvas && pickableObjects.length > 0) {
+      pickRaycaster.far = pointed === null ? Infinity : pointed.distance;
+      const hits: Intersection[] = pickRaycaster.intersectObjects(pickableObjects, true);
+      for (const hit of hits) {
+        const cell = worldPointToCell(hit.point.x, hit.point.z, size);
+        if (cell !== null) return { x: cell.x, y: cell.y };
+      }
+    }
+
+    return pointed === null ? null : { x: pointed.x, y: pointed.y };
+  };
+
+  const moverLookups = new Map<string, (id: number) => MoverPose | null>();
+
+  const gaugeLookups = new Map<string, () => number>();
+
+  const groundShadeLookups = new Map<string, () => readonly GroundShadeDisc[]>();
+
+  const groundShadeBreaches = new Set<string>();
+
+  const gatheredShade: GroundShadeDisc[] = [];
+
+  const gatherGroundShade = (): void => {
+    if (holding()) return;
+    if (groundShadeLookups.size === 0) {
+      clearGroundShade();
+      return;
+    }
+    gatheredShade.length = 0;
+    for (const [name, lookup] of groundShadeLookups) {
+      const entry = mounted.get(name);
+      if (entry === undefined) continue;
+      let discs: readonly GroundShadeDisc[];
+      try {
+        discs = lookup();
+      } catch (error) {
+        console.error(`[terrace] client plugin "${name}" threw publishing ground shade`, error);
+        continue;
+      }
+      const declared = entry.plugin.groundShadeBudget;
+      const budget =
+        declared !== undefined && Number.isFinite(declared) && declared > 0 ? declared : 0;
+      if (discs.length > budget && !groundShadeBreaches.has(name)) {
+        groundShadeBreaches.add(name);
+        console.error(
+          `[terrace] client plugin "${name}" is over its ground-shade budget: ` +
+            `${String(discs.length)} discs against a budget of ${String(budget)}; ` +
+            `the excess is dropped`,
+        );
+      }
+      for (let i = 0; i < discs.length && i < budget; i++) gatheredShade.push(discs[i]);
+    }
+    setGroundShade(viewport.lighting.sun.position, gatheredShade);
+  };
+
+  const moverPose = (pluginName: string, id: number): MoverPose | null => {
+    const lookup = moverLookups.get(pluginName);
+    if (lookup === undefined) return null;
+    try {
+      return lookup(id);
+    } catch {
+      return null;
+    }
+  };
+
+  const gauge = (pluginName: string, key: string): number | null => {
+    const read = gaugeLookups.get(`${pluginName}:${key}`);
+    if (read === undefined) return null;
+    try {
+      return read();
+    } catch {
+      return null;
+    }
+  };
+
+  interface FrameHandler {
+    readonly handler: (dt: number) => void;
+    cancelled: boolean;
+  }
+
+  let warmedOnce = false;
+  let settlePassStarted = false;
+  let warmupInFlight: Promise<void> | null = null;
+  let warmupQueued: Promise<void> | null = null;
+
+  // While a snapshot's terrain builds, plugins skip frames, their terrain changes are
+  // batched and their layers go undrawn. The world arms it; only the host releases it.
+  let buildHeld = false;
+  const holding = (): boolean => buildHeld || world.terrainBuildHeld();
+  const pluginLayers = new Set<Group>();
+  const heldTerrainChanges = new Map<(dirty: ReadonlySet<number>) => void, Set<number>>();
+  // A warmup begun after the terrain was drawn; its finish lets the next frame release.
+  let releaseWarmup: Promise<void> | null = null;
+  let releaseReady = false;
+
+  const startWarmupPass = (): Promise<void> => {
+    // Only the settle pass runs before play, so only it may flip a shared material side.
+    const sideFlip: SideFlip = settlePassStarted ? 'forbidden' : 'allowed';
+    settlePassStarted = true;
+    warmedOnce = true;
+    const undrawn: ReadonlySet<Object3D> = buildHeld ? pluginLayers : NO_LAYERS;
+    return warmHiddenDrawables(viewport, sideFlip, undrawn).then(
+      () => undefined,
+      (error: unknown) => {
+        console.error('[terrace] shader warmup threw', error);
+      },
+    );
+  };
+
+  // Settles once a pass begun at or after this call has finished; calls made while a pass
+  // runs share one follow-up pass.
+  const runWarmup = (): Promise<void> => {
+    if (warmupInFlight === null) {
+      const pass = startWarmupPass().finally(() => {
+        warmupInFlight = null;
+      });
+      warmupInFlight = pass;
+      return pass;
+    }
+    warmupQueued ??= warmupInFlight.then(() => {
+      warmupQueued = null;
+      return runWarmup();
+    });
+    return warmupQueued;
+  };
+
+  const flushHeldTerrainChanges = (): void => {
+    const changes = [...heldTerrainChanges];
+    heldTerrainChanges.clear();
+    for (const [deliver, dirty] of changes) deliver(dirty);
+  };
+
+  // Skips drawing, never visibility: a hidden layer takes its light bank out of the lit
+  // set, re-keying every lit pipeline in the scene (see plugins/kit/lightBank.ts).
+  const drawUnlessHeld: RenderObjectFunction = (object, ...rest) => {
+    for (let node: Object3D | null = object; node !== null; node = node.parent) {
+      if (pluginLayers.has(node as Group)) return;
+    }
+    viewport.renderer.renderObject(object, ...rest);
+  };
+
+  const engageBuildHold = (): void => {
+    buildHeld = true;
+    viewport.renderer.setRenderObjectFunction(drawUnlessHeld);
+    clearGroundShade();
+    // Compiles alongside the terrain build, so the release pass mostly hits the cache.
+    if (bootMarked(BOOT_MARKS.firstFrame)) void runWarmup();
+  };
+
+  const releaseBuildHold = (): void => {
+    buildHeld = false;
+    releaseWarmup = null;
+    releaseReady = false;
+    viewport.renderer.setRenderObjectFunction(null);
+    flushHeldTerrainChanges();
+  };
+
+  const mountPlugin = (plugin: TerraceClientPlugin): void => {
+    if (mounted.has(plugin.name) || pendingMounts.has(plugin.name)) {
+      console.error(`[terrace] client plugin "${plugin.name}" mounted twice; leaking runners`);
+    }
+    const undo: (() => void)[] = [];
+    const track = (unregister: () => void): (() => void) => {
+      undo.push(unregister);
+      return unregister;
+    };
+    const deferredFrameHandlers: FrameHandler[] = [];
+    const layer = new Group();
+    layer.name = `plugin:${plugin.name}`;
+    pluginLayers.add(layer);
+    viewport.scene.add(layer);
+
+    const audioHandle = audioEngine.forPlugin(plugin.name);
+    track(audioHandle.release);
+
+    const ctx: ClientPluginCtx = {
+      layer,
+      audio: audioHandle.audio,
+      worldSize: () => world.worldSize(),
+      terrainSampleAt: (x, y) => world.terrainSampleAt(x, y),
+      terrainRevisionAt: (x, y) => world.terrainRevisionAt(x, y),
+      drawnGroundYAt: (cellX, cellZ) => world.drawnGroundYAt(cellX, cellZ),
+      onTerrainChanged(handler) {
+        const name = plugin.name;
+        const deliver = (dirty: ReadonlySet<number>): void => {
+          const startMs = performance.now();
+          try {
+            handler(dirty);
+          } catch (error) {
+            console.error(`[terrace] client plugin "${name}" threw in onTerrainChanged`, error);
+          } finally {
+            recordPluginAsync(name, performance.now() - startMs);
+          }
+        };
+        // The world may pass a reused set, so a held change is copied, never kept.
+        const wrapped = (dirty: ReadonlySet<number>): void => {
+          if (!holding()) {
+            deliver(dirty);
+            return;
+          }
+          let held = heldTerrainChanges.get(deliver);
+          if (held === undefined) {
+            held = new Set();
+            heldTerrainChanges.set(deliver, held);
+          }
+          for (const chunkIdx of dirty) held.add(chunkIdx);
+        };
+        const unsubscribe = world.onTerrainChanged(wrapped);
+        return track(() => {
+          unsubscribe();
+          heldTerrainChanges.delete(deliver);
+        });
+      },
+      onMessage(type, handler) {
+        const key = `${plugin.name}:${type}`;
+        let set = handlers.get(key);
+        if (set === undefined) {
+          set = new Set();
+          handlers.set(key, set);
+        }
+        const name = plugin.name;
+        const wrapped = (payload: unknown): void => {
+          const startMs = performance.now();
+          try {
+            handler(payload);
+          } finally {
+            recordPluginAsync(name, performance.now() - startMs);
+          }
+        };
+        set.add(wrapped);
+        return track(() => {
+          set.delete(wrapped);
+          if (set.size === 0) handlers.delete(key);
+        });
+      },
+      send(type, payload) {
+        deps.connection().sendPlugin(`${plugin.name}:${type}`, payload);
+      },
+      onWorldReset(handler) {
+        worldResetHandlers.set(handler, plugin.name);
+        return track(() => {
+          worldResetHandlers.delete(handler);
+        });
+      },
+      onFrame(handler) {
+        const deferred: FrameHandler = { handler, cancelled: false };
+        deferredFrameHandlers.push(deferred);
+        return track(() => {
+          deferred.cancelled = true;
+          const index = deferredFrameHandlers.indexOf(deferred);
+          if (index !== -1) deferredFrameHandlers.splice(index, 1);
+        });
+      },
+      setInterval(handler, ms) {
+        const name = plugin.name;
+        const id = setInterval(() => {
+          const startMs = performance.now();
+          try {
+            handler();
+          } finally {
+            recordPluginAsync(name, performance.now() - startMs);
+          }
+        }, ms);
+        return track(() => clearInterval(id));
+      },
+      setTimeout(handler, ms) {
+        const name = plugin.name;
+        const id = setTimeout(() => {
+          const startMs = performance.now();
+          try {
+            handler();
+          } finally {
+            recordPluginAsync(name, performance.now() - startMs);
+          }
+        }, ms);
+        return track(() => clearTimeout(id));
+      },
+      registerHudPanel(
+        component: Component,
+        options?: {
+          placement?:
+            | 'panel'
+            | 'top-center'
+            | 'bottom-center'
+            | 'bottom-right'
+            | 'connection'
+            | 'settings';
+          headerSummary?: Component;
+          tabSummary?: () => string;
+          hasBody?: () => boolean;
+        },
+      ) {
+        addPluginHudPanel({
+          pluginName: plugin.name,
+          component,
+          placement: options?.placement ?? 'panel',
+          headerSummary: options?.headerSummary,
+          tabSummary: options?.tabSummary,
+          hasBody: options?.hasBody,
+        });
+      },
+      registerTool(tool) {
+        addPluginTool({ ...tool, id: `${plugin.name}:${tool.id}`, pluginName: plugin.name });
+      },
+      registerWorldHeaderAction(action) {
+        claimWorldHeaderAction({ ...action, pluginName: plugin.name });
+      },
+      onCanvasPress(handler) {
+        pressHandlers.push(handler);
+        return track(() => {
+          const i = pressHandlers.indexOf(handler);
+          if (i !== -1) pressHandlers.splice(i, 1);
+        });
+      },
+      aimRay,
+      pickTerrainCell,
+      pickWorldCell,
+      cameraPosition,
+      moverPose,
+      revealedAt: (x, y) => world.revealedAt(x, y),
+      applyRevealClip: (material, label) => world.applyRevealClip(material, label),
+      revealClipUniforms: () => world.revealClipUniforms(),
+      publishGroundShade(lookup: () => readonly GroundShadeDisc[]): () => void {
+        groundShadeLookups.set(plugin.name, lookup);
+        return track(() => {
+          if (groundShadeLookups.get(plugin.name) === lookup) {
+            groundShadeLookups.delete(plugin.name);
+          }
+        });
+      },
+      gauge,
+      publishGauge(key: string, read: () => number): () => void {
+        const id = `${plugin.name}:${key}`;
+        gaugeLookups.set(id, read);
+        return track(() => {
+          if (gaugeLookups.get(id) === read) gaugeLookups.delete(id);
+        });
+      },
+      publishMovers(lookup: (id: number) => MoverPose | null): () => void {
+        moverLookups.set(plugin.name, lookup);
+        return track(() => {
+          if (moverLookups.get(plugin.name) === lookup) moverLookups.delete(plugin.name);
+        });
+      },
+      markPickable(object: Object3D, occupancy?: CellOccupancy): () => void {
+        if (occupancy !== undefined) {
+          pickableOccupancy.push(occupancy);
+          return track(() => {
+            const index = pickableOccupancy.indexOf(occupancy);
+            if (index !== -1) pickableOccupancy.splice(index, 1);
+          });
+        }
+        if (!pickableObjects.includes(object)) pickableObjects.push(object);
+        return track(() => {
+          const index = pickableObjects.indexOf(object);
+          if (index !== -1) pickableObjects.splice(index, 1);
+        });
+      },
+      onLocalIntent(handler) {
+        localIntentHandlers.push(handler);
+        return track(() => {
+          const i = localIntentHandlers.indexOf(handler);
+          if (i !== -1) localIntentHandlers.splice(i, 1);
+        });
+      },
+      setSkyRig(state: SkyRigState) {
+        if (skyRigClaimant === null) skyRigClaimant = plugin.name;
+        if (skyRigClaimant !== plugin.name) {
+          if (!skyRigRefusals.has(plugin.name)) {
+            skyRigRefusals.add(plugin.name);
+            console.warn(
+              `sky rig already claimed by "${skyRigClaimant}"; ` +
+                `ignoring updates from "${plugin.name}"`,
+            );
+          }
+          return;
+        }
+        skyRigBase = state;
+        refreshSkyRig();
+      },
+      loadRigAsset(url, lighting) {
+        return loadRigAsset(
+          url,
+          lighting === 'sky-environment' ? viewport.skyEnvironment.texture : null,
+        );
+      },
+      // Before the settle pass, whatever the plugin added is covered by that pass.
+      requestShaderWarmup(): void {
+        if (warmedOnce) void runWarmup();
+      },
+      modulateSkyRig(modify: (state: SkyRigState) => SkyRigState) {
+        skyRigModifiers.push(modify);
+        return track(() => {
+          const index = skyRigModifiers.indexOf(modify);
+          if (index !== -1) skyRigModifiers.splice(index, 1);
+        });
+      },
+    };
+
+    const finishMount = (): void => {
+      try {
+        plugin.attach(ctx);
+
+        const name = plugin.name;
+        const phase: FramePhase =
+          moverLookups.has(name) || groundShadeLookups.has(name) ? 'pose' : 'draw';
+        // One runner per plugin: shared budget, skip counter and sample.
+        // The list stays live; catch-up dt is clamped (see scene.ts).
+        const throttle: PluginFrameThrottle = {
+          skipRemaining: 0,
+          pendingDt: 0,
+          breachNotified: false,
+          breachLogged: false,
+          slowLogged: false,
+          lowSamples: 0,
+        };
+        const runner = (dt: number): void => {
+          if (holding()) return;
+          if (throttle.skipRemaining > 0) {
+            throttle.skipRemaining -= 1;
+            throttle.pendingDt += dt;
+            // No sample on skips: msPerRun keeps the demand, msPerFrame the impact.
+            return;
+          }
+          const effectiveDt = Math.min(throttle.pendingDt + dt, FRAME_DELTA_CAP_S);
+          throttle.pendingDt = 0;
+          const startMs = performance.now();
+          let elapsedMs = 0;
+          try {
+            for (const deferred of deferredFrameHandlers) {
+              if (deferred.cancelled) continue;
+              try {
+                deferred.handler(effectiveDt);
+              } catch (handlerError) {
+                console.error(
+                  `[terrace] client plugin "${name}" frame handler threw`,
+                  handlerError,
+                );
+              }
+            }
+          } finally {
+            elapsedMs = performance.now() - startMs;
+            recordPluginFrame(name, elapsedMs);
+          }
+          if (elapsedMs > PLUGIN_SLOW_RUN_MS && !throttle.slowLogged) {
+            throttle.slowLogged = true;
+            console.warn(
+              `[terrace] client plugin "${name}" slow run: ${elapsedMs.toFixed(2)} ms`,
+            );
+          }
+          if (elapsedMs > PLUGIN_FRAME_BUDGET_MS) {
+            throttle.skipRemaining = PLUGIN_FRAME_SKIP_FRAMES;
+            throttle.lowSamples = 0;
+            if (!throttle.breachNotified) {
+              throttle.breachNotified = true;
+              if (!throttle.breachLogged) {
+                throttle.breachLogged = true;
+                console.error(
+                  `[terrace] client plugin "${name}" exceeded its frame budget: ` +
+                    `${elapsedMs.toFixed(2)} ms against a budget of ` +
+                    `${PLUGIN_FRAME_BUDGET_MS.toFixed(2)} ms; ` +
+                    `skipping the next ${String(PLUGIN_FRAME_SKIP_FRAMES)} frames`,
+                );
+              }
+            }
+          } else if (throttle.breachNotified) {
+            throttle.lowSamples += 1;
+            if (throttle.lowSamples >= DRAW_BUDGET_CLEAR_SAMPLES) {
+              throttle.breachNotified = false;
+              throttle.lowSamples = 0;
+            }
+          }
+        };
+        track(viewport.onFrame(runner, phase));
+      } catch (error) {
+        console.error(`[terrace] client plugin "${plugin.name}" threw in attach`, error);
+      }
+
+      mounted.set(plugin.name, { plugin, layer, undo });
+      // A plugin mounting after the settle warmup ran gets its own pass; the
+      // already-compiled objects are cache hits.
+      if (warmedOnce) void runWarmup();
+    };
+
+    const dropUnattached = (): void => {
+      for (const unregister of undo) {
+        try {
+          unregister();
+        } catch (error) {
+          console.error(`[terrace] client plugin "${plugin.name}" threw unregistering`, error);
+        }
+      }
+      layer.clear();
+      viewport.scene.remove(layer);
+      pluginLayers.delete(layer);
+    };
+
+    const preload = plugin.preload;
+    if (preload === undefined) {
+      finishMount();
+      return;
+    }
+    const generation = (mountGenerations.get(plugin.name) ?? 0) + 1;
+    mountGenerations.set(plugin.name, generation);
+    pendingMounts.add(plugin.name);
+    heldMessages.set(plugin.name, []);
+    void Promise.resolve()
+      .then(() => preload(ctx))
+      .then(
+        () => {
+          // A stale preload leaves pendingMounts alone: it may belong to a newer mount.
+          if (mountGenerations.get(plugin.name) !== generation) {
+            dropUnattached();
+            return;
+          }
+          pendingMounts.delete(plugin.name);
+          finishMount();
+          const held = heldMessages.get(plugin.name) ?? [];
+          heldMessages.delete(plugin.name);
+          for (const { type, payload } of held) deliverMessage(type, payload);
+        },
+        (error: unknown) => {
+          if (mountGenerations.get(plugin.name) === generation) {
+            pendingMounts.delete(plugin.name);
+            heldMessages.delete(plugin.name);
+          }
+          console.error(`[terrace] client plugin "${plugin.name}" threw in preload`, error);
+          dropUnattached();
+        },
+      );
+  };
+
+  const deliverMessage = (type: string, payload: unknown): void => {
+    const set = handlers.get(type);
+    if (set === undefined) return;
+    for (const handler of set) {
+      try {
+        handler(payload);
+      } catch (error) {
+        console.error(`[terrace] plugin handler for "${type}" threw`, error);
+      }
+    }
+  };
+
+  const unmountPlugin = (name: string): void => {
+    mountGenerations.set(name, (mountGenerations.get(name) ?? 0) + 1);
+    pendingMounts.delete(name);
+    heldMessages.delete(name);
+    const entry = mounted.get(name);
+    if (entry === undefined) return;
+    mounted.delete(name);
+
+    removePluginTools(name);
+    removePluginHudPanels(name);
+    removePluginDrawRow(name);
+    breachStates.delete(name);
+    groundShadeBreaches.delete(name);
+    releaseWorldHeaderAction(name);
+
+    try {
+      entry.plugin.dispose?.();
+    } catch (error) {
+      console.error(`[terrace] client plugin "${name}" threw in dispose`, error);
+    }
+    for (const unregister of entry.undo) {
+      try {
+        unregister();
+      } catch (error) {
+        console.error(`[terrace] client plugin "${name}" threw unregistering`, error);
+      }
+    }
+    entry.layer.clear();
+    viewport.scene.remove(entry.layer);
+    pluginLayers.delete(entry.layer);
+
+    if (skyRigClaimant === name) skyRigClaimant = null;
+    skyRigRefusals.delete(name);
+  };
+
+  configureGroundShade(groundShadeMaxFor(plugins));
+
+  // Pose phase, registered before any runner, so engage and release land before a plugin
+  // runs that frame. Release waits for a warmup, so first show draws warmed materials.
+  const stopBuildHold = viewport.onFrame(() => {
+    if (world.terrainBuildHeld()) {
+      if (!buildHeld) engageBuildHold();
+      // A new snapshot while releasing voids that release's warmup.
+      releaseWarmup = null;
+      releaseReady = false;
+      return;
+    }
+    if (!buildHeld) {
+      // The world armed and disarmed between two frames: deliver whatever it held.
+      if (heldTerrainChanges.size > 0) flushHeldTerrainChanges();
+      return;
+    }
+    // One subscriber's batch per frame, still undrawn, so the release warmup below
+    // compiles whatever the batch builds and no frame carries every plugin's rebuild.
+    const next = heldTerrainChanges.entries().next();
+    if (next.done !== true) {
+      const [deliver, dirty] = next.value;
+      heldTerrainChanges.delete(deliver);
+      deliver(dirty);
+      return;
+    }
+    if (releaseReady) {
+      releaseBuildHold();
+      return;
+    }
+    // Runs after each build, once boot has applied the AA setting; a later
+    // multisample toggle drops the canvas target and the next render recompiles.
+    if (releaseWarmup !== null || !bootMarked(BOOT_MARKS.firstFrame)) return;
+    const warmed = runWarmup();
+    releaseWarmup = warmed;
+    void warmed.then(() => {
+      if (releaseWarmup === warmed) releaseReady = true;
+    });
+  }, 'pose');
+
+  for (const plugin of plugins) mountPlugin(plugin);
+
+  const stopGroundShade = viewport.onFrame(gatherGroundShade);
+  const stopSkyRigRefresh = viewport.onFrame(refreshSkyRig);
+
+  const frameDrawBudget = (): number => {
+    let budget = deps.coreDrawBudget();
+    for (const entry of mounted.values()) {
+      const declared = entry.plugin.drawBudget;
+      if (Number.isFinite(declared)) budget += declared;
+    }
+    return budget;
+  };
+
+  const sampleDrawObjects = (): void => {
+    const rows: PluginDrawRow[] = [];
+    for (const [name, entry] of mounted) {
+      const objects = countDrawObjects(entry.layer);
+      const budget = entry.plugin.drawBudget;
+      const before = breachStates.get(name) ?? NO_DRAW_BUDGET_BREACH;
+      const after = stepDrawBudgetBreach(before, objects, budget);
+      breachStates.set(name, after);
+      if (after.breached && !before.breached) {
+        console.error(
+          `[terrace] client plugin "${name}" is over its draw budget: ` +
+            `${String(objects)} objects against a budget of ${String(budget)}`,
+        );
+      }
+      rows.push({ pluginName: name, objects, budget, breached: after.breached });
+    }
+    setPluginDrawRows(rows);
+    // Frame handlers run before render, after three's own loop has reset the per-frame
+    // counters; frameStats reads them after render, so its draw calls are the frame's.
+    setFrameDraw({
+      calls: frameStatsSample()?.counters.drawCalls ?? 0,
+      objects: countDrawObjects(viewport.scene),
+      budget: frameDrawBudget(),
+    });
+    setRenderPath({
+      backend: rendererBackendName(viewport.renderer),
+      mesher: world.terrainMesherActive(),
+    });
+  };
+
+  const now = deps.now ?? ((): number => performance.now());
+  let sampleWindowStartMs = now();
+  const stopSampling = viewport.onFrame(() => {
+    const nowMs = now();
+    if (nowMs - sampleWindowStartMs < FPS_SAMPLE_INTERVAL_MS) return;
+    sampleWindowStartMs = nowMs;
+    sampleDrawObjects();
+  });
+
+  return {
+    frameDrawBudget,
+    allowLocalIntent(intent: SculptIntent): boolean {
+      for (const handler of localIntentHandlers) {
+        try {
+          if (!handler(intent)) return false;
+        } catch (error) {
+          console.error('[terrace] plugin local-intent handler threw', error);
+        }
+      }
+      return true;
+    },
+
+    routeMessage(type: string, payload: unknown): void {
+      if (!handlers.has(type)) {
+        const held = heldMessages.get(type.slice(0, type.indexOf(':')));
+        if (held !== undefined && held.length < HELD_PLUGIN_MESSAGE_LIMIT) {
+          held.push({ type, payload });
+        }
+        return;
+      }
+      deliverMessage(type, payload);
+    },
+
+    // A snapshot from a new plugin world generation restarts every id, so
+    // id-keyed client state must go; a re-snapshot of the same world keeps it.
+    resetWorld(worldGeneration?: number): void {
+      if (worldGeneration !== undefined && worldGeneration === joinedGeneration) return;
+      joinedGeneration = worldGeneration;
+      // Held messages describe the old world; the new one's follow this snapshot.
+      for (const held of heldMessages.values()) held.length = 0;
+      for (const [handler, name] of worldResetHandlers) {
+        try {
+          handler();
+        } catch (error) {
+          console.error(`[terrace] client plugin "${name}" threw in onWorldReset`, error);
+        }
+      }
+    },
+
+    syncLivePlugins(liveNames: readonly string[] | undefined): void {
+      if (liveNames === undefined) return;
+      const live = new Set(liveNames);
+
+      for (const [name, entry] of [...mounted]) {
+        if (entry.plugin.clientOnly === true) continue;
+        if (!live.has(name)) unmountPlugin(name);
+      }
+      // A plugin still preloading when the server drops it must not attach afterwards.
+      for (const plugin of plugins) {
+        if (plugin.clientOnly === true || live.has(plugin.name)) continue;
+        if (pendingMounts.has(plugin.name)) unmountPlugin(plugin.name);
+      }
+      for (const plugin of plugins) {
+        const wanted = live.has(plugin.name) || plugin.clientOnly === true;
+        if (wanted && !mounted.has(plugin.name) && !pendingMounts.has(plugin.name))
+          mountPlugin(plugin);
+      }
+    },
+
+    dispose(): void {
+      stopSampling();
+      stopGroundShade();
+      stopSkyRigRefresh();
+      stopBuildHold();
+      if (buildHeld) viewport.renderer.setRenderObjectFunction(null);
+      heldTerrainChanges.clear();
+      for (const name of [...mounted.keys()]) unmountPlugin(name);
+      for (const name of [...pendingMounts]) {
+        mountGenerations.set(name, (mountGenerations.get(name) ?? 0) + 1);
+      }
+      pendingMounts.clear();
+      heldMessages.clear();
+      worldResetHandlers.clear();
+      canvas.removeEventListener('pointerdown', onCanvasPointerDown, {
+        capture: true,
+      });
+      pressHandlers.length = 0;
+      localIntentHandlers.length = 0;
+      handlers.clear();
+      skyRigClaimant = null;
+      audioEngine.dispose();
+    },
+  };
+}

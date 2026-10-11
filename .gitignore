@@ -1,0 +1,28 @@
+node_modules/
+dist/
+# Desktop app: the built main process, the staged server, and the installers.
+dist-electron/
+.electron-stage/
+release/
+data/
+.env
+*.tsbuildinfo
+.*/worktrees/
+
+# Python bytecode from run_server.py
+__pycache__/
+
+# Throwaway visual-verification rigs (screenshots, capture scripts, vite logs).
+.volcano-shots/
+.mudslide-shots/
+.weather-verify/
+.gpu-perf/
+.relics-harness/
+.terrace-perf/
+.devlogs/
+
+# Third-party model sources, the .glb the import tool writes from them, and its
+# render checks. Sources are downloaded, never committed (see LICENSES.md
+# inside it); an asset that ships gets copied into its plugin's assets/ dir.
+.model-import/
+.terrace-tmp/

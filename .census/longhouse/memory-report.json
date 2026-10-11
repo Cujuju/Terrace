@@ -1,0 +1,94 @@
+{
+  "assumptions": {
+    "png_gpu_format": "RGBA8 with complete mip chain",
+    "compressed_gpu_format": "BC7 or ASTC 4x4, 16 bytes per 4x4 block, complete mip chain",
+    "excluded": "CPU decoded images, loader buffers, driver allocation overhead, shaders, framebuffer and instance buffers",
+    "sharing": "Terrace draws repeated structures with InstancedMesh; mesh and textures are shared, not duplicated per house."
+  },
+  "variants": {
+    "original": {
+      "triangles": 4260,
+      "exported_vertices": 8332,
+      "geometry_gpu_bytes": 425496,
+      "textures": [
+        {
+          "name": "longhouse-normal",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 2682359
+        },
+        {
+          "name": "longhouse-basecolor",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 2826131
+        },
+        {
+          "name": "longhouse-metallicRoughness",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 1335657
+        }
+      ],
+      "png_gpu_total_bytes": 67534356,
+      "ktx2_bc7_astc_gpu_total_bytes": 17202792,
+      "png_glb_file_bytes": 5614940,
+      "ktx2_glb_file_bytes": 7271744,
+      "png_glb_sha256": "9e876f4f63ce9dcee0e376ad016e58e796fd03302742de5ff0e12e735f6734ff",
+      "ktx2_glb_sha256": "7da6b697e1f709b19167ad68ee1f6dd7885804a83227315010e736efdea5e486",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    },
+    "low": {
+      "triangles": 3016,
+      "exported_vertices": 6002,
+      "geometry_gpu_bytes": 306192,
+      "textures": [
+        {
+          "name": "longhouse-normal",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 754600
+        },
+        {
+          "name": "longhouse-basecolor",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 844029
+        },
+        {
+          "name": "longhouse-metallicRoughness",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 429322
+        }
+      ],
+      "png_gpu_total_bytes": 17083404,
+      "ktx2_bc7_astc_gpu_total_bytes": 4500576,
+      "png_glb_file_bytes": 1893056,
+      "ktx2_glb_file_bytes": 2336236,
+      "png_glb_sha256": "b90962acb63b2647afa5c2c3ea08b4954c73c86c8f04d4089211531a2c16bc2e",
+      "ktx2_glb_sha256": "6608eb65b5f5eb00e7af10978b4afcddbf5d82a6a3944b6a2c5988277dddf965",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    }
+  }
+}

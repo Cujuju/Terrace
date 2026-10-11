@@ -1,0 +1,37 @@
+[
+  {
+    "candidate": "a",
+    "file": "E:\\Development\\Projects\\Terrace\\.census\\ricks-concepts\\candidate-a.png",
+    "width": 1536,
+    "height": 1024,
+    "sha256": "cf630fdb9e4aa6aea02822b4de97b78c741a90cabcb40c32c8e99bf58c8b8532"
+  },
+  {
+    "candidate": "b",
+    "file": "E:\\Development\\Projects\\Terrace\\.census\\ricks-concepts\\candidate-b.png",
+    "width": 1536,
+    "height": 1024,
+    "sha256": "b6286e784b3d8d6de7f0e0ac256fc99d906fcb9b05cf880d97a85da824658416"
+  },
+  {
+    "candidate": "c",
+    "file": "E:\\Development\\Projects\\Terrace\\.census\\ricks-concepts\\candidate-c.png",
+    "width": 1312,
+    "height": 1199,
+    "sha256": "5acc9ec344f2ec393036ac11cd7ea510401cc32c0cb11dc78b793e0908550e58"
+  },
+  {
+    "candidate": "d",
+    "file": "E:\\Development\\Projects\\Terrace\\.census\\ricks-concepts\\candidate-d.png",
+    "width": 1312,
+    "height": 1199,
+    "sha256": "408d5dfb79325e6b91b10555d854d27e2e7a91756d4958c8ea9001cf8cce9998"
+  },
+  {
+    "candidate": "e",
+    "file": "E:\\Development\\Projects\\Terrace\\.census\\ricks-concepts\\candidate-e.png",
+    "width": 1536,
+    "height": 1024,
+    "sha256": "1a0e190519b79f10ff3b45512f8f4a5a959728b95b3b2027b6e7ee40bbcf99e3"
+  }
+]

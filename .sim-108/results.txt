@@ -1,0 +1,312 @@
+Issue #108 — relaxation conservation, old vs new movePair
+MAX_STEP=4  RELAX_SLACK=1  SMOOTH_PASS_LIMIT=2560
+node v24.19.0   2026-08-30T03:30:53.392Z
+
+fixture                     rule                      total before     total after    manufactured   passes   max grad   pairs>STEP        ms
+--------------------------  ----------------------  --------------  --------------  --------------  -------  ---------  -----------  --------
+cliff 100 (128²)            old (e>>1 / e-(e>>1))          819,200         896,000          76,800       53          4            0      11.5
+cliff 100 (128²)            new (e>>1 / e>>1)              819,200         819,200               0       76          5        2,304      14.7
+
+cliff 401 (128²)            old (e>>1 / e-(e>>1))        3,284,992       4,952,064       1,667,072      300          4            0      80.3
+cliff 401 (128²)            new (e>>1 / e>>1)            3,284,992       3,284,992               0     1187          5       10,095     305.9
+
+cliff 1000 (128²)           old (e>>1 / e-(e>>1))        8,192,000      14,287,360       6,095,360      841          4            0     372.6
+cliff 1000 (128²)           new (e>>1 / e>>1)            8,192,000       8,192,000               0    2560!          7       16,128    1256.5
+
+cliff 1000 (256²)           old (e>>1 / e-(e>>1))       32,768,000      53,314,560      20,546,560      841          4            0    1149.0
+cliff 1000 (256²)           new (e>>1 / e>>1)           32,768,000      32,768,000               0    2560!          7       42,240    4121.0
+
+spire (128²)                old (e>>1 / e-(e>>1))            1,024           1,670             646       18          4            0       0.7
+spire (128²)                new (e>>1 / e>>1)                1,024           1,024               0       14          5           68       0.5
+
+random rough ±40 (128²)     old (e>>1 / e-(e>>1))           -1,562          36,139          37,701       11          4            0       8.8
+random rough ±40 (128²)     new (e>>1 / e>>1)               -1,562          -1,562               0        9          5        4,807       8.1
+
+scour -64 on flat 512 (128²)  old (e>>1 / e-(e>>1))        8,388,544       8,388,553               9        3          4            0       0.1
+scour -64 on flat 512 (128²)  new (e>>1 / e>>1)            8,388,544       8,388,544               0        3          5            4       0.0
+
+"!" on a pass count means the sweep hit SMOOTH_PASS_LIMIT: the cascade
+was TRUNCATED, not converged, and the gradient invariant is left locally
+violated (documented residual — see SMOOTH_PASS_LIMIT).
+
+==============================================================================
+CROSS-SECTIONS
+==============================================================================
+
+### cliff 401 (128²)
+
+BEFORE   [x 24..103, y 64]  height 0 .. 401
+  ########################################                                        
+  ||||||||||||||||||||||||||||||||||||||||                                        
+  ||||||||||||||||||||||||||||||||||||||||                                        
+  ||||||||||||||||||||||||||||||||||||||||                                        
+  ||||||||||||||||||||||||||||||||||||||||                                        
+  ||||||||||||||||||||||||||||||||||||||||                                        
+  ||||||||||||||||||||||||||||||||||||||||                                        
+  ||||||||||||||||||||||||||||||||||||||||                                        
+  ||||||||||||||||||||||||||||||||||||||||                                        
+  ||||||||||||||||||||||||||||||||||||||||                                        
+  ||||||||||||||||||||||||||||||||||||||||                                        
+  ||||||||||||||||||||||||||||||||||||||||                                        
+  ||||||||||||||||||||||||||||||||||||||||                                        
+  ||||||||||||||||||||||||||||||||||||||||                                        
+  ||||||||||||||||||||||||||||||||||||||||                                        
+  ||||||||||||||||||||||||||||||||||||||||########################################
+
+AFTER  old (e>>1 / e-(e>>1))  (manufactured 1,667,072, 300 passes)   [x 24..103, y 64]  height 181 .. 401
+  ##########################                                                      
+  ||||||||||||||||||||||||||####                                                  
+  ||||||||||||||||||||||||||||||####                                              
+  ||||||||||||||||||||||||||||||||||###                                           
+  |||||||||||||||||||||||||||||||||||||####                                       
+  |||||||||||||||||||||||||||||||||||||||||####                                   
+  |||||||||||||||||||||||||||||||||||||||||||||###                                
+  ||||||||||||||||||||||||||||||||||||||||||||||||####                            
+  ||||||||||||||||||||||||||||||||||||||||||||||||||||####                        
+  ||||||||||||||||||||||||||||||||||||||||||||||||||||||||###                     
+  |||||||||||||||||||||||||||||||||||||||||||||||||||||||||||####                 
+  |||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||####             
+  |||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||###          
+  ||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||####      
+  ||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||####  
+  ||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||##
+
+AFTER  new (e>>1 / e>>1)  (manufactured 0, 1187 passes)   [x 24..103, y 64]  height 3 .. 398
+  ###                                                                             
+  |||#####                                                                        
+  ||||||||######                                                                  
+  ||||||||||||||#####                                                             
+  |||||||||||||||||||#####                                                        
+  ||||||||||||||||||||||||#####                                                   
+  |||||||||||||||||||||||||||||######                                             
+  |||||||||||||||||||||||||||||||||||#####                                        
+  ||||||||||||||||||||||||||||||||||||||||#####                                   
+  |||||||||||||||||||||||||||||||||||||||||||||######                             
+  |||||||||||||||||||||||||||||||||||||||||||||||||||#####                        
+  ||||||||||||||||||||||||||||||||||||||||||||||||||||||||#####                   
+  |||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||#####              
+  ||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||######        
+  ||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||#####   
+  |||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||###
+
+### scour -64 on flat 512 (128²)
+
+BEFORE   [x 44..83, y 64]  height 448 .. 512
+  #################### ###################
+  |||||||||||||||||||| |||||||||||||||||||
+  |||||||||||||||||||| |||||||||||||||||||
+  |||||||||||||||||||| |||||||||||||||||||
+  |||||||||||||||||||| |||||||||||||||||||
+  |||||||||||||||||||| |||||||||||||||||||
+  |||||||||||||||||||| |||||||||||||||||||
+  |||||||||||||||||||| |||||||||||||||||||
+  |||||||||||||||||||| |||||||||||||||||||
+  ||||||||||||||||||||#|||||||||||||||||||
+
+AFTER  old (e>>1 / e-(e>>1))  (manufactured 9, 3 passes)   [x 44..83, y 64]  height 505 .. 512
+  ##################    ##################
+  ||||||||||||||||||    ||||||||||||||||||
+  ||||||||||||||||||    ||||||||||||||||||
+  ||||||||||||||||||#   ||||||||||||||||||
+  |||||||||||||||||||   ||||||||||||||||||
+  |||||||||||||||||||  #||||||||||||||||||
+  |||||||||||||||||||  |||||||||||||||||||
+  |||||||||||||||||||  |||||||||||||||||||
+  |||||||||||||||||||# |||||||||||||||||||
+  ||||||||||||||||||||#|||||||||||||||||||
+
+AFTER  new (e>>1 / e>>1)  (manufactured 0, 3 passes)   [x 44..83, y 64]  height 504 .. 512
+  ##################     #################
+  ||||||||||||||||||    #|||||||||||||||||
+  ||||||||||||||||||    ||||||||||||||||||
+  ||||||||||||||||||#   ||||||||||||||||||
+  |||||||||||||||||||   ||||||||||||||||||
+  |||||||||||||||||||   ||||||||||||||||||
+  |||||||||||||||||||  #||||||||||||||||||
+  |||||||||||||||||||  |||||||||||||||||||
+  |||||||||||||||||||# |||||||||||||||||||
+  ||||||||||||||||||||#|||||||||||||||||||
+
+==============================================================================
+THE #239 MEASUREMENT: net height change over the scoured centre cell
+==============================================================================
+  old (e>>1 / e-(e>>1))    centre 448 -> 505   map total change 9
+  new (e>>1 / e>>1)        centre 448 -> 504   map total change 0
+
+==============================================================================
+PROBE 1 — how many passes the new rule REALLY needs, and banded saturation
+(.sim-108/probe.mjs)
+==============================================================================
+cliff 1000 (256²): converged, ~7205 passes (3 rounds)
+final max gradient 5
+banded outside-moved per stroke: 14,0,0,0,7,15,15,11,17,19,20,17,17,12,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+
+==============================================================================
+PROBE 2 — can a mountain still be built? 384 stacked clicks, r=2 and r=8
+(.sim-108/probe2.mjs)  The PLAYER path (wire default) is byte-identical.
+==============================================================================
+old  library default (free/free)    r=2  peak= 1024  mapTotal        0 ->   3686396
+old  library default (free/free)    r=8  peak= 1024  mapTotal        0 ->   3826912
+old  wire default (clicked/banded)  r=2  peak= 1024  mapTotal        0 ->      5120
+old  wire default (clicked/banded)  r=8  peak= 1024  mapTotal        0 ->    173056
+old  stamp/hard                     r=2  peak= 1024  mapTotal        0 ->      5120
+old  stamp/hard                     r=8  peak= 1024  mapTotal        0 ->    181248
+
+new  library default (free/free)    r=2  peak=   87  mapTotal        0 ->     18432
+new  library default (free/free)    r=8  peak=  266  mapTotal        0 ->    445440
+new  wire default (clicked/banded)  r=2  peak= 1024  mapTotal        0 ->      5120
+new  wire default (clicked/banded)  r=8  peak= 1024  mapTotal        0 ->    173056
+new  stamp/hard                     r=2  peak= 1024  mapTotal        0 ->      5120
+new  stamp/hard                     r=8  peak= 1024  mapTotal        0 ->    181248
+
+
+
+##############################################################################
+# PASS 2 (2026-08-29) — RE-DERIVING THE PLUGIN CONSTANTS AND THE PASS BUDGET
+##############################################################################
+
+Scripts, all run with `node --experimental-strip-types` from the repo root and
+all driving the SAME fixtures through `.sim-108/old-src/` (shared/src as it
+stood before the fix) and the working tree's `shared/src`:
+
+  .sim-108/plugins.mjs  → .sim-108/plugins.txt   plugin constants, old vs new
+  .sim-108/passes.mjs   → .sim-108/passes.txt    passes per cell of spread
+  .sim-108/probe3.mjs                            the numbers the new tests pin
+
+Plugin fixtures are a 512x512 GENESIS world (seed 108), built with the server's
+own buildFreshGenesisTerrain/freshGenesisHeightAt so the ground is the
+band-quantised, everywhere-over-steep terrain a fresh world really ships, plus
+flat/uniform-slope controls. Plugin sculpts go through
+applySculpt(..., {tool:'smooth', profile:'soft', spill:'banded'}), which is
+exactly what WorldApi.sculpt does.
+
+------------------------------------------------------------------ RETUNED --
+
+volcanoes CONE_GROWTH_BANDS_PER_ERUPTION  1 -> 2
+  (rewritten as CONE_PEAK_BANDS_PER_ERUPTION x CONE_BRUSH_BANDS_PER_PEAK_BAND)
+  Mean cone PEAK gain per eruption, 10 eruptions on a GENESIS_CONE_BANDS cone:
+
+    world     rule  bands asked   1st gain   peak/10   mean gain
+    genesis   old   1                   16       160       16.00   <- the intent
+    genesis   new   1                   16        90        9.00
+    genesis   new   2                   32       151       15.10   <- restored
+    genesis   new   3                   39       204       20.40
+    flat      old   1                   16       160       16.00
+    flat      new   1                   16       121       12.10
+    flat      new   2                   32       177       17.70
+    flat      new   3                   48       229       22.90
+
+mudslides MUDSLIDE_MAX_DROP_OVER_SPAN  32 -> 40
+  Not a measurement, a definition: the constant claims to be "the steepest the
+  sim permits", and the conserving split moved that from MAX_STEP to
+  MAX_STEP + RELAX_SLACK per cell. Written as (MAX_STEP + RELAX_SLACK) x
+  MUDSLIDE_SLOPE_SPAN_CELLS. MUDSLIDE_TRIGGER_DROP follows it, 16 -> 20.
+
+--------------------------------------------- RE-MEASURED, NOT RETUNED ------
+
+volcanoes FLOW_THICKNESS  stays BAND_HEIGHT/2
+    world     rule  FLOW_THICKNESS   one cell   over a 32-cell flow   moved
+    genesis   old   8                    8.00                 41.88   12642
+    genesis   new   8                    8.00                 20.44    4608
+    genesis   new   16                  16.00                 34.19    9216
+  The constant's own claim is the "one cell" column, and it is unchanged. The
+  pooled figure halved because the old rule was inventing 8,034 of those 12,642
+  units; 4,608 is exactly what the brush displaced. Doubling the constant would
+  put a FULL band on every flow cell (16.00), i.e. the self-terracing flow the
+  half-band exists to prevent.
+
+storms SURGE_BRUSH_RADIUS_CELLS  stays 4 (one world unit)
+    world     rule  radius   removed   centre drop   vs old
+    genesis   old   4            139            10    1.00x
+    genesis   new   4            152            11    1.09x
+    genesis   new   3             85            10    0.56x
+    slope     old   4            109             4    1.00x
+    slope     new   4            144             8    1.32x
+    slope     new   3             72             6    0.66x
+  One surge still drops the shore less than one band (11 of 16), which is the
+  documented intent. The only integer alternative undershoots harder than 4
+  overshoots, and stops being a derivation. Residual named in the doc comment:
+  48 surges on ONE cell cut 12.8 bands (old rule on the same fixture: 9.6).
+
+mudslides MUDSLIDE_TRACK_DEPOSIT_FRACTION / _TOE_DUMP_STEPS /
+          _MASS_TOLERANCE_HEIGHT_UNITS / _MEASURE_MARGIN_CELLS  all unchanged
+    world     rule  margin  track  toe   excavated  deposited  residual  resid%  unmeas  max changed
+    genesis   old   16      0.15   8           675       1811         0     0.0      41          502
+    genesis   new   16      0.15   8          1848       1828        20     1.1       0          229
+    genesis   new   64      0.25   16         1848       1834        14     0.8       0          242
+  The old row is the defect: a scour MEASURED 675 units out and the run-out put
+  1,811 back. Under the conserving rule sculptGuarded's net is exactly the
+  brush's displacement, Slide.gain is an exact calibration, and 1.1% is the
+  run-out genuinely meeting MAX_STEP. The measurement window did not need
+  widening either: the widest single diff FELL from 502 cells to 229 and the
+  unmeasured count from 41 to 0 — the manufacturing rule had been feeding its
+  own cascade.
+
+------------------------------------------------- THE PASS BUDGET ------------
+
+Passes actually taken over the spread the fixture's relief pays for
+(relief / MAX_STEP) — .sim-108/passes.mjs:
+
+    stroke                                    rule    relief  spread  passes  per cell
+    15-band stamp plateau, one smooth stroke  old       1008     252     135      0.54
+    15-band stamp plateau, one smooth stroke  new       1008     252     108      0.43
+    MAX plateau, brush fully clamped          old       1024     256     135      0.53
+    MAX plateau, brush fully clamped          new       1024     256     108      0.42
+    MAX plateau beside a MIN moat             old       1280     320     119      0.37
+    MAX plateau beside a MIN moat             new       1280     320     118      0.37
+    bare cliff 100 (synthetic)                old        100      25      53      2.12
+    bare cliff 100 (synthetic)                new        100      25      76      3.04
+    bare cliff 401 (synthetic)                old        401     100     300      3.00
+    bare cliff 401 (synthetic)                new        401     100    1187     11.87
+    bare cliff 1000 (synthetic)               old       1000     250     841      3.36
+    bare cliff 1000 (synthetic)               new       1000     250    2560     10.24  TRUNCATED
+
+  SMOOTH_PASSES_PER_SPREAD_CELL's old "~2.2 passes per cell" was the SYNTHETIC
+  row, not the player one. Player-constructible strokes take FEWER passes under
+  the conserving rule than under the old one. The factor stays 4 and
+  SMOOTH_PASS_LIMIT stays 2560 (owner decision) — see the constants' own doc
+  comments.
+
+  Truncation threshold, by bisection on a bare cliff over 128x128 — produced by
+  .sim-108/passes.mjs's TRUNCATION THRESHOLD section (output in passes.txt):
+
+    cliff 529: passes 2047  max gradient 5
+    cliff 592: passes 2524  max gradient 5
+    cliff 593: passes 2560  max gradient 6   <- smallest wall that truncates
+    cliff 657: passes 2560  max gradient 6
+    cliff 1000: passes 2560 max gradient 7
+
+volcanoes GENESIS_CONE_BANDS  stays 4  (measured 2026-08-30, review finding 4)
+  Peak gain from ONE raiseCone call, i.e. what a genesis vent's summit really
+  stands above the ground it was sited on:
+
+    ground    rule  bands asked   peak gain   in bands   summit above sea
+    flat      old   4                    64       4.00              10.00
+    flat      new   4                    64       4.00              10.00
+    genesis   old   4                    54       3.38               9.38
+    genesis   new   4                    44       2.75               8.75
+    genesis   new   5                    53       3.31               9.31
+    genesis   new   6                    60       3.75               9.75
+    genesis   new   8                    77       4.81              10.81
+
+  The documented ten-band summit is EXACT on flat ground under both rules. The
+  shortfall belongs to the ground, not the rule: a fresh world is band-quantised
+  and over-steep, so the cone sheds into the terraces round it — and it was
+  already 9.38 bands before the split. Accepted rather than retuned: 6 or 8
+  bands overshoots to 11.4 / 12.4 on flat ground and makes genesis dearer (ring
+  steps are 4-190 ms apiece on 2048²), to buy 0.63 of a band on a figure whose
+  only consumers are the client's plume and the settings preview.
+
+------------------------------------------ WHAT THE NEW TESTS PIN ------------
+
+  player smooth stroke on genesis terraces: 37 diff cells on stroke 1,
+    then 58, 74, 94 — every diff cell really moved
+  relaxation total delta: free 0, banded 0, anchored 0
+  layered path: SOLID VOLUME delta 0; sum of map.cells delta -1408 on the
+    pinned fixture (map.cells holds only the TOP span's ceiling, so it is not
+    a conserved quantity when the stroke moves a lower span)
+  free-spill peak after 384 library-default clicks: 87, map total 18,432
+  movePair guard: an UNDRAWN top span (thinner than a band, between two band
+    boundaries) has spanCaps.lo ABOVE its own ceiling, so the coupled clamp's
+    `t` goes negative — measured before the guard, a cell at 14 beside a
+    neighbour at 0 was pushed UP to 16, moving the pair APART.

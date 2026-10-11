@@ -1,0 +1,40 @@
+{
+  "original": {
+    "basecolor": {
+      "mean_absolute_error_8bit": 0.1389203816652298,
+      "root_mean_square_error_8bit": 0.3913199007511139
+    },
+    "normal": {
+      "mean_absolute_error_8bit": 0.45671603083610535,
+      "root_mean_square_error_8bit": 1.3758091926574707,
+      "mean_normal_angle_degrees": 0.36947187781333923
+    },
+    "metallicRoughness": {
+      "mean_absolute_error_8bit": 0.02185797691345215,
+      "root_mean_square_error_8bit": 0.1488131433725357,
+      "metalness_range": [
+        0.0,
+        0.0
+      ]
+    }
+  },
+  "low": {
+    "basecolor": {
+      "mean_absolute_error_8bit": 0.20694509148597717,
+      "root_mean_square_error_8bit": 0.490639865398407
+    },
+    "normal": {
+      "mean_absolute_error_8bit": 0.717558741569519,
+      "root_mean_square_error_8bit": 1.7841836214065552,
+      "mean_normal_angle_degrees": 0.5971882939338684
+    },
+    "metallicRoughness": {
+      "mean_absolute_error_8bit": 0.03192869573831558,
+      "root_mean_square_error_8bit": 0.1800224334001541,
+      "metalness_range": [
+        0.0,
+        0.0
+      ]
+    }
+  }
+}

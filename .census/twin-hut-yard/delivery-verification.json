@@ -1,0 +1,126 @@
+{
+  "original": {
+    "passed": true,
+    "png_metadata": {
+      "basecolor": {
+        "dimensions": [
+          2048,
+          2048
+        ],
+        "channels": "RGB",
+        "bits": 8,
+        "srgb_tag": true
+      },
+      "normal": {
+        "dimensions": [
+          2048,
+          2048
+        ],
+        "channels": "RGB",
+        "bits": 8,
+        "srgb_tag": false
+      },
+      "metallicRoughness": {
+        "dimensions": [
+          2048,
+          2048
+        ],
+        "channels": "RGB",
+        "bits": 8,
+        "srgb_tag": false
+      }
+    },
+    "ktx_metadata": {
+      "twin-hut-yard-normal": {
+        "transfer": "KHR_DF_TRANSFER_LINEAR",
+        "model": "KHR_DF_MODEL_UASTC",
+        "channels": "KHR_DF_CHANNEL_UASTC_RGB",
+        "mip_levels": 12,
+        "orientation": "rd",
+        "swizzle": null
+      },
+      "twin-hut-yard-basecolor": {
+        "transfer": "KHR_DF_TRANSFER_SRGB",
+        "model": "KHR_DF_MODEL_UASTC",
+        "channels": "KHR_DF_CHANNEL_UASTC_RGB",
+        "mip_levels": 12,
+        "orientation": "rd",
+        "swizzle": null
+      },
+      "twin-hut-yard-metallicRoughness": {
+        "transfer": "KHR_DF_TRANSFER_LINEAR",
+        "model": "KHR_DF_MODEL_UASTC",
+        "channels": "KHR_DF_CHANNEL_UASTC_RGB",
+        "mip_levels": 12,
+        "orientation": "rd",
+        "swizzle": null
+      }
+    },
+    "geometry_and_hierarchy_unchanged": true,
+    "texel_density_relative_spread": 4.534953722945545e-05,
+    "glb_sha256": "40a396e974caf073e34ef15628e46b4157b9c9f7250f990c6d5e27abcd071de1"
+  },
+  "low": {
+    "passed": true,
+    "png_metadata": {
+      "basecolor": {
+        "dimensions": [
+          1024,
+          1024
+        ],
+        "channels": "RGB",
+        "bits": 8,
+        "srgb_tag": true
+      },
+      "normal": {
+        "dimensions": [
+          1024,
+          1024
+        ],
+        "channels": "RGB",
+        "bits": 8,
+        "srgb_tag": false
+      },
+      "metallicRoughness": {
+        "dimensions": [
+          1024,
+          1024
+        ],
+        "channels": "RGB",
+        "bits": 8,
+        "srgb_tag": false
+      }
+    },
+    "ktx_metadata": {
+      "twin-hut-yard-normal": {
+        "transfer": "KHR_DF_TRANSFER_LINEAR",
+        "model": "KHR_DF_MODEL_UASTC",
+        "channels": "KHR_DF_CHANNEL_UASTC_RGB",
+        "mip_levels": 11,
+        "orientation": "rd",
+        "swizzle": null
+      },
+      "twin-hut-yard-basecolor": {
+        "transfer": "KHR_DF_TRANSFER_SRGB",
+        "model": "KHR_DF_MODEL_UASTC",
+        "channels": "KHR_DF_CHANNEL_UASTC_RGB",
+        "mip_levels": 11,
+        "orientation": "rd",
+        "swizzle": null
+      },
+      "twin-hut-yard-metallicRoughness": {
+        "transfer": "KHR_DF_TRANSFER_LINEAR",
+        "model": "KHR_DF_MODEL_UASTC",
+        "channels": "KHR_DF_CHANNEL_UASTC_RGB",
+        "mip_levels": 11,
+        "orientation": "rd",
+        "swizzle": null
+      }
+    },
+    "geometry_and_hierarchy_unchanged": true,
+    "texel_density_relative_spread": 1.2096376165615652e-05,
+    "glb_sha256": "71dc7103f2015057f71fb339deb70a9aed33ad78e55d55a485c2dce06dbd9e7e"
+  },
+  "lod_bounds_delta": 0.0,
+  "passed": true
+}

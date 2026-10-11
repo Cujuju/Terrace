@@ -1,0 +1,270 @@
+import { Group, Vector3 } from 'three';
+import { CELL_WORLD_SIZE } from '@terrace/shared';
+import type { ClientPluginCtx, TerraceClientPlugin } from '../../../client/src/plugins/types.ts';
+import { SEA_SURFACE_WORLD_Y } from '../../../client/src/worldScale.ts';
+import { NO_SAMPLE, reconcileById } from '../../../client/src/plugins/kit/viewReconcile.ts';
+import { watchReducedMotion } from '../../../client/src/plugins/kit/reducedMotion.ts';
+import {
+  MAX_LASER_BOLTS,
+  SAUCER_VARIANT_COUNT,
+  SAUCERS_PLUGIN_NAME,
+  SAUCERS_STATE_MESSAGE,
+  parseSaucersPayload,
+  type CrashState,
+  type LaserBolt,
+} from '../protocol.ts';
+import {
+  BURST_DRAW_OBJECTS,
+  LASER_POOL_DRAW_OBJECTS,
+  SPLASH_DRAW_OBJECTS,
+  createCrashSplashes,
+  type CrashSplashes,
+  createCrashBursts,
+  createLaserPool,
+  type CrashBursts,
+  type LaserPool,
+} from './effects.ts';
+import { factionColour } from './factions.ts';
+import { SaucerInterpolator, type InterpolatedSaucer } from './interpolation.ts';
+import {
+  createSaucerFleet,
+  createSaucerModels,
+  disposeSaucerAssets,
+  preloadSaucerModels,
+  SAUCER_MODEL_DRAW_OBJECTS,
+  type SaucerFleet,
+  type SaucerModels,
+} from './models.ts';
+
+const RING_RADIANS_PER_SECOND = 6;
+
+const LIGHTS_FLASHES_PER_SECOND = 2;
+const LIGHTS_FLASH_FRACTION = 0.4;
+
+const MUZZLE_FLASH_GAIN = 2.5;
+const MUZZLE_FLASH_DECAY_PER_SECOND = 8;
+
+const MAX_BANK_RADIANS = 0.6;
+const BANK_FULL_TURN_RATE = 2;
+
+const MAX_ANIMATION_STEP_SECONDS = 0.1;
+
+interface SaucerView {
+  readonly variant: number;
+  lastHeading: number;
+}
+
+let models: SaucerModels | null = null;
+let container: Group | null = null;
+let fleet: SaucerFleet | null = null;
+let lasers: LaserPool | null = null;
+let bursts: CrashBursts | null = null;
+let splashes: CrashSplashes | null = null;
+let reducedMotion: { matches(): boolean; stop(): void } | null = null;
+const views = new Map<number, SaucerView>();
+const interpolator = new SaucerInterpolator();
+
+let bolts: readonly LaserBolt[] = [];
+let crashes: readonly CrashState[] = [];
+let animationSeconds = 0;
+let unsubscribes: Array<() => void> = [];
+
+const boltFrom = new Vector3();
+const boltAim = new Vector3();
+
+function reconcileViews(sampled: ReadonlyMap<number, InterpolatedSaucer>): void {
+  reconcileById(sampled, views, {
+    acquire: (_id, saucer) => ({ variant: saucer.variant, lastHeading: saucer.heading }),
+    replace: (_id, saucer, existing) =>
+      existing.variant === saucer.variant
+        ? null
+        : { variant: saucer.variant, lastHeading: existing.lastHeading },
+    release: () => {},
+  });
+}
+
+function forgetViews(): void {
+  reconcileViews(NO_SAMPLE);
+  interpolator.clear();
+  bolts = [];
+  crashes = [];
+}
+
+function renderFrame(ctx: ClientPluginCtx, dt: number): void {
+  const step = Math.min(dt, MAX_ANIMATION_STEP_SECONDS);
+  if (!(reducedMotion?.matches() ?? false)) animationSeconds += step;
+
+  interpolator.advance(dt);
+  const sampled = interpolator.sample();
+  reconcileViews(sampled);
+
+  const ringSpin = animationSeconds * RING_RADIANS_PER_SECOND;
+  fleet?.begin();
+  for (const [id, saucer] of sampled) {
+    const view = views.get(id);
+    if (view === undefined) continue;
+    const turn = dt > 0 ? shortestAngle(saucer.heading - view.lastHeading) / dt : 0;
+    view.lastHeading = saucer.heading;
+    fleet?.place(
+      view.variant,
+      saucer.x * CELL_WORLD_SIZE,
+      saucer.alt,
+      saucer.y * CELL_WORLD_SIZE,
+      -saucer.heading,
+      clampSigned(turn / BANK_FULL_TURN_RATE) * MAX_BANK_RADIANS,
+      ringSpin,
+      muzzleGlow(id),
+    );
+  }
+  fleet?.finish(
+    1 + LIGHTS_FLASH_FRACTION * Math.sin(animationSeconds * LIGHTS_FLASHES_PER_SECOND * Math.PI * 2),
+  );
+
+  drawBolts();
+  drawCrashes(ctx);
+}
+
+function muzzleGlow(id: number): number {
+  let youngest = Infinity;
+  for (const bolt of bolts) {
+    if (bolt.from !== id) continue;
+    const age = renderAge(bolt.age);
+    if (age >= 0 && age < youngest) youngest = age;
+  }
+  if (youngest === Infinity) return 1;
+  return 1 + (MUZZLE_FLASH_GAIN - 1) * Math.exp(-MUZZLE_FLASH_DECAY_PER_SECOND * youngest);
+}
+
+function renderAge(wireAge: number): number {
+  return wireAge - interpolator.lagSeconds();
+}
+
+function drawBolts(): void {
+  const pool = lasers;
+  if (pool === null) return;
+  pool.begin();
+  if (bolts.length === 0) return;
+
+  for (const bolt of bolts) {
+    const shooter = views.get(bolt.from);
+    if (shooter === undefined) continue;
+    const age = renderAge(bolt.age);
+    if (age < 0) continue;
+    boltFrom.set(bolt.x * CELL_WORLD_SIZE, bolt.alt, bolt.y * CELL_WORLD_SIZE);
+    boltAim.set(bolt.aimX * CELL_WORLD_SIZE, bolt.aimAlt, bolt.aimY * CELL_WORLD_SIZE);
+    pool.draw(boltFrom, boltAim, age, factionColour(shooter.variant));
+  }
+}
+
+function drawCrashes(ctx: ClientPluginCtx): void {
+  const rig = bursts;
+  const splashRig = splashes;
+  if (rig === null || splashRig === null) return;
+  rig.begin();
+  splashRig.begin();
+  for (const crash of crashes) {
+    const x = crash.x * CELL_WORLD_SIZE;
+    const z = crash.y * CELL_WORLD_SIZE;
+    const age = renderAge(crash.age);
+    if (crash.water) {
+      rig.show(x, SEA_SURFACE_WORLD_Y, z, age);
+      splashRig.show(x, SEA_SURFACE_WORLD_Y, z, age);
+      continue;
+    }
+    const groundY = ctx.drawnGroundYAt(crash.x, crash.y);
+    if (groundY === null) continue;
+    rig.show(x, groundY, z, age);
+  }
+}
+
+function shortestAngle(radians: number): number {
+  const twoPi = Math.PI * 2;
+  let delta = radians % twoPi;
+  if (delta > Math.PI) delta -= twoPi;
+  if (delta < -Math.PI) delta += twoPi;
+  return delta;
+}
+
+function clampSigned(value: number): number {
+  return value < -1 ? -1 : value > 1 ? 1 : value;
+}
+
+export const clientPlugin: TerraceClientPlugin = {
+  name: SAUCERS_PLUGIN_NAME,
+
+  get drawBudget(): number {
+    return (
+      SAUCER_VARIANT_COUNT * SAUCER_MODEL_DRAW_OBJECTS +
+      LASER_POOL_DRAW_OBJECTS +
+      BURST_DRAW_OBJECTS +
+      SPLASH_DRAW_OBJECTS
+    );
+  },
+
+  preload(ctx: ClientPluginCtx): Promise<void> {
+    return preloadSaucerModels(ctx);
+  },
+
+  attach(ctx: ClientPluginCtx): void {
+    models = createSaucerModels();
+    reducedMotion = watchReducedMotion();
+    animationSeconds = 0;
+    bolts = [];
+    crashes = [];
+
+    container = new Group();
+    container.name = 'saucers:flying';
+    ctx.layer.add(container);
+    fleet = createSaucerFleet(models, container);
+
+    lasers = createLaserPool();
+    ctx.layer.add(lasers.root);
+    bursts = createCrashBursts();
+    ctx.layer.add(bursts.root);
+    splashes = createCrashSplashes();
+    ctx.layer.add(splashes.root);
+
+    unsubscribes = [
+      ctx.onMessage(SAUCERS_STATE_MESSAGE, (payload) => {
+        const state = parseSaucersPayload(payload);
+        if (state === null) return;
+        interpolator.receive(state.saucers);
+        bolts = state.lasers;
+        crashes = state.crashes;
+      }),
+
+      ctx.onFrame((dt) => renderFrame(ctx, dt)),
+
+      ctx.onWorldReset(forgetViews),
+    ];
+  },
+
+  dispose(): void {
+    for (const unsubscribe of unsubscribes) unsubscribe();
+    unsubscribes = [];
+
+    forgetViews();
+    fleet?.dispose();
+    fleet = null;
+
+    lasers?.dispose();
+    lasers = null;
+    bursts?.dispose();
+    bursts = null;
+    splashes?.dispose();
+    splashes = null;
+
+    container?.clear();
+    container = null;
+
+    models?.dispose();
+    models = null;
+    disposeSaucerAssets();
+
+    reducedMotion?.stop();
+    reducedMotion = null;
+    animationSeconds = 0;
+  },
+};
+
+export { MAX_LASER_BOLTS };

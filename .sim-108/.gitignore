@@ -1,0 +1,9 @@
+# The OLD (pre-#108) copy of shared/src, extracted from git so the simulation
+# can import it side by side with the working tree's. NOT committed: a second
+# copy of shared/ in the tree is exactly the kind of duplicate that goes stale
+# and answers a grep wrongly. Recreate it before running run.mjs with:
+#
+#   git archive <ref> shared/src | tar -x -C .sim-108/old-src --strip-components=2
+#
+# where <ref> is any commit before the conserving split (78951d1 or earlier).
+old-src/

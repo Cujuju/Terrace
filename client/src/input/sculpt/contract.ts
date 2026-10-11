@@ -1,0 +1,73 @@
+import type { Camera } from 'three';
+import type { TerrainRayPick, Vec3 } from '../../terrain/picking.ts';
+import { CUE_BLINK_ON_MS, DENIED_BLINK_SETTLE_MS } from '../../render/denialCue.ts';
+import type { SculptIntent } from '@terrace/shared';
+
+/**
+ * Brush cues lane E renders: `refused` red, `offline` grey and never red,
+ * `ghost` sent but predicted nothing, `flat` an aim the tool cannot take.
+ */
+export type SculptCue = 'refused' | 'offline' | 'ghost' | 'flat';
+
+/**
+ * What the host did with an intent. `refused` already pulsed red via
+ * releaseStroke, so the input must not also blink grey for it.
+ */
+export type SendOutcome = 'sent' | 'refused' | 'offline';
+
+/**
+ * Consecutive silent repeat ticks before the held button blinks the flat cue
+ * once. Press-time failures blink immediately instead of counting here.
+ */
+export const SILENT_REPEAT_BLINK_AFTER = 3;
+
+/** Red for this long when no button holds it. Derived so the pulse outlasts the cue's own blinks. */
+export const REFUSED_PULSE_MS = DENIED_BLINK_SETTLE_MS + CUE_BLINK_ON_MS;
+
+export interface SculptInputOptions {
+  canvas: HTMLCanvasElement;
+  camera: Camera;
+  pickCell: (origin: Vec3, direction: Vec3) => TerrainRayPick | null;
+  pickInColumn: (
+    x: number,
+    y: number,
+    origin: Vec3,
+    direction: Vec3,
+  ) => TerrainRayPick | null;
+  worldSize: () => number;
+  riserBand: (pick: TerrainRayPick | null) => number | null;
+  runFloorBandAt: (x: number, y: number, band: number) => number | null;
+  graspSpanBand: (
+    pick: TerrainRayPick | null,
+    atX: number,
+    atY: number,
+  ) => number | null;
+  carveBand: (pick: TerrainRayPick | null) => number | null;
+  carveReach: (
+    origin: Vec3,
+    direction: Vec3,
+    band: number,
+  ) => { x: number; y: number } | null;
+  send: (intent: SculptIntent) => SendOutcome;
+}
+
+export interface SculptInput {
+  hoverTarget(): TerrainRayPick | null;
+  /** A held drag's plane point as a pick, or null without a held drag on the ray. */
+  dragAim(): TerrainRayPick | null;
+  heldBand(): number | null;
+  carveHeldBand(): number | null;
+  releaseStroke(): void;
+  refusedHold(): boolean;
+  /** Grey/hollow brush: send() returned 'offline' during this stroke. Never red. */
+  offlineHold(): boolean;
+  /** The drag plane left the held band: freeze the stroke, grey the highlight. */
+  dragDescentFrozen(): boolean;
+  /** Press-time offline failures plus one blink per dropped sweep, transition-only. */
+  offlineBlinks(): number;
+  /** Press-time posture failures plus one blink per silent repeat streak. */
+  flatBlinks(): number;
+  /** Hits on the dead directionless-raise guard: logged, never cued. */
+  deadGuardHits(): number;
+  dispose(): void;
+}

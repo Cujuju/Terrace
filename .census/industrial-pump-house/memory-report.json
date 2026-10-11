@@ -1,0 +1,94 @@
+{
+  "assumptions": {
+    "png_gpu_format": "RGBA8 with complete mip chain",
+    "compressed_gpu_format": "BC7 or ASTC 4x4, 16 bytes per 4x4 block, complete mip chain",
+    "excluded": "CPU decoded images, loader buffers, driver allocation overhead, shaders, framebuffer and instance buffers",
+    "sharing": "Terrace draws repeated structures with InstancedMesh; mesh and textures are shared, not duplicated per house."
+  },
+  "variants": {
+    "original": {
+      "triangles": 1214,
+      "exported_vertices": 2388,
+      "geometry_gpu_bytes": 121908,
+      "textures": [
+        {
+          "name": "industrial-pump-house-normal",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 1620260
+        },
+        {
+          "name": "industrial-pump-house-basecolor",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 2300166
+        },
+        {
+          "name": "industrial-pump-house-metallicRoughness",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 549020
+        }
+      ],
+      "png_gpu_total_bytes": 67230768,
+      "ktx2_bc7_astc_gpu_total_bytes": 16899204,
+      "png_glb_file_bytes": 2975500,
+      "ktx2_glb_file_bytes": 4593528,
+      "png_glb_sha256": "90fe65a5e6eb45a8956eef4f67958f4cb83eb959ed799759c2d2ef733c978472",
+      "ktx2_glb_sha256": "424a754fa6f9ccf898196c0a09d48af410cba7de03f1a8f8c5f84a84fc95087e",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    },
+    "low": {
+      "triangles": 910,
+      "exported_vertices": 1812,
+      "geometry_gpu_bytes": 92436,
+      "textures": [
+        {
+          "name": "industrial-pump-house-normal",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 592997
+        },
+        {
+          "name": "industrial-pump-house-basecolor",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 792407
+        },
+        {
+          "name": "industrial-pump-house-metallicRoughness",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 237479
+        }
+      ],
+      "png_gpu_total_bytes": 16869648,
+      "ktx2_bc7_astc_gpu_total_bytes": 4286820,
+      "png_glb_file_bytes": 1205060,
+      "ktx2_glb_file_bytes": 1717484,
+      "png_glb_sha256": "42bed4f8889122484a7cae429a3cd3f252f95c6bfebb6244b4b96c40dd84fbac",
+      "ktx2_glb_sha256": "4287b522ee6857042b7e06b18d1e8e16c312d52461b85da2998bc2a78be7ec45",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    }
+  }
+}

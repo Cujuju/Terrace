@@ -1,0 +1,20 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // This is the first plugin with BOTH halves, so one project compiles server
+    // code (node builtins reachable through the core sources it type-imports)
+    // and client code (PointerEvent, and the three/solid types the client
+    // plugin contract names).
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    // tsc 7.0.2 does not auto-discover the pnpm-linked node_modules/@types of a
+    // nested workspace package (it does for server/, one level up), so the node
+    // types are named explicitly — same reason as plugins/mana and plugins/reveal.
+    "types": ["node"],
+    // Matches client/tsconfig.json exactly: the HUD panel is a Solid component
+    // and is compiled by the client's vite-plugin-solid, which expects
+    // untransformed JSX.
+    "jsx": "preserve",
+    "jsxImportSource": "solid-js"
+  },
+  "include": ["protocol.ts", "server", "client", "test"]
+}

@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node node_modules/eslint-plugin-comment-budget/dist/bin/check-file.js",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}

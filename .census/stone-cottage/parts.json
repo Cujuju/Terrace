@@ -1,0 +1,82 @@
+[
+  {
+    "name": "Preserved original Terrace procedural base, coplanar merge and bevel improvements",
+    "first_face": 0,
+    "face_count": 1665
+  },
+  {
+    "name": "Added threshold",
+    "first_face": 1665,
+    "face_count": 6
+  },
+  {
+    "name": "Closed roof ridge",
+    "first_face": 1671,
+    "face_count": 10
+  },
+  {
+    "name": "Closed roof verge",
+    "first_face": 1681,
+    "face_count": 10
+  },
+  {
+    "name": "Closed roof verge",
+    "first_face": 1691,
+    "face_count": 10
+  },
+  {
+    "name": "Closed roof verge",
+    "first_face": 1701,
+    "face_count": 10
+  },
+  {
+    "name": "Closed roof verge",
+    "first_face": 1711,
+    "face_count": 10
+  },
+  {
+    "name": "Closed gable",
+    "first_face": 1721,
+    "face_count": 5
+  },
+  {
+    "name": "Closed gable",
+    "first_face": 1726,
+    "face_count": 5
+  },
+  {
+    "name": "Closed gable",
+    "first_face": 1731,
+    "face_count": 5
+  },
+  {
+    "name": "Closed gable",
+    "first_face": 1736,
+    "face_count": 5
+  },
+  {
+    "name": "Inset plank door",
+    "first_face": 1741,
+    "face_count": 6
+  },
+  {
+    "name": "Window mullion",
+    "first_face": 1747,
+    "face_count": 6
+  },
+  {
+    "name": "Window cross rail",
+    "first_face": 1753,
+    "face_count": 6
+  },
+  {
+    "name": "Window mullion",
+    "first_face": 1759,
+    "face_count": 6
+  },
+  {
+    "name": "Window cross rail",
+    "first_face": 1765,
+    "face_count": 6
+  }
+]

@@ -1,0 +1,312 @@
+[
+  {
+    "name": "Stone footing",
+    "first_face": 0,
+    "face_count": 6
+  },
+  {
+    "name": "Plaster infill",
+    "first_face": 6,
+    "face_count": 6
+  },
+  {
+    "name": "Wall post",
+    "first_face": 12,
+    "face_count": 10
+  },
+  {
+    "name": "Wall post",
+    "first_face": 22,
+    "face_count": 10
+  },
+  {
+    "name": "Wall post",
+    "first_face": 32,
+    "face_count": 10
+  },
+  {
+    "name": "Wall rail",
+    "first_face": 42,
+    "face_count": 10
+  },
+  {
+    "name": "Wall rail",
+    "first_face": 52,
+    "face_count": 10
+  },
+  {
+    "name": "Diagonal brace",
+    "first_face": 62,
+    "face_count": 10
+  },
+  {
+    "name": "Diagonal brace",
+    "first_face": 72,
+    "face_count": 10
+  },
+  {
+    "name": "Wall post",
+    "first_face": 82,
+    "face_count": 10
+  },
+  {
+    "name": "Wall post",
+    "first_face": 92,
+    "face_count": 10
+  },
+  {
+    "name": "Wall post",
+    "first_face": 102,
+    "face_count": 10
+  },
+  {
+    "name": "Wall rail",
+    "first_face": 112,
+    "face_count": 10
+  },
+  {
+    "name": "Wall rail",
+    "first_face": 122,
+    "face_count": 10
+  },
+  {
+    "name": "Diagonal brace",
+    "first_face": 132,
+    "face_count": 10
+  },
+  {
+    "name": "Diagonal brace",
+    "first_face": 142,
+    "face_count": 10
+  },
+  {
+    "name": "Cottage tiled roof course 1",
+    "first_face": 152,
+    "face_count": 22
+  },
+  {
+    "name": "Cottage tiled roof course 2",
+    "first_face": 174,
+    "face_count": 22
+  },
+  {
+    "name": "Cottage tiled roof course 3",
+    "first_face": 196,
+    "face_count": 22
+  },
+  {
+    "name": "Cottage tiled roof course 4",
+    "first_face": 218,
+    "face_count": 22
+  },
+  {
+    "name": "Cottage tiled roof course 5",
+    "first_face": 240,
+    "face_count": 22
+  },
+  {
+    "name": "Cottage tiled roof course 1",
+    "first_face": 262,
+    "face_count": 22
+  },
+  {
+    "name": "Cottage tiled roof course 2",
+    "first_face": 284,
+    "face_count": 22
+  },
+  {
+    "name": "Cottage tiled roof course 3",
+    "first_face": 306,
+    "face_count": 22
+  },
+  {
+    "name": "Cottage tiled roof course 4",
+    "first_face": 328,
+    "face_count": 22
+  },
+  {
+    "name": "Cottage tiled roof course 5",
+    "first_face": 350,
+    "face_count": 22
+  },
+  {
+    "name": "Cottage tiled roof gable fascia",
+    "first_face": 372,
+    "face_count": 18
+  },
+  {
+    "name": "Cottage tiled roof gable fascia",
+    "first_face": 390,
+    "face_count": 18
+  },
+  {
+    "name": "Cottage tiled roof gable fascia",
+    "first_face": 408,
+    "face_count": 18
+  },
+  {
+    "name": "Cottage tiled roof gable fascia",
+    "first_face": 426,
+    "face_count": 18
+  },
+  {
+    "name": "Cottage tiled roof eave",
+    "first_face": 444,
+    "face_count": 22
+  },
+  {
+    "name": "Cottage tiled roof eave",
+    "first_face": 466,
+    "face_count": 22
+  },
+  {
+    "name": "Cottage tiled roof ridge",
+    "first_face": 488,
+    "face_count": 42
+  },
+  {
+    "name": "Closed gable",
+    "first_face": 530,
+    "face_count": 5
+  },
+  {
+    "name": "Gable rafter",
+    "first_face": 535,
+    "face_count": 10
+  },
+  {
+    "name": "Gable rafter",
+    "first_face": 545,
+    "face_count": 10
+  },
+  {
+    "name": "Closed gable",
+    "first_face": 555,
+    "face_count": 5
+  },
+  {
+    "name": "Gable rafter",
+    "first_face": 560,
+    "face_count": 10
+  },
+  {
+    "name": "Gable rafter",
+    "first_face": 570,
+    "face_count": 10
+  },
+  {
+    "name": "Recessed opening",
+    "first_face": 580,
+    "face_count": 6
+  },
+  {
+    "name": "Inset door",
+    "first_face": 586,
+    "face_count": 6
+  },
+  {
+    "name": "Door jamb",
+    "first_face": 592,
+    "face_count": 10
+  },
+  {
+    "name": "Door jamb",
+    "first_face": 602,
+    "face_count": 10
+  },
+  {
+    "name": "Lintel",
+    "first_face": 612,
+    "face_count": 10
+  },
+  {
+    "name": "Window opening",
+    "first_face": 622,
+    "face_count": 6
+  },
+  {
+    "name": "Window rail",
+    "first_face": 628,
+    "face_count": 6
+  },
+  {
+    "name": "Window rail",
+    "first_face": 634,
+    "face_count": 6
+  },
+  {
+    "name": "Window mullion",
+    "first_face": 640,
+    "face_count": 6
+  },
+  {
+    "name": "Window opening",
+    "first_face": 646,
+    "face_count": 6
+  },
+  {
+    "name": "Window rail",
+    "first_face": 652,
+    "face_count": 6
+  },
+  {
+    "name": "Window rail",
+    "first_face": 658,
+    "face_count": 6
+  },
+  {
+    "name": "Window mullion",
+    "first_face": 664,
+    "face_count": 6
+  },
+  {
+    "name": "Window opening",
+    "first_face": 670,
+    "face_count": 6
+  },
+  {
+    "name": "Window rail",
+    "first_face": 676,
+    "face_count": 6
+  },
+  {
+    "name": "Window rail",
+    "first_face": 682,
+    "face_count": 6
+  },
+  {
+    "name": "Window mullion",
+    "first_face": 688,
+    "face_count": 6
+  },
+  {
+    "name": "Window opening",
+    "first_face": 694,
+    "face_count": 6
+  },
+  {
+    "name": "Window rail",
+    "first_face": 700,
+    "face_count": 6
+  },
+  {
+    "name": "Window rail",
+    "first_face": 706,
+    "face_count": 6
+  },
+  {
+    "name": "Window mullion",
+    "first_face": 712,
+    "face_count": 6
+  },
+  {
+    "name": "Chimney",
+    "first_face": 718,
+    "face_count": 6
+  },
+  {
+    "name": "Chimney crown",
+    "first_face": 724,
+    "face_count": 6
+  }
+]

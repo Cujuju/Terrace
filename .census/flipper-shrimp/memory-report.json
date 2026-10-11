@@ -1,0 +1,112 @@
+{
+  "assumptions": {
+    "png_gpu_format": "RGBA8 with complete mip chain",
+    "compressed_gpu_format": "BC7 or ASTC 4x4, 16 bytes per 4x4 block, complete mip chain",
+    "excluded": "CPU decoded images, loader buffers, driver allocation overhead, shaders, framebuffer and instance buffers",
+    "sharing": "Terrace draws repeated structures with InstancedMesh; mesh and textures are shared, not duplicated per house."
+  },
+  "variants": {
+    "original": {
+      "triangles": 10396,
+      "exported_vertices": 24488,
+      "geometry_gpu_bytes": 1237800,
+      "textures": [
+        {
+          "name": "flipper-shrimp-emissive",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 34135
+        },
+        {
+          "name": "flipper-shrimp-normal",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 1303206
+        },
+        {
+          "name": "flipper-shrimp-basecolor",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 3084845
+        },
+        {
+          "name": "flipper-shrimp-metallicRoughness",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 751694
+        }
+      ],
+      "png_gpu_total_bytes": 90716280,
+      "ktx2_bc7_astc_gpu_total_bytes": 23607528,
+      "png_glb_file_bytes": 4426924,
+      "ktx2_glb_file_bytes": 6414172,
+      "png_glb_sha256": "3ce4e459be6b589cbf5acdb261c5a9f5231671f7441ce454bb58c692ad52ab4b",
+      "ktx2_glb_sha256": "d9bf8aa4945eaeee20c9aca9c8862fe4a94258a0848523de4bb4681d1972de46",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    },
+    "low": {
+      "triangles": 6092,
+      "exported_vertices": 13556,
+      "geometry_gpu_bytes": 687240,
+      "textures": [
+        {
+          "name": "flipper-shrimp-emissive",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 21464
+        },
+        {
+          "name": "flipper-shrimp-normal",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 298208
+        },
+        {
+          "name": "flipper-shrimp-basecolor",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 902994
+        },
+        {
+          "name": "flipper-shrimp-metallicRoughness",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 304849
+        }
+      ],
+      "png_gpu_total_bytes": 23056856,
+      "ktx2_bc7_astc_gpu_total_bytes": 6279752,
+      "png_glb_file_bytes": 1623324,
+      "ktx2_glb_file_bytes": 2217244,
+      "png_glb_sha256": "17dfab40c2e0299e1a3fbbf87772c08650f9b906169c922dce78e343d09734b2",
+      "ktx2_glb_sha256": "da814e210cf9a148d076e930a51822a177e1f0913e28a2a5816725a95ec75794",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    }
+  }
+}

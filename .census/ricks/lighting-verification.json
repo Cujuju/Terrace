@@ -1,0 +1,57 @@
+{
+  "original": {
+    "day": {
+      "external_world_strength": 0.65,
+      "external_sun_strength": 2.0,
+      "emission_strength": 1.600000023841858,
+      "bright_pixels": 1457016
+    },
+    "night": {
+      "external_world_strength": 0.015,
+      "external_sun_strength": 0.035,
+      "emission_strength": 1.600000023841858,
+      "bright_pixels": 51908
+    },
+    "unlit": {
+      "external_world_strength": 0.0,
+      "external_sun_strength": 0.0,
+      "emission_strength": 1.600000023841858,
+      "bright_pixels": 51181
+    },
+    "emission-off": {
+      "external_world_strength": 0.0,
+      "external_sun_strength": 0.0,
+      "emission_strength": 0.0,
+      "bright_pixels": 0
+    }
+  },
+  "low": {
+    "day": {
+      "external_world_strength": 0.65,
+      "external_sun_strength": 2.0,
+      "emission_strength": 1.600000023841858,
+      "bright_pixels": 1456577
+    },
+    "night": {
+      "external_world_strength": 0.015,
+      "external_sun_strength": 0.035,
+      "emission_strength": 1.600000023841858,
+      "bright_pixels": 51907
+    },
+    "unlit": {
+      "external_world_strength": 0.0,
+      "external_sun_strength": 0.0,
+      "emission_strength": 1.600000023841858,
+      "bright_pixels": 51182
+    },
+    "emission-off": {
+      "external_world_strength": 0.0,
+      "external_sun_strength": 0.0,
+      "emission_strength": 0.0,
+      "bright_pixels": 0
+    }
+  },
+  "indirect_bounces": 0,
+  "bloom": false,
+  "passed": true
+}

@@ -1,0 +1,30 @@
+{
+  "wordCap": 30,
+  "redirect": "docs/decisions/<arc>.md",
+  "patterns": [
+    "iso-date",
+    "owner",
+    "history",
+    "measurement",
+    "was-now",
+    "digit-row"
+  ],
+  "ignore": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/out/**",
+    "**/__pycache__/**",
+    "**/.*/**",
+    "**/.*",
+    "**/*.d.ts"
+  ],
+  "linted": [
+    "**/*.ts",
+    "**/*.tsx"
+  ],
+  "exempt": [
+    "client/test/zz-perf-sculpt.bench.test.ts",
+    "client/test/zz-perf-snapshot.gen.test.ts"
+  ]
+}

@@ -1,0 +1,227 @@
+[
+  {
+    "name": "Ventilated raised base",
+    "first_face": 0,
+    "face_count": 6
+  },
+  {
+    "name": "Granary masonry",
+    "first_face": 6,
+    "face_count": 6
+  },
+  {
+    "name": "External buttress",
+    "first_face": 12,
+    "face_count": 6
+  },
+  {
+    "name": "Subfloor ventilation",
+    "first_face": 18,
+    "face_count": 6
+  },
+  {
+    "name": "External buttress",
+    "first_face": 24,
+    "face_count": 6
+  },
+  {
+    "name": "Subfloor ventilation",
+    "first_face": 30,
+    "face_count": 6
+  },
+  {
+    "name": "External buttress",
+    "first_face": 36,
+    "face_count": 6
+  },
+  {
+    "name": "Subfloor ventilation",
+    "first_face": 42,
+    "face_count": 6
+  },
+  {
+    "name": "External buttress",
+    "first_face": 48,
+    "face_count": 6
+  },
+  {
+    "name": "Subfloor ventilation",
+    "first_face": 54,
+    "face_count": 6
+  },
+  {
+    "name": "External buttress",
+    "first_face": 60,
+    "face_count": 6
+  },
+  {
+    "name": "Subfloor ventilation",
+    "first_face": 66,
+    "face_count": 6
+  },
+  {
+    "name": "External buttress",
+    "first_face": 72,
+    "face_count": 6
+  },
+  {
+    "name": "Subfloor ventilation",
+    "first_face": 78,
+    "face_count": 6
+  },
+  {
+    "name": "External buttress",
+    "first_face": 84,
+    "face_count": 6
+  },
+  {
+    "name": "Subfloor ventilation",
+    "first_face": 90,
+    "face_count": 6
+  },
+  {
+    "name": "External buttress",
+    "first_face": 96,
+    "face_count": 6
+  },
+  {
+    "name": "Subfloor ventilation",
+    "first_face": 102,
+    "face_count": 6
+  },
+  {
+    "name": "Roman tile roof course 1",
+    "first_face": 108,
+    "face_count": 22
+  },
+  {
+    "name": "Roman tile roof course 2",
+    "first_face": 130,
+    "face_count": 22
+  },
+  {
+    "name": "Roman tile roof course 3",
+    "first_face": 152,
+    "face_count": 22
+  },
+  {
+    "name": "Roman tile roof course 4",
+    "first_face": 174,
+    "face_count": 22
+  },
+  {
+    "name": "Roman tile roof course 5",
+    "first_face": 196,
+    "face_count": 22
+  },
+  {
+    "name": "Roman tile roof course 1",
+    "first_face": 218,
+    "face_count": 22
+  },
+  {
+    "name": "Roman tile roof course 2",
+    "first_face": 240,
+    "face_count": 22
+  },
+  {
+    "name": "Roman tile roof course 3",
+    "first_face": 262,
+    "face_count": 22
+  },
+  {
+    "name": "Roman tile roof course 4",
+    "first_face": 284,
+    "face_count": 22
+  },
+  {
+    "name": "Roman tile roof course 5",
+    "first_face": 306,
+    "face_count": 22
+  },
+  {
+    "name": "Roman tile roof gable fascia",
+    "first_face": 328,
+    "face_count": 18
+  },
+  {
+    "name": "Roman tile roof gable fascia",
+    "first_face": 346,
+    "face_count": 18
+  },
+  {
+    "name": "Roman tile roof gable fascia",
+    "first_face": 364,
+    "face_count": 18
+  },
+  {
+    "name": "Roman tile roof gable fascia",
+    "first_face": 382,
+    "face_count": 18
+  },
+  {
+    "name": "Roman tile roof eave",
+    "first_face": 400,
+    "face_count": 22
+  },
+  {
+    "name": "Roman tile roof eave",
+    "first_face": 422,
+    "face_count": 22
+  },
+  {
+    "name": "Roman tile roof ridge",
+    "first_face": 444,
+    "face_count": 42
+  },
+  {
+    "name": "Closed gable",
+    "first_face": 486,
+    "face_count": 5
+  },
+  {
+    "name": "Closed gable",
+    "first_face": 491,
+    "face_count": 5
+  },
+  {
+    "name": "Recessed opening",
+    "first_face": 496,
+    "face_count": 6
+  },
+  {
+    "name": "Inset door",
+    "first_face": 502,
+    "face_count": 6
+  },
+  {
+    "name": "Door jamb",
+    "first_face": 508,
+    "face_count": 10
+  },
+  {
+    "name": "Door jamb",
+    "first_face": 518,
+    "face_count": 10
+  },
+  {
+    "name": "Lintel",
+    "first_face": 528,
+    "face_count": 10
+  },
+  {
+    "name": "Granary step",
+    "first_face": 538,
+    "face_count": 6
+  },
+  {
+    "name": "Granary step",
+    "first_face": 544,
+    "face_count": 6
+  },
+  {
+    "name": "Granary step",
+    "first_face": 550,
+    "face_count": 6
+  }
+]

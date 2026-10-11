@@ -1,0 +1,94 @@
+{
+  "assumptions": {
+    "png_gpu_format": "RGBA8 with complete mip chain",
+    "compressed_gpu_format": "BC7 or ASTC 4x4, 16 bytes per 4x4 block, complete mip chain",
+    "excluded": "CPU decoded images, loader buffers, driver allocation overhead, shaders, framebuffer and instance buffers",
+    "sharing": "Terrace draws repeated structures with InstancedMesh; mesh and textures are shared, not duplicated per house."
+  },
+  "variants": {
+    "original": {
+      "triangles": 484,
+      "exported_vertices": 864,
+      "geometry_gpu_bytes": 44376,
+      "textures": [
+        {
+          "name": "medieval-dovecote-normal",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 1971650
+        },
+        {
+          "name": "medieval-dovecote-basecolor",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 2239336
+        },
+        {
+          "name": "medieval-dovecote-metallicRoughness",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 344471
+        }
+      ],
+      "png_gpu_total_bytes": 67153236,
+      "ktx2_bc7_astc_gpu_total_bytes": 16821672,
+      "png_glb_file_bytes": 4120556,
+      "ktx2_glb_file_bytes": 4601972,
+      "png_glb_sha256": "e238908fc2aede5f8a90d3fbdc3e877afcb8e96d39c766a20a2de615276b66e2",
+      "ktx2_glb_sha256": "48559fc567aed4585ed69413afe75d55581e3fe9b53734da36f411cdeecb1b5f",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    },
+    "low": {
+      "triangles": 436,
+      "exported_vertices": 792,
+      "geometry_gpu_bytes": 40632,
+      "textures": [
+        {
+          "name": "medieval-dovecote-normal",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 698534
+        },
+        {
+          "name": "medieval-dovecote-basecolor",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 792003
+        },
+        {
+          "name": "medieval-dovecote-metallicRoughness",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 171816
+        }
+      ],
+      "png_gpu_total_bytes": 16817844,
+      "ktx2_bc7_astc_gpu_total_bytes": 4235016,
+      "png_glb_file_bytes": 1608996,
+      "ktx2_glb_file_bytes": 1705120,
+      "png_glb_sha256": "e590c8fa6261d310c1878332c867cdcf0ff69692071fd4bb8c56c9a6c3337763",
+      "ktx2_glb_sha256": "149e207e5f639685b1132ff9745111dc23404f3e9896124fbc73da9b24fc5321",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    }
+  }
+}

@@ -1,0 +1,160 @@
+{
+  "original": {
+    "passed": true,
+    "png_metadata": {
+      "basecolor": {
+        "dimensions": [
+          2048,
+          2048
+        ],
+        "channels": "RGB",
+        "bits": 8,
+        "srgb_tag": true
+      },
+      "normal": {
+        "dimensions": [
+          2048,
+          2048
+        ],
+        "channels": "RGB",
+        "bits": 8,
+        "srgb_tag": false
+      },
+      "metallicRoughness": {
+        "dimensions": [
+          2048,
+          2048
+        ],
+        "channels": "RGB",
+        "bits": 8,
+        "srgb_tag": false
+      },
+      "emissive": {
+        "dimensions": [
+          2048,
+          2048
+        ],
+        "channels": "RGB",
+        "bits": 8,
+        "srgb_tag": true
+      }
+    },
+    "ktx_metadata": {
+      "flipper-shrimp-emissive": {
+        "transfer": "KHR_DF_TRANSFER_SRGB",
+        "model": "KHR_DF_MODEL_UASTC",
+        "channels": "KHR_DF_CHANNEL_UASTC_RGB",
+        "mip_levels": 12,
+        "orientation": "rd",
+        "swizzle": null
+      },
+      "flipper-shrimp-normal": {
+        "transfer": "KHR_DF_TRANSFER_LINEAR",
+        "model": "KHR_DF_MODEL_UASTC",
+        "channels": "KHR_DF_CHANNEL_UASTC_RGB",
+        "mip_levels": 12,
+        "orientation": "rd",
+        "swizzle": null
+      },
+      "flipper-shrimp-basecolor": {
+        "transfer": "KHR_DF_TRANSFER_SRGB",
+        "model": "KHR_DF_MODEL_UASTC",
+        "channels": "KHR_DF_CHANNEL_UASTC_RGB",
+        "mip_levels": 12,
+        "orientation": "rd",
+        "swizzle": null
+      },
+      "flipper-shrimp-metallicRoughness": {
+        "transfer": "KHR_DF_TRANSFER_LINEAR",
+        "model": "KHR_DF_MODEL_UASTC",
+        "channels": "KHR_DF_CHANNEL_UASTC_RGB",
+        "mip_levels": 12,
+        "orientation": "rd",
+        "swizzle": null
+      }
+    },
+    "geometry_and_hierarchy_unchanged": true,
+    "texel_density_relative_spread": 0.0002938383270298939,
+    "glb_sha256": "3ce4e459be6b589cbf5acdb261c5a9f5231671f7441ce454bb58c692ad52ab4b"
+  },
+  "low": {
+    "passed": true,
+    "png_metadata": {
+      "basecolor": {
+        "dimensions": [
+          1024,
+          1024
+        ],
+        "channels": "RGB",
+        "bits": 8,
+        "srgb_tag": true
+      },
+      "normal": {
+        "dimensions": [
+          1024,
+          1024
+        ],
+        "channels": "RGB",
+        "bits": 8,
+        "srgb_tag": false
+      },
+      "metallicRoughness": {
+        "dimensions": [
+          1024,
+          1024
+        ],
+        "channels": "RGB",
+        "bits": 8,
+        "srgb_tag": false
+      },
+      "emissive": {
+        "dimensions": [
+          1024,
+          1024
+        ],
+        "channels": "RGB",
+        "bits": 8,
+        "srgb_tag": true
+      }
+    },
+    "ktx_metadata": {
+      "flipper-shrimp-emissive": {
+        "transfer": "KHR_DF_TRANSFER_SRGB",
+        "model": "KHR_DF_MODEL_UASTC",
+        "channels": "KHR_DF_CHANNEL_UASTC_RGB",
+        "mip_levels": 11,
+        "orientation": "rd",
+        "swizzle": null
+      },
+      "flipper-shrimp-normal": {
+        "transfer": "KHR_DF_TRANSFER_LINEAR",
+        "model": "KHR_DF_MODEL_UASTC",
+        "channels": "KHR_DF_CHANNEL_UASTC_RGB",
+        "mip_levels": 11,
+        "orientation": "rd",
+        "swizzle": null
+      },
+      "flipper-shrimp-basecolor": {
+        "transfer": "KHR_DF_TRANSFER_SRGB",
+        "model": "KHR_DF_MODEL_UASTC",
+        "channels": "KHR_DF_CHANNEL_UASTC_RGB",
+        "mip_levels": 11,
+        "orientation": "rd",
+        "swizzle": null
+      },
+      "flipper-shrimp-metallicRoughness": {
+        "transfer": "KHR_DF_TRANSFER_LINEAR",
+        "model": "KHR_DF_MODEL_UASTC",
+        "channels": "KHR_DF_CHANNEL_UASTC_RGB",
+        "mip_levels": 11,
+        "orientation": "rd",
+        "swizzle": null
+      }
+    },
+    "geometry_and_hierarchy_unchanged": true,
+    "texel_density_relative_spread": 0.0004776166884119526,
+    "glb_sha256": "17dfab40c2e0299e1a3fbbf87772c08650f9b906169c922dce78e343d09734b2"
+  },
+  "lod_bounds_delta": 0.0,
+  "passed": true
+}

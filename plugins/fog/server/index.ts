@@ -1,0 +1,119 @@
+import { logInfo } from '../../../server/src/log.ts';
+import type {
+  PluginActionOutcome,
+  PluginActionSite,
+  TerracePlugin,
+  WorldApi,
+} from '../../../server/src/plugins/types.ts';
+import { devForceEnvName, readDevForce } from '../../../server/src/plugins/kit/devForce.ts';
+import { createDiscSystems } from '../../../server/src/plugins/kit/discSystems.ts';
+import { isRefusal, summonDisc } from '../../../server/src/plugins/kit/discSummon.ts';
+import {
+  FOG_COVERAGE_FRACTION,
+  FOG_PLUGIN_NAME,
+  FOG_SYSTEMS_MESSAGE,
+  MAX_ACTIVE_SYSTEMS,
+} from '../protocol.ts';
+import { fogRandom } from './rng.ts';
+import {
+  loadWeatherBridge,
+  registerWithHub,
+  unregisterFromHub,
+  windVelocity,
+} from './weather-bridge.ts';
+
+export const BROADCAST_TICK_INTERVAL = 10;
+
+export const FOG_DEV_FORCE_ENV = devForceEnvName(FOG_PLUGIN_NAME);
+
+const systems = createDiscSystems({
+  coverageFraction: FOG_COVERAGE_FRACTION,
+  maxActiveSystems: MAX_ACTIVE_SYSTEMS,
+  random: fogRandom,
+});
+
+let tickCount = 0;
+
+export function livingSystems(): ReturnType<typeof systems.systems> {
+  return systems.systems();
+}
+
+export function systemStates(): ReturnType<typeof systems.states> {
+  return systems.states(windVelocity());
+}
+
+export function wetnessAt(_x: number, _y: number): number {
+  return 0;
+}
+
+function simulate(world: WorldApi, dt: number): void {
+  systems.advance(world.worldSize, dt, windVelocity());
+
+  tickCount++;
+  if (tickCount % BROADCAST_TICK_INTERVAL !== 0) return;
+  world.broadcast(FOG_SYSTEMS_MESSAGE, { systems: systemStates() });
+}
+
+export const plugin: TerracePlugin = {
+  name: FOG_PLUGIN_NAME,
+
+  onWorldCreate(world: WorldApi): void {
+    systems.reset();
+    tickCount = 0;
+
+    loadWeatherBridge(world);
+    registerWithHub({
+      name: FOG_PLUGIN_NAME,
+      cells: () => systems.cells(),
+      wetnessAt,
+    });
+
+    const forced = readDevForce(FOG_DEV_FORCE_ENV, process.env);
+    systems.force(forced);
+    if (forced) {
+      logInfo(`[fog] ${FOG_DEV_FORCE_ENV}=1 — one fog system parked over the world centre`);
+    }
+  },
+
+  onWorldClose(): void {
+    unregisterFromHub();
+    systems.reset();
+  },
+
+  archetype: 'weather',
+  actions: [
+    {
+      key: FOG_PLUGIN_NAME,
+      label: 'Bring fog',
+      description:
+        'A fog bank gathers over where you are looking, then drifts on the wind like any other system.',
+    },
+  ],
+
+  onAction(world: WorldApi, key: string, site: PluginActionSite): PluginActionOutcome {
+    if (key !== FOG_PLUGIN_NAME) return { ok: false, detail: `no such action "${key}"` };
+    const summoned = summonDisc({
+      systems,
+      worldSize: world.worldSize,
+      site,
+      forcedEnv: FOG_DEV_FORCE_ENV,
+      ceiling: MAX_ACTIVE_SYSTEMS,
+      noun: 'fog systems',
+    });
+    if (isRefusal(summoned)) return summoned;
+    const system = summoned;
+    world.broadcast(FOG_SYSTEMS_MESSAGE, { systems: systemStates() });
+    return { ok: true, detail: `fog system ${system.id} gathering at (${site.x}, ${site.y})` };
+  },
+
+  onTick(world: WorldApi, dt: number): void {
+    simulate(world, dt);
+  },
+};
+
+export function resetFogState(): void {
+  tickCount = 0;
+  systems.reset();
+}
+
+export { systems as fogSystems };

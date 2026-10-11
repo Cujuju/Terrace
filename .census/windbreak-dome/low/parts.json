@@ -1,0 +1,27 @@
+[
+  {
+    "name": "Preserved original Terrace procedural base, coplanar merge and bevel improvements",
+    "first_face": 0,
+    "face_count": 368
+  },
+  {
+    "name": "Visible entry recess",
+    "first_face": 368,
+    "face_count": 6
+  },
+  {
+    "name": "Entry porch jamb",
+    "first_face": 374,
+    "face_count": 6
+  },
+  {
+    "name": "Entry porch jamb",
+    "first_face": 380,
+    "face_count": 6
+  },
+  {
+    "name": "Entry porch lintel",
+    "first_face": 386,
+    "face_count": 6
+  }
+]

@@ -1,0 +1,397 @@
+[
+  {
+    "name": "Original temple plinth",
+    "first_face": 0,
+    "face_count": 6
+  },
+  {
+    "name": "Grounded stair apron",
+    "first_face": 6,
+    "face_count": 6
+  },
+  {
+    "name": "Original terrace 1",
+    "first_face": 12,
+    "face_count": 6
+  },
+  {
+    "name": "Terrace coping",
+    "first_face": 18,
+    "face_count": 6
+  },
+  {
+    "name": "Terrace coping",
+    "first_face": 24,
+    "face_count": 6
+  },
+  {
+    "name": "Dressed corner",
+    "first_face": 30,
+    "face_count": 6
+  },
+  {
+    "name": "Dressed corner",
+    "first_face": 36,
+    "face_count": 6
+  },
+  {
+    "name": "Terrace coping",
+    "first_face": 42,
+    "face_count": 6
+  },
+  {
+    "name": "Terrace coping",
+    "first_face": 48,
+    "face_count": 6
+  },
+  {
+    "name": "Dressed corner",
+    "first_face": 54,
+    "face_count": 6
+  },
+  {
+    "name": "Dressed corner",
+    "first_face": 60,
+    "face_count": 6
+  },
+  {
+    "name": "Ascent tread",
+    "first_face": 66,
+    "face_count": 6
+  },
+  {
+    "name": "Ascent tread",
+    "first_face": 72,
+    "face_count": 6
+  },
+  {
+    "name": "Ascent tread",
+    "first_face": 78,
+    "face_count": 6
+  },
+  {
+    "name": "Ascent tread",
+    "first_face": 84,
+    "face_count": 6
+  },
+  {
+    "name": "Stair parapet",
+    "first_face": 90,
+    "face_count": 6
+  },
+  {
+    "name": "Stair parapet",
+    "first_face": 96,
+    "face_count": 6
+  },
+  {
+    "name": "Original terrace 2",
+    "first_face": 102,
+    "face_count": 6
+  },
+  {
+    "name": "Terrace coping",
+    "first_face": 108,
+    "face_count": 6
+  },
+  {
+    "name": "Terrace coping",
+    "first_face": 114,
+    "face_count": 6
+  },
+  {
+    "name": "Dressed corner",
+    "first_face": 120,
+    "face_count": 6
+  },
+  {
+    "name": "Dressed corner",
+    "first_face": 126,
+    "face_count": 6
+  },
+  {
+    "name": "Terrace coping",
+    "first_face": 132,
+    "face_count": 6
+  },
+  {
+    "name": "Terrace coping",
+    "first_face": 138,
+    "face_count": 6
+  },
+  {
+    "name": "Dressed corner",
+    "first_face": 144,
+    "face_count": 6
+  },
+  {
+    "name": "Dressed corner",
+    "first_face": 150,
+    "face_count": 6
+  },
+  {
+    "name": "Ascent tread",
+    "first_face": 156,
+    "face_count": 6
+  },
+  {
+    "name": "Ascent tread",
+    "first_face": 162,
+    "face_count": 6
+  },
+  {
+    "name": "Ascent tread",
+    "first_face": 168,
+    "face_count": 6
+  },
+  {
+    "name": "Ascent tread",
+    "first_face": 174,
+    "face_count": 6
+  },
+  {
+    "name": "Stair parapet",
+    "first_face": 180,
+    "face_count": 6
+  },
+  {
+    "name": "Stair parapet",
+    "first_face": 186,
+    "face_count": 6
+  },
+  {
+    "name": "Original terrace 3",
+    "first_face": 192,
+    "face_count": 6
+  },
+  {
+    "name": "Terrace coping",
+    "first_face": 198,
+    "face_count": 6
+  },
+  {
+    "name": "Terrace coping",
+    "first_face": 204,
+    "face_count": 6
+  },
+  {
+    "name": "Dressed corner",
+    "first_face": 210,
+    "face_count": 6
+  },
+  {
+    "name": "Dressed corner",
+    "first_face": 216,
+    "face_count": 6
+  },
+  {
+    "name": "Terrace coping",
+    "first_face": 222,
+    "face_count": 6
+  },
+  {
+    "name": "Terrace coping",
+    "first_face": 228,
+    "face_count": 6
+  },
+  {
+    "name": "Dressed corner",
+    "first_face": 234,
+    "face_count": 6
+  },
+  {
+    "name": "Dressed corner",
+    "first_face": 240,
+    "face_count": 6
+  },
+  {
+    "name": "Ascent tread",
+    "first_face": 246,
+    "face_count": 6
+  },
+  {
+    "name": "Ascent tread",
+    "first_face": 252,
+    "face_count": 6
+  },
+  {
+    "name": "Ascent tread",
+    "first_face": 258,
+    "face_count": 6
+  },
+  {
+    "name": "Ascent tread",
+    "first_face": 264,
+    "face_count": 6
+  },
+  {
+    "name": "Stair parapet",
+    "first_face": 270,
+    "face_count": 6
+  },
+  {
+    "name": "Stair parapet",
+    "first_face": 276,
+    "face_count": 6
+  },
+  {
+    "name": "Original terrace 4",
+    "first_face": 282,
+    "face_count": 6
+  },
+  {
+    "name": "Terrace coping",
+    "first_face": 288,
+    "face_count": 6
+  },
+  {
+    "name": "Terrace coping",
+    "first_face": 294,
+    "face_count": 6
+  },
+  {
+    "name": "Dressed corner",
+    "first_face": 300,
+    "face_count": 6
+  },
+  {
+    "name": "Dressed corner",
+    "first_face": 306,
+    "face_count": 6
+  },
+  {
+    "name": "Terrace coping",
+    "first_face": 312,
+    "face_count": 6
+  },
+  {
+    "name": "Terrace coping",
+    "first_face": 318,
+    "face_count": 6
+  },
+  {
+    "name": "Dressed corner",
+    "first_face": 324,
+    "face_count": 6
+  },
+  {
+    "name": "Dressed corner",
+    "first_face": 330,
+    "face_count": 6
+  },
+  {
+    "name": "Ascent tread",
+    "first_face": 336,
+    "face_count": 6
+  },
+  {
+    "name": "Ascent tread",
+    "first_face": 342,
+    "face_count": 6
+  },
+  {
+    "name": "Ascent tread",
+    "first_face": 348,
+    "face_count": 6
+  },
+  {
+    "name": "Ascent tread",
+    "first_face": 354,
+    "face_count": 6
+  },
+  {
+    "name": "Stair parapet",
+    "first_face": 360,
+    "face_count": 6
+  },
+  {
+    "name": "Stair parapet",
+    "first_face": 366,
+    "face_count": 6
+  },
+  {
+    "name": "Summit shrine",
+    "first_face": 372,
+    "face_count": 6
+  },
+  {
+    "name": "Shrine corner pier",
+    "first_face": 378,
+    "face_count": 6
+  },
+  {
+    "name": "Shrine corner pier",
+    "first_face": 384,
+    "face_count": 6
+  },
+  {
+    "name": "Shrine corner pier",
+    "first_face": 390,
+    "face_count": 6
+  },
+  {
+    "name": "Shrine corner pier",
+    "first_face": 396,
+    "face_count": 6
+  },
+  {
+    "name": "Recessed opening",
+    "first_face": 402,
+    "face_count": 6
+  },
+  {
+    "name": "Inset door",
+    "first_face": 408,
+    "face_count": 6
+  },
+  {
+    "name": "Door jamb",
+    "first_face": 414,
+    "face_count": 6
+  },
+  {
+    "name": "Door jamb",
+    "first_face": 420,
+    "face_count": 6
+  },
+  {
+    "name": "Lintel",
+    "first_face": 426,
+    "face_count": 6
+  },
+  {
+    "name": "Summit lintel band",
+    "first_face": 432,
+    "face_count": 6
+  },
+  {
+    "name": "Hipped roof course",
+    "first_face": 438,
+    "face_count": 6
+  },
+  {
+    "name": "Hipped roof course",
+    "first_face": 444,
+    "face_count": 6
+  },
+  {
+    "name": "Hipped roof course",
+    "first_face": 450,
+    "face_count": 6
+  },
+  {
+    "name": "Summit cap",
+    "first_face": 456,
+    "face_count": 6
+  },
+  {
+    "name": "Original lower portal",
+    "first_face": 462,
+    "face_count": 6
+  },
+  {
+    "name": "Original lower portal",
+    "first_face": 468,
+    "face_count": 6
+  }
+]

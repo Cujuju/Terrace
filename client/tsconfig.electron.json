@@ -1,0 +1,10 @@
+// Typecheck project for the desktop main process only. tsconfig.json targets the DOM with Solid's
+// JSX runtime; folding electron/ into it would hand main a fake `window` and leave its Node globals unchecked.
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023"],
+    "types": ["node"]
+  },
+  "include": ["electron/**/*.ts", "electron-builder.ts"]
+}

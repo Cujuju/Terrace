@@ -1,0 +1,54 @@
+import { describe, expect, it } from 'vitest';
+import {
+  SCULPT_REPEAT_DELAY_MS,
+  SCULPT_REPEAT_INTERVAL_MS,
+  SCULPT_REPEAT_RAMP_FACTOR,
+} from '../src/config.ts';
+import { repeatDelayMs } from '../src/input/sculptInput.ts';
+
+describe('repeatDelayMs', () => {
+  it('starts at the full hold delay', () => {
+    expect(repeatDelayMs(0)).toBe(SCULPT_REPEAT_DELAY_MS);
+  });
+
+  it('is monotonically non-increasing — it may only ever speed up', () => {
+    for (let i = 1; i < 50; i++) {
+      expect(repeatDelayMs(i)).toBeLessThanOrEqual(repeatDelayMs(i - 1));
+    }
+  });
+
+  it('never dips below the floor, however long the hold', () => {
+    for (let i = 0; i < 1000; i++) {
+      expect(repeatDelayMs(i)).toBeGreaterThanOrEqual(SCULPT_REPEAT_INTERVAL_MS);
+    }
+  });
+
+  it('reaches the floor and stays there', () => {
+    expect(repeatDelayMs(999)).toBe(SCULPT_REPEAT_INTERVAL_MS);
+    expect(repeatDelayMs(1000)).toBe(SCULPT_REPEAT_INTERVAL_MS);
+  });
+
+  it('decays by the ramp factor while above the floor', () => {
+    const first = repeatDelayMs(0);
+    const second = repeatDelayMs(1);
+    expect(second).toBeGreaterThan(SCULPT_REPEAT_INTERVAL_MS);
+    expect(second).toBeCloseTo(first * SCULPT_REPEAT_RAMP_FACTOR, 6);
+  });
+
+  it('gives a deliberate click time to end before the second intent', () => {
+    const SLOWEST_DELIBERATE_CLICK_MS = 300;
+    expect(repeatDelayMs(0)).toBeGreaterThan(SLOWEST_DELIBERATE_CLICK_MS);
+  });
+
+  it('reaches full speed within a couple of seconds of holding', () => {
+    const FULL_SPEED_DEADLINE_MS = 2000;
+    let elapsed = 0;
+    let repeats = 0;
+    while (repeatDelayMs(repeats) > SCULPT_REPEAT_INTERVAL_MS) {
+      elapsed += repeatDelayMs(repeats);
+      repeats++;
+      expect(repeats).toBeLessThan(100);
+    }
+    expect(elapsed).toBeLessThan(FULL_SPEED_DEADLINE_MS);
+  });
+});

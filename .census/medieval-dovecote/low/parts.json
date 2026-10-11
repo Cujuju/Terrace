@@ -1,0 +1,117 @@
+[
+  {
+    "name": "stone polygonal course",
+    "first_face": 0,
+    "face_count": 14
+  },
+  {
+    "name": "stone polygonal course",
+    "first_face": 14,
+    "face_count": 14
+  },
+  {
+    "name": "plaster polygonal course",
+    "first_face": 28,
+    "face_count": 14
+  },
+  {
+    "name": "plaster polygonal course",
+    "first_face": 42,
+    "face_count": 14
+  },
+  {
+    "name": "plaster polygonal course",
+    "first_face": 56,
+    "face_count": 14
+  },
+  {
+    "name": "Hipped roof course",
+    "first_face": 70,
+    "face_count": 6
+  },
+  {
+    "name": "Hipped roof course",
+    "first_face": 76,
+    "face_count": 6
+  },
+  {
+    "name": "Hipped roof course",
+    "first_face": 82,
+    "face_count": 6
+  },
+  {
+    "name": "Hipped roof course",
+    "first_face": 88,
+    "face_count": 6
+  },
+  {
+    "name": "Hipped roof course",
+    "first_face": 94,
+    "face_count": 6
+  },
+  {
+    "name": "Louvred lantern",
+    "first_face": 100,
+    "face_count": 6
+  },
+  {
+    "name": "Dove flight opening",
+    "first_face": 106,
+    "face_count": 6
+  },
+  {
+    "name": "Dove flight opening",
+    "first_face": 112,
+    "face_count": 6
+  },
+  {
+    "name": "Hipped roof course",
+    "first_face": 118,
+    "face_count": 6
+  },
+  {
+    "name": "Hipped roof course",
+    "first_face": 124,
+    "face_count": 6
+  },
+  {
+    "name": "Recessed opening",
+    "first_face": 130,
+    "face_count": 6
+  },
+  {
+    "name": "Inset door",
+    "first_face": 136,
+    "face_count": 6
+  },
+  {
+    "name": "Door jamb",
+    "first_face": 142,
+    "face_count": 6
+  },
+  {
+    "name": "Door jamb",
+    "first_face": 148,
+    "face_count": 6
+  },
+  {
+    "name": "Lintel",
+    "first_face": 154,
+    "face_count": 6
+  },
+  {
+    "name": "Pigeon hole",
+    "first_face": 160,
+    "face_count": 6
+  },
+  {
+    "name": "Pigeon hole",
+    "first_face": 166,
+    "face_count": 6
+  },
+  {
+    "name": "Pigeon hole",
+    "first_face": 172,
+    "face_count": 6
+  }
+]

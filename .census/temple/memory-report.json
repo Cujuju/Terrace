@@ -1,0 +1,94 @@
+{
+  "assumptions": {
+    "png_gpu_format": "RGBA8 with complete mip chain",
+    "compressed_gpu_format": "BC7 or ASTC 4x4, 16 bytes per 4x4 block, complete mip chain",
+    "excluded": "CPU decoded images, loader buffers, driver allocation overhead, shaders, framebuffer and instance buffers",
+    "sharing": "Terrace draws repeated structures with InstancedMesh; mesh and textures are shared, not duplicated per house."
+  },
+  "variants": {
+    "original": {
+      "triangles": 1232,
+      "exported_vertices": 2405,
+      "geometry_gpu_bytes": 122832,
+      "textures": [
+        {
+          "name": "temple-normal",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 1679404
+        },
+        {
+          "name": "temple-basecolor",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 2678852
+        },
+        {
+          "name": "temple-metallicRoughness",
+          "width": 2048,
+          "height": 2048,
+          "mip_levels": 12,
+          "png_rgba8_gpu_bytes": 22369620,
+          "bc7_astc_gpu_bytes": 5592432,
+          "ktx_file_bytes": 317600
+        }
+      ],
+      "png_gpu_total_bytes": 67231692,
+      "ktx2_bc7_astc_gpu_total_bytes": 16900128,
+      "png_glb_file_bytes": 3874024,
+      "ktx2_glb_file_bytes": 4800724,
+      "png_glb_sha256": "ec098d333a3e3f712f7f6d37c7e2c03ea040cceef0e6908a50a96ee0151873f7",
+      "ktx2_glb_sha256": "e28d9e6715ae130a8aac030027ad596e360a03a08a639df9135d85d190fa840f",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    },
+    "low": {
+      "triangles": 948,
+      "exported_vertices": 1896,
+      "geometry_gpu_bytes": 96696,
+      "textures": [
+        {
+          "name": "temple-normal",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 533139
+        },
+        {
+          "name": "temple-basecolor",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 867180
+        },
+        {
+          "name": "temple-metallicRoughness",
+          "width": 1024,
+          "height": 1024,
+          "mip_levels": 11,
+          "png_rgba8_gpu_bytes": 5592404,
+          "bc7_astc_gpu_bytes": 1398128,
+          "ktx_file_bytes": 122007
+        }
+      ],
+      "png_gpu_total_bytes": 16873908,
+      "ktx2_bc7_astc_gpu_total_bytes": 4291080,
+      "png_glb_file_bytes": 1342036,
+      "ktx2_glb_file_bytes": 1621044,
+      "png_glb_sha256": "61900726fb2e1ac1cd9305b30b50ffe85eb2e5ac54a28ec5ab3d49ac9017937a",
+      "ktx2_glb_sha256": "9b421d5f2240c81b37da724062e36e11c2b9d2e1808c865778d9c52dfffce706",
+      "geometry_unchanged": true,
+      "ktx_validation_passed": true
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // tsc 7.0.2 does not auto-discover the pnpm-linked node_modules/@types of a
+    // nested workspace package (it does for server/, one level up), and these
+    // tests compile server sources that use node: builtins. Naming the types
+    // explicitly is deterministic and costs nothing.
+    "types": ["node"]
+  },
+  // No client half and no protocol: the hub owns the wind and the sky-kind
+  // register, neither of which is drawn or put on the wire (server/index.ts).
+  "include": ["server", "test"]
+}

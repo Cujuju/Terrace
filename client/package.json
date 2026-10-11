@@ -1,0 +1,34 @@
+{
+  "name": "@terrace/client",
+  "private": true,
+  "type": "module",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "electron:dev": "vite --mode electron",
+    "electron:build": "vite build --mode electron",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.electron.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@colyseus/sdk": "^0.17.43",
+    "@terrace/shared": "workspace:*",
+    "electron-updater": "6.8.9",
+    "solid-js": "^1.9.14",
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "@types/three": "^0.185.4",
+    "@webgpu/types": "^0.1.72",
+    "electron": "44.7.0",
+    "electron-builder": "26.15.3",
+    "typescript": "7.0.2",
+    "vite": "^8.2.1",
+    "vite-plugin-electron": "1.1.2",
+    "vite-plugin-solid": "^2.11.14",
+    "vitest": "4.1.10"
+  }
+}

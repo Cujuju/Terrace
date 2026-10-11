@@ -1,0 +1,1947 @@
+[
+  {
+    "name": "Shallow lagoon",
+    "first_face": 0,
+    "face_count": 15
+  },
+  {
+    "name": "Lagoon boulder",
+    "first_face": 15,
+    "face_count": 7
+  },
+  {
+    "name": "Lagoon boulder",
+    "first_face": 22,
+    "face_count": 7
+  },
+  {
+    "name": "Lagoon boulder",
+    "first_face": 29,
+    "face_count": 7
+  },
+  {
+    "name": "Lagoon boulder",
+    "first_face": 36,
+    "face_count": 7
+  },
+  {
+    "name": "Lagoon boulder",
+    "first_face": 43,
+    "face_count": 7
+  },
+  {
+    "name": "Round pier lounge deck",
+    "first_face": 50,
+    "face_count": 12
+  },
+  {
+    "name": "Pier piling",
+    "first_face": 62,
+    "face_count": 7
+  },
+  {
+    "name": "Piling rope wrap",
+    "first_face": 69,
+    "face_count": 8
+  },
+  {
+    "name": "Pier piling",
+    "first_face": 77,
+    "face_count": 7
+  },
+  {
+    "name": "Piling rope wrap",
+    "first_face": 84,
+    "face_count": 8
+  },
+  {
+    "name": "Pier piling",
+    "first_face": 92,
+    "face_count": 7
+  },
+  {
+    "name": "Piling rope wrap",
+    "first_face": 99,
+    "face_count": 8
+  },
+  {
+    "name": "Pier piling",
+    "first_face": 107,
+    "face_count": 7
+  },
+  {
+    "name": "Piling rope wrap",
+    "first_face": 114,
+    "face_count": 8
+  },
+  {
+    "name": "Pier piling",
+    "first_face": 122,
+    "face_count": 7
+  },
+  {
+    "name": "Piling rope wrap",
+    "first_face": 129,
+    "face_count": 8
+  },
+  {
+    "name": "Pier piling",
+    "first_face": 137,
+    "face_count": 7
+  },
+  {
+    "name": "Piling rope wrap",
+    "first_face": 144,
+    "face_count": 8
+  },
+  {
+    "name": "Pier piling",
+    "first_face": 152,
+    "face_count": 7
+  },
+  {
+    "name": "Piling rope wrap",
+    "first_face": 159,
+    "face_count": 8
+  },
+  {
+    "name": "Rail post",
+    "first_face": 167,
+    "face_count": 6
+  },
+  {
+    "name": "Rail post",
+    "first_face": 173,
+    "face_count": 6
+  },
+  {
+    "name": "Emissive post lantern",
+    "first_face": 179,
+    "face_count": 6
+  },
+  {
+    "name": "Lantern cap",
+    "first_face": 185,
+    "face_count": 6
+  },
+  {
+    "name": "Rail post",
+    "first_face": 191,
+    "face_count": 6
+  },
+  {
+    "name": "Hanging buoy",
+    "first_face": 197,
+    "face_count": 8
+  },
+  {
+    "name": "Rail post",
+    "first_face": 205,
+    "face_count": 6
+  },
+  {
+    "name": "Rail post",
+    "first_face": 211,
+    "face_count": 6
+  },
+  {
+    "name": "Emissive post lantern",
+    "first_face": 217,
+    "face_count": 6
+  },
+  {
+    "name": "Lantern cap",
+    "first_face": 223,
+    "face_count": 6
+  },
+  {
+    "name": "Rail post",
+    "first_face": 229,
+    "face_count": 6
+  },
+  {
+    "name": "Hanging buoy",
+    "first_face": 235,
+    "face_count": 8
+  },
+  {
+    "name": "Rail post",
+    "first_face": 243,
+    "face_count": 6
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 249,
+    "face_count": 34
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 283,
+    "face_count": 26
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 309,
+    "face_count": 34
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 343,
+    "face_count": 34
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 377,
+    "face_count": 34
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 411,
+    "face_count": 34
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 445,
+    "face_count": 34
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 479,
+    "face_count": 34
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 513,
+    "face_count": 34
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 547,
+    "face_count": 34
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 581,
+    "face_count": 34
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 615,
+    "face_count": 26
+  },
+  {
+    "name": "Round pier lounge deck",
+    "first_face": 641,
+    "face_count": 12
+  },
+  {
+    "name": "Pier piling",
+    "first_face": 653,
+    "face_count": 7
+  },
+  {
+    "name": "Piling rope wrap",
+    "first_face": 660,
+    "face_count": 8
+  },
+  {
+    "name": "Pier piling",
+    "first_face": 668,
+    "face_count": 7
+  },
+  {
+    "name": "Piling rope wrap",
+    "first_face": 675,
+    "face_count": 8
+  },
+  {
+    "name": "Pier piling",
+    "first_face": 683,
+    "face_count": 7
+  },
+  {
+    "name": "Piling rope wrap",
+    "first_face": 690,
+    "face_count": 8
+  },
+  {
+    "name": "Pier piling",
+    "first_face": 698,
+    "face_count": 7
+  },
+  {
+    "name": "Piling rope wrap",
+    "first_face": 705,
+    "face_count": 8
+  },
+  {
+    "name": "Pier piling",
+    "first_face": 713,
+    "face_count": 7
+  },
+  {
+    "name": "Piling rope wrap",
+    "first_face": 720,
+    "face_count": 8
+  },
+  {
+    "name": "Pier piling",
+    "first_face": 728,
+    "face_count": 7
+  },
+  {
+    "name": "Piling rope wrap",
+    "first_face": 735,
+    "face_count": 8
+  },
+  {
+    "name": "Pier piling",
+    "first_face": 743,
+    "face_count": 7
+  },
+  {
+    "name": "Piling rope wrap",
+    "first_face": 750,
+    "face_count": 8
+  },
+  {
+    "name": "Rail post",
+    "first_face": 758,
+    "face_count": 6
+  },
+  {
+    "name": "Rail post",
+    "first_face": 764,
+    "face_count": 6
+  },
+  {
+    "name": "Emissive post lantern",
+    "first_face": 770,
+    "face_count": 6
+  },
+  {
+    "name": "Lantern cap",
+    "first_face": 776,
+    "face_count": 6
+  },
+  {
+    "name": "Rail post",
+    "first_face": 782,
+    "face_count": 6
+  },
+  {
+    "name": "Hanging buoy",
+    "first_face": 788,
+    "face_count": 8
+  },
+  {
+    "name": "Rail post",
+    "first_face": 796,
+    "face_count": 6
+  },
+  {
+    "name": "Rail post",
+    "first_face": 802,
+    "face_count": 6
+  },
+  {
+    "name": "Emissive post lantern",
+    "first_face": 808,
+    "face_count": 6
+  },
+  {
+    "name": "Lantern cap",
+    "first_face": 814,
+    "face_count": 6
+  },
+  {
+    "name": "Rail post",
+    "first_face": 820,
+    "face_count": 6
+  },
+  {
+    "name": "Hanging buoy",
+    "first_face": 826,
+    "face_count": 8
+  },
+  {
+    "name": "Rail post",
+    "first_face": 834,
+    "face_count": 6
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 840,
+    "face_count": 34
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 874,
+    "face_count": 26
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 900,
+    "face_count": 34
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 934,
+    "face_count": 34
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 968,
+    "face_count": 34
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 1002,
+    "face_count": 34
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 1036,
+    "face_count": 34
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 1070,
+    "face_count": 34
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 1104,
+    "face_count": 34
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 1138,
+    "face_count": 34
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 1172,
+    "face_count": 34
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 1206,
+    "face_count": 26
+  },
+  {
+    "name": "Upper pier deck",
+    "first_face": 1232,
+    "face_count": 6
+  },
+  {
+    "name": "Pier piling",
+    "first_face": 1238,
+    "face_count": 7
+  },
+  {
+    "name": "Piling rope wrap",
+    "first_face": 1245,
+    "face_count": 8
+  },
+  {
+    "name": "Pier piling",
+    "first_face": 1253,
+    "face_count": 7
+  },
+  {
+    "name": "Piling rope wrap",
+    "first_face": 1260,
+    "face_count": 8
+  },
+  {
+    "name": "Pier piling",
+    "first_face": 1268,
+    "face_count": 7
+  },
+  {
+    "name": "Piling rope wrap",
+    "first_face": 1275,
+    "face_count": 8
+  },
+  {
+    "name": "Pier piling",
+    "first_face": 1283,
+    "face_count": 7
+  },
+  {
+    "name": "Piling rope wrap",
+    "first_face": 1290,
+    "face_count": 8
+  },
+  {
+    "name": "Pier piling",
+    "first_face": 1298,
+    "face_count": 7
+  },
+  {
+    "name": "Piling rope wrap",
+    "first_face": 1305,
+    "face_count": 8
+  },
+  {
+    "name": "Pier piling",
+    "first_face": 1313,
+    "face_count": 7
+  },
+  {
+    "name": "Piling rope wrap",
+    "first_face": 1320,
+    "face_count": 8
+  },
+  {
+    "name": "Pier piling",
+    "first_face": 1328,
+    "face_count": 7
+  },
+  {
+    "name": "Piling rope wrap",
+    "first_face": 1335,
+    "face_count": 8
+  },
+  {
+    "name": "Pier piling",
+    "first_face": 1343,
+    "face_count": 7
+  },
+  {
+    "name": "Piling rope wrap",
+    "first_face": 1350,
+    "face_count": 8
+  },
+  {
+    "name": "Pier piling",
+    "first_face": 1358,
+    "face_count": 7
+  },
+  {
+    "name": "Piling rope wrap",
+    "first_face": 1365,
+    "face_count": 8
+  },
+  {
+    "name": "Pier piling",
+    "first_face": 1373,
+    "face_count": 7
+  },
+  {
+    "name": "Piling rope wrap",
+    "first_face": 1380,
+    "face_count": 8
+  },
+  {
+    "name": "Pier piling",
+    "first_face": 1388,
+    "face_count": 7
+  },
+  {
+    "name": "Piling rope wrap",
+    "first_face": 1395,
+    "face_count": 8
+  },
+  {
+    "name": "Pier piling",
+    "first_face": 1403,
+    "face_count": 7
+  },
+  {
+    "name": "Piling rope wrap",
+    "first_face": 1410,
+    "face_count": 8
+  },
+  {
+    "name": "Rail post",
+    "first_face": 1418,
+    "face_count": 6
+  },
+  {
+    "name": "Rail post",
+    "first_face": 1424,
+    "face_count": 6
+  },
+  {
+    "name": "Rail post",
+    "first_face": 1430,
+    "face_count": 6
+  },
+  {
+    "name": "Rail post",
+    "first_face": 1436,
+    "face_count": 6
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 1442,
+    "face_count": 34
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 1476,
+    "face_count": 27
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 1503,
+    "face_count": 34
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 1537,
+    "face_count": 27
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 1564,
+    "face_count": 34
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 1598,
+    "face_count": 34
+  },
+  {
+    "name": "Rail post",
+    "first_face": 1632,
+    "face_count": 6
+  },
+  {
+    "name": "Rail post",
+    "first_face": 1638,
+    "face_count": 6
+  },
+  {
+    "name": "Rail post",
+    "first_face": 1644,
+    "face_count": 6
+  },
+  {
+    "name": "Rail post",
+    "first_face": 1650,
+    "face_count": 6
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 1656,
+    "face_count": 34
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 1690,
+    "face_count": 34
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 1724,
+    "face_count": 34
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 1758,
+    "face_count": 27
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 1785,
+    "face_count": 34
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 1819,
+    "face_count": 27
+  },
+  {
+    "name": "Rail post",
+    "first_face": 1846,
+    "face_count": 6
+  },
+  {
+    "name": "Rail post",
+    "first_face": 1852,
+    "face_count": 6
+  },
+  {
+    "name": "Rail post",
+    "first_face": 1858,
+    "face_count": 6
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 1864,
+    "face_count": 26
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 1890,
+    "face_count": 26
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 1916,
+    "face_count": 26
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 1942,
+    "face_count": 26
+  },
+  {
+    "name": "Deck-to-deck stair tread",
+    "first_face": 1968,
+    "face_count": 6
+  },
+  {
+    "name": "Deck-to-deck stair tread",
+    "first_face": 1974,
+    "face_count": 6
+  },
+  {
+    "name": "Deck-to-deck stair tread",
+    "first_face": 1980,
+    "face_count": 6
+  },
+  {
+    "name": "Deck-to-deck stair tread",
+    "first_face": 1986,
+    "face_count": 6
+  },
+  {
+    "name": "Rail post",
+    "first_face": 1992,
+    "face_count": 6
+  },
+  {
+    "name": "Rail post",
+    "first_face": 1998,
+    "face_count": 6
+  },
+  {
+    "name": "Rail post",
+    "first_face": 2004,
+    "face_count": 6
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 2010,
+    "face_count": 26
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 2036,
+    "face_count": 26
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 2062,
+    "face_count": 26
+  },
+  {
+    "name": "Rope rail",
+    "first_face": 2088,
+    "face_count": 26
+  },
+  {
+    "name": "Deck-to-deck stair tread",
+    "first_face": 2114,
+    "face_count": 6
+  },
+  {
+    "name": "Deck-to-deck stair tread",
+    "first_face": 2120,
+    "face_count": 6
+  },
+  {
+    "name": "Deck-to-deck stair tread",
+    "first_face": 2126,
+    "face_count": 6
+  },
+  {
+    "name": "Deck-to-deck stair tread",
+    "first_face": 2132,
+    "face_count": 6
+  },
+  {
+    "name": "Stone pool basin wall",
+    "first_face": 2138,
+    "face_count": 6
+  },
+  {
+    "name": "Stone pool basin wall",
+    "first_face": 2144,
+    "face_count": 6
+  },
+  {
+    "name": "Stone pool basin wall",
+    "first_face": 2150,
+    "face_count": 6
+  },
+  {
+    "name": "Stone pool basin wall",
+    "first_face": 2156,
+    "face_count": 6
+  },
+  {
+    "name": "Stone pool basin wall",
+    "first_face": 2162,
+    "face_count": 6
+  },
+  {
+    "name": "Stone pool basin wall",
+    "first_face": 2168,
+    "face_count": 6
+  },
+  {
+    "name": "Stone pool basin wall",
+    "first_face": 2174,
+    "face_count": 6
+  },
+  {
+    "name": "Stone pool basin wall",
+    "first_face": 2180,
+    "face_count": 6
+  },
+  {
+    "name": "Stone pool basin wall",
+    "first_face": 2186,
+    "face_count": 6
+  },
+  {
+    "name": "Stone pool basin wall",
+    "first_face": 2192,
+    "face_count": 6
+  },
+  {
+    "name": "Stone pool basin wall",
+    "first_face": 2198,
+    "face_count": 6
+  },
+  {
+    "name": "Stone pool basin wall",
+    "first_face": 2204,
+    "face_count": 6
+  },
+  {
+    "name": "Turquoise pool water",
+    "first_face": 2210,
+    "face_count": 13
+  },
+  {
+    "name": "Pool stepping stone",
+    "first_face": 2223,
+    "face_count": 8
+  },
+  {
+    "name": "Pool stepping stone",
+    "first_face": 2231,
+    "face_count": 8
+  },
+  {
+    "name": "Pool stepping stone",
+    "first_face": 2239,
+    "face_count": 8
+  },
+  {
+    "name": "Front boardwalk dock",
+    "first_face": 2247,
+    "face_count": 6
+  },
+  {
+    "name": "Pier piling",
+    "first_face": 2253,
+    "face_count": 7
+  },
+  {
+    "name": "Piling rope wrap",
+    "first_face": 2260,
+    "face_count": 8
+  },
+  {
+    "name": "Pier piling",
+    "first_face": 2268,
+    "face_count": 7
+  },
+  {
+    "name": "Piling rope wrap",
+    "first_face": 2275,
+    "face_count": 8
+  },
+  {
+    "name": "Pier piling",
+    "first_face": 2283,
+    "face_count": 7
+  },
+  {
+    "name": "Piling rope wrap",
+    "first_face": 2290,
+    "face_count": 8
+  },
+  {
+    "name": "Pier piling",
+    "first_face": 2298,
+    "face_count": 7
+  },
+  {
+    "name": "Piling rope wrap",
+    "first_face": 2305,
+    "face_count": 8
+  },
+  {
+    "name": "Dock stair up to pool rim",
+    "first_face": 2313,
+    "face_count": 6
+  },
+  {
+    "name": "Dock stair up to pool rim",
+    "first_face": 2319,
+    "face_count": 6
+  },
+  {
+    "name": "Dock stair up to pool rim",
+    "first_face": 2325,
+    "face_count": 6
+  },
+  {
+    "name": "Dock stair up to pool rim",
+    "first_face": 2331,
+    "face_count": 6
+  },
+  {
+    "name": "Dock mooring post",
+    "first_face": 2337,
+    "face_count": 6
+  },
+  {
+    "name": "Dock mooring post",
+    "first_face": 2343,
+    "face_count": 6
+  },
+  {
+    "name": "Emissive dock lantern",
+    "first_face": 2349,
+    "face_count": 6
+  },
+  {
+    "name": "Stacked stone waterfall tier",
+    "first_face": 2355,
+    "face_count": 6
+  },
+  {
+    "name": "Stacked stone waterfall tier",
+    "first_face": 2361,
+    "face_count": 6
+  },
+  {
+    "name": "Lower cascade sheet",
+    "first_face": 2367,
+    "face_count": 6
+  },
+  {
+    "name": "Upper cascade sheet",
+    "first_face": 2373,
+    "face_count": 6
+  },
+  {
+    "name": "Bubbling jet",
+    "first_face": 2379,
+    "face_count": 8
+  },
+  {
+    "name": "Bubbling jet",
+    "first_face": 2387,
+    "face_count": 8
+  },
+  {
+    "name": "Cascade splash ring",
+    "first_face": 2395,
+    "face_count": 10
+  },
+  {
+    "name": "Weathered clapboard clubhouse",
+    "first_face": 2405,
+    "face_count": 9
+  },
+  {
+    "name": "Teal roof cornice",
+    "first_face": 2414,
+    "face_count": 10
+  },
+  {
+    "name": "Arched teal double door",
+    "first_face": 2424,
+    "face_count": 11
+  },
+  {
+    "name": "Door surround",
+    "first_face": 2435,
+    "face_count": 11
+  },
+  {
+    "name": "Door leaf split",
+    "first_face": 2446,
+    "face_count": 6
+  },
+  {
+    "name": "Door knob",
+    "first_face": 2452,
+    "face_count": 8
+  },
+  {
+    "name": "Door knob",
+    "first_face": 2460,
+    "face_count": 8
+  },
+  {
+    "name": "Door canopy",
+    "first_face": 2468,
+    "face_count": 6
+  },
+  {
+    "name": "Emissive door lantern",
+    "first_face": 2474,
+    "face_count": 8
+  },
+  {
+    "name": "Brass porthole rim",
+    "first_face": 2482,
+    "face_count": 10
+  },
+  {
+    "name": "Emissive porthole glass",
+    "first_face": 2492,
+    "face_count": 10
+  },
+  {
+    "name": "Brass porthole rim",
+    "first_face": 2502,
+    "face_count": 10
+  },
+  {
+    "name": "Emissive porthole glass",
+    "first_face": 2512,
+    "face_count": 10
+  },
+  {
+    "name": "Life ring",
+    "first_face": 2522,
+    "face_count": 42
+  },
+  {
+    "name": "Life ring",
+    "first_face": 2564,
+    "face_count": 42
+  },
+  {
+    "name": "Side porthole rim",
+    "first_face": 2606,
+    "face_count": 10
+  },
+  {
+    "name": "Emissive side porthole",
+    "first_face": 2616,
+    "face_count": 10
+  },
+  {
+    "name": "Side porthole rim",
+    "first_face": 2626,
+    "face_count": 10
+  },
+  {
+    "name": "Emissive side porthole",
+    "first_face": 2636,
+    "face_count": 10
+  },
+  {
+    "name": "Main sign frame",
+    "first_face": 2646,
+    "face_count": 6
+  },
+  {
+    "name": "FLIPPER & SHRIMP'S PLACE sign",
+    "first_face": 2652,
+    "face_count": 6
+  },
+  {
+    "name": "Sign post",
+    "first_face": 2658,
+    "face_count": 6
+  },
+  {
+    "name": "Sign post",
+    "first_face": 2664,
+    "face_count": 6
+  },
+  {
+    "name": "Scallop crest rib",
+    "first_face": 2670,
+    "face_count": 5
+  },
+  {
+    "name": "Scallop crest rib",
+    "first_face": 2675,
+    "face_count": 5
+  },
+  {
+    "name": "Scallop crest rib",
+    "first_face": 2680,
+    "face_count": 5
+  },
+  {
+    "name": "Scallop crest rib",
+    "first_face": 2685,
+    "face_count": 5
+  },
+  {
+    "name": "Scallop crest rib",
+    "first_face": 2690,
+    "face_count": 5
+  },
+  {
+    "name": "Scallop crest rib",
+    "first_face": 2695,
+    "face_count": 5
+  },
+  {
+    "name": "Scallop crest rib",
+    "first_face": 2700,
+    "face_count": 5
+  },
+  {
+    "name": "Curling blue wave",
+    "first_face": 2705,
+    "face_count": 14
+  },
+  {
+    "name": "Curling blue wave foam crest",
+    "first_face": 2719,
+    "face_count": 11
+  },
+  {
+    "name": "Curling blue wave",
+    "first_face": 2730,
+    "face_count": 14
+  },
+  {
+    "name": "Curling blue wave foam crest",
+    "first_face": 2744,
+    "face_count": 11
+  },
+  {
+    "name": "Dolphin mascot body",
+    "first_face": 2755,
+    "face_count": 236
+  },
+  {
+    "name": "Dolphin mascot eye",
+    "first_face": 2991,
+    "face_count": 10
+  },
+  {
+    "name": "Dolphin mascot pupil",
+    "first_face": 3001,
+    "face_count": 10
+  },
+  {
+    "name": "Dolphin mascot catch-light",
+    "first_face": 3011,
+    "face_count": 8
+  },
+  {
+    "name": "Dolphin mascot eye",
+    "first_face": 3019,
+    "face_count": 10
+  },
+  {
+    "name": "Dolphin mascot pupil",
+    "first_face": 3029,
+    "face_count": 10
+  },
+  {
+    "name": "Dolphin mascot catch-light",
+    "first_face": 3039,
+    "face_count": 8
+  },
+  {
+    "name": "Dolphin mascot dorsal fin",
+    "first_face": 3047,
+    "face_count": 7
+  },
+  {
+    "name": "Dolphin mascot flipper",
+    "first_face": 3054,
+    "face_count": 6
+  },
+  {
+    "name": "Dolphin mascot flipper",
+    "first_face": 3060,
+    "face_count": 6
+  },
+  {
+    "name": "Dolphin mascot tail fluke",
+    "first_face": 3066,
+    "face_count": 12
+  },
+  {
+    "name": "Shrimp mascot segmented body",
+    "first_face": 3078,
+    "face_count": 434
+  },
+  {
+    "name": "Shrimp mascot rostrum spike",
+    "first_face": 3512,
+    "face_count": 10
+  },
+  {
+    "name": "Shrimp mascot eye stalk",
+    "first_face": 3522,
+    "face_count": 20
+  },
+  {
+    "name": "Shrimp mascot eye",
+    "first_face": 3542,
+    "face_count": 10
+  },
+  {
+    "name": "Shrimp mascot pupil",
+    "first_face": 3552,
+    "face_count": 10
+  },
+  {
+    "name": "Shrimp mascot catch-light",
+    "first_face": 3562,
+    "face_count": 8
+  },
+  {
+    "name": "Shrimp mascot long antenna",
+    "first_face": 3570,
+    "face_count": 58
+  },
+  {
+    "name": "Shrimp mascot antennule",
+    "first_face": 3628,
+    "face_count": 26
+  },
+  {
+    "name": "Shrimp mascot eye stalk",
+    "first_face": 3654,
+    "face_count": 20
+  },
+  {
+    "name": "Shrimp mascot eye",
+    "first_face": 3674,
+    "face_count": 10
+  },
+  {
+    "name": "Shrimp mascot pupil",
+    "first_face": 3684,
+    "face_count": 10
+  },
+  {
+    "name": "Shrimp mascot catch-light",
+    "first_face": 3694,
+    "face_count": 8
+  },
+  {
+    "name": "Shrimp mascot long antenna",
+    "first_face": 3702,
+    "face_count": 58
+  },
+  {
+    "name": "Shrimp mascot antennule",
+    "first_face": 3760,
+    "face_count": 26
+  },
+  {
+    "name": "Shrimp mascot claw arm",
+    "first_face": 3786,
+    "face_count": 31
+  },
+  {
+    "name": "Shrimp mascot pincer",
+    "first_face": 3817,
+    "face_count": 6
+  },
+  {
+    "name": "Shrimp mascot pincer",
+    "first_face": 3823,
+    "face_count": 6
+  },
+  {
+    "name": "Shrimp mascot claw arm",
+    "first_face": 3829,
+    "face_count": 31
+  },
+  {
+    "name": "Shrimp mascot pincer",
+    "first_face": 3860,
+    "face_count": 6
+  },
+  {
+    "name": "Shrimp mascot pincer",
+    "first_face": 3866,
+    "face_count": 6
+  },
+  {
+    "name": "Shrimp mascot walking leg",
+    "first_face": 3872,
+    "face_count": 18
+  },
+  {
+    "name": "Shrimp mascot walking leg",
+    "first_face": 3890,
+    "face_count": 18
+  },
+  {
+    "name": "Shrimp mascot walking leg",
+    "first_face": 3908,
+    "face_count": 18
+  },
+  {
+    "name": "Shrimp mascot walking leg",
+    "first_face": 3926,
+    "face_count": 18
+  },
+  {
+    "name": "Shrimp mascot walking leg",
+    "first_face": 3944,
+    "face_count": 18
+  },
+  {
+    "name": "Shrimp mascot walking leg",
+    "first_face": 3962,
+    "face_count": 18
+  },
+  {
+    "name": "Shrimp mascot walking leg",
+    "first_face": 3980,
+    "face_count": 18
+  },
+  {
+    "name": "Shrimp mascot walking leg",
+    "first_face": 3998,
+    "face_count": 18
+  },
+  {
+    "name": "Shrimp mascot tail fan",
+    "first_face": 4016,
+    "face_count": 12
+  },
+  {
+    "name": "Dolphin slide body",
+    "first_face": 4028,
+    "face_count": 128
+  },
+  {
+    "name": "Dolphin slide eye",
+    "first_face": 4156,
+    "face_count": 10
+  },
+  {
+    "name": "Dolphin slide pupil",
+    "first_face": 4166,
+    "face_count": 10
+  },
+  {
+    "name": "Dolphin slide catch-light",
+    "first_face": 4176,
+    "face_count": 8
+  },
+  {
+    "name": "Dolphin slide eye",
+    "first_face": 4184,
+    "face_count": 10
+  },
+  {
+    "name": "Dolphin slide pupil",
+    "first_face": 4194,
+    "face_count": 10
+  },
+  {
+    "name": "Dolphin slide catch-light",
+    "first_face": 4204,
+    "face_count": 8
+  },
+  {
+    "name": "Dolphin slide dorsal fin",
+    "first_face": 4212,
+    "face_count": 7
+  },
+  {
+    "name": "Dolphin slide pedestal",
+    "first_face": 4219,
+    "face_count": 10
+  },
+  {
+    "name": "Dolphin slide open mouth",
+    "first_face": 4229,
+    "face_count": 10
+  },
+  {
+    "name": "Dolphin slide curved flume",
+    "first_face": 4239,
+    "face_count": 478
+  },
+  {
+    "name": "Dolphin slide flume support",
+    "first_face": 4717,
+    "face_count": 6
+  },
+  {
+    "name": "Shrimp slide segmented body",
+    "first_face": 4723,
+    "face_count": 434
+  },
+  {
+    "name": "Shrimp slide rostrum spike",
+    "first_face": 5157,
+    "face_count": 10
+  },
+  {
+    "name": "Shrimp slide eye stalk",
+    "first_face": 5167,
+    "face_count": 22
+  },
+  {
+    "name": "Shrimp slide eye",
+    "first_face": 5189,
+    "face_count": 10
+  },
+  {
+    "name": "Shrimp slide pupil",
+    "first_face": 5199,
+    "face_count": 10
+  },
+  {
+    "name": "Shrimp slide catch-light",
+    "first_face": 5209,
+    "face_count": 8
+  },
+  {
+    "name": "Shrimp slide long antenna",
+    "first_face": 5217,
+    "face_count": 58
+  },
+  {
+    "name": "Shrimp slide antennule",
+    "first_face": 5275,
+    "face_count": 26
+  },
+  {
+    "name": "Shrimp slide eye stalk",
+    "first_face": 5301,
+    "face_count": 22
+  },
+  {
+    "name": "Shrimp slide eye",
+    "first_face": 5323,
+    "face_count": 10
+  },
+  {
+    "name": "Shrimp slide pupil",
+    "first_face": 5333,
+    "face_count": 10
+  },
+  {
+    "name": "Shrimp slide catch-light",
+    "first_face": 5343,
+    "face_count": 8
+  },
+  {
+    "name": "Shrimp slide long antenna",
+    "first_face": 5351,
+    "face_count": 57
+  },
+  {
+    "name": "Shrimp slide antennule",
+    "first_face": 5408,
+    "face_count": 26
+  },
+  {
+    "name": "Shrimp slide claw arm",
+    "first_face": 5434,
+    "face_count": 32
+  },
+  {
+    "name": "Shrimp slide pincer",
+    "first_face": 5466,
+    "face_count": 6
+  },
+  {
+    "name": "Shrimp slide pincer",
+    "first_face": 5472,
+    "face_count": 6
+  },
+  {
+    "name": "Shrimp slide claw arm",
+    "first_face": 5478,
+    "face_count": 32
+  },
+  {
+    "name": "Shrimp slide pincer",
+    "first_face": 5510,
+    "face_count": 6
+  },
+  {
+    "name": "Shrimp slide pincer",
+    "first_face": 5516,
+    "face_count": 6
+  },
+  {
+    "name": "Shrimp slide tail fan",
+    "first_face": 5522,
+    "face_count": 12
+  },
+  {
+    "name": "Shrimp slide pedestal",
+    "first_face": 5534,
+    "face_count": 10
+  },
+  {
+    "name": "Shrimp slide open mouth",
+    "first_face": 5544,
+    "face_count": 10
+  },
+  {
+    "name": "Shrimp slide curved flume",
+    "first_face": 5554,
+    "face_count": 478
+  },
+  {
+    "name": "Shrimp slide flume support",
+    "first_face": 6032,
+    "face_count": 6
+  },
+  {
+    "name": "Striped lighthouse tower",
+    "first_face": 6038,
+    "face_count": 9
+  },
+  {
+    "name": "Lighthouse gallery deck",
+    "first_face": 6047,
+    "face_count": 10
+  },
+  {
+    "name": "Gallery rail post",
+    "first_face": 6057,
+    "face_count": 6
+  },
+  {
+    "name": "Gallery rail post",
+    "first_face": 6063,
+    "face_count": 6
+  },
+  {
+    "name": "Gallery rail post",
+    "first_face": 6069,
+    "face_count": 6
+  },
+  {
+    "name": "Gallery rail post",
+    "first_face": 6075,
+    "face_count": 6
+  },
+  {
+    "name": "Gallery rail post",
+    "first_face": 6081,
+    "face_count": 6
+  },
+  {
+    "name": "Gallery rail post",
+    "first_face": 6087,
+    "face_count": 6
+  },
+  {
+    "name": "Gallery rail post",
+    "first_face": 6093,
+    "face_count": 6
+  },
+  {
+    "name": "Gallery rail post",
+    "first_face": 6099,
+    "face_count": 6
+  },
+  {
+    "name": "Gallery rope rail",
+    "first_face": 6105,
+    "face_count": 10
+  },
+  {
+    "name": "Emissive lighthouse lantern",
+    "first_face": 6115,
+    "face_count": 10
+  },
+  {
+    "name": "Teal lighthouse dome",
+    "first_face": 6125,
+    "face_count": 10
+  },
+  {
+    "name": "Flag pole",
+    "first_face": 6135,
+    "face_count": 6
+  },
+  {
+    "name": "Anchor pennant",
+    "first_face": 6141,
+    "face_count": 6
+  },
+  {
+    "name": "Bait shack",
+    "first_face": 6147,
+    "face_count": 6
+  },
+  {
+    "name": "Shingled shack roof",
+    "first_face": 6153,
+    "face_count": 5
+  },
+  {
+    "name": "Shack door",
+    "first_face": 6158,
+    "face_count": 6
+  },
+  {
+    "name": "Emissive shack lamp",
+    "first_face": 6164,
+    "face_count": 8
+  },
+  {
+    "name": "Sign post",
+    "first_face": 6172,
+    "face_count": 6
+  },
+  {
+    "name": "Sign post",
+    "first_face": 6178,
+    "face_count": 6
+  },
+  {
+    "name": "NO FISHING sign",
+    "first_face": 6184,
+    "face_count": 6
+  },
+  {
+    "name": "Sign post",
+    "first_face": 6190,
+    "face_count": 6
+  },
+  {
+    "name": "Sign post",
+    "first_face": 6196,
+    "face_count": 6
+  },
+  {
+    "name": "WATER WIGGLERS WELCOME sign",
+    "first_face": 6202,
+    "face_count": 6
+  },
+  {
+    "name": "Dolphin lounge umbrella pole",
+    "first_face": 6208,
+    "face_count": 6
+  },
+  {
+    "name": "Dolphin lounge umbrella canopy panel",
+    "first_face": 6214,
+    "face_count": 5
+  },
+  {
+    "name": "Dolphin lounge umbrella canopy panel",
+    "first_face": 6219,
+    "face_count": 5
+  },
+  {
+    "name": "Dolphin lounge umbrella canopy panel",
+    "first_face": 6224,
+    "face_count": 5
+  },
+  {
+    "name": "Dolphin lounge umbrella canopy panel",
+    "first_face": 6229,
+    "face_count": 5
+  },
+  {
+    "name": "Dolphin lounge umbrella canopy panel",
+    "first_face": 6234,
+    "face_count": 5
+  },
+  {
+    "name": "Dolphin lounge umbrella canopy panel",
+    "first_face": 6239,
+    "face_count": 5
+  },
+  {
+    "name": "Dolphin lounge umbrella canopy panel",
+    "first_face": 6244,
+    "face_count": 5
+  },
+  {
+    "name": "Dolphin lounge umbrella canopy panel",
+    "first_face": 6249,
+    "face_count": 5
+  },
+  {
+    "name": "Lounge table",
+    "first_face": 6254,
+    "face_count": 8
+  },
+  {
+    "name": "Lounge chair frame",
+    "first_face": 6262,
+    "face_count": 6
+  },
+  {
+    "name": "Lounge chair seat",
+    "first_face": 6268,
+    "face_count": 6
+  },
+  {
+    "name": "Lounge chair back",
+    "first_face": 6274,
+    "face_count": 6
+  },
+  {
+    "name": "Lounge chair frame",
+    "first_face": 6280,
+    "face_count": 6
+  },
+  {
+    "name": "Lounge chair seat",
+    "first_face": 6286,
+    "face_count": 6
+  },
+  {
+    "name": "Lounge chair back",
+    "first_face": 6292,
+    "face_count": 6
+  },
+  {
+    "name": "Shrimp lounge umbrella pole",
+    "first_face": 6298,
+    "face_count": 6
+  },
+  {
+    "name": "Shrimp lounge umbrella canopy panel",
+    "first_face": 6304,
+    "face_count": 5
+  },
+  {
+    "name": "Shrimp lounge umbrella canopy panel",
+    "first_face": 6309,
+    "face_count": 5
+  },
+  {
+    "name": "Shrimp lounge umbrella canopy panel",
+    "first_face": 6314,
+    "face_count": 5
+  },
+  {
+    "name": "Shrimp lounge umbrella canopy panel",
+    "first_face": 6319,
+    "face_count": 5
+  },
+  {
+    "name": "Shrimp lounge umbrella canopy panel",
+    "first_face": 6324,
+    "face_count": 5
+  },
+  {
+    "name": "Shrimp lounge umbrella canopy panel",
+    "first_face": 6329,
+    "face_count": 5
+  },
+  {
+    "name": "Shrimp lounge umbrella canopy panel",
+    "first_face": 6334,
+    "face_count": 5
+  },
+  {
+    "name": "Shrimp lounge umbrella canopy panel",
+    "first_face": 6339,
+    "face_count": 5
+  },
+  {
+    "name": "Lounge table",
+    "first_face": 6344,
+    "face_count": 8
+  },
+  {
+    "name": "Lounge chair frame",
+    "first_face": 6352,
+    "face_count": 6
+  },
+  {
+    "name": "Lounge chair seat",
+    "first_face": 6358,
+    "face_count": 6
+  },
+  {
+    "name": "Lounge chair back",
+    "first_face": 6364,
+    "face_count": 6
+  },
+  {
+    "name": "Lounge chair frame",
+    "first_face": 6370,
+    "face_count": 6
+  },
+  {
+    "name": "Lounge chair seat",
+    "first_face": 6376,
+    "face_count": 6
+  },
+  {
+    "name": "Lounge chair back",
+    "first_face": 6382,
+    "face_count": 6
+  },
+  {
+    "name": "Dolphin lounge wave backrest",
+    "first_face": 6388,
+    "face_count": 14
+  },
+  {
+    "name": "Dolphin lounge wave backrest foam crest",
+    "first_face": 6402,
+    "face_count": 11
+  },
+  {
+    "name": "Shrimp lounge scallop canopy",
+    "first_face": 6413,
+    "face_count": 5
+  },
+  {
+    "name": "Shrimp lounge scallop canopy",
+    "first_face": 6418,
+    "face_count": 5
+  },
+  {
+    "name": "Shrimp lounge scallop canopy",
+    "first_face": 6423,
+    "face_count": 5
+  },
+  {
+    "name": "Shrimp lounge scallop canopy",
+    "first_face": 6428,
+    "face_count": 5
+  },
+  {
+    "name": "Shrimp lounge scallop canopy",
+    "first_face": 6433,
+    "face_count": 5
+  },
+  {
+    "name": "Shrimp lounge scallop canopy",
+    "first_face": 6438,
+    "face_count": 5
+  },
+  {
+    "name": "Shrimp lounge scallop canopy",
+    "first_face": 6443,
+    "face_count": 5
+  },
+  {
+    "name": "Coral sprig",
+    "first_face": 6448,
+    "face_count": 7
+  },
+  {
+    "name": "Coral sprig",
+    "first_face": 6455,
+    "face_count": 7
+  },
+  {
+    "name": "Dolphin-side palm trunk",
+    "first_face": 6462,
+    "face_count": 44
+  },
+  {
+    "name": "Dolphin-side palm frond",
+    "first_face": 6506,
+    "face_count": 20
+  },
+  {
+    "name": "Dolphin-side palm frond",
+    "first_face": 6526,
+    "face_count": 20
+  },
+  {
+    "name": "Dolphin-side palm frond",
+    "first_face": 6546,
+    "face_count": 20
+  },
+  {
+    "name": "Dolphin-side palm frond",
+    "first_face": 6566,
+    "face_count": 20
+  },
+  {
+    "name": "Dolphin-side palm frond",
+    "first_face": 6586,
+    "face_count": 20
+  },
+  {
+    "name": "Dolphin-side palm frond",
+    "first_face": 6606,
+    "face_count": 20
+  },
+  {
+    "name": "Dolphin-side palm frond",
+    "first_face": 6626,
+    "face_count": 20
+  },
+  {
+    "name": "Dolphin-side palm coconut cluster",
+    "first_face": 6646,
+    "face_count": 7
+  },
+  {
+    "name": "Shrimp-side palm trunk",
+    "first_face": 6653,
+    "face_count": 45
+  },
+  {
+    "name": "Shrimp-side palm frond",
+    "first_face": 6698,
+    "face_count": 20
+  },
+  {
+    "name": "Shrimp-side palm frond",
+    "first_face": 6718,
+    "face_count": 20
+  },
+  {
+    "name": "Shrimp-side palm frond",
+    "first_face": 6738,
+    "face_count": 20
+  },
+  {
+    "name": "Shrimp-side palm frond",
+    "first_face": 6758,
+    "face_count": 20
+  },
+  {
+    "name": "Shrimp-side palm frond",
+    "first_face": 6778,
+    "face_count": 20
+  },
+  {
+    "name": "Shrimp-side palm frond",
+    "first_face": 6798,
+    "face_count": 20
+  },
+  {
+    "name": "Shrimp-side palm frond",
+    "first_face": 6818,
+    "face_count": 20
+  },
+  {
+    "name": "Shrimp-side palm coconut cluster",
+    "first_face": 6838,
+    "face_count": 7
+  }
+]

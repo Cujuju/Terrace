@@ -1,0 +1,358 @@
+import { cellCentre } from './climb.ts';
+import { isFiniteNumber } from './parse.ts';
+import {
+  isWalkableCell,
+  type TerrainSampler,
+  type TraversalProfile,
+} from './traversal.ts';
+
+/** Waypoint chains: ordered cell goals with a cursor; long legs subdivide
+ * into hops. Group travel shares one point list. Integer math, fixed order:
+ * deterministic.
+ */
+
+export interface Waypoint {
+  readonly x: number;
+  readonly y: number;
+}
+
+export interface WaypointChain {
+  readonly points: Waypoint[];
+  index: number;
+}
+
+/** Default arrival radius: one cell. Matches the rejoin radius followRoute
+ * treats as on-route. */
+export const WAYPOINT_ARRIVAL_RADIUS_CELLS = 1;
+
+export function createWaypointChain(points: readonly Waypoint[]): WaypointChain {
+  const copied: Waypoint[] = [];
+  for (const point of points) copied.push({ x: point.x, y: point.y });
+  return { points: copied, index: 0 };
+}
+
+export function waypointChainCurrent(chain: WaypointChain): Waypoint | null {
+  if (chain.index < 0 || chain.index >= chain.points.length) return null;
+  return chain.points[chain.index];
+}
+
+export function waypointChainRemaining(chain: WaypointChain): number {
+  const remaining = chain.points.length - chain.index;
+  return remaining < 0 ? 0 : remaining;
+}
+
+export function waypointChainComplete(chain: WaypointChain): boolean {
+  return chain.index >= chain.points.length;
+}
+
+export function resetWaypointChain(chain: WaypointChain, index: number = 0): void {
+  chain.index = Math.max(0, Math.min(Math.floor(index), chain.points.length));
+}
+
+/** Advances the cursor while the mover is within radius of the current
+ * waypoint, so overshooting steps land right. Returns true when the cursor
+ * moved. */
+export function advanceWaypointChain(
+  chain: WaypointChain,
+  x: number,
+  y: number,
+  arrivalRadiusCells: number = WAYPOINT_ARRIVAL_RADIUS_CELLS,
+): boolean {
+  const radius = arrivalRadiusCells < 0 ? 0 : arrivalRadiusCells;
+  const radiusSquared = radius * radius;
+  let progressed = false;
+  while (chain.index < chain.points.length) {
+    const current = chain.points[chain.index];
+    const dx = x - current.x;
+    const dy = y - current.y;
+    if (dx * dx + dy * dy > radiusSquared) break;
+    chain.index++;
+    progressed = true;
+  }
+  return progressed;
+}
+
+function chebyshevCells(ax: number, ay: number, bx: number, by: number): number {
+  const dx = Math.abs(ax - bx);
+  const dy = Math.abs(ay - by);
+  return dx > dy ? dx : dy;
+}
+
+/** Subdivides one straight leg into hops of at most `maxLegCells`, excluding
+ * `from` and including `to`. Fixed order keeps identical inputs on identical
+ * hops. */
+export function subdivideLeg(
+  from: Waypoint,
+  to: Waypoint,
+  maxLegCells: number,
+): Waypoint[] {
+  const span = chebyshevCells(from.x, from.y, to.x, to.y);
+  if (span <= 0) return [];
+  const capped = maxLegCells <= 0 ? span : maxLegCells;
+  const legs = Math.max(1, Math.ceil(span / capped));
+  const hops: Waypoint[] = [];
+  for (let i = 1; i <= legs; i++) {
+    hops.push({
+      x: from.x + ((to.x - from.x) * i) / legs,
+      y: from.y + ((to.y - from.y) * i) / legs,
+    });
+  }
+  return hops;
+}
+
+/** Expands coarse legs into fine hops from `from`. Each leg subdivides
+ * independently, so every hop fits one budgeted search. */
+export function buildWaypointChain(
+  from: Waypoint,
+  legs: readonly Waypoint[],
+  maxLegCells: number,
+): Waypoint[] {
+  const hops: Waypoint[] = [];
+  let anchor: Waypoint = from;
+  for (const leg of legs) {
+    const part = subdivideLeg(anchor, leg, maxLegCells);
+    for (const hop of part) hops.push(hop);
+    anchor = leg;
+  }
+  return hops;
+}
+
+/** Shared-path cursor for one member: the leader's cursor minus a stagger,
+ * clamped to the list. Null for an empty list. */
+export function memberTargetIndex(
+  pointCount: number,
+  leaderIndex: number,
+  staggerWaypoints: number,
+): number | null {
+  if (pointCount <= 0) return null;
+  const stagger = Math.max(0, Math.floor(staggerWaypoints));
+  const target = Math.floor(leaderIndex) - stagger;
+  if (target < 0) return 0;
+  if (target >= pointCount) return pointCount - 1;
+  return target;
+}
+
+export function memberWaypoint(
+  points: readonly Waypoint[],
+  leaderIndex: number,
+  staggerWaypoints: number,
+): Waypoint | null {
+  const target = memberTargetIndex(points.length, leaderIndex, staggerWaypoints);
+  if (target === null) return null;
+  return points[target];
+}
+
+export interface SlotOffset {
+  readonly dx: number;
+  readonly dy: number;
+}
+
+/** Deterministic formation offset for `memberRank` on integer-lattice rings.
+ * Rank 0 is the goal itself; further ranks walk square-ring perimeters in
+ * fixed order. */
+export function slotOffsetForMember(memberRank: number, spacingCells: number): SlotOffset {
+  const rank = Math.max(0, Math.floor(memberRank));
+  if (rank === 0) return { dx: 0, dy: 0 };
+  let remaining = rank;
+  let ring = 1;
+  for (;;) {
+    const capacity = 8 * ring;
+    if (remaining <= capacity) break;
+    remaining -= capacity;
+    ring++;
+  }
+  const sideLength = 2 * ring;
+  const position = remaining - 1;
+  const side = Math.floor(position / sideLength);
+  const step = position % sideLength;
+  let lx = 0;
+  let ly = 0;
+  if (side === 0) {
+    lx = -ring + step;
+    ly = -ring;
+  } else if (side === 1) {
+    lx = ring;
+    ly = -ring + step;
+  } else if (side === 2) {
+    lx = ring - step;
+    ly = ring;
+  } else {
+    lx = -ring;
+    ly = ring - step;
+  }
+  return { dx: lx * spacingCells, dy: ly * spacingCells };
+}
+
+/** The shared goal with one member's formation offset applied. Pure
+ * composition of `slotOffsetForMember` over a chain point. */
+export function waypointForMember(
+  goal: Waypoint,
+  memberRank: number,
+  spacingCells: number,
+): Waypoint {
+  const offset = slotOffsetForMember(memberRank, spacingCells);
+  return { x: goal.x + offset.dx, y: goal.y + offset.dy };
+}
+
+export type WaypointGroupArrival = 'all' | 'flagship' | 'any';
+
+/** Group arrival over per-member flags, in fixed order: 'all', 'flagship'
+ * (member at index), or 'any'. An empty group never arrives. */
+export function groupArrived(
+  completions: readonly boolean[],
+  mode: WaypointGroupArrival,
+  flagshipIndex: number = 0,
+): boolean {
+  if (completions.length === 0) return false;
+  if (mode === 'flagship') {
+    const index = Math.max(0, Math.min(Math.floor(flagshipIndex), completions.length - 1));
+    return completions[index];
+  }
+  if (mode === 'any') {
+    for (const complete of completions) {
+      if (complete) return true;
+    }
+    return false;
+  }
+  for (const complete of completions) {
+    if (!complete) return false;
+  }
+  return true;
+}
+
+/** Debug wire: one group's live chain geometry, visualisation only. Anchor,
+ * hops, cursor, members, spacing, sailed route. Carries no authority: never
+ * read back. */
+export interface WaypointChainSnapshot {
+  readonly id: number;
+  readonly label: string;
+  readonly anchor: Waypoint;
+  readonly hops: readonly Waypoint[];
+  readonly cursor: number;
+  readonly members: number;
+  readonly spacing: number;
+  readonly sailed: readonly Waypoint[];
+  /** Member mover ids, when the producer tracks them. Absent on old frames. */
+  readonly crew?: readonly number[];
+}
+
+export interface WaypointDebugFrame {
+  readonly chains: readonly WaypointChainSnapshot[];
+}
+
+export const MAX_DEBUG_CHAINS_PER_FRAME = 64;
+
+export const MAX_DEBUG_HOPS_PER_CHAIN = 64;
+
+export const MAX_DEBUG_SAILED_CELLS_PER_CHAIN = 256;
+
+export const MAX_DEBUG_CREW_PER_CHAIN = 16;
+
+export const MAX_DEBUG_LABEL_LENGTH = 64;
+
+function isDebugWaypoint(value: unknown): value is Waypoint {
+  if (typeof value !== 'object' || value === null) return false;
+  const point = value as Record<string, unknown>;
+  return isFiniteNumber(point.x) && isFiniteNumber(point.y);
+}
+
+function isDebugWaypointList(value: unknown, cap: number): value is Waypoint[] {
+  if (!Array.isArray(value) || value.length > cap) return false;
+  for (const item of value) {
+    if (!isDebugWaypoint(item)) return false;
+  }
+  return true;
+}
+
+/** Validates an untrusted debug frame, returning a deep copy or null. Bounds
+ * mirror the payload caps. */
+export function parseWaypointDebugFrame(payload: unknown): WaypointDebugFrame | null {
+  if (typeof payload !== 'object' || payload === null) return null;
+  const { chains } = payload as { chains?: unknown };
+  if (!Array.isArray(chains) || chains.length > MAX_DEBUG_CHAINS_PER_FRAME) return null;
+  const parsed: WaypointChainSnapshot[] = [];
+  for (const item of chains) {
+    if (typeof item !== 'object' || item === null) return null;
+    const chain = item as Record<string, unknown>;
+    const { id, label, anchor, hops, cursor, members, spacing } = chain;
+    if (!Number.isInteger(id) || (id as number) < 0) return null;
+    if (typeof label !== 'string' || label.length > MAX_DEBUG_LABEL_LENGTH) return null;
+    if (!isDebugWaypoint(anchor)) return null;
+    if (!isDebugWaypointList(hops, MAX_DEBUG_HOPS_PER_CHAIN)) return null;
+    const hopList = hops as Waypoint[];
+    if (!Number.isInteger(cursor) || (cursor as number) < 0 || (cursor as number) > hopList.length) {
+      return null;
+    }
+    if (!Number.isInteger(members) || (members as number) < 0) return null;
+    if (!isFiniteNumber(spacing) || (spacing as number) < 0) return null;
+    const { sailed } = chain;
+    let sailedList: Waypoint[] = [];
+    if (sailed !== undefined) {
+      if (!isDebugWaypointList(sailed, MAX_DEBUG_SAILED_CELLS_PER_CHAIN)) return null;
+      sailedList = (sailed as Waypoint[]).map((cell) => ({ x: cell.x, y: cell.y }));
+    }
+    const { crew } = chain;
+    let crewList: number[] | null = null;
+    if (crew !== undefined) {
+      if (!Array.isArray(crew) || crew.length > MAX_DEBUG_CREW_PER_CHAIN) return null;
+      crewList = [];
+      for (const member of crew) {
+        if (!Number.isInteger(member) || (member as number) < 0) return null;
+        crewList.push(member as number);
+      }
+    }
+    parsed.push({
+      id: id as number,
+      label,
+      anchor: { x: (anchor as Waypoint).x, y: (anchor as Waypoint).y },
+      hops: hopList.map((hop) => ({ x: hop.x, y: hop.y })),
+      cursor: cursor as number,
+      members: members as number,
+      spacing: spacing as number,
+      sailed: sailedList,
+      ...(crewList === null ? {} : { crew: crewList }),
+    });
+  }
+  return { chains: parsed };
+}
+
+/** Slides a blind chain point onto nearby walkable ground. Walks square rings
+ * out to `radiusCells` in fixed order, returning the first walkable centre;
+ * unchanged when none qualifies. Deterministic. */
+export function snapWaypointToWalkable(
+  world: TerrainSampler,
+  profile: TraversalProfile,
+  x: number,
+  y: number,
+  radiusCells: number,
+): Waypoint {
+  const size = world.worldSize;
+  if (size <= 0) return { x, y };
+  const clampCell = (v: number): number => (v < 0 ? 0 : v >= size ? size - 1 : v);
+  const cx = clampCell(Math.floor(x));
+  const cy = clampCell(Math.floor(y));
+  if (isWalkableCell(world, profile, cx, cy)) return { x, y };
+  const radius = Math.max(0, Math.floor(radiusCells));
+  for (let ring = 1; ring <= radius; ring++) {
+    const sideLength = 2 * ring;
+    for (let step = 0; step < sideLength; step++) {
+      const topX = clampCell(cx - ring + step);
+      if (isWalkableCell(world, profile, topX, clampCell(cy - ring))) {
+        return cellCentre({ x: topX, y: clampCell(cy - ring) });
+      }
+      const rightY = clampCell(cy - ring + step);
+      if (isWalkableCell(world, profile, clampCell(cx + ring), rightY)) {
+        return cellCentre({ x: clampCell(cx + ring), y: rightY });
+      }
+      const bottomX = clampCell(cx + ring - step);
+      if (isWalkableCell(world, profile, bottomX, clampCell(cy + ring))) {
+        return cellCentre({ x: bottomX, y: clampCell(cy + ring) });
+      }
+      const leftY = clampCell(cy + ring - step);
+      if (isWalkableCell(world, profile, clampCell(cx - ring), leftY)) {
+        return cellCentre({ x: clampCell(cx - ring), y: leftY });
+      }
+    }
+  }
+  return { x, y };
+}

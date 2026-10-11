@@ -1,0 +1,106 @@
+export const KRAKEN_HEAD_CENTER_HEIGHT = 0.9;
+export const KRAKEN_HEAD_LENGTH = 2.8;
+export const KRAKEN_HEAD_HEIGHT = 2.2;
+export const KRAKEN_HEAD_WIDTH = 2.8;
+
+export const KRAKEN_HEAD_TOP = KRAKEN_HEAD_CENTER_HEIGHT + KRAKEN_HEAD_HEIGHT / 2;
+
+export const KRAKEN_MANTLE_ROOT_BACKSET = 0.7;
+export const KRAKEN_MANTLE_ROOT_HEIGHT = 1;
+export const KRAKEN_MANTLE_RISE_BACKSET = 1.2;
+export const KRAKEN_MANTLE_RISE_HEIGHT = 1.9;
+export const KRAKEN_MANTLE_APEX_BACKSET = 2;
+export const KRAKEN_MANTLE_APEX_HEIGHT = 2.35;
+export const KRAKEN_MANTLE_TIP_BACKSET = 2.75;
+export const KRAKEN_MANTLE_TIP_HEIGHT = 0.55;
+export const KRAKEN_MANTLE_BASE_RADIUS = 0.8;
+export const KRAKEN_MANTLE_RADIUS = 1.35;
+export const KRAKEN_MANTLE_SHOULDER = 0.55;
+export const KRAKEN_MANTLE_TAPER_EXPONENT = 0.85;
+export const KRAKEN_MANTLE_TIP_RADIUS = 0.06;
+
+export function krakenMantleRadiusAt(along: number): number {
+  if (along <= KRAKEN_MANTLE_SHOULDER) {
+    const swell = along / KRAKEN_MANTLE_SHOULDER;
+    return KRAKEN_MANTLE_BASE_RADIUS + (KRAKEN_MANTLE_RADIUS - KRAKEN_MANTLE_BASE_RADIUS) * swell;
+  }
+  const taper = (along - KRAKEN_MANTLE_SHOULDER) / (1 - KRAKEN_MANTLE_SHOULDER);
+  return (
+    KRAKEN_MANTLE_RADIUS +
+    (KRAKEN_MANTLE_TIP_RADIUS - KRAKEN_MANTLE_RADIUS) *
+      Math.pow(taper, KRAKEN_MANTLE_TAPER_EXPONENT)
+  );
+}
+
+export const KRAKEN_FIN_CENTER_HEIGHT = 0.7;
+export const KRAKEN_FIN_LENGTH = 1.1;
+export const KRAKEN_FIN_RISE = 0.32;
+export const KRAKEN_FIN_SPAN = 1.3;
+export const KRAKEN_FIN_BACKSET = 2.6;
+
+export const KRAKEN_EYE_RADIUS = 0.42;
+export const KRAKEN_EYE_HEIGHT = 1.15;
+export const KRAKEN_EYE_FORWARD = 0.9;
+export const KRAKEN_EYE_OFFSET = 1.15;
+export const KRAKEN_EYE_BULGE = 0.45;
+export const KRAKEN_EYE_HALO_SCALE = 2.4;
+export const KRAKEN_EYE_HALO_OPACITY = 0.18;
+export const KRAKEN_EYE_BOTTOM = KRAKEN_EYE_HEIGHT - KRAKEN_EYE_RADIUS;
+
+export const KRAKEN_ARM_COUNT = 8;
+export const KRAKEN_ARM_ROOT_REACH = 0.85;
+export const KRAKEN_ARM_ROOT_HEIGHT = 0.55;
+export const KRAKEN_ARM_CREST_REACH = 2.3;
+export const KRAKEN_ARM_CREST_HEIGHT = 0.95;
+export const KRAKEN_ARM_TIP_REACH = 3.15;
+export const KRAKEN_ARM_TIP_HEIGHT = 0.35;
+export const KRAKEN_ARM_RADIUS = 0.42;
+export const KRAKEN_ARM_TIP_RADIUS = 0.045;
+export const KRAKEN_ARM_TAPER_EXPONENT = 0.7;
+export const KRAKEN_ARM_DRIFT = 0.3;
+export const KRAKEN_ARM_LENGTH_VARIATION = 0.22;
+
+export const KRAKEN_TENTACLE_COUNT = 2;
+export const KRAKEN_TENTACLE_CREST_REACH = 1.9;
+export const KRAKEN_TENTACLE_CREST_HEIGHT = 2.1;
+export const KRAKEN_TENTACLE_TIP_REACH = 2.6;
+export const KRAKEN_TENTACLE_TIP_HEIGHT = -1.6;
+export const KRAKEN_TENTACLE_RADIUS = 0.2;
+export const KRAKEN_TENTACLE_TIP_RADIUS = 0.04;
+export const KRAKEN_CLUB_AT = 0.86;
+export const KRAKEN_CLUB_LENGTH = 1;
+export const KRAKEN_CLUB_RISE = 0.4;
+export const KRAKEN_CLUB_WIDTH = 0.6;
+
+export const KRAKEN_LIMB_COUNT = KRAKEN_ARM_COUNT + KRAKEN_TENTACLE_COUNT;
+export const KRAKEN_LIMB_STEP_RADIANS = (Math.PI * 2) / KRAKEN_LIMB_COUNT;
+export const KRAKEN_TENTACLE_SPREAD_RADIANS = KRAKEN_LIMB_STEP_RADIANS;
+
+export const KRAKEN_TOTAL_HEIGHT = KRAKEN_MANTLE_APEX_HEIGHT + KRAKEN_MANTLE_RADIUS;
+
+export const KRAKEN_WIDTH_CELLS = 7;
+
+export const KRAKEN_WATERLINE_BITE = 0.12;
+
+export const KRAKEN_LURK_DEPTH = KRAKEN_EYE_BOTTOM + KRAKEN_WATERLINE_BITE;
+
+export const KRAKEN_MANTLE_COLOR = 0x3a2a45;
+export const KRAKEN_FIN_COLOR = 0x33253d;
+export const KRAKEN_HEAD_COLOR = 0x2d2035;
+export const KRAKEN_ARM_COLOR = 0x271b30;
+export const KRAKEN_CLUB_COLOR = 0x4a3557;
+export const KRAKEN_EYE_COLOR = 0x14100c;
+export const KRAKEN_EYE_EMISSIVE = 0xd9a441;
+
+export const KRAKEN_MANTLE_WRINKLE_DEPTH = 0.07;
+export const KRAKEN_HEAD_WRINKLE_DEPTH = 0.05;
+export const KRAKEN_WRINKLE_FREQUENCY = 1.4;
+export const KRAKEN_SHADE_VARIATION = 0.18;
+export const KRAKEN_SHADE_FREQUENCY = 0.5;
+
+export const KRAKEN_ARM_WAVE_HZ = 0.16;
+export const KRAKEN_ARM_WAVE_RADIANS = 0.2;
+export const KRAKEN_ARM_PHASE_STEP = 0.8;
+export const KRAKEN_PULSE_HZ = 0.11;
+export const KRAKEN_PULSE_RISE = 0.16;
+export const KRAKEN_PULSE_SWELL = 0.035;

@@ -1,0 +1,144 @@
+{
+  "idleFrames": 600,
+  "strokeFrames": 600,
+  "viewport": [
+    1200,
+    900
+  ],
+  "runs": {
+    "webgl": {
+      "renderer": "webgl",
+      "vertices": 11753733,
+      "superMeshes": 16,
+      "adapter": null,
+      "smallItemSize": 4,
+      "antialias": true,
+      "extraMeshes": 150,
+      "drawCalls": 163,
+      "triangles": 3919675,
+      "info": {
+        "frame": 1320,
+        "calls": 163,
+        "triangles": 3919675,
+        "points": 0,
+        "lines": 0
+      },
+      "pixel": [
+        1200,
+        900
+      ],
+      "strokeBytesPerFrame": 1199982,
+      "idle": {
+        "n": 600,
+        "p50": 6.900000000000546,
+        "p95": 7,
+        "p99": 7.100000000000364,
+        "max": 9.099999999999909,
+        "mean": 6.944333333333334,
+        "fps": 144.0023040368646
+      },
+      "stroke": {
+        "n": 600,
+        "p50": 6.900000000001455,
+        "p95": 7,
+        "p99": 7.100000000000364,
+        "max": 7.100000000000364,
+        "mean": 6.9446666666666665,
+        "fps": 143.9953921474513
+      },
+      "renderJsIdle": {
+        "n": 600,
+        "p50": 0.5999999977648258,
+        "p95": 1,
+        "p99": 1.2999999970197678,
+        "max": 1.5,
+        "mean": 0.6183333333022892,
+        "fps": 1617.2506739356434
+      },
+      "renderJsStroke": {
+        "n": 600,
+        "p50": 0.6999999992549419,
+        "p95": 1.1000000014901161,
+        "p99": 1.2000000029802322,
+        "max": 1.7000000029802322,
+        "mean": 0.7501666666691502,
+        "fps": 1333.0371028616166
+      }
+    },
+    "webgpu": {
+      "renderer": "webgpu",
+      "vertices": 11753733,
+      "superMeshes": 16,
+      "adapter": {
+        "vendor": "nvidia",
+        "architecture": "ampere",
+        "description": "",
+        "fallback": false
+      },
+      "smallItemSize": 4,
+      "antialias": true,
+      "extraMeshes": 150,
+      "drawCalls": 0,
+      "triangles": 0,
+      "info": {
+        "calls": 2640,
+        "frameCalls": 0,
+        "drawCalls": 0,
+        "triangles": 0,
+        "points": 0,
+        "lines": 0,
+        "timestamp": 0
+      },
+      "pixel": [
+        1200,
+        900
+      ],
+      "strokeBytesPerFrame": 1199982,
+      "idle": {
+        "n": 600,
+        "p50": 6.900000000000546,
+        "p95": 7,
+        "p99": 7.100000000000364,
+        "max": 7.199999999999818,
+        "mean": 6.9445,
+        "fps": 143.99884800921592
+      },
+      "stroke": {
+        "n": 600,
+        "p50": 6.900000000001455,
+        "p95": 7,
+        "p99": 7.100000000000364,
+        "max": 13.799999999999272,
+        "mean": 6.956166666666668,
+        "fps": 143.75733761410734
+      },
+      "renderJsIdle": {
+        "n": 600,
+        "p50": 0.8000000007450581,
+        "p95": 1.1000000014901161,
+        "p99": 1.4000000022351742,
+        "max": 2.699999999254942,
+        "mean": 0.8016666665424903,
+        "fps": 1247.4012475944671
+      },
+      "renderJsStroke": {
+        "n": 600,
+        "p50": 1.5999999977648258,
+        "p95": 1.9000000022351742,
+        "p99": 2.300000000745058,
+        "max": 2.5,
+        "mean": 1.5514999999602637,
+        "fps": 644.5375443284638
+      }
+    }
+  },
+  "pageLogs": [],
+  "pixels": {
+    "width": 1200,
+    "height": 900,
+    "mismatched": 298466,
+    "mismatchFraction": 0.2763574074074074,
+    "tolerance": 8,
+    "neighbourhood": 3
+  }
+}

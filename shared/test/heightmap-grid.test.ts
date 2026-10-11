@@ -1,0 +1,217 @@
+import { describe, expect, it } from 'vitest';
+import {
+  applySculpt,
+  bandLevelHeight,
+  bandOf,
+  BAND_HEIGHT,
+  cellIndex,
+  cellX,
+  cellY,
+  createHeightmap,
+  DEFAULT_SCULPT_AMOUNT,
+  DEEP_BASALT_BANDS,
+  DEEP_BASALT_DEPTH,
+  DEEP_LAVA_BANDS,
+  DEEP_LAVA_DEPTH,
+  DEEP_OBSIDIAN_BANDS,
+  DEEP_OBSIDIAN_DEPTH,
+  DEEP_STRATA_BANDS,
+  DEEP_STRATA_DEPTH,
+  isValidHeight,
+  isWater,
+  LIBRARY_SCULPT_TOOL,
+  MAX_BRUSH_RADIUS,
+  MAX_HEIGHT,
+  MAX_STEP,
+  MIN_HEIGHT,
+  quantizeToBand,
+  RAMP_CELLS_PER_BAND,
+  sculptOptionsOf,
+  sculptReachCells,
+  sculptSweepRadius,
+  SEA_COLUMN_BANDS,
+  SEA_COLUMN_DEPTH,
+  SMOOTH_REACH_MARGIN_CELLS,
+  smoothCascadeReachCells,
+  SMOOTH_SPREAD_CELLS,
+  WORLD_UNIT_CELLS,
+  type SculptIntent,
+} from '../src/index.ts';
+import { EDGE_REGION_MARGIN_CELLS } from '../src/sculpt/edges.ts';
+import { NUDGE_READ_MARGIN_CELLS } from '../src/sculpt/nudge.ts';
+import { OUTLINE_SMOOTH_READ_MARGIN_CELLS } from '../src/sculpt/outlineSmooth.ts';
+
+describe('createHeightmap', () => {
+  it('allocates a zeroed size×size grid', () => {
+    const map = createHeightmap(64);
+    expect(map.size).toBe(64);
+    expect(map.cells.length).toBe(64 * 64);
+    expect(map.cells.every((h) => h === 0)).toBe(true);
+  });
+
+  it('rejects non-positive and non-integer sizes', () => {
+    expect(() => createHeightmap(0)).toThrow(RangeError);
+    expect(() => createHeightmap(-4)).toThrow(RangeError);
+    expect(() => createHeightmap(2.5)).toThrow(RangeError);
+  });
+});
+
+describe('water and terracing', () => {
+  it('height <= 0 is water', () => {
+    expect(isWater(0)).toBe(true);
+    expect(isWater(-5)).toBe(true);
+    expect(isWater(1)).toBe(false);
+  });
+
+  it('bands use floor division so underwater heights band correctly', () => {
+    expect(bandOf(0)).toBe(0);
+    expect(bandOf(BAND_HEIGHT - 1)).toBe(0);
+    expect(bandOf(BAND_HEIGHT)).toBe(1);
+    expect(bandOf(-1)).toBe(-1);
+    expect(bandOf(-BAND_HEIGHT)).toBe(-1);
+    expect(bandOf(-BAND_HEIGHT - 1)).toBe(-2);
+  });
+
+  it('quantizes to the band floor', () => {
+    expect(quantizeToBand(BAND_HEIGHT + 5)).toBe(BAND_HEIGHT);
+    expect(quantizeToBand(-1)).toBe(-BAND_HEIGHT);
+  });
+});
+
+describe('deep strata constants', () => {
+  it('derives MIN_HEIGHT from the strata stack (Deep Strata, 2026-08-19)', () => {
+    expect(SEA_COLUMN_DEPTH).toBe(MAX_HEIGHT);
+    expect(DEEP_STRATA_DEPTH).toBe(
+      DEEP_BASALT_DEPTH + DEEP_OBSIDIAN_DEPTH + DEEP_LAVA_DEPTH,
+    );
+    expect(MIN_HEIGHT).toBe(-(SEA_COLUMN_DEPTH + DEEP_STRATA_DEPTH));
+    expect(MIN_HEIGHT).toBe(-1536);
+    expect(isValidHeight(-SEA_COLUMN_DEPTH)).toBe(true);
+    expect(isValidHeight(MIN_HEIGHT)).toBe(true);
+    expect(isValidHeight(MIN_HEIGHT - 1)).toBe(false);
+  });
+
+  it('keeps the strata DEPTHS fixed while their band counts follow BAND_HEIGHT', () => {
+    expect(SEA_COLUMN_BANDS).toBe(SEA_COLUMN_DEPTH / BAND_HEIGHT);
+    expect(DEEP_BASALT_BANDS).toBe(DEEP_BASALT_DEPTH / BAND_HEIGHT);
+    expect(DEEP_OBSIDIAN_BANDS).toBe(DEEP_OBSIDIAN_DEPTH / BAND_HEIGHT);
+    expect(DEEP_LAVA_BANDS).toBe(DEEP_LAVA_DEPTH / BAND_HEIGHT);
+    expect(DEEP_STRATA_BANDS).toBe(
+      DEEP_BASALT_BANDS + DEEP_OBSIDIAN_BANDS + DEEP_LAVA_BANDS,
+    );
+    for (const bands of [
+      SEA_COLUMN_BANDS,
+      DEEP_BASALT_BANDS,
+      DEEP_OBSIDIAN_BANDS,
+      DEEP_LAVA_BANDS,
+    ]) {
+      expect(Number.isInteger(bands)).toBe(true);
+    }
+    expect(DEEP_BASALT_DEPTH / DEEP_LAVA_DEPTH).toBe(4);
+    expect(DEEP_OBSIDIAN_DEPTH / DEEP_LAVA_DEPTH).toBe(3);
+  });
+
+  it('scales the smoothing budget with the range AND the gradient limit', () => {
+    expect(SMOOTH_SPREAD_CELLS).toBe(
+      Math.floor((MAX_HEIGHT - MIN_HEIGHT) / MAX_STEP),
+    );
+    expect(SMOOTH_SPREAD_CELLS).toBe(160 * WORLD_UNIT_CELLS);
+  });
+
+  it('caps the player smooth cascade at the brush that started it', () => {
+    expect(RAMP_CELLS_PER_BAND).toBe(BAND_HEIGHT / MAX_STEP);
+    // A stamp edge converges at radius + 2 cells; the margin matches.
+    for (const radius of [1, 2, 4, 8, MAX_BRUSH_RADIUS]) {
+      expect([radius, smoothCascadeReachCells(radius)])
+        .toEqual([radius, radius + SMOOTH_REACH_MARGIN_CELLS]);
+    }
+    expect(smoothCascadeReachCells(MAX_BRUSH_RADIUS)).toBeLessThan(SMOOTH_SPREAD_CELLS);
+  });
+});
+
+describe('sculptReachCells — one statement of how far a stroke can read or write', () => {
+  const RADIUS = 4;
+
+  it('gives smooth and nudge their read margin, settle its cascade, and the rest their sweep', () => {
+    // Smooth and nudge write only their disc but read a margin past it (reach.ts).
+    for (const radius of [1, RADIUS, MAX_BRUSH_RADIUS]) {
+      expect([radius, sculptReachCells(radius, 'hard', 'smooth', 'clicked')])
+        .toEqual([radius, radius + OUTLINE_SMOOTH_READ_MARGIN_CELLS]);
+      expect([radius, sculptReachCells(radius, 'hard', 'nudge', 'clicked')])
+        .toEqual([radius, radius + NUDGE_READ_MARGIN_CELLS]);
+    }
+    expect(sculptReachCells(RADIUS, 'soft', LIBRARY_SCULPT_TOOL, 'free'))
+      .toBe(RADIUS + SMOOTH_SPREAD_CELLS);
+    for (const tool of ['stamp', 'drag', 'carve'] as const) {
+      // An edge-aware brush re-encodes the cells just past its sweep.
+      const margin = tool === 'carve' ? 0 : EDGE_REGION_MARGIN_CELLS;
+      for (const profile of ['soft', 'hard'] as const) {
+        for (const anchor of ['clicked', 'free', 'band'] as const) {
+          expect(sculptReachCells(RADIUS, profile, tool, anchor))
+            .toBe(sculptSweepRadius(RADIUS, profile, tool, anchor) + margin);
+        }
+      }
+    }
+  });
+
+  // The client predicts only strokes whose reach it has received, so reach must
+  // bound every cell a stroke reads, not just those it writes.
+  const READ_WORLD = 64;
+  const READ_CENTRE = READ_WORLD / 2;
+  const BASE_BAND = 8;
+  const KINK_EVERY_ROWS = 4;
+  const WALL_BANDS = 3;
+
+  /** One kinked step through the centre: few outlines, so a wall past reach would be the nearest. */
+  function kinkedStep(): ReturnType<typeof createHeightmap> {
+    const map = createHeightmap(READ_WORLD);
+    for (let y = 0; y < READ_WORLD; y++) {
+      const edge = READ_CENTRE + (y % KINK_EVERY_ROWS === 0 ? 1 : 0);
+      for (let x = 0; x < READ_WORLD; x++) {
+        map.cells[y * READ_WORLD + x] = bandLevelHeight(BASE_BAND + (x >= edge ? 1 : 0));
+      }
+    }
+    return map;
+  }
+
+  it.each([
+    ['stamp', 1],
+    ['stamp', -1],
+    ['smooth', 1],
+    ['nudge', 1],
+    ['nudge', -1],
+  ] as const)('a %s (dir %i) reads no cell past its reach', (tool, dir) => {
+    for (const radius of [1, 2, 3, 4, 8]) {
+      const intent: SculptIntent = { type: 'sculpt', x: READ_CENTRE, y: READ_CENTRE, radius, dir, tool };
+      const options = sculptOptionsOf(intent);
+      const reach = sculptReachCells(radius, options.profile, tool, options.anchor);
+      const inside = kinkedStep();
+      const outside = kinkedStep();
+      for (let y = 0; y < READ_WORLD; y++) {
+        for (let x = 0; x < READ_WORLD; x++) {
+          const beyond = Math.max(Math.abs(x - READ_CENTRE), Math.abs(y - READ_CENTRE)) > reach;
+          if (beyond) outside.cells[y * READ_WORLD + x] = bandLevelHeight(BASE_BAND + WALL_BANDS);
+        }
+      }
+
+      const amount = DEFAULT_SCULPT_AMOUNT * dir;
+      const expected = applySculpt(inside, READ_CENTRE, READ_CENTRE, radius, amount, options);
+      const actual = applySculpt(outside, READ_CENTRE, READ_CENTRE, radius, amount, options);
+      expect(expected.length).toBeGreaterThan(0);
+      expect([radius, actual]).toEqual([radius, expected]);
+    }
+  });
+});
+
+describe('cellX/cellY — the exported inverse of cellIndex (#14)', () => {
+  it('round-trips every cell of a small map', () => {
+    const map = createHeightmap(7);
+    for (let y = 0; y < 7; y++) {
+      for (let x = 0; x < 7; x++) {
+        const i = cellIndex(map, x, y);
+        expect(cellX(map.size, i)).toBe(x);
+        expect(cellY(map.size, i)).toBe(y);
+      }
+    }
+  });
+});

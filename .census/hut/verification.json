@@ -1,0 +1,103 @@
+{
+  "glb_sha256": "c8d6e84c2c99799c6b5668fe5ae1102cf5bf882902c96186a56253ebacfb7fe6",
+  "mesh_count": 1,
+  "primitive_count": 1,
+  "material_count": 1,
+  "triangles": 1236,
+  "exported_vertices": 2400,
+  "nodes": [
+    {
+      "mesh": 0,
+      "name": "hut"
+    },
+    {
+      "children": [
+        0
+      ],
+      "name": "RootNode"
+    }
+  ],
+  "dimensions_gltf_y_up": [
+    0.7770689129829407,
+    0.8500000238418579,
+    0.7770689129829407
+  ],
+  "uv_islands": 502,
+  "uv_min_max": [
+    0.0029296875,
+    0.9969746470451355
+  ],
+  "uv_overlap_pairs": [],
+  "uv_candidate_pairs_checked": 642,
+  "minimum_island_bounds_gap_pixels": 12.006454467773438,
+  "texel_density_min_max": [
+    831.1400007402549,
+    831.1759608956714
+  ],
+  "zero_area_triangles": 0,
+  "normal_length_error_max": 9.480008378304206e-08,
+  "tangent_normal_dot_max": 8.423045980698873e-05,
+  "compression_extensions": [],
+  "textures": {
+    "hut-normal": {
+      "format": "image/png",
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "matches_external_bytes": true
+    },
+    "hut-basecolor": {
+      "format": "image/png",
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "matches_external_bytes": true
+    },
+    "hut-metallicRoughness": {
+      "format": "image/png",
+      "dimensions": [
+        2048,
+        2048
+      ],
+      "matches_external_bytes": true
+    }
+  },
+  "roughness_range": [
+    0.7803922295570374,
+    0.9803922176361084
+  ],
+  "metalness_range": [
+    0.0,
+    0.0
+  ],
+  "normal_map_length_error_max": 0.005414247512817383,
+  "blend": {
+    "mesh_count": 1,
+    "material_count": 1,
+    "vertices": 749,
+    "triangles": 1236,
+    "uv_layers": [
+      "UVMap"
+    ],
+    "images_packed": true,
+    "objects": [
+      "hut",
+      "RootNode"
+    ]
+  },
+  "bounds_gltf_y_up": {
+    "min": [
+      -0.38853445649147034,
+      0.0,
+      -0.38853445649147034
+    ],
+    "max": [
+      0.38853445649147034,
+      0.8500000238418579,
+      0.38853445649147034
+    ]
+  },
+  "passed": true
+}

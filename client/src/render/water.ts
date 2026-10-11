@@ -1,0 +1,283 @@
+import {
+  Box3,
+  BufferAttribute,
+  BufferGeometry,
+  DataTexture,
+  DoubleSide,
+  FloatType,
+  Mesh,
+  NearestFilter,
+  RGBAFormat,
+  RedFormat,
+  Sphere,
+  UnsignedByteType,
+  Vector3,
+  type Object3D,
+} from 'three';
+import { MeshPhysicalNodeMaterial, type Renderer, type UniformNode } from 'three/webgpu';
+import {
+  diffuseColor,
+  mix,
+  positionWorld,
+  select,
+  texture,
+  uniform,
+  vec3,
+} from 'three/tsl';
+import {
+  CHUNK_SIZE,
+  MAX_BRUSH_RADIUS,
+  chunksPerEdge,
+} from '@terrace/shared';
+import {
+  CELL_WORLD_SIZE,
+  SEA_SURFACE_WORLD_Y,
+} from '../config.ts';
+import type { TerrainMirror } from '../terrain/mirror.ts';
+import {
+  WATER_CURVE_BYTES_PER_TEXEL,
+  WATER_SELF_LIGHT_RADIANCE,
+  WATER_SHADE_FLOOR_MIX,
+  WATER_TRENCH_TINT,
+  WATER_DEEP_TINT,
+  WATER_SHALLOW_TINT,
+  createWaterCurveBuffer,
+  writeWaterCurveTexels,
+} from '../terrain/waterDepth.ts';
+import { compose } from './materialSlots.ts';
+import { writeTextureRegion } from './gpuTextureWrite.ts';
+import { applyGroundShade } from './groundShade.ts';
+import { makeBanded } from './water/waterBands.ts';
+
+export const WATER_COLOR = 0x2f6f9e;
+const WATER_ROUGHNESS = 0.9;
+const WATER_METALNESS = 0;
+
+const VERTICES_PER_CHUNK_QUAD = 4;
+const INDICES_PER_CHUNK_QUAD = 6;
+
+export interface Water {
+  setWorldSize(worldSize: number): void;
+  sync(mirror: TerrainMirror): void;
+  refresh(mirror: TerrainMirror, dirty: Iterable<number>): void;
+  dispose(): void;
+}
+
+function createCurveTexture(worldSize: number): { texture: DataTexture; buffer: Uint8Array } {
+  const buffer = createWaterCurveBuffer(worldSize);
+  const texture = new DataTexture(buffer, worldSize, worldSize, RGBAFormat, UnsignedByteType);
+  texture.generateMipmaps = false;
+  texture.minFilter = NearestFilter;
+  texture.magFilter = NearestFilter;
+  texture.needsUpdate = true;
+  return { texture, buffer };
+}
+
+const TEXEL_CENTRE_CELLS = 0.5;
+
+function tintOf(shadeMix: ReturnType<typeof texture>['b']) {
+  const trenchSide = mix(
+    vec3(...WATER_TRENCH_TINT),
+    vec3(...WATER_DEEP_TINT),
+    shadeMix.div(WATER_SHADE_FLOOR_MIX).clamp(0, 1),
+  );
+  const ordinarySide = mix(
+    vec3(...WATER_DEEP_TINT),
+    vec3(...WATER_SHALLOW_TINT),
+    shadeMix.sub(WATER_SHADE_FLOOR_MIX).div(1 - WATER_SHADE_FLOOR_MIX).clamp(0, 1),
+  );
+  return select(shadeMix.lessThan(WATER_SHADE_FLOOR_MIX), trenchSide, ordinarySide);
+}
+
+function makeDepthAware(
+  material: MeshPhysicalNodeMaterial,
+  curveTexture: DataTexture,
+  worldSizeCells: UniformNode<'float', number>,
+): void {
+  const depthUv = positionWorld.xz
+    .div(CELL_WORLD_SIZE)
+    .add(TEXEL_CENTRE_CELLS)
+    .div(worldSizeCells);
+  const curves = texture(curveTexture, depthUv);
+  compose(material, 'color', (previous) => previous.mul(tintOf(curves.b)));
+  compose(material, 'opacity', (previous) => previous.mul(curves.r));
+  compose(material, 'emissive', (previous) =>
+    previous.add(diffuseColor.rgb.mul(WATER_SELF_LIGHT_RADIANCE)),
+  );
+  // The GLSL scaled totalSpecular, which has no slot; F0 is the nearest hook.
+  material.specularColorNode = vec3(curves.g);
+}
+
+export interface WaterOptions {
+  /** Lets a refresh write only its dirty chunks' texels instead of the whole curve texture. */
+  readonly renderer?: Renderer;
+}
+
+export const WATER_DRAW_OBJECTS = 1;
+
+const MAX_BRUSH_FOOTPRINT_CHUNKS =
+  (Math.ceil((MAX_BRUSH_RADIUS * 2 + 1) / CHUNK_SIZE) + 1) ** 2;
+const COALESCED_SCULPT_STEPS = 4;
+const MAX_RANGED_REFRESH_CHUNKS = MAX_BRUSH_FOOTPRINT_CHUNKS * COALESCED_SCULPT_STEPS;
+
+export function createWater(
+  parent: Object3D,
+  initialWorldSize: number,
+  options: WaterOptions = {},
+): Water {
+  const { texture: curveTexture, buffer: initialCurveBuffer } =
+    createCurveTexture(initialWorldSize);
+  let curveBuffer = initialCurveBuffer;
+  let curveUploadPending = true;
+  curveTexture.onUpdate = () => { curveUploadPending = false; };
+  const worldSizeCells = uniform(initialWorldSize);
+  const dirtyChunkScratch: number[] = [];
+
+  const writeDirtyRegions = (worldSize: number): boolean => {
+    const renderer = options.renderer;
+    if (renderer === undefined || curveUploadPending) return false;
+    const chunkCols = chunksPerEdge(worldSize);
+    for (const chunkIdx of dirtyChunkScratch) {
+      const region = {
+        x: (chunkIdx % chunkCols) * CHUNK_SIZE,
+        y: Math.floor(chunkIdx / chunkCols) * CHUNK_SIZE,
+        width: CHUNK_SIZE,
+        height: CHUNK_SIZE,
+      };
+      if (!writeTextureRegion(renderer, curveTexture, curveBuffer, WATER_CURVE_BYTES_PER_TEXEL, worldSize, region)) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  const material = new MeshPhysicalNodeMaterial({
+    color: WATER_COLOR,
+    transparent: true,
+    roughness: WATER_ROUGHNESS,
+    metalness: WATER_METALNESS,
+    depthWrite: false,
+    side: DoubleSide,
+  });
+  makeDepthAware(material, curveTexture, worldSizeCells);
+  applyGroundShade(material, 'water');
+  makeBanded(material);
+
+  let geometry = new BufferGeometry();
+  const mesh = new Mesh(geometry, material);
+  mesh.visible = false;
+  parent.add(mesh);
+  const surfaceY = SEA_SURFACE_WORLD_Y;
+
+  let quadCapacity = 0;
+  let positions = new Float32Array(0);
+  let normals = new Float32Array(0);
+  let indices = new Uint32Array(0);
+
+  const growTo = (quads: number): void => {
+    if (quads <= quadCapacity) return;
+    let capacity = quadCapacity === 0 ? 1 : quadCapacity;
+    while (capacity < quads) capacity *= 2;
+    quadCapacity = capacity;
+    positions = new Float32Array(capacity * VERTICES_PER_CHUNK_QUAD * 3);
+    normals = new Float32Array(capacity * VERTICES_PER_CHUNK_QUAD * 3);
+    indices = new Uint32Array(capacity * INDICES_PER_CHUNK_QUAD);
+    for (let vertex = 0; vertex < capacity * VERTICES_PER_CHUNK_QUAD; vertex++) {
+      normals[vertex * 3 + 1] = 1;
+    }
+    for (let quad = 0; quad < capacity; quad++) {
+      const v = quad * VERTICES_PER_CHUNK_QUAD;
+      const i = quad * INDICES_PER_CHUNK_QUAD;
+      indices[i] = v;
+      indices[i + 1] = v + 2;
+      indices[i + 2] = v + 1;
+      indices[i + 3] = v + 1;
+      indices[i + 4] = v + 2;
+      indices[i + 5] = v + 3;
+    }
+    const previousGeometry = geometry;
+    geometry = new BufferGeometry();
+    geometry.setAttribute('position', new BufferAttribute(positions, 3));
+    geometry.setAttribute('normal', new BufferAttribute(normals, 3));
+    geometry.setIndex(new BufferAttribute(indices, 1));
+    mesh.geometry = geometry;
+    previousGeometry.dispose();
+  };
+
+  const setWorldSize = (worldSize: number): void => {
+    if (worldSize !== worldSizeCells.value) curveTexture.dispose();
+    curveBuffer = createWaterCurveBuffer(worldSize);
+    curveTexture.image = { data: curveBuffer, width: worldSize, height: worldSize };
+    curveUploadPending = true;
+    curveTexture.clearUpdateRanges();
+    curveTexture.needsUpdate = true;
+    worldSizeCells.value = worldSize;
+  };
+
+  setWorldSize(initialWorldSize);
+
+  return {
+    setWorldSize,
+    sync(mirror: TerrainMirror): void {
+      const chunkCols = chunksPerEdge(mirror.map.size);
+      const chunkWorldSpan = CHUNK_SIZE * CELL_WORLD_SIZE;
+      growTo(mirror.received.size);
+      let quad = 0;
+      let minX = Infinity;
+      let minZ = Infinity;
+      let maxX = -Infinity;
+      let maxZ = -Infinity;
+      for (const chunkIdx of [...mirror.received].sort((a, b) => a - b)) {
+        const x0 = (chunkIdx % chunkCols) * chunkWorldSpan;
+        const z0 = Math.floor(chunkIdx / chunkCols) * chunkWorldSpan;
+        const x1 = x0 + chunkWorldSpan;
+        const z1 = z0 + chunkWorldSpan;
+        const v = quad * VERTICES_PER_CHUNK_QUAD * 3;
+        positions[v] = x0; positions[v + 1] = surfaceY; positions[v + 2] = z0;
+        positions[v + 3] = x1; positions[v + 4] = surfaceY; positions[v + 5] = z0;
+        positions[v + 6] = x0; positions[v + 7] = surfaceY; positions[v + 8] = z1;
+        positions[v + 9] = x1; positions[v + 10] = surfaceY; positions[v + 11] = z1;
+        if (x0 < minX) minX = x0;
+        if (z0 < minZ) minZ = z0;
+        if (x1 > maxX) maxX = x1;
+        if (z1 > maxZ) maxZ = z1;
+        quad++;
+      }
+      const positionAttribute = geometry.getAttribute('position') as BufferAttribute | undefined;
+      if (positionAttribute) positionAttribute.needsUpdate = true;
+      geometry.setDrawRange(0, quad * INDICES_PER_CHUNK_QUAD);
+      if (quad === 0) {
+        mesh.visible = false;
+        return;
+      }
+      const centreX = (minX + maxX) / 2;
+      const centreZ = (minZ + maxZ) / 2;
+      geometry.boundingSphere = new Sphere(
+        new Vector3(centreX, surfaceY, centreZ),
+        Math.hypot(maxX - centreX, maxZ - centreZ),
+      );
+      geometry.boundingBox = new Box3(
+        new Vector3(minX, surfaceY, minZ),
+        new Vector3(maxX, surfaceY, maxZ),
+      );
+      mesh.visible = quad > 0;
+    },
+    refresh(mirror: TerrainMirror, dirty: Iterable<number>): void {
+      dirtyChunkScratch.length = 0;
+      for (const chunkIdx of dirty) dirtyChunkScratch.push(chunkIdx);
+      if (dirtyChunkScratch.length === 0) return;
+      const worldSize = worldSizeCells.value;
+      writeWaterCurveTexels(curveBuffer, worldSize, mirror, dirtyChunkScratch);
+      if (dirtyChunkScratch.length <= MAX_RANGED_REFRESH_CHUNKS && writeDirtyRegions(worldSize)) return;
+      curveTexture.clearUpdateRanges();
+      curveUploadPending = true;
+      curveTexture.needsUpdate = true;
+    },
+    dispose(): void {
+      parent.remove(mesh);
+      mesh.geometry.dispose();
+      material.dispose();
+      curveTexture.dispose();
+    },
+  };
+}

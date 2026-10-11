@@ -1,0 +1,219 @@
+{
+  "revision": 4,
+  "revision_changes": [
+    "Slides use 28 longitudinal samples and integrated closed rims instead of separate tubes.",
+    "Suspended ropes use crossed opaque UV strips; wrapped ropes use eight-sided UV bands.",
+    "Three connected shell fans replace overlapping lobes; fine ribs use color and normal maps.",
+    "Painted mascots, rock and barnacle textures, and emissive lanterns preserved."
+  ],
+  "blender_version": "5.2.1 LTS",
+  "authoring_objects": 1422,
+  "evaluated_triangles": 90294,
+  "optimized_part_triangles": {
+    "slides_and_rims": 2232,
+    "rope_details": 2680,
+    "shell_decorations": 1056
+  },
+  "materials": 37,
+  "authoring_dimensions": [
+    11.0600004196167,
+    10.045000076293945,
+    9.870442390441895
+  ],
+  "mascot_design": {
+    "design": "Shallow bevelled relief with painted eyes and closed smiles",
+    "body_depths": [
+      0.28,
+      0.27
+    ],
+    "facial_geometry_objects": 0,
+    "face_maps": 2
+  },
+  "reference": "Owner-selected C plus A; owner supplied reference image",
+  "differences": [
+    "Duplicate dolphin and shrimp slide heads omitted with owner authorization.",
+    "Water is a static textured surface in this asset; no animation or simulation."
+  ],
+  "surface_strategy": "Reusable original image base-color and tangent-space normal maps for wood, decking, plaster, roof shingles, stone, rope, caustics and waterfall streaks. No concept-image projection.",
+  "runtime_status": "Standalone asset, not integrated into the game. Runtime frame cost unmeasured.",
+  "gltf_footprint": 0.86,
+  "gltf_bytes": 17735524,
+  "lighter_export_triangles": 42507,
+  "lighter_export_bytes": 16017052,
+  "comparison_to_revision_3": {
+    "previous_triangles": 113948,
+    "triangles_removed": 23654,
+    "previous_optimized_part_triangles": {
+      "slides_and_rims": 11240,
+      "rope_details": 7708,
+      "shell_decorations": 10674
+    },
+    "preserved_texture_checks": [
+      {
+        "texture": "Limestone-color.png",
+        "identical": true
+      },
+      {
+        "texture": "Limestone-normal.png",
+        "identical": true
+      },
+      {
+        "texture": "Limestone-roughness.png",
+        "identical": true
+      },
+      {
+        "texture": "Warm stone-color.png",
+        "identical": true
+      },
+      {
+        "texture": "Warm stone-normal.png",
+        "identical": true
+      },
+      {
+        "texture": "Warm stone-roughness.png",
+        "identical": true
+      },
+      {
+        "texture": "Barnacled timber-color.png",
+        "identical": true
+      },
+      {
+        "texture": "Barnacled timber-normal.png",
+        "identical": true
+      },
+      {
+        "texture": "Barnacled timber-roughness.png",
+        "identical": true
+      },
+      {
+        "texture": "Dolphin painted relief.png",
+        "identical": true
+      },
+      {
+        "texture": "Shrimp painted relief.png",
+        "identical": true
+      }
+    ]
+  },
+  "export_verified": {
+    "triangles": 90294,
+    "mesh_count": 1,
+    "material_primitives": 37,
+    "embedded_images": 38,
+    "alpha_materials": [
+      "Foam ripples - texture not tubes",
+      "Draped rope net - alpha texture",
+      "Painted nautical lettering atlas"
+    ],
+    "self_contained": true,
+    "roundtrip_render": "export-roundtrip.png",
+    "mascot_closeup": "mascots-closeup.png",
+    "slide_closeup": "slides-closeup.png",
+    "slide_surfaces": [
+      {
+        "name": "Blue sweeping flume",
+        "upward_floor_faces": 216,
+        "floor_faces": 216,
+        "vertices_inside_lounge_deck": 0,
+        "closed_rims": true,
+        "nonmanifold_edges": 0
+      },
+      {
+        "name": "Coral sweeping flume",
+        "upward_floor_faces": 216,
+        "floor_faces": 216,
+        "vertices_inside_lounge_deck": 0,
+        "closed_rims": true,
+        "nonmanifold_edges": 0
+      }
+    ],
+    "separate_slide_water_overlays": 0,
+    "vertex_colour_materials": [],
+    "emissive_materials": [
+      {
+        "name": "Lamp",
+        "factor": [
+          1,
+          0.6399999856948853,
+          0.20000000298023224
+        ],
+        "strength": 6
+      },
+      {
+        "name": "Foam",
+        "factor": [
+          0.0829999995678663,
+          0.09700000430643563,
+          0.09400000116229057
+        ],
+        "strength": 1
+      }
+    ],
+    "lantern_emission_strengths": {
+      "Amber lantern": 6.0,
+      "Amber lantern.001": 6.0,
+      "Amber lantern.002": 6.0,
+      "Amber lantern.003": 6.0,
+      "Amber lantern.004": 6.0,
+      "Amber lantern.005": 6.0,
+      "Amber lantern.006": 6.0,
+      "Amber lantern.007": 6.0,
+      "Amber lantern.008": 6.0,
+      "Amber lantern.009": 6.0,
+      "Amber lantern.010": 6.0,
+      "Amber lantern.011": 6.0,
+      "Amber lantern.012": 6.0,
+      "Amber lantern.013": 6.0,
+      "Lighthouse glowing lantern": 6.0,
+      "Amber lantern.014": 6.0,
+      "Amber lantern.015": 6.0,
+      "Amber lantern.016": 6.0
+    },
+    "surface_image_maps": {
+      "Limestone": [
+        "Limestone-color",
+        "Limestone-normal",
+        "Limestone-roughness"
+      ],
+      "Warm stone": [
+        "Warm stone-color",
+        "Warm stone-normal",
+        "Warm stone-roughness"
+      ],
+      "Barnacled timber": [
+        "Barnacled timber-color",
+        "Barnacled timber-normal",
+        "Barnacled timber-roughness"
+      ],
+      "Dolphin painted relief": [
+        "Dolphin painted relief"
+      ],
+      "Shrimp painted relief": [
+        "Shrimp painted relief"
+      ],
+      "Rope": [
+        "Rope-color",
+        "Rope-normal"
+      ],
+      "UV textured rope cord": [
+        "Rope cord-color",
+        "Rope cord-normal"
+      ],
+      "Ivory shell relief": [
+        "Ivory shell relief-color",
+        "Ivory shell relief-normal"
+      ],
+      "Coral shell relief": [
+        "Coral shell relief-color",
+        "Coral shell relief-normal"
+      ]
+    }
+  },
+  "lighter_mesh_triangles": 42512,
+  "lighter_export_verified": {
+    "triangles": 42507,
+    "mesh_count": 1,
+    "roundtrip_render": "lighter-export-roundtrip.png",
+    "footprint": 0.86
+  }
+}

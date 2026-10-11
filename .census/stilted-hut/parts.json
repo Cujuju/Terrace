@@ -1,0 +1,22 @@
+[
+  {
+    "name": "Preserved original Terrace procedural base, coplanar merge and bevel improvements",
+    "first_face": 0,
+    "face_count": 511
+  },
+  {
+    "name": "Added pile cross brace",
+    "first_face": 511,
+    "face_count": 10
+  },
+  {
+    "name": "Added pile cross brace",
+    "first_face": 521,
+    "face_count": 10
+  },
+  {
+    "name": "Ramp landing connection",
+    "first_face": 531,
+    "face_count": 6
+  }
+]

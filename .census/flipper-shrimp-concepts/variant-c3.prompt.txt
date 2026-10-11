@@ -1,0 +1,7 @@
+Use your image generation tool to create ONE image and save it as variant-c3.png in the current directory. Reply with the saved path only.
+
+Attached image 1 (variant-c2.png) is the BASE design. Keep everything about it the same: layout, camera angle, footprint, lighthouse, pier, stilts, signs and their text, mascots, the dolphin head and shrimp head at the top of the two slides, lounges, materials, colors, lighting, grey background, and stylized game-art look.
+
+Attached image 2 (variant-a.png) is the reference for ONE change only: the shape of the slide flumes. In the base, the slides run straight down. Make them like image 2: each flume leaves the character head's mouth and sweeps in a long curved arc (a gentle S / banana curve bending toward the center of the pool) before splashing into the pool. Blue flume from the dolphin head on the left, orange-coral flume from the shrimp head on the right, mirrored and equal in size.
+
+Do not change anything else.

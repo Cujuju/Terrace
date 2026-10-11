@@ -1,0 +1,57 @@
+{
+  "date": "2026-10-10",
+  "newTestsWritten": false,
+  "checks": [
+    {
+      "command": "pnpm --filter @terrace/client typecheck",
+      "result": "Passed after full-window overflow fix; both client/electron TypeScript configurations."
+    },
+    {
+      "command": "pnpm exec eslint client/src/render/frameStats.ts client/src/render/perfHandle.ts client/src/ui/VersionWatermark.tsx",
+      "result": "Passed after full-window overflow fix."
+    },
+    {
+      "command": "pnpm --filter @terrace/client test",
+      "result": "First run: 64 files passed, 1 skipped; 798 tests passed, 1 skipped."
+    },
+    {
+      "command": "pnpm --filter @terrace/client test",
+      "result": "Repeat after overflow fix: 63 files passed, 1 failed, 1 skipped; 797 tests passed, 1 timed out, 1 skipped. Unchanged vertexGrid WORST POLYGON case exceeded 60 seconds."
+    },
+    {
+      "command": "pnpm --filter @terrace/client exec vitest run test/vertexGrid.test.ts -t 'discriminates on the WORST POLYGON'",
+      "result": "Passed with original timeout: 1 passed, 63 skipped; test 51.90 seconds, run 53.51 seconds."
+    },
+    {
+      "command": "pnpm --filter @terrace/client exec vitest run test/drawBudget.test.ts test/uploadMeter.test.ts",
+      "result": "One matching file (drawBudget): 22 tests passed. No uploadMeter test file matched; do not claim separate upload-meter coverage."
+    },
+    {
+      "command": "git diff --check -- client/src/render/frameStats.ts client/src/render/perfHandle.ts client/src/ui/VersionWatermark.tsx",
+      "result": "Passed."
+    }
+  ],
+  "runtime": {
+    "orderedHistoryWindows": 82,
+    "invalidSamples": 0,
+    "validatedFields": [
+      "retained sample count",
+      "budget count bounded by frame count",
+      "frame percentile/max order",
+      "interval percentile/max order",
+      "chronological windows"
+    ],
+    "uiRows": [
+      "work >7.14ms",
+      "p95",
+      "interval p99"
+    ],
+    "gpu": "WebGPU, NVIDIA Ampere, non-fallback; timestamp-query available",
+    "cleanup": "Own browser tabs closed; isolated server/client stopped by ownership-checked PIDs."
+  },
+  "limits": [
+    "No new automated tests were written because permission was not granted.",
+    "History wraparound is source-reviewed; the live capture did not fill all 120 entries.",
+    "No production FPS improvement claimed, and no 20-minute soak completed."
+  ]
+}

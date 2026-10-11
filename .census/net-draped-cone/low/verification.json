@@ -1,0 +1,103 @@
+{
+  "glb_sha256": "f50457c0669731a25c3bb90fbfc37cc079dbfaf9faacc03a24d99050b3aca1e3",
+  "mesh_count": 1,
+  "primitive_count": 1,
+  "material_count": 1,
+  "triangles": 1664,
+  "exported_vertices": 3448,
+  "nodes": [
+    {
+      "mesh": 0,
+      "name": "net-draped-cone"
+    },
+    {
+      "children": [
+        0
+      ],
+      "name": "RootNode"
+    }
+  ],
+  "dimensions_gltf_y_up": [
+    0.7561937570571899,
+    0.6599999666213989,
+    0.6455326676368713
+  ],
+  "uv_islands": 880,
+  "uv_min_max": [
+    0.005859375,
+    0.9941175580024719
+  ],
+  "uv_overlap_pairs": [],
+  "uv_candidate_pairs_checked": 792,
+  "minimum_island_bounds_gap_pixels": 12.00372314453125,
+  "texel_density_min_max": [
+    422.16013993742365,
+    422.17491086576047
+  ],
+  "zero_area_triangles": 0,
+  "normal_length_error_max": 1.0024868646318907e-07,
+  "tangent_normal_dot_max": 0.00010181170236123194,
+  "compression_extensions": [],
+  "textures": {
+    "net-draped-cone-normal": {
+      "format": "image/png",
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "matches_external_bytes": true
+    },
+    "net-draped-cone-basecolor": {
+      "format": "image/png",
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "matches_external_bytes": true
+    },
+    "net-draped-cone-metallicRoughness": {
+      "format": "image/png",
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "matches_external_bytes": true
+    }
+  },
+  "roughness_range": [
+    0.7803922295570374,
+    0.9803922176361084
+  ],
+  "metalness_range": [
+    0.0,
+    0.0
+  ],
+  "normal_map_length_error_max": 0.0052918195724487305,
+  "blend": {
+    "mesh_count": 1,
+    "material_count": 1,
+    "vertices": 1085,
+    "triangles": 1664,
+    "uv_layers": [
+      "UVMap"
+    ],
+    "images_packed": true,
+    "objects": [
+      "net-draped-cone",
+      "RootNode"
+    ]
+  },
+  "bounds_gltf_y_up": {
+    "min": [
+      -0.3595530688762665,
+      0.0,
+      -0.3015487790107727
+    ],
+    "max": [
+      0.39664068818092346,
+      0.6599999666213989,
+      0.34398388862609863
+    ]
+  },
+  "passed": true
+}

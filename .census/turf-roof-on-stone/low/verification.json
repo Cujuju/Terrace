@@ -1,0 +1,103 @@
+{
+  "glb_sha256": "5127f97ddc70a17749a657e6749f8622e3c75dc4b6ac13f0f8b22593f1fcdea0",
+  "mesh_count": 1,
+  "primitive_count": 1,
+  "material_count": 1,
+  "triangles": 744,
+  "exported_vertices": 1584,
+  "nodes": [
+    {
+      "mesh": 0,
+      "name": "turf-roof-on-stone"
+    },
+    {
+      "children": [
+        0
+      ],
+      "name": "RootNode"
+    }
+  ],
+  "dimensions_gltf_y_up": [
+    0.5099999904632568,
+    0.4699999988079071,
+    0.6092030853033066
+  ],
+  "uv_islands": 418,
+  "uv_min_max": [
+    0.005859375,
+    0.9939786791801453
+  ],
+  "uv_overlap_pairs": [],
+  "uv_candidate_pairs_checked": 326,
+  "minimum_island_bounds_gap_pixels": 12.007659912109375,
+  "texel_density_min_max": [
+    485.8312887829814,
+    485.83608535865835
+  ],
+  "zero_area_triangles": 0,
+  "normal_length_error_max": 9.041068471660196e-08,
+  "tangent_normal_dot_max": 9.46277567423718e-05,
+  "compression_extensions": [],
+  "textures": {
+    "turf-roof-on-stone-normal": {
+      "format": "image/png",
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "matches_external_bytes": true
+    },
+    "turf-roof-on-stone-basecolor": {
+      "format": "image/png",
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "matches_external_bytes": true
+    },
+    "turf-roof-on-stone-metallicRoughness": {
+      "format": "image/png",
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "matches_external_bytes": true
+    }
+  },
+  "roughness_range": [
+    0.7803922295570374,
+    0.9803922176361084
+  ],
+  "metalness_range": [
+    0.0,
+    0.0
+  ],
+  "normal_map_length_error_max": 0.005169391632080078,
+  "blend": {
+    "mesh_count": 1,
+    "material_count": 1,
+    "vertices": 484,
+    "triangles": 744,
+    "uv_layers": [
+      "UVMap"
+    ],
+    "images_packed": true,
+    "objects": [
+      "RootNode",
+      "turf-roof-on-stone"
+    ]
+  },
+  "bounds_gltf_y_up": {
+    "min": [
+      -0.2549999952316284,
+      0.0,
+      -0.21920309960842133
+    ],
+    "max": [
+      0.2549999952316284,
+      0.4699999988079071,
+      0.38999998569488525
+    ]
+  },
+  "passed": true
+}
