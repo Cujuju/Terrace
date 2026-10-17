@@ -1,0 +1,12 @@
+[mcp_servers.playwright]
+command = "cmd"
+args = ["/c", "npx", "-y", "@playwright/mcp@latest", "--isolated"]
+
+[mcp_servers.chrome-devtools]
+command = "cmd"
+args = ["/c", "npx", "-y", "chrome-devtools-mcp@latest", "--isolated"]
+
+[mcp_servers.blender]
+command = "uvx"
+args = ["mcp-for-blender@2.0.3"]
+env = { DISABLE_TELEMETRY = "true" }

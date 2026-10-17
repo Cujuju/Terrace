@@ -1,0 +1,6 @@
+{
+  "mcpServers": {
+    "playwright": { "type": "stdio", "command": "cmd", "args": ["/c", "npx", "-y", "@playwright/mcp@latest", "--isolated"] },
+    "blender": { "type": "stdio", "command": "uvx", "args": ["mcp-for-blender@2.0.3"], "env": { "DISABLE_TELEMETRY": "true" } }
+  }
+}
