@@ -1,6 +1,22 @@
 {
   "mcpServers": {
-    "playwright": { "type": "stdio", "command": "cmd", "args": ["/c", "npx", "-y", "@playwright/mcp@latest", "--isolated"] },
-    "blender": { "type": "stdio", "command": "uvx", "args": ["mcp-for-blender@2.0.3"], "env": { "DISABLE_TELEMETRY": "true" } }
+    "playwright": {
+      "type": "http",
+      "url": "http://localhost:8931/mcp"
+    },
+    "playwright-headed": {
+      "type": "http",
+      "url": "http://localhost:8932/mcp"
+    },
+    "blender": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "mcp-for-blender@2.0.3"
+      ],
+      "env": {
+        "DISABLE_TELEMETRY": "true"
+      }
+    }
   }
 }

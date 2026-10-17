@@ -1,6 +1,8 @@
 [mcp_servers.playwright]
-command = "cmd"
-args = ["/c", "npx", "-y", "@playwright/mcp@latest", "--isolated"]
+url = "http://localhost:8931/mcp"
+
+[mcp_servers.playwright-headed]
+url = "http://localhost:8932/mcp"
 
 [mcp_servers.chrome-devtools]
 command = "cmd"
