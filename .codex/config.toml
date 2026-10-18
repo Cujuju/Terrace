@@ -6,7 +6,7 @@ url = "http://localhost:8932/mcp"
 
 [mcp_servers.chrome-devtools]
 command = "cmd"
-args = ["/c", "npx", "-y", "chrome-devtools-mcp@latest", "--isolated"]
+args = ["/c", "chrome-devtools-mcp", "--isolated"]
 
 [mcp_servers.blender]
 command = "uvx"
