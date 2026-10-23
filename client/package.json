@@ -16,19 +16,19 @@
     "@colyseus/sdk": "^0.17.43",
     "@terrace/shared": "workspace:*",
     "electron-updater": "6.8.9",
-    "solid-js": "^1.9.14",
+    "solid-js": "^1.9.17",
     "three": "^0.185.1"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",
     "@types/three": "^0.185.4",
     "@webgpu/types": "^0.1.72",
-    "electron": "44.7.0",
+    "electron": "44.9.3",
     "electron-builder": "26.15.3",
     "typescript": "7.0.2",
-    "vite": "^8.2.1",
+    "vite": "^8.2.4",
     "vite-plugin-electron": "1.1.2",
     "vite-plugin-solid": "^2.11.14",
-    "vitest": "4.1.10"
+    "vitest": "4.1.12"
   }
 }
