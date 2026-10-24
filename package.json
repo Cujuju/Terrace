@@ -19,6 +19,7 @@
   "devDependencies": {
     "@gltf-transform/cli": "4.5.1",
     "eslint-plugin-comment-budget": "git+https://github.com/Cujuju/eslint-plugin-comment-budget.git#v2.5.0",
+    "eslint-plugin-solid": "0.18.1",
     "oxlint": "1.89.0",
     "typescript": "7.0.2"
   }
