@@ -273,12 +273,11 @@ What ships in `plugins/`:
 ## Development
 
 You need Node 24+ (the server runs `.ts` directly via type stripping, no build
-step) and pnpm 10 (`corepack enable`). Python 3 is only for the `run_server.py`
-launcher.
+step) and pnpm 12 (pinned by `packageManager`; pnpm switches to it).
+Python 3 is only for the `run_server.py` launcher.
 
 ```sh
-pnpm install     # the ignored-build-scripts warning for better-sqlite3 and
-                 # msgpackr-extract is expected; both ship prebuilt binaries
+pnpm install     # build scripts run only as pnpm-workspace.yaml allowBuilds says
 ```
 
 Then either one command for both halves:

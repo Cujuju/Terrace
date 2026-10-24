@@ -24,7 +24,7 @@ jobs:
           # The version is counted from the whole git history.
           fetch-depth: 0
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6.1.0
         # pnpm version comes from packageManager in package.json
 
       - uses: actions/setup-node@v4
@@ -102,7 +102,7 @@ jobs:
           # The version is counted from the whole git history.
           fetch-depth: 0
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6.1.0
 
       - uses: actions/setup-node@v4
         with:
