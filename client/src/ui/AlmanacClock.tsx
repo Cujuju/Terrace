@@ -1,4 +1,4 @@
-import { createMemo, createSignal, onCleanup, onMount, type JSX } from 'solid-js';
+import { createMemo, createSignal, For, onCleanup, onMount, type JSX } from 'solid-js';
 import type { WorldClockReading } from '../plugins/hudPanels.ts';
 
 const STRIP_MIN_WIDTH = 220;
@@ -234,9 +234,9 @@ export function AlmanacClock(props: AlmanacClockProps): JSX.Element {
         fill={`url(#${GROUND_GRADIENT_ID})`}
       />
       <rect x={0} y={0} width={width()} height={TITLE_BAND_HEIGHT} fill={`url(#${TITLE_SCRIM_ID})`} />
-      {skyStars().map((star) => (
+      <For each={skyStars()}>{(star) => (
         <circle cx={f1(star.x)} cy={f1(star.y)} r={f1(star.r)} fill={MOON} opacity={f1(star.opacity)} />
-      ))}
+      )}</For>
 
       {}
       <path d={path()} fill="none" stroke={CURVE_STROKE} stroke-width={1} stroke-dasharray="1.5 2" />
