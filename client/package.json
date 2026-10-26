@@ -17,11 +17,11 @@
     "@terrace/shared": "workspace:*",
     "electron-updater": "6.8.11",
     "solid-js": "^1.9.17",
-    "three": "^0.185.1"
+    "three": "^0.186.1"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",
-    "@types/three": "^0.185.4",
+    "@types/three": "^0.186.0",
     "@webgpu/types": "^0.1.74",
     "electron": "44.9.3",
     "electron-builder": "26.18.0",

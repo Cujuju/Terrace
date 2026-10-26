@@ -3,14 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "scripts": { "typecheck": "tsc --noEmit" },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
   "dependencies": {
     "@terrace/shared": "workspace:*",
-    "three": "^0.185.1"
+    "three": "^0.186.1"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",
-    "@types/three": "^0.185.4",
+    "@types/three": "^0.186.0",
     "typescript": "7.0.2"
   }
 }
