@@ -148,6 +148,7 @@ export interface HostDesktopState {
   portLocked: boolean;
   /** False when another process already held the port and the window joined it instead. */
   hosting: boolean;
+  joinFailure: FailedJoin | null;
   /** Whether the system starts the app at sign-in; null in dev. */
   openAtLogin: boolean | null;
   /** The hotkey is set but another app holds it. */
@@ -160,6 +161,22 @@ export interface HostDesktopState {
 
 export type DesktopState = GuestDesktopState | HostDesktopState;
 
+/** Why nothing answered at a server address. */
+export type UnreachableCause = 'refused' | 'timeout' | 'notFound' | 'other';
+
+/** Why a join did not show the server; the page words and draws each kind. */
+export type JoinFailure =
+  | { kind: 'badAddress' }
+  | { kind: 'unreachable'; host: string; cause: UnreachableCause; detail: string }
+  | { kind: 'notTerrace'; host: string }
+  | { kind: 'noClient'; host: string; status: number };
+
+/** The last join that failed, until the next join or a dismissal. */
+export interface FailedJoin {
+  address: string;
+  failure: JoinFailure;
+}
+
 /** Calls the game page may make; each returns a promise through the bridge. */
 export interface DesktopMethods {
   state(): DesktopState;
@@ -167,8 +184,9 @@ export interface DesktopMethods {
   setOpenAtLogin(on: boolean): void;
   /** Opens the folder picker; the embedded server restarts in the folder picked. */
   chooseDataDir(): void;
-  /** Shows the server at `address`; resolves to why it could not, or null. */
-  join(address: string): string | null;
+  /** Shows the server at `address`; a failure lands in state as `joinFailure`. */
+  join(address: string): void;
+  dismissJoinFailure(): void;
   goHome(): void;
   checkForUpdate(): void;
   installUpdate(): void;

@@ -16,6 +16,8 @@ import {
   type DesktopSettings,
   type DesktopState,
   type DesktopView,
+  type FailedJoin,
+  type JoinFailure,
 } from './contract.ts';
 import type { TrayChoices } from './mainWindow.ts';
 import { restartApp } from './restart.ts';
@@ -39,8 +41,6 @@ const QUIT_BUTTON = 1;
 
 const messageOf = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
-const notTerrace = (host: string): string =>
-  `${host} is not a ${APP_NAME} server, or runs a ${APP_NAME} version too old to identify itself.`;
 
 /** Whether the system started this run at sign-in. Windows passes the entry's argument; macOS says so itself. */
 const startedAtLogin = (): boolean =>
@@ -91,6 +91,7 @@ export class Desktop {
   /** False when another process held the port and the window shows that server instead. */
   private hosting = true;
   private failed = false;
+  private joinFailure: FailedJoin | null = null;
   private bound: string | null = null;
   private hotkeyTaken = false;
   private win: BrowserWindow | undefined;
@@ -275,6 +276,7 @@ export class Desktop {
       dataDirLocked: envDataDir() !== null,
       portLocked: fixedPort() !== null,
       hosting: this.hosting,
+      joinFailure: this.joinFailure,
       openAtLogin: openAtLogin(),
       hotkeyTaken: this.hotkeyTaken,
       trayAvailable: this.tray !== undefined,
@@ -307,13 +309,24 @@ export class Desktop {
     this.changed();
   }
 
-  private async join(address: string): Promise<string | null> {
+  /** Kept in state, not returned: a failure after navigating reloads the home page that asked. */
+  private failJoin(address: string, failure: JoinFailure, navigated: boolean): void {
+    this.joinFailure = { address: address.trim(), failure };
+    if (navigated) this.showHome();
+    else this.changed();
+  }
+
+  private async join(address: string): Promise<void> {
     const win = this.win;
+    if (win === undefined) return;
+    this.joinFailure = null;
     const url = remoteUrl(address);
-    if (win === undefined || url === null) return 'That is not a server address.';
+    if (url === null) return this.failJoin(address, { kind: 'badAddress' }, false);
     const target = await probeServer(url.origin);
-    if (target.kind === 'unreachable') return `Could not reach ${url.host}: ${target.reason}`;
-    if (target.kind === 'other') return notTerrace(url.host);
+    if (target.kind === 'unreachable') {
+      return this.failJoin(address, { kind: 'unreachable', host: url.host, cause: target.cause, detail: target.detail }, false);
+    }
+    if (target.kind === 'other') return this.failJoin(address, { kind: 'notTerrace', host: url.host }, false);
     let status = 0;
     win.webContents.once('did-navigate', (_e, _url, httpStatus) => (status = httpStatus));
     this.joining = true;
@@ -321,23 +334,22 @@ export class Desktop {
       await win.loadURL(url.href);
     } catch (err) {
       this.joining = false;
-      this.showHome();
-      return `Could not reach ${url.host}: ${messageOf(err)}`;
+      return this.failJoin(address, { kind: 'unreachable', host: url.host, cause: 'other', detail: messageOf(err) }, true);
     }
     this.joining = false;
-    if (status >= HTTP_ERROR_STATUS) {
-      this.showHome();
-      return `${url.host} is a ${APP_NAME} server but answered ${status}: it may have no built client.`;
-    }
+    if (status >= HTTP_ERROR_STATUS) return this.failJoin(address, { kind: 'noClient', host: url.host, status }, true);
     // Redirects during the load may land elsewhere; that origin must be Terrace too.
     const landed = new URL(win.webContents.getURL());
     if (landed.origin !== url.origin && (await probeServer(landed.origin)).kind !== 'terrace') {
-      this.showHome();
-      return notTerrace(landed.host);
+      return this.failJoin(address, { kind: 'notTerrace', host: landed.host }, true);
     }
     this.view = { kind: 'remote', origin: landed.origin };
     await this.set({ lastServer: address.trim() });
-    return null;
+  }
+
+  private dismissJoinFailure(): void {
+    this.joinFailure = null;
+    this.changed();
   }
 
   /** Shows the main window, or hides it to the tray when it is the one in front. */
@@ -375,6 +387,8 @@ export class Desktop {
         return this.pickDataDir().then(() => undefined);
       case 'join':
         return this.join(String(args[0]));
+      case 'dismissJoinFailure':
+        return this.dismissJoinFailure();
       case 'goHome':
         return this.showHome();
       case 'checkForUpdate':

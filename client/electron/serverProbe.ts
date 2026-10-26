@@ -1,7 +1,7 @@
 // What holds a port, here or at a server address. No Electron imports: vite.config.ts uses it too.
 import { createServer } from 'node:net';
 import { SERVER_IDENTITY_PATH, validateServerIdentity, type ServerIdentity } from '../../shared/src/protocol/serverIdentity.ts';
-import { MAX_PORT } from './contract.ts';
+import { MAX_PORT, type UnreachableCause } from './contract.ts';
 
 const LOOPBACK = '127.0.0.1';
 /** Estimate: outlasts a large world's stalled tick; a listener that is not HTTP never answers. */
@@ -41,12 +41,23 @@ export async function freePortFrom(first: number): Promise<number> {
 export type ServerProbe =
   | { kind: 'terrace'; identity: ServerIdentity }
   | { kind: 'other' }
-  | { kind: 'unreachable'; reason: string };
+  | { kind: 'unreachable'; cause: UnreachableCause; detail: string };
 
-/** Fetch failures put the network cause (refused, DNS, timeout) under `cause`. */
-function failureReason(err: unknown): string {
-  if (!(err instanceof Error)) return String(err);
-  return err.cause instanceof Error ? err.cause.message : err.message;
+/** Node's network error codes, by what they mean to someone joining. */
+const CAUSE_BY_CODE: Readonly<Record<string, UnreachableCause>> = {
+  ECONNREFUSED: 'refused',
+  ETIMEDOUT: 'timeout',
+  ENOTFOUND: 'notFound',
+  EAI_AGAIN: 'notFound',
+};
+
+/** Fetch failures carry the network error under `cause`; our own deadline is a TimeoutError. */
+function unreachable(err: unknown): ServerProbe {
+  if (!(err instanceof Error)) return { kind: 'unreachable', cause: 'other', detail: String(err) };
+  if (err.name === 'TimeoutError') return { kind: 'unreachable', cause: 'timeout', detail: err.message };
+  const network = err.cause instanceof Error ? (err.cause as NodeJS.ErrnoException) : null;
+  const cause = (network?.code !== undefined ? CAUSE_BY_CODE[network.code] : undefined) ?? 'other';
+  return { kind: 'unreachable', cause, detail: network?.message ?? err.message };
 }
 
 export async function probeServer(origin: string): Promise<ServerProbe> {
@@ -54,7 +65,7 @@ export async function probeServer(origin: string): Promise<ServerProbe> {
   try {
     res = await fetch(new URL(SERVER_IDENTITY_PATH, origin), { signal: AbortSignal.timeout(IDENTITY_TIMEOUT_MS) });
   } catch (err) {
-    return { kind: 'unreachable', reason: failureReason(err) };
+    return unreachable(err);
   }
   const identity = res.ok ? validateServerIdentity(await res.json().catch(() => null)) : null;
   return identity === null ? { kind: 'other' } : { kind: 'terrace', identity };

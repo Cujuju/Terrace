@@ -79,10 +79,17 @@ function TextRow(props: {
   );
 }
 
-/** The settings a page served by this machine's own server may change. */
-export function DesktopPanel(props: { host: HostDesktopState }): JSX.Element {
+/** The settings a page served by this machine's own server may change. The join form's state is the caller's. */
+export function DesktopPanel(props: {
+  host: HostDesktopState;
+  address: string;
+  onAddress: (address: string) => void;
+  addressRef: (input: HTMLInputElement) => void;
+  joining: boolean;
+  joinError: string | null;
+  onJoin: (address: string) => void;
+}): JSX.Element {
   const [error, setError] = createSignal<string | null>(null);
-  const [address, setAddress] = createSignal(props.host.settings.lastServer ?? '');
   const [capturing, setCapturing] = createSignal(false);
 
   const call = (run: Promise<unknown> | undefined): void => {
@@ -90,10 +97,6 @@ export function DesktopPanel(props: { host: HostDesktopState }): JSX.Element {
     void run?.catch((err: unknown) => setError(desktopErrorMessage(err)));
   };
   const set = (patch: Partial<DesktopSettings>): void => call(desktopBridge?.invoke('set', patch));
-  const join = (): void => {
-    setError(null);
-    void desktopBridge?.invoke('join', address()).then(setError, (err: unknown) => setError(desktopErrorMessage(err)));
-  };
 
   return (
     <div class="desktop-panel">
@@ -149,22 +152,24 @@ export function DesktopPanel(props: { host: HostDesktopState }): JSX.Element {
         class="restore-key-row"
         onSubmit={(event) => {
           event.preventDefault();
-          join();
+          props.onJoin(props.address);
         }}
       >
         <input
+          ref={props.addressRef}
           class="restore-key-input"
           type="text"
           autocomplete="off"
           aria-label="Server address"
           placeholder="host or host:port"
-          value={address()}
-          onInput={(event) => setAddress(event.currentTarget.value)}
+          value={props.address}
+          onInput={(event) => props.onAddress(event.currentTarget.value)}
         />
-        <button type="submit" class="chart-button">
-          Join
+        <button type="submit" class="chart-button" disabled={props.joining || props.address.trim() === ''}>
+          {props.joining ? 'Checking…' : 'Join'}
         </button>
       </form>
+      <Show when={props.joinError}>{(message) => <p class="hud-hint desktop-error">{message()}</p>}</Show>
 
       <p class="desktop-heading">Window</p>
       <CheckRow
