@@ -19,6 +19,7 @@ export * from './protocol/world.ts';
 export * from './protocol/worldAdmin.ts';
 export * from './protocol/worldAdminValidate.ts';
 export * from './protocol/perfLogging.ts';
+export * from './protocol/serverIdentity.ts';
 
 export interface StackRestartRequestMessage {
   type: 'stackRestart';

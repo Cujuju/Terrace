@@ -19,7 +19,8 @@ import {
 } from './contract.ts';
 import type { TrayChoices } from './mainWindow.ts';
 import { restartApp } from './restart.ts';
-import { ServerSupervisor, portOpen, type ServerLaunch } from './serverChild.ts';
+import { ServerSupervisor, type ServerLaunch } from './serverChild.ts';
+import { freePortFrom, loopbackOrigin, portFree, serverIdentityAt } from './serverProbe.ts';
 import { readDesktopSettings, writeDesktopSettings } from './settingsFile.ts';
 import { AppTray } from './tray.ts';
 import { Updates } from './updates.ts';
@@ -31,9 +32,9 @@ declare const __CLIENT_VERSION__: string;
 const AT_LOGIN_ARG = '--at-login';
 /** The sign-in entry's registry value name; build/installer.nsh removes it on uninstall. */
 const LOGIN_ITEM_NAME = APP_NAME;
-const LOOPBACK_HOST = '127.0.0.1';
 const HTTP_ERROR_STATUS = 400;
 const CONNECT_BUTTON = 0;
+const USE_FREE_PORT_BUTTON = 0;
 const QUIT_BUTTON = 1;
 
 const messageOf = (err: unknown): string => (err instanceof Error ? err.message : String(err));
@@ -116,7 +117,7 @@ export class Desktop {
   }
 
   private homeUrl(): string {
-    return devServerUrl ?? `http://${LOOPBACK_HOST}:${this.port()}`;
+    return devServerUrl ?? loopbackOrigin(this.port());
   }
 
   private launch(): ServerLaunch {
@@ -156,18 +157,51 @@ export class Desktop {
   /** Starts the embedded server and waits for it; false when the app should quit instead. */
   async host(): Promise<boolean> {
     const port = this.port();
-    if (await portOpen(port)) {
-      const { response } = await dialog.showMessageBox({
-        type: 'question',
-        message: `Port ${port} is already in use.`,
-        detail: `If a ${APP_NAME} server is running there, ${APP_NAME} can show it instead of starting its own.`,
-        buttons: ['Connect to it', `Quit ${APP_NAME}`],
-        defaultId: CONNECT_BUTTON,
-        cancelId: QUIT_BUTTON,
+    if (await portFree(port)) return this.startServer();
+    // The window loads this exact origin, so that is where the holder must prove it is Terrace.
+    const running = await serverIdentityAt(loopbackOrigin(port));
+    if (running !== null) return this.offerRunningServer(port, running.version);
+    return this.offerOtherPort(port);
+  }
+
+  /** Another Terrace server holds the port: show it instead, or quit. */
+  private async offerRunningServer(port: number, version: string): Promise<boolean> {
+    const { response } = await dialog.showMessageBox({
+      type: 'question',
+      message: `A ${APP_NAME} server (version ${version}) is already running on port ${port}.`,
+      detail: `${APP_NAME} can show it instead of starting its own.`,
+      buttons: ['Connect to it', `Quit ${APP_NAME}`],
+      defaultId: CONNECT_BUTTON,
+      cancelId: QUIT_BUTTON,
+    });
+    this.hosting = false;
+    return response === CONNECT_BUTTON;
+  }
+
+  /** Another program holds the port: move this server to a free one with the owner's consent, or quit. */
+  private async offerOtherPort(port: number): Promise<boolean> {
+    // A failed bind can also be a system reservation (Windows excluded port ranges).
+    const message = `Port ${port} is held by another program or reserved by the system.`;
+    if (fixedPort() !== null) {
+      await dialog.showMessageBox({
+        type: 'error',
+        message,
+        detail: `This run's port is fixed by its environment. Close the other program, or start ${APP_NAME} with a different port.`,
+        buttons: [`Quit ${APP_NAME}`],
       });
-      this.hosting = false;
-      return response === CONNECT_BUTTON;
+      return false;
     }
+    const free = await freePortFrom(port + 1);
+    const { response } = await dialog.showMessageBox({
+      type: 'question',
+      message,
+      detail: `${APP_NAME} can host on port ${free} instead and keep it. Players joining you need the new port; you can change it in Settings.`,
+      buttons: [`Use port ${free}`, `Quit ${APP_NAME}`],
+      defaultId: USE_FREE_PORT_BUTTON,
+      cancelId: QUIT_BUTTON,
+    });
+    if (response !== USE_FREE_PORT_BUTTON) return false;
+    await this.set({ port: free });
     return this.startServer();
   }
 

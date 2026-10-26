@@ -13,6 +13,7 @@ import { InstalledPlugins } from './plugins/installed.ts';
 import { ServerRestartService, TERRACE_RESTART_EXIT_CODE } from './restart.ts';
 import { SUPERVISOR_SHUTDOWN_MESSAGE } from './supervisor-protocol.ts';
 import { createStaticFileHandler } from './static/serve-client.ts';
+import { createServerIdentityHandler } from './net/server-identity.ts';
 import { closePerfLog, openPerfLog } from './perf-log.ts';
 import { PerfLoggingSetting } from './perf-logging-setting.ts';
 import { startTickLoop } from './tick.ts';
@@ -28,25 +29,25 @@ import { WorldManager } from './world/world-manager.ts';
 
 const MILLISECONDS_PER_SECOND = 1000;
 
-async function clientStaticExpressHook(
-  config: ServerConfig,
-): Promise<ServerOptions['express'] | undefined> {
+/** Whether a built client exists to serve; Vite serves it otherwise. */
+async function clientBuilt(config: ServerConfig): Promise<boolean> {
   const indexPath = join(config.clientDistPath, 'index.html');
   const built = await stat(indexPath)
     .then((stats) => stats.isFile())
     .catch(() => false);
+  logInfo(
+    built
+      ? `serving built client from ${config.clientDistPath}`
+      : `client is unbuilt (no ${indexPath}) — Vite ('pnpm --dir client dev') remains the dev path`,
+  );
+  return built;
+}
 
-  if (!built) {
-    logInfo(
-      `client is unbuilt (no ${indexPath}) — Vite ('pnpm --dir client dev') remains the dev path`,
-    );
-    return undefined;
-  }
-
-  logInfo(`serving built client from ${config.clientDistPath}`);
-  const handleStaticRequest = createStaticFileHandler(config.clientDistPath);
+/** The identity route always; the built client after it, whose index.html answers every other path. */
+function httpRoutes(config: ServerConfig, serveClient: boolean): NonNullable<ServerOptions['express']> {
   return (app) => {
-    app.use(handleStaticRequest);
+    app.use(createServerIdentityHandler());
+    if (serveClient) app.use(createStaticFileHandler(config.clientDistPath));
   };
 }
 
@@ -155,12 +156,8 @@ async function main(): Promise<void> {
   }, config.snapshotIntervalS * MILLISECONDS_PER_SECOND);
 
   bindRoomContext({ manager, admin, restart, perfLogging });
-  const serverOptions: ServerOptions = { greet: false };
-  const clientExpressHook = await clientStaticExpressHook(config);
-  if (clientExpressHook !== undefined) {
-    serverOptions.express = clientExpressHook;
-  }
-  gameServer = new Server(serverOptions);
+  const serveClient = await clientBuilt(config);
+  gameServer = new Server({ greet: false, express: httpRoutes(config, serveClient) });
   // Windows delivers Ctrl-Break as SIGBREAK; Colyseus binds only SIGINT/SIGTERM/SIGUSR2.
   process.once('SIGBREAK', () => void gameServer?.gracefullyShutdown());
   // A parent holding an IPC channel asks by message; losing that parent is the same request.
@@ -192,7 +189,7 @@ async function main(): Promise<void> {
     `an operator restart exits ${TERRACE_RESTART_EXIT_CODE}; ` +
       'a supervisor must relaunch on that code',
   );
-  if (clientExpressHook !== undefined) {
+  if (serveClient) {
     logInfo(`play at http://localhost:${config.port} (same URL on your LAN address)`);
   } else {
     logInfo(`no built client to serve — browse the Vite dev server instead (pnpm --dir client dev)`);

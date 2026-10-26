@@ -1,7 +1,6 @@
 // The embedded world server: Terrace's own server, run under Electron's Node as a child and supervised.
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createWriteStream, mkdirSync, type WriteStream } from 'node:fs';
-import { connect } from 'node:net';
 import { join } from 'node:path';
 import { app } from 'electron';
 import {
@@ -10,9 +9,8 @@ import {
   TERRACE_STACK_RESTART_EXIT_CODE,
 } from '../../server/src/supervisor-protocol.ts';
 import { clientDist, isPackaged, pluginsDir, serverCwd, serverEntry } from './appEnv.ts';
+import { loopbackOrigin, serverIdentityAt } from './serverProbe.ts';
 
-const LOOPBACK = '127.0.0.1';
-const PORT_PROBE_TIMEOUT_MS = 1_000;
 const PORT_POLL_INTERVAL_MS = 250;
 /** A large world loads for tens of seconds before the server listens. */
 export const SERVER_READY_TIMEOUT_MS = 120_000;
@@ -27,20 +25,6 @@ const WORLDS_DIR_NAME = 'worlds';
 const LEGACY_DB_NAME = 'world.db';
 const LOG_DIR_NAME = 'logs';
 const LOG_FILE_NAME = 'server.log';
-
-/** Whether something accepts connections on this machine's `port`. */
-export function portOpen(port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const socket = connect({ host: LOOPBACK, port });
-    const settle = (open: boolean): void => {
-      socket.destroy();
-      resolve(open);
-    };
-    socket.setTimeout(PORT_PROBE_TIMEOUT_MS, () => settle(false));
-    socket.once('connect', () => settle(true));
-    socket.once('error', () => settle(false));
-  });
-}
 
 export interface ServerLaunch {
   port: number;
@@ -129,12 +113,12 @@ export class ServerSupervisor {
     });
   }
 
-  /** Resolves true once the server listens; false when it has not within the timeout, or is not running. */
+  /** Resolves true once a Terrace server answers on the port; false when none has within the timeout, or this one is not running. */
   async ready(): Promise<boolean> {
-    const { port } = this.launch();
+    const origin = loopbackOrigin(this.launch().port);
     const deadline = Date.now() + SERVER_READY_TIMEOUT_MS;
     while (Date.now() < deadline && !this.stopping) {
-      if (this.proc !== null && (await portOpen(port))) {
+      if (this.proc !== null && (await serverIdentityAt(origin)) !== null) {
         this.listening = true;
         return true;
       }
