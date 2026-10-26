@@ -20,7 +20,7 @@ import {
 import type { TrayChoices } from './mainWindow.ts';
 import { restartApp } from './restart.ts';
 import { ServerSupervisor, type ServerLaunch } from './serverChild.ts';
-import { freePortFrom, loopbackOrigin, portFree, serverIdentityAt } from './serverProbe.ts';
+import { freePortFrom, loopbackOrigin, portFree, probeServer } from './serverProbe.ts';
 import { readDesktopSettings, writeDesktopSettings } from './settingsFile.ts';
 import { AppTray } from './tray.ts';
 import { Updates } from './updates.ts';
@@ -38,6 +38,9 @@ const USE_FREE_PORT_BUTTON = 0;
 const QUIT_BUTTON = 1;
 
 const messageOf = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+const notTerrace = (host: string): string =>
+  `${host} is not a ${APP_NAME} server, or runs a ${APP_NAME} version too old to identify itself.`;
 
 /** Whether the system started this run at sign-in. Windows passes the entry's argument; macOS says so itself. */
 const startedAtLogin = (): boolean =>
@@ -159,8 +162,8 @@ export class Desktop {
     const port = this.port();
     if (await portFree(port)) return this.startServer();
     // The window loads this exact origin, so that is where the holder must prove it is Terrace.
-    const running = await serverIdentityAt(loopbackOrigin(port));
-    if (running !== null) return this.offerRunningServer(port, running.version);
+    const holder = await probeServer(loopbackOrigin(port));
+    if (holder.kind === 'terrace') return this.offerRunningServer(port, holder.identity.version);
     return this.offerOtherPort(port);
   }
 
@@ -308,6 +311,9 @@ export class Desktop {
     const win = this.win;
     const url = remoteUrl(address);
     if (win === undefined || url === null) return 'That is not a server address.';
+    const target = await probeServer(url.origin);
+    if (target.kind === 'unreachable') return `Could not reach ${url.host}: ${target.reason}`;
+    if (target.kind === 'other') return notTerrace(url.host);
     let status = 0;
     win.webContents.once('did-navigate', (_e, _url, httpStatus) => (status = httpStatus));
     this.joining = true;
@@ -321,9 +327,15 @@ export class Desktop {
     this.joining = false;
     if (status >= HTTP_ERROR_STATUS) {
       this.showHome();
-      return `${url.host} answered ${status}: it may not be a ${APP_NAME} server with a built client.`;
+      return `${url.host} is a ${APP_NAME} server but answered ${status}: it may have no built client.`;
     }
-    this.view = { kind: 'remote', origin: new URL(win.webContents.getURL()).origin };
+    // Redirects during the load may land elsewhere; that origin must be Terrace too.
+    const landed = new URL(win.webContents.getURL());
+    if (landed.origin !== url.origin && (await probeServer(landed.origin)).kind !== 'terrace') {
+      this.showHome();
+      return notTerrace(landed.host);
+    }
+    this.view = { kind: 'remote', origin: landed.origin };
     await this.set({ lastServer: address.trim() });
     return null;
   }

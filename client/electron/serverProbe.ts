@@ -1,4 +1,4 @@
-// What holds a port on this machine. No Electron imports: vite.config.ts uses it too.
+// What holds a port, here or at a server address. No Electron imports: vite.config.ts uses it too.
 import { createServer } from 'node:net';
 import { SERVER_IDENTITY_PATH, validateServerIdentity, type ServerIdentity } from '../../shared/src/protocol/serverIdentity.ts';
 import { MAX_PORT } from './contract.ts';
@@ -37,16 +37,27 @@ export async function freePortFrom(first: number): Promise<number> {
   throw new Error(`No port from ${first} to ${MAX_PORT} is free.`);
 }
 
-/** The Terrace server answering at `origin`; null for anything else or no answer. */
-export async function serverIdentityAt(origin: string): Promise<ServerIdentity | null> {
+/** What answers at an origin: a Terrace server, something else, or nothing reachable. */
+export type ServerProbe =
+  | { kind: 'terrace'; identity: ServerIdentity }
+  | { kind: 'other' }
+  | { kind: 'unreachable'; reason: string };
+
+/** Fetch failures put the network cause (refused, DNS, timeout) under `cause`. */
+function failureReason(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  return err.cause instanceof Error ? err.cause.message : err.message;
+}
+
+export async function probeServer(origin: string): Promise<ServerProbe> {
+  let res: Response;
   try {
-    const res = await fetch(new URL(SERVER_IDENTITY_PATH, origin), {
-      signal: AbortSignal.timeout(IDENTITY_TIMEOUT_MS),
-    });
-    return res.ok ? validateServerIdentity(await res.json()) : null;
-  } catch {
-    return null;
+    res = await fetch(new URL(SERVER_IDENTITY_PATH, origin), { signal: AbortSignal.timeout(IDENTITY_TIMEOUT_MS) });
+  } catch (err) {
+    return { kind: 'unreachable', reason: failureReason(err) };
   }
+  const identity = res.ok ? validateServerIdentity(await res.json().catch(() => null)) : null;
+  return identity === null ? { kind: 'other' } : { kind: 'terrace', identity };
 }
 
 /** The address of a server on this machine, as the window loads it. */

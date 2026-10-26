@@ -9,7 +9,7 @@ import {
   TERRACE_STACK_RESTART_EXIT_CODE,
 } from '../../server/src/supervisor-protocol.ts';
 import { clientDist, isPackaged, pluginsDir, serverCwd, serverEntry } from './appEnv.ts';
-import { loopbackOrigin, serverIdentityAt } from './serverProbe.ts';
+import { loopbackOrigin, probeServer } from './serverProbe.ts';
 
 const PORT_POLL_INTERVAL_MS = 250;
 /** A large world loads for tens of seconds before the server listens. */
@@ -118,7 +118,7 @@ export class ServerSupervisor {
     const origin = loopbackOrigin(this.launch().port);
     const deadline = Date.now() + SERVER_READY_TIMEOUT_MS;
     while (Date.now() < deadline && !this.stopping) {
-      if (this.proc !== null && (await serverIdentityAt(origin)) !== null) {
+      if (this.proc !== null && (await probeServer(origin)).kind === 'terrace') {
         this.listening = true;
         return true;
       }
