@@ -13,7 +13,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@colyseus/sdk": "^0.17.43",
+    "@colyseus/sdk": "^0.18.6",
     "@terrace/shared": "workspace:*",
     "electron-updater": "6.8.11",
     "solid-js": "^1.9.17",
