@@ -54,6 +54,10 @@ Dated decisions moved out of `docs/DESIGN.md` on 2026-09-01. Settled with the ow
   **colyseus 0.17.x server + @colyseus/sdk 0.17.x client**. Note 0.17's
   `Client<{ userData, auth, messages }>` generic shape and multi-handler
   `onMessage()`.
+- **Colyseus pairing — UPDATED 2026-10-26 (owner):** both sides moved to 0.18
+  (`@colyseus/core` 0.18.x + `@colyseus/sdk` 0.18.x), verified live: join,
+  sculpt broadcast, drop and rejoin. The server allows no session resume, so the
+  SDK's resume attempt is refused and the client's own retry rejoins.
 
 ## Version facts recorded at scaffold time (2026-08-13)
 
