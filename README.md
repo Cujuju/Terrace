@@ -127,3 +127,10 @@ A desktop build (Electron) is also available: `pnpm electron:dev`, or
 | `plugins/` | Auto-discovered at boot |
 
 Architecture: [`docs/DESIGN.md`](docs/DESIGN.md).
+
+## License
+
+Free for noncommercial use under [PolyForm Noncommercial 1.0.0](LICENSE).
+Commercial use needs a separate license:
+[open an issue](https://github.com/Cujuju/Terrace/issues) to ask. Third-party
+models keep their own terms (see each `LICENSES.md`).
