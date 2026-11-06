@@ -1,0 +1,10 @@
+{
+  "shots": [
+    {
+      "name": "overview",
+      "alt": "A whole Terrace world from above: terraced hills, coastline and settlements",
+      "target": { "x": 64, "y": 0.5, "z": 64 },
+      "position": { "x": 64, "y": 80.5, "z": 139 }
+    }
+  ]
+}

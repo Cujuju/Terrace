@@ -13,6 +13,7 @@
     "electron:pack:dir": "node scripts/electron-package.mjs && pnpm --filter @terrace/client exec electron-builder --config electron-builder.ts --dir",
     "dist": "node scripts/electron-package.mjs && pnpm --filter @terrace/client exec electron-builder --config electron-builder.ts --win nsis --publish never",
     "dist:mac": "node scripts/electron-package.mjs && pnpm --filter @terrace/client exec electron-builder --config electron-builder.ts --mac --publish never",
+    "screenshots": "node scripts/screenshots/capture.mjs",
     "lint": "oxlint",
     "lint:seed": "comment-budget-seed"
   },
