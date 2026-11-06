@@ -26,3 +26,7 @@ __pycache__/
 # inside it); an asset that ships gets copied into its plugin's assets/ dir.
 .model-import/
 .terrace-tmp/
+
+# Local pi agent state and transcripts.
+.pi/
+.pi-subagents/
