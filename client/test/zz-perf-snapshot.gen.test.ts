@@ -1,5 +1,5 @@
 // Regenerates .terrace-perf/snapshot.json for the sculpt bench, in-process (no server).
-import { writeFileSync } from 'node:fs';
+import { renameSync, writeFileSync } from 'node:fs';
 import { ensurePerfDir, PERF_SNAPSHOT } from './support/perfPaths.ts';
 import { it } from 'vitest';
 import {
@@ -82,6 +82,9 @@ it('writes a 512² snapshot with 400 revealed chunks', () => {
   console.log(`window chunks (${bestX},${bestY}) high cells ${best}`);
   const snap = { type: 'snapshot', worldSize: WORLD_SIZE, chunks };
   ensurePerfDir();
-  writeFileSync(PERF_SNAPSHOT, JSON.stringify({ snap, unlocks: [] }));
+  // Write then rename: zz-perf-probe may read this file from a parallel worker, so it must never see a partial write.
+  const partial = `${PERF_SNAPSHOT}.partial`;
+  writeFileSync(partial, JSON.stringify({ snap, unlocks: [] }));
+  renameSync(partial, PERF_SNAPSHOT);
   console.log(`wrote ${chunks.length} chunks, world ${WORLD_SIZE}²`);
 }, GENERATE_TIMEOUT_MS);

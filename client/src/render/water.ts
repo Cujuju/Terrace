@@ -14,7 +14,7 @@ import {
   Vector3,
   type Object3D,
 } from 'three';
-import { MeshPhysicalNodeMaterial, type Renderer, type UniformNode } from 'three/webgpu';
+import { MeshPhysicalNodeMaterial, type Node, type Renderer, type UniformNode } from 'three/webgpu';
 import {
   diffuseColor,
   mix,
@@ -75,7 +75,7 @@ function createCurveTexture(worldSize: number): { texture: DataTexture; buffer: 
 
 const TEXEL_CENTRE_CELLS = 0.5;
 
-function tintOf(shadeMix: ReturnType<typeof texture>['b']) {
+function tintOf(shadeMix: Node<'float'>) {
   const trenchSide = mix(
     vec3(...WATER_TRENCH_TINT),
     vec3(...WATER_DEEP_TINT),
