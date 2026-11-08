@@ -3,7 +3,7 @@ import {
   MAX_BRUSH_RADIUS,
   WORLD_UNIT_CELLS,
   cellsAcross,
-  strokeSweep,
+  strokeWriteSweep,
   sweepAt,
   type CellDiff,
   type SculptIntent,
@@ -52,7 +52,7 @@ import {
   claimWardNotice,
   dropWardsOf,
   resetWards,
-  stampWard,
+  claimWardCells,
   sweepWards,
   wardHolderAgainst,
 } from './ward.ts';
@@ -435,7 +435,7 @@ export const plugin: TerracePlugin = {
   },
 
   onIntent(intent: SculptIntent, ctx: IntentCtx): IntentVerdict | void {
-    if (wardRefuses(ctx.world, ctx.player.id, strokeSweep(intent))) {
+    if (wardRefuses(ctx.world, ctx.player.id, strokeWriteSweep(intent))) {
       return { kind: 'deny', reason: CAST_DENIED_WARDED };
     }
   },
@@ -446,7 +446,7 @@ export const plugin: TerracePlugin = {
     if (diff.length === 0) return;
     const held = skillsBySession.get(ctx.player.id);
     if (held === undefined || !held.has('bedrock-ward')) return;
-    stampWard(ctx.world.worldSize, ctx.player.id, strokeSweep(intent));
+    claimWardCells(ctx.world.worldSize, ctx.player.id, diff);
   },
 
   messages: {

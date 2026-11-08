@@ -1,21 +1,19 @@
 import { createSignal } from 'solid-js';
 import {
-  TOOLS_WITHOUT_EDGE_PROFILE,
   sculptProfileOf,
-  strokeSweep,
-  sweepAt,
-  type StrokeSweep,
+  type CellDiff,
 } from '@terrace/shared';
 import type { SculptIntent, SculptTool } from '@terrace/shared';
 import {
   chunkOriginCell,
   chunkUnlockFee,
-  openedChunkCount,
+  closedStrokeChunks,
   sculptIntentCost,
   sculptManaCost,
   strokeChargeCost,
 } from '../pricing.ts';
-import { dryRunDisplacement } from './quote.ts';
+import { dryRunSculpt, type LocalHeights } from './quote.ts';
+import { pointSculptIntent } from '../../../client/src/input/sculpt/intent.ts';
 import { parseManaDeniedPayload, type ManaBalanceMessage, type ManaDeniedMessage } from '../protocol.ts';
 import {
   brushProfile,
@@ -25,6 +23,7 @@ import {
   effectiveSculptMode,
   hoverPick,
   sculptDirection,
+  sculptAlt,
 } from '../../../client/src/state/hudState.ts';
 
 export interface ManaPool {
@@ -126,10 +125,8 @@ export function recordDenial(cost?: number): void {
   setDeniedCount((n) => n + 1);
 }
 
-export interface LocalTerritory {
-  worldSize(): number;
+export interface LocalTerritory extends LocalHeights {
   revealedAt(x: number, y: number): boolean;
-  terrainSampleAt(x: number, y: number): number | null;
 }
 
 /**
@@ -142,24 +139,22 @@ export function setLocalTerritory(territory: LocalTerritory | null): void {
   localTerritory = territory;
 }
 
-function openedChunksAt(territory: LocalTerritory | null, sweep: StrokeSweep): number {
+function openedChunksAt(territory: LocalTerritory | null, intent: SculptIntent, diff?: readonly CellDiff[]): number {
   if (territory === null) return 0;
   const worldSize = territory.worldSize();
   if (worldSize <= 0) return 0;
-  return openedChunkCount(worldSize, sweep, (cx, cy) => {
+  return closedStrokeChunks(worldSize, intent, (cx, cy) => {
     const origin = chunkOriginCell(cx, cy);
     return territory.revealedAt(origin.x, origin.y);
-  });
+  }, diff).length;
 }
 
-/**
- * The unlock half of the quote: what the frontier under the aim would cost to
- * open. Zero away from the frontier, and zero until a pointer pick exists.
- */
-export function currentUnlockFee(): number {
+function nominalAimIntent(tool: SculptTool): SculptIntent | null {
   const aim = hoverPick();
-  if (aim === null) return 0;
-  return chunkUnlockFee(openedChunksAt(localTerritory, sweepAt(aim.x, aim.y, brushRadius())));
+  return aim === null ? null : {
+    type: 'sculpt' as const, x: aim.x, y: aim.y, radius: brushRadius(),
+    dir: sculptDirection(effectiveSculptMode()), tool, profile: sculptProfileOf(tool, brushProfile()),
+  };
 }
 
 /**
@@ -169,6 +164,7 @@ export function currentUnlockFee(): number {
 export interface BrushQuote {
   readonly cost: number;
   readonly estimated: boolean;
+  readonly unlockCost: number;
 }
 
 /** The tools a hover alone fully describes; a carve and a drag need a grasp. */
@@ -176,33 +172,27 @@ const SELF_DESCRIBING_TOOLS: readonly SculptTool[] = ['stamp', 'smooth', 'nudge'
 
 function aimedIntent(tool: SculptTool): SculptIntent | null {
   const aim = hoverPick();
-  if (aim === null || !SELF_DESCRIBING_TOOLS.includes(tool)) return null;
-  const profile = sculptProfileOf(tool, brushProfile());
-  return {
-    type: 'sculpt',
-    x: aim.x,
-    y: aim.y,
-    radius: brushRadius(),
-    dir: sculptDirection(effectiveSculptMode()),
-    tool,
-    ...(TOOLS_WITHOUT_EDGE_PROFILE.includes(tool) ? {} : { profile }),
-  };
+  if (aim?.sculptTarget == null || !SELF_DESCRIBING_TOOLS.includes(tool)) return null;
+  return pointSculptIntent(aim.sculptTarget, tool, sculptDirection(effectiveSculptMode()), sculptAlt());
 }
 
 export function currentBrushQuote(): BrushQuote {
   const pool = manaPool();
-  if (pool === null) return { cost: 0, estimated: false };
+  if (pool === null) return { cost: 0, estimated: false, unlockCost: 0 };
 
   const tool = brushTool();
-  const unlock = currentUnlockFee();
   const intent = aimedIntent(tool);
-  const moved = intent === null || localTerritory === null
+  const measured = intent === null || localTerritory === null
     ? null
-    : dryRunDisplacement(localTerritory, intent);
-  if (intent !== null && moved !== null) {
+    : dryRunSculpt(localTerritory, intent);
+  const unlockIntent = intent ?? nominalAimIntent(tool);
+  const unlock = unlockIntent === null ? 0
+    : chunkUnlockFee(openedChunksAt(localTerritory, unlockIntent, measured?.diff));
+  if (intent !== null && measured !== null) {
     return {
-      cost: strokeChargeCost(moved, pool.manaPerBandCell, intent) + unlock,
+      cost: strokeChargeCost(measured.units, pool.manaPerBandCell, intent) + unlock,
       estimated: false,
+      unlockCost: unlock,
     };
   }
 
@@ -213,7 +203,7 @@ export function currentBrushQuote(): BrushQuote {
     tool,
     carveDepthBands(),
   );
-  return { cost: nominal + unlock, estimated: true };
+  return { cost: nominal + unlock, estimated: true, unlockCost: unlock };
 }
 
 export function currentBrushCost(): number {
@@ -229,7 +219,7 @@ export function gateLocalSculpt(intent: SculptIntent, territory: LocalTerritory)
   const pool = manaPool();
   if (pool === null) return true;
 
-  const opened = openedChunksAt(territory, strokeSweep(intent));
+  const opened = openedChunksAt(territory, intent);
   const cost = sculptIntentCost(pool.manaPerBandCell, intent, opened);
 
   if (pool.balance < cost) {

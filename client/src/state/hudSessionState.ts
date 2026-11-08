@@ -4,6 +4,7 @@ import type { ConnectionStatus } from '../net/connection.ts';
 import type { FrameStatsSample } from '../render/frameStats.ts';
 import type { PickFace } from '../terrain/picking.ts';
 import { REFUSED_PULSE_MS } from '../input/sculpt/contract.ts';
+import type { SculptTarget } from '../input/sculpt/intent.ts';
 
 const [connectionStatus, setConnectionStatus] =
   createSignal<ConnectionStatus>('connecting');
@@ -87,6 +88,7 @@ export interface HoverPickSample {
   readonly y: number;
   readonly face: PickFace;
   readonly band: number | null;
+  readonly sculptTarget?: SculptTarget | null;
 }
 
 const [hoverPick, setHoverPickSignal] = createSignal<HoverPickSample | null>(null);
@@ -94,7 +96,9 @@ const [hoverPick, setHoverPickSignal] = createSignal<HoverPickSample | null>(nul
 const sameHoverPick = (a: HoverPickSample | null, b: HoverPickSample | null): boolean =>
   a === b
   || (a !== null && b !== null && a.x === b.x && a.y === b.y
-    && a.face === b.face && a.band === b.band);
+    && a.face === b.face && a.band === b.band
+    && a.sculptTarget?.x === b.sculptTarget?.x && a.sculptTarget?.y === b.sculptTarget?.y
+    && a.sculptTarget?.spanBand === b.sculptTarget?.spanBand);
 
 /** Called every frame; only a changed pick notifies the HUD. */
 export function setHoverPick(sample: HoverPickSample | null): void {

@@ -463,6 +463,7 @@ export function createClientPluginHost(
       audio: audioHandle.audio,
       worldSize: () => world.worldSize(),
       terrainSampleAt: (x, y) => world.terrainSampleAt(x, y),
+      terrainSpansAt: (x, y) => world.terrainSpansAt(x, y),
       terrainRevisionAt: (x, y) => world.terrainRevisionAt(x, y),
       drawnGroundYAt: (cellX, cellZ) => world.drawnGroundYAt(cellX, cellZ),
       onTerrainChanged(handler) {

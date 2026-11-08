@@ -6,6 +6,7 @@ import {
   MAX_BRUSH_RADIUS,
   MAX_DRAG_SWEEP_CELLS,
   applySculpt,
+  packColumnSpans,
   bandLevelHeight,
   cellIndex,
   createHeightmap,
@@ -35,7 +36,8 @@ const MANA_PER_BAND_CELL = 10;
 
 const POOL_CAPACITY = 100000;
 
-const AIM = { x: 40, y: 40, face: 'tread', band: GROUND_BAND } as const;
+const AIM = { x: 40, y: 40, face: 'tread', band: GROUND_BAND,
+  sculptTarget: { x: 40, y: 40, spanBand: null } } as const;
 
 function groundedWorld(height: number): Heightmap {
   const map = createHeightmap(WORLD_SIZE);
@@ -48,6 +50,7 @@ function territoryOf(map: Heightmap) {
   return {
     worldSize: () => map.size,
     revealedAt: () => true,
+    terrainSpansAt: (x: number, y: number) => packColumnSpans(map, x, y),
     terrainSampleAt: (x: number, y: number) =>
       x < 0 || y < 0 || x >= map.size || y >= map.size
         ? null
@@ -58,6 +61,7 @@ function territoryOf(map: Heightmap) {
 const UNKNOWN_GROUND = {
   worldSize: () => WORLD_SIZE,
   revealedAt: () => true,
+  terrainSpansAt: () => null,
   terrainSampleAt: () => null,
 };
 

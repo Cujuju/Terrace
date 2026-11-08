@@ -35,7 +35,7 @@ export interface ManaQuote {
   readonly radius: number;
   readonly tool: SculptTool;
   readonly profile: SculptProfile;
-  readonly openedChunks: number;
+  readonly openedChunks: readonly number[];
 }
 
 /**
@@ -44,7 +44,7 @@ export interface ManaQuote {
  */
 const SEQLESS_QUOTE = null;
 
-export function quoteFor(intent: SculptIntent, openedChunks: number): ManaQuote {
+export function quoteFor(intent: SculptIntent, openedChunks: readonly number[]): ManaQuote {
   const options = sculptOptionsOf(intent);
   const sweep = strokeSweep(intent);
   return {
@@ -60,7 +60,7 @@ export function quoteFor(intent: SculptIntent, openedChunks: number): ManaQuote 
   };
 }
 
-export function quotedOpenedChunksFor(pool: ManaPool, intent: SculptIntent): number | null {
+export function quotedOpenedChunksFor(pool: ManaPool, intent: SculptIntent): readonly number[] | null {
   const { quote } = pool;
   if (quote === null || quote.seq !== (intent.seq ?? SEQLESS_QUOTE)) return null;
   const options = sculptOptionsOf(intent);

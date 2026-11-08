@@ -120,7 +120,7 @@ export function assertBrushArgs(
   radius: number,
   amount: number,
 ): void {
-  if (!inBounds(map, cx, cy)) {
+  if (!Number.isInteger(cx) || !Number.isInteger(cy) || !inBounds(map, cx, cy)) {
     throw new RangeError(`brush center (${cx},${cy}) out of bounds`);
   }
   assertBrushRadius(radius);

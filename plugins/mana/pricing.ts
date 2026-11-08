@@ -3,11 +3,13 @@ import {
   CHUNK_SIZE,
   chunksPerEdge,
   chunksWithinSweep,
+  chunkIndexOfCell,
   pressDisplacementUnits,
   revealReachCells,
   sculptDisplacementUnits,
   sculptOptionsOf,
   strokeSweep,
+  strokeWriteSweep,
   sweepAt,
   sweptCellCount,
 } from '@terrace/shared';
@@ -16,6 +18,7 @@ import type {
   SculptProfile,
   SculptTool,
   StrokeSweep,
+  CellDiff,
 } from '@terrace/shared';
 
 /** A disc costs the same wherever it lands, so a quote with no cell uses this one. */
@@ -127,17 +130,32 @@ export function sculptIntentCost(
   return nominalStrokeCost(manaPerBandCell, intent) + chunkUnlockFee(openedChunks);
 }
 
-export function openedChunkCount(
+/** Reveal opens the core reach; creep opens changed columns, bounded by the write sweep before application. */
+export function strokeUnlockChunks(
   worldSize: number,
-  sweep: StrokeSweep,
-  isOpen: (cx: number, cy: number) => boolean,
-): number {
-  const cols = chunksPerEdge(worldSize);
-  let opened = 0;
-  for (const index of chunksWithinSweep(worldSize, sweep, revealReachCells(sweep.radius))) {
-    if (!isOpen(index % cols, Math.floor(index / cols))) opened++;
+  intent: SculptIntent,
+  diff?: readonly CellDiff[],
+): number[] {
+  const core = strokeSweep(intent);
+  const chunks = new Set(chunksWithinSweep(worldSize, core, revealReachCells(core.radius)));
+  if (diff === undefined) {
+    const writes = strokeWriteSweep(intent);
+    for (const chunk of chunksWithinSweep(worldSize, writes, writes.radius)) chunks.add(chunk);
+  } else {
+    for (const cell of diff) chunks.add(chunkIndexOfCell(worldSize, cell.x, cell.y));
   }
-  return opened;
+  return [...chunks].sort((a, b) => a - b);
+}
+
+export function closedStrokeChunks(
+  worldSize: number,
+  intent: SculptIntent,
+  isOpen: (cx: number, cy: number) => boolean,
+  diff?: readonly CellDiff[],
+): number[] {
+  const edge = chunksPerEdge(worldSize);
+  return strokeUnlockChunks(worldSize, intent, diff)
+    .filter((index) => !isOpen(index % edge, Math.floor(index / edge)));
 }
 
 export function chunkOriginCell(cx: number, cy: number): { x: number; y: number } {

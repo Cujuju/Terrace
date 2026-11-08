@@ -1,6 +1,6 @@
+import { openedChunkCount } from '../../mana/test/support/chunkPricing.ts';
 import {
   CHUNK_UNLOCK_MANA,
-  openedChunkCount,
   strokeChargeCost,
 } from '../../mana/pricing.ts';
 import {

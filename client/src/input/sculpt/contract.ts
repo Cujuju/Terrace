@@ -2,6 +2,7 @@ import type { Camera } from 'three';
 import type { TerrainRayPick, Vec3 } from '../../terrain/picking.ts';
 import { CUE_BLINK_ON_MS, DENIED_BLINK_SETTLE_MS } from '../../render/denialCue.ts';
 import type { SculptIntent } from '@terrace/shared';
+import type { SculptTarget } from './intent.ts';
 
 /**
  * Brush cues lane E renders: `refused` red, `offline` grey and never red,
@@ -53,6 +54,7 @@ export interface SculptInputOptions {
 
 export interface SculptInput {
   hoverTarget(): TerrainRayPick | null;
+  targetForPick(pick: TerrainRayPick): SculptTarget;
   /** A held drag's plane point as a pick, or null without a held drag on the ray. */
   dragAim(): TerrainRayPick | null;
   heldBand(): number | null;

@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { forEachSweptCell, sweepAt, sweepBetween } from '@terrace/shared';
+import { forEachSweptCell, sweepAt, sweepBetween, type CellDiff, type StrokeSweep } from '@terrace/shared';
 import {
   resetWards,
-  stampWard,
+  claimWardCells,
   wardHolderAgainst,
   wardedCellCount,
 } from '../server/ward.ts';
@@ -21,6 +21,14 @@ const LEG_TO = { x: 60, y: 20 } as const;
 
 /** Mid-leg, far outside the disc at either end. */
 const MIDWAY_CELL = { x: 40, y: 20 } as const;
+
+function stampWard(size: number, owner: string, sweep: StrokeSweep): void {
+  const diff: CellDiff[] = [];
+  forEachSweptCell(sweep, (x, y) => {
+    if (x >= 0 && y >= 0 && x < size && y < size) diff.push({ x, y, h: 0 });
+  });
+  claimWardCells(size, owner, diff);
+}
 
 describe('a bedrock ward sees the whole swept shape', () => {
   beforeEach(() => {

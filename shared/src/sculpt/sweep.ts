@@ -4,6 +4,8 @@ import { sculptOptionsOf } from '../protocol/sculpt.ts';
 import type { SculptIntent } from '../protocol/sculpt.ts';
 import { footprintRadiusSquared } from './footprint.ts';
 import { sculptReachCells } from './reach.ts';
+import { sculptSweepRadius } from './stamp.ts';
+import { EDGE_AWARE_TOOLS, EDGE_REGION_MARGIN_CELLS } from './edges.ts';
 
 /**
  * What one stroke sweeps: the brush disc of `radius` dragged from
@@ -16,6 +18,8 @@ export interface StrokeSweep {
   readonly toX: number;
   readonly toY: number;
   readonly radius: number;
+  /** Squared bound when the writable region differs from the core disc. */
+  readonly radiusSquared?: number;
 }
 
 /** A sweep that adds nothing to the brush's own reach. */
@@ -42,6 +46,16 @@ export function strokeSweep(intent: SculptIntent): StrokeSweep {
   return from === null
     ? sweepAt(intent.x, intent.y, intent.radius)
     : sweepBetween(from.x, from.y, intent.x, intent.y, intent.radius);
+}
+
+/** Bounds writes, including mound flanks and edge encoding; excludes read-only halos. */
+export function strokeWriteSweep(intent: SculptIntent): StrokeSweep {
+  const core = strokeSweep(intent);
+  const options = sculptOptionsOf(intent);
+  if (!EDGE_AWARE_TOOLS.includes(options.tool)) return core;
+  const radius = sculptSweepRadius(intent.radius, options.profile, options.tool, options.anchor) +
+    EDGE_REGION_MARGIN_CELLS;
+  return { ...core, radius, radiusSquared: radius * radius };
 }
 
 /** The rectangle of cells one stroke can write, clipped to the world. */
@@ -86,8 +100,8 @@ export function sweepReachSquared(radius: number, extraCells: number): number {
 }
 
 /** The furthest one axis strays from the segment: the enumeration's margin. */
-function sweepMarginCells(radius: number, extraCells: number): number {
-  const reachSquared = sweepReachSquared(radius, extraCells);
+function sweepMarginCells(sweep: StrokeSweep): number {
+  const reachSquared = sweep.radiusSquared ?? footprintRadiusSquared(sweep.radius);
   let margin = 0;
   while ((margin + 1) * (margin + 1) < reachSquared) margin++;
   return margin;
@@ -104,7 +118,9 @@ export function pointWithinSweep(
   py: number,
   extraCells: number = NO_EXTRA_REACH,
 ): boolean {
-  const reachSquared = sweepReachSquared(sweep.radius, extraCells);
+  const reachSquared = extraCells === NO_EXTRA_REACH
+    ? sweep.radiusSquared ?? footprintRadiusSquared(sweep.radius)
+    : sweepReachSquared(sweep.radius, extraCells);
   const vx = sweep.toX - sweep.fromX;
   const vy = sweep.toY - sweep.fromY;
   const wx = px - sweep.fromX;
@@ -127,7 +143,7 @@ export function forEachSweptCell(
   sweep: StrokeSweep,
   visit: (x: number, y: number) => void,
 ): void {
-  const margin = sweepMarginCells(sweep.radius, NO_EXTRA_REACH);
+  const margin = sweepMarginCells(sweep);
   const minX = (sweep.fromX < sweep.toX ? sweep.fromX : sweep.toX) - margin;
   const maxX = (sweep.fromX > sweep.toX ? sweep.fromX : sweep.toX) + margin;
   const minY = (sweep.fromY < sweep.toY ? sweep.fromY : sweep.toY) - margin;

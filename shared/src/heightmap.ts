@@ -140,6 +140,7 @@ export function applySculpt(
   amount: number,
   options?: SculptOptions,
 ): CellDiff[] {
+  assertBrushArgs(map, cx, cy, radius, amount);
   const tool = options?.tool ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.tool;
   const profile = options?.profile ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.profile;
   const spill = options?.spill ?? LIBRARY_DEFAULT_SCULPT_OPTIONS.spill;
@@ -260,7 +261,6 @@ export function applySculpt(
     : 0;
   // Settle's relaxation grades only what its deposit adds, so it needs the ground before it.
   const settles = tool === LIBRARY_SCULPT_TOOL && !anchoredSmooth;
-  if (settles) assertBrushArgs(map, cx, cy, radius, strokeAmount);
   const beforeDeposit = settles ? footprintHeights(map, cx, cy, radius) : null;
   // Smooth never deposits: relaxation alone melts roughness within anchor bounds.
   if (deposits) {

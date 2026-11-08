@@ -1,6 +1,7 @@
 import {
   DEFAULT_SCULPT_AMOUNT,
   applySculpt,
+  applyPackedSpans,
   createHeightmap,
   displacementOf,
   sculptOptionsOf,
@@ -8,12 +9,14 @@ import {
   strokeSolidMeasure,
   strokeReachBox,
   type SculptIntent,
+  type CellDiff,
 } from '@terrace/shared';
 
 /** The ground the client knows, cell by cell. Null where no chunk has arrived. */
 export interface LocalHeights {
   worldSize(): number;
   terrainSampleAt(x: number, y: number): number | null;
+  terrainSpansAt(x: number, y: number): readonly number[] | null | undefined;
 }
 
 /** An applier reads one cell past everything it writes. */
@@ -23,10 +26,10 @@ const SCRATCH_HALO_CELLS = 1;
  * The units a stroke would move, run on a copy of the ground it touches. Null
  * when any of that ground is unknown.
  */
-export function dryRunDisplacement(
+export function dryRunSculpt(
   terrain: LocalHeights,
   intent: SculptIntent,
-): number | null {
+): { readonly units: number; readonly diff: readonly CellDiff[] } | null {
   const worldSize = terrain.worldSize();
   if (worldSize <= 0) return null;
 
@@ -46,6 +49,8 @@ export function dryRunDisplacement(
       const height = terrain.terrainSampleAt(originX + sx, originY + sy);
       if (height === null) return null;
       scratch.cells[sy * side + sx] = height;
+      const spans = terrain.terrainSpansAt(originX + sx, originY + sy);
+      if (spans === null || !applyPackedSpans(scratch, sx, sy, spans)) return null;
     }
   }
 
@@ -75,5 +80,12 @@ export function dryRunDisplacement(
     DEFAULT_SCULPT_AMOUNT * local.dir,
     sculptOptionsOf(local),
   );
-  return displacementOf(before, scratch, diff, measure);
+  return {
+    units: displacementOf(before, scratch, diff, measure),
+    diff: diff.map((cell) => ({ ...cell, x: cell.x + originX, y: cell.y + originY })),
+  };
+}
+
+export function dryRunDisplacement(terrain: LocalHeights, intent: SculptIntent): number | null {
+  return dryRunSculpt(terrain, intent)?.units ?? null;
 }

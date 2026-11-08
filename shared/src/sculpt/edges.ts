@@ -5,7 +5,7 @@ import {
   DRAWN_GROUND_BAND_BIAS,
   drawnBandOfSample,
 } from '../bands.ts';
-import { columnCoversBand } from '../columns.ts';
+import { columnCoversBand, spanAt, spanCount } from '../columns.ts';
 import { cellIndex, cellX, cellY, inBounds, type Heightmap } from '../grid.ts';
 import { footprintRadiusSquared } from './footprint.ts';
 import { clampHeight, graspedCeiling, writeGraspedCeiling } from './grasp.ts';
@@ -86,6 +86,7 @@ interface Survey {
   readonly quarters: Int32Array;
   /** The written span's ceiling before `write`, or UNSURVEYED outside the region. */
   readonly before: Int32Array;
+  readonly spanFloors: Int32Array;
 }
 
 /** Beyond every centre's square: no decision reads the cell. */
@@ -128,6 +129,7 @@ function survey(map: Heightmap, shape: EdgeShape): Survey {
   const height = maxY + margin - y0 + 1;
   const quarters = new Int32Array(width * height).fill(UNREACHED_QUARTERS);
   const before = new Int32Array(width * height).fill(UNSURVEYED);
+  const spanFloors = new Int32Array(width * height).fill(UNSURVEYED);
   // Each centre's square of `margin` holds every cell within reach of it, and their neighbours.
   for (const [cx, cy] of shape.centres) {
     for (let dy = -margin; dy <= margin; dy++) {
@@ -146,12 +148,14 @@ function survey(map: Heightmap, shape: EdgeShape): Survey {
       // fixedRadius(q) < reachFixed, squared through so no root is taken per cell.
       if (!inBounds(map, x, y) || quarters[g]! * HALF_FIXED_SQUARED >= reachFixed * reachFixed) continue;
       const i = cellIndex(map, x, y);
+      const k = shape.spanOf(map, i);
+      if (k !== null) spanFloors[g] = spanAt(map, x, y, k).floorBand;
       // A one-span column's only ceiling is its cell; `write` cannot grasp it otherwise.
       const ceiling = map.columnSpans.has(i) ? ceilingOf(map, shape, i) : map.cells[i]!;
       if (ceiling !== null) before[g] = ceiling;
     }
   }
-  return { x0, y0, width, height, quarters, before };
+  return { x0, y0, width, height, quarters, before, spanFloors };
 }
 
 function toUnits(fixed: number): number {
@@ -190,6 +194,23 @@ export function writeWithEdges(
 ): void {
   const grid = survey(map, shape);
   write();
+
+  const selectSpan = shape.spanOf;
+  shape = { ...shape, spanOf: (map, i) => {
+    const selected = selectSpan(map, i);
+    if (selected !== null) return selected;
+    const x = cellX(map.size, i);
+    const y = cellY(map.size, i);
+    const gx = x - grid.x0;
+    const gy = y - grid.y0;
+    if (gx < 0 || gy < 0 || gx >= grid.width || gy >= grid.height) return null;
+    const floor = grid.spanFloors[gy * grid.width + gx];
+    if (floor === UNSURVEYED || floor === undefined) return null;
+    for (let k = 0; k < spanCount(map, x, y); k++) {
+      if (spanAt(map, x, y, k).floorBand === floor) return k;
+    }
+    return null;
+  } };
 
   const { x0, y0, width, height, quarters, before } = grid;
   const ringFixed = shape.rings.map(fixedRadius);

@@ -1,3 +1,4 @@
+import { openedChunkCount } from './support/chunkPricing.ts';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   BAND_HEIGHT,
@@ -8,7 +9,7 @@ import {
   sweptCellCount,
   type SculptIntent,
 } from '@terrace/shared';
-import { openedChunkCount, sculptIntentCost, sculptManaCost } from '../pricing.ts';
+import { sculptIntentCost, sculptManaCost } from '../pricing.ts';
 
 type ManaClientState = typeof import('../client/state.ts');
 
@@ -35,7 +36,7 @@ const HELD_BAND = 3;
 
 const NOTHING_OPEN_CHUNKS = 0;
 
-const EVERYWHERE = { worldSize: () => 0, revealedAt: () => true, terrainSampleAt: () => null };
+const EVERYWHERE = { worldSize: () => 0, revealedAt: () => true, terrainSpansAt: () => null, terrainSampleAt: () => null };
 
 function dragLeg(from: { x: number; y: number } | null): SculptIntent {
   return {

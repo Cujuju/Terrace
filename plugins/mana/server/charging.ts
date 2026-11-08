@@ -1,8 +1,8 @@
-import { strokeSweep } from '@terrace/shared';
-import type { SculptIntent } from '@terrace/shared';
+import type { CellDiff, SculptIntent } from '@terrace/shared';
 import {
   chunkUnlockFee,
-  openedChunkCount,
+  closedStrokeChunks,
+  strokeUnlockChunks,
   sculptIntentCost,
   strokeChargeCost,
 } from '../pricing.ts';
@@ -48,8 +48,8 @@ export function manaChargeFor(
   );
 }
 
-function openedChunksFor(world: WorldApi, token: string, intent: SculptIntent): number {
-  return openedChunkCount(world.worldSize, strokeSweep(intent), (cx, cy) =>
+function openedChunksFor(world: WorldApi, token: string, intent: SculptIntent): number[] {
+  return closedStrokeChunks(world.worldSize, intent, (cx, cy) =>
     world.isChunkUnlockedForToken(token, cx, cy),
   );
 }
@@ -60,7 +60,7 @@ export function checkAffordability(intent: SculptIntent, ctx: IntentCtx): Intent
   pool.quote = null;
   noteSeq(pool, intent);
   const opened = openedChunksFor(world, ctx.player.token, intent);
-  const cost = manaCostFor(ctx.player.id, intent, opened);
+  const cost = manaCostFor(ctx.player.id, intent, opened.length);
 
   if (pool.balance < cost) {
     world.sendTo(ctx.player.id, MANA_DENIED_MESSAGE, {
@@ -77,13 +77,15 @@ export function checkAffordability(intent: SculptIntent, ctx: IntentCtx): Intent
   return { kind: 'allow' };
 }
 
-export function commitCharge(intent: SculptIntent, ctx: AppliedIntentCtx): void {
+export function commitCharge(intent: SculptIntent, ctx: AppliedIntentCtx, diff: readonly CellDiff[]): void {
   const { world } = ctx;
   const pool = poolFor(ctx.player.id);
   noteSeq(pool, intent);
 
   const quoted = quotedOpenedChunksFor(pool, intent);
-  const opened = quoted ?? openedChunksFor(world, ctx.player.token, intent);
+  const pending = new Set(quoted ?? openedChunksFor(world, ctx.player.token, intent));
+  const opened = strokeUnlockChunks(world.worldSize, intent, diff)
+    .filter((index) => pending.has(index)).length;
   pool.quote = null;
 
   // Charge follows effect: a stroke that moved nothing displaced nothing.

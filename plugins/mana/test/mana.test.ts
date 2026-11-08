@@ -1,3 +1,4 @@
+import { openedChunkCount } from './support/chunkPricing.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   BAND_HEIGHT,
@@ -40,7 +41,7 @@ import {
   worldWithUnlockedChunks,
 } from '../../../server/test/support/harness.ts';
 import { plugin as revealPlugin } from '../../reveal/server/index.ts';
-import { CHUNK_UNLOCK_MANA, chunkUnlockFee, displacementManaCost, openedChunkCount, sculptManaCost } from '../pricing.ts';
+import { CHUNK_UNLOCK_MANA, chunkUnlockFee, displacementManaCost, sculptManaCost } from '../pricing.ts';
 import { MANA_PLUGIN_NAME } from '../protocol.ts';
 import {
   FULL_POOL_MAX_RADIUS_HARD_STAMPS,
@@ -78,7 +79,7 @@ import {
   spendMana,
 } from '../server/index.ts';
 
-const ALL_REVEALED = { worldSize: () => 0, revealedAt: () => true, terrainSampleAt: () => UNKNOWN_HEIGHT };
+const ALL_REVEALED = { worldSize: () => 0, revealedAt: () => true, terrainSpansAt: () => null, terrainSampleAt: () => UNKNOWN_HEIGHT };
 
 /** No chunk in hand: a quote on unknown ground falls back to the nominal. */
 const UNKNOWN_HEIGHT = null;
@@ -1368,7 +1369,7 @@ describe('the frontier price is quoted once, at verdict time', () => {
           Math.floor(x / CHUNK_SIZE),
           Math.floor(y / CHUNK_SIZE),
         ),
-      terrainSampleAt: () => UNKNOWN_HEIGHT,
+      terrainSpansAt: () => null, terrainSampleAt: () => UNKNOWN_HEIGHT,
     };
   }
 

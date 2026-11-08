@@ -82,6 +82,8 @@ export interface ClientPluginCtx {
 
   /** The server's raw height sample, for reproducing server rules. Anything drawn uses drawnGroundYAt. */
   terrainSampleAt(x: number, y: number): number | null;
+  /** Packed spans; undefined is a single span, null is unknown terrain. */
+  terrainSpansAt(x: number, y: number): readonly number[] | null | undefined;
 
   terrainRevisionAt(x: number, y: number): number;
 

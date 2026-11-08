@@ -1,3 +1,4 @@
+import { openedChunkCount } from './support/chunkPricing.ts';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CARVE_DEFAULT_DEPTH_BANDS,
@@ -6,7 +7,7 @@ import {
   MIN_BRUSH_RADIUS,
   sweepAt,
 } from '@terrace/shared';
-import { CHUNK_UNLOCK_MANA, chunkUnlockFee, openedChunkCount, sculptManaCost } from '../pricing.ts';
+import { CHUNK_UNLOCK_MANA, chunkUnlockFee, sculptManaCost } from '../pricing.ts';
 
 /** No chunk in hand: a quote on unknown ground falls back to the nominal. */
 const UNKNOWN_HEIGHT = null;
@@ -77,7 +78,7 @@ describe('lane E: mana denial pulse carries its cost', () => {
       tool: 'stamp',
       profile: 'hard',
     } as const;
-    expect(state.gateLocalSculpt(bigStamp, { worldSize: () => 0, revealedAt: () => true, terrainSampleAt: () => UNKNOWN_HEIGHT })).toBe(
+    expect(state.gateLocalSculpt(bigStamp, { worldSize: () => 0, revealedAt: () => true, terrainSpansAt: () => null, terrainSampleAt: () => UNKNOWN_HEIGHT })).toBe(
       false,
     );
     expect(state.deniedCount()).toBe(before + 1);
@@ -99,10 +100,10 @@ describe('the HUD quote prices the frontier under the aim', () => {
     worldSize: () => WORLD_SIZE,
     revealedAt: (x: number, y: number) =>
       Math.floor(x / CHUNK_SIZE) === HOME_CHUNK_X && Math.floor(y / CHUNK_SIZE) === HOME_CHUNK_Y,
-    terrainSampleAt: () => UNKNOWN_HEIGHT,
+    terrainSpansAt: () => null, terrainSampleAt: () => UNKNOWN_HEIGHT,
   };
 
-  const EVERYWHERE = { worldSize: () => WORLD_SIZE, revealedAt: () => true, terrainSampleAt: () => UNKNOWN_HEIGHT };
+  const EVERYWHERE = { worldSize: () => WORLD_SIZE, revealedAt: () => true, terrainSpansAt: () => null, terrainSampleAt: () => UNKNOWN_HEIGHT };
 
   // Re-imported inside the reset registry, so it is the module state.ts reads.
   let hud: typeof import('../../../client/src/state/hudState.ts');
@@ -130,7 +131,7 @@ describe('the HUD quote prices the frontier under the aim', () => {
       (cx, cy) => HOME_ONLY.revealedAt(cx * CHUNK_SIZE, cy * CHUNK_SIZE),
     );
     expect(opened).toBeGreaterThan(0);
-    expect(state.currentUnlockFee()).toBe(opened * CHUNK_UNLOCK_MANA);
+    expect(state.currentBrushQuote().unlockCost).toBe(opened * CHUNK_UNLOCK_MANA);
     expect(state.currentBrushCost()).toBe(displacement() + chunkUnlockFee(opened));
   });
 
@@ -138,14 +139,14 @@ describe('the HUD quote prices the frontier under the aim', () => {
     state.setLocalTerritory(EVERYWHERE);
     hud.setHoverPick(AIM);
 
-    expect(state.currentUnlockFee()).toBe(0);
+    expect(state.currentBrushQuote().unlockCost).toBe(0);
     expect(state.currentBrushCost()).toBe(displacement());
   });
 
   it('quotes displacement alone while nothing is aimed at', () => {
     state.setLocalTerritory(HOME_ONLY);
 
-    expect(state.currentUnlockFee()).toBe(0);
+    expect(state.currentBrushQuote().unlockCost).toBe(0);
     expect(state.currentBrushCost()).toBe(displacement());
   });
 });

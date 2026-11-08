@@ -6,6 +6,7 @@ import { bindCameraControls } from './input/cameraBindings.ts';
 import { createCameraGestureLock } from './input/cameraGestureLock.ts';
 import { bindKeyCamera } from './input/keyCamera.ts';
 import { createSculptInput } from './input/sculptInput.ts';
+import { TOOLS_WITH_FOOT_ANCHOR } from './input/sculpt/intent.ts';
 import { createClientPluginHost } from './plugins/host.ts';
 import { CLIENT_PLUGINS } from './plugins/registry.ts';
 import { createViewport } from './render/scene.ts';
@@ -21,6 +22,7 @@ import { frameRateTarget, frameRateTargetFps } from './state/frameRatePrefs.ts';
 import { multisampleEnabled, multisampleSetting } from './state/multisamplePrefs.ts';
 import { pointerToNdc, worldPointToCell } from './terrain/picking.ts';
 import type { TerrainRayPick } from './terrain/pick/types.ts';
+import { drawnBandCapY } from './terrain/capEmission.ts';
 import { CELL_WORLD_SIZE } from './config.ts';
 import { createWorld } from './world.ts';
 import {
@@ -277,6 +279,9 @@ viewport.onFrame(() => {
   }
   const pick = heldAim;
   const tool = brushTool();
+  const target = pick !== null && TOOLS_WITH_FOOT_ANCHOR.includes(tool)
+    ? sculptInput.targetForPick(pick) : null;
+  const targetBand = target === null ? null : world.bandAtCell(target.x, target.y, target.spanBand);
   const grabbedBand = world.highlightLayerEdge(pick, {
     litSpanWorldUnits: litLipSpan(),
     heldBand: tool === 'carve' ? sculptInput.carveHeldBand() : sculptInput.heldBand(),
@@ -286,8 +291,10 @@ viewport.onFrame(() => {
       ? null
       : {
           ...pick,
+          ...(target === null ? {} : { x: target.x, y: target.y,
+            surfaceY: targetBand === null ? pick.surfaceY : drawnBandCapY(targetBand) }),
           grabbable: grabbedBand !== null && brushTool() === 'drag',
-          band: grabbedBand,
+          band: target === null ? grabbedBand : targetBand,
           aimBand: world.aimBand(pick),
           carveBand: world.carveBand(pick),
         },
@@ -300,7 +307,7 @@ viewport.onFrame(() => {
   );
   pickDebug?.update(pick, grabbedBand, world.aimBand(pick));
   setHoverPick(
-    pick === null ? null : { x: pick.x, y: pick.y, face: pick.face, band: grabbedBand },
+    pick === null ? null : { x: pick.x, y: pick.y, face: pick.face, band: grabbedBand, sculptTarget: target },
   );
 });
 

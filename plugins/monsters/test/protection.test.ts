@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_DRAG_SWEEP_CELLS, type SculptIntent } from '@terrace/shared';
+import { MAX_DRAG_SWEEP_CELLS, strokeWriteSweep, type SculptIntent } from '@terrace/shared';
 import { reachesProtectedGround } from '../server/protection.ts';
 import { groundProtectionRadiusCells, profileOf } from '../server/kinds.ts';
 import type { Monster } from '../server/summoning.ts';
@@ -36,16 +36,25 @@ function raise(from: { x: number; y: number } | null): SculptIntent {
     y: LEG_TO.y,
     radius: BRUSH_RADIUS,
     dir: 1,
+    tool: 'stamp',
+    profile: 'hard',
     ...(from === null ? {} : { tool: 'drag', targetBand: 3, fromX: from.x, fromY: from.y }),
   };
 }
 
-const REACH = BRUSH_RADIUS + groundProtectionRadiusCells(profileOf(GUARDING_KIND));
+const REACH = strokeWriteSweep(raise(LEG_FROM)).radius + groundProtectionRadiusCells(profileOf(GUARDING_KIND));
 
 /** Off the leg's flank: inside the capsule, outside the disc at either end. */
 const FLANK_STANDOFF = REACH - 0.5;
 
 describe('ground protection sees the whole swept shape', () => {
+  it.each(['soft', 'stepped'] as const)('protects ground reached by %s mound flanks', (profile) => {
+    const centre = { x: 48, y: 48 };
+    const outsideCore = monsterAt(centre.x + 25.5, centre.y + 0.5);
+    const stamp: SculptIntent = { type: 'sculpt', ...centre, radius: BRUSH_RADIUS, dir: 1, tool: 'stamp', profile };
+    expect(reachesProtectedGround(stamp, outsideCore)).toBe(true);
+    expect(reachesProtectedGround({ ...stamp, profile: 'hard' }, outsideCore)).toBe(false);
+  });
   it('blocks a leg that only meets the monster off its flank', () => {
     const monster = monsterAt(MIDWAY.x + 0.5, MIDWAY.y + 0.5 + FLANK_STANDOFF);
     expect(reachesProtectedGround(raise(LEG_FROM), monster)).toBe(true);

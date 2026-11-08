@@ -1,4 +1,4 @@
-import { pointWithinSweep, strokeSweep, type SculptIntent } from '@terrace/shared';
+import { pointWithinSweep, strokeWriteSweep, type SculptIntent } from '@terrace/shared';
 import { groundProtectionRadiusCells, profileOf } from './kinds.ts';
 import type { Monster } from './summoning.ts';
 
@@ -15,7 +15,7 @@ export function reachesProtectedGround(intent: SculptIntent, monster: Monster): 
   if (intent.dir !== RAISE_DIRECTION) return false;
 
   return pointWithinSweep(
-    strokeSweep(intent),
+    strokeWriteSweep(intent),
     monster.x - CELL_CENTRE_OFFSET,
     monster.y - CELL_CENTRE_OFFSET,
     groundProtectionRadiusCells(profile),

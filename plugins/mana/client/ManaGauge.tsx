@@ -9,7 +9,6 @@ import {
 } from './gauge.ts';
 import {
   currentBrushQuote,
-  currentUnlockFee,
   deniedCount,
   lastDeniedCost,
   liveBalance,
@@ -233,7 +232,7 @@ export function ManaGauge(): JSX.Element {
   // Cost hint: the brush cost, the frontier it opens, plus the last denied cost
   // once a denial pulses.
   const costHint = () => {
-    const unlock = currentUnlockFee();
+    const unlock = quote().unlockCost;
     const opening = unlock > 0 ? `, including ${unlock} to open the frontier` : '';
     const denied = lastDeniedCost();
     const measured = quote().estimated ? ' (estimated)' : '';

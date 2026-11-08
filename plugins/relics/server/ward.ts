@@ -1,4 +1,4 @@
-import { forEachSweptCell, pointWithinSweep, type StrokeSweep } from '@terrace/shared';
+import { pointWithinSweep, type CellDiff, type StrokeSweep } from '@terrace/shared';
 
 export const BEDROCK_WARD_SECONDS = 15;
 
@@ -13,11 +13,8 @@ const wards = new Map<number, Ward>();
 
 const noticeSilenceS = new Map<string, number>();
 
-export function stampWard(size: number, owner: string, sweep: StrokeSweep): void {
-  forEachSweptCell(sweep, (cx, cy) => {
-    if (cx < 0 || cy < 0 || cx >= size || cy >= size) return;
-    wards.set(cy * size + cx, { owner, remainingS: BEDROCK_WARD_SECONDS });
-  });
+export function claimWardCells(size: number, owner: string, cells: readonly CellDiff[]): void {
+  for (const { x, y } of cells) wards.set(y * size + x, { owner, remainingS: BEDROCK_WARD_SECONDS });
 }
 
 /** One closed-form test per standing ward, whatever shape the stroke swept. */

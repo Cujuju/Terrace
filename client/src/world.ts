@@ -9,6 +9,7 @@ import {
   cellX as cellXIn,
   cellY as cellYIn,
   runFloorBandAt as runFloorBandAtIn,
+  packColumnSpans,
 } from '@terrace/shared';
 import type {
   ChunkUnlockMessage,
@@ -196,6 +197,7 @@ export interface World extends TerrainSink {
   aimBand(pick: TerrainRayPick | null): number | null;
   carveReach(origin: Vec3, direction: Vec3, band: number): { x: number; y: number } | null;
   terrainSampleAt(x: number, y: number): number | null;
+  terrainSpansAt(x: number, y: number): readonly number[] | null | undefined;
   terrainRevisionAt(x: number, y: number): number;
   drawnGroundYAt(cellX: number, cellZ: number): number | null;
   /** Fires when drawn ground may have arrived or moved: chunk drawn, snapshot, unlock, sculpt. */
@@ -661,6 +663,11 @@ export function createWorld(viewport: Viewport, options?: WorldOptions): World {
       if (mirror === null) return null;
       if (!isCellReceived(mirror, x, y)) return null;
       return sampleHeight(mirror, x, y);
+    },
+
+    terrainSpansAt(x: number, y: number): readonly number[] | null | undefined {
+      if (mirror === null || !isCellReceived(mirror, x, y)) return null;
+      return packColumnSpans(mirror.map, x, y);
     },
 
     terrainRevisionAt(x: number, y: number): number {
