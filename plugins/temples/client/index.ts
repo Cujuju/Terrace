@@ -1,4 +1,5 @@
-import { CELL_WORLD_SIZE, bandOf, isWater } from '@terrace/shared';
+import { CELL_WORLD_SIZE } from '@terrace/shared';
+import { createComponent, createSignal } from 'solid-js';
 import type {
   ClientPluginCtx,
   TerraceClientPlugin,
@@ -8,6 +9,8 @@ import {
   TEMPLES_PLUGIN_NAME,
   TEMPLE_PLACE_MESSAGE,
   TEMPLE_REFUSED_MESSAGE,
+  TEMPLE_REFUSED_GROUND,
+  TEMPLE_REFUSED_NO_SETTLERS,
   TEMPLE_REFUSED_STANDING,
   TEMPLE_REMOVE_MESSAGE,
   TEMPLE_STATE_MESSAGE,
@@ -17,6 +20,8 @@ import {
   type TempleCell,
 } from '../protocol.ts';
 import { TempleIcon } from './TempleIcon.tsx';
+import { PlacementHint } from './PlacementHint.tsx';
+import { isTempleGround } from '../suitability.ts';
 import { createTempleModels, type TempleModels } from './temple.ts';
 import { buildingQuality, registerBuildingQualityConsumer } from '../../../client/src/state/buildingQualityPrefs.ts';
 import type { BuildingAssetKit } from '../../../client/src/render/buildingAssetKit.ts';
@@ -42,12 +47,36 @@ const RAZE_KEY = 'Control';
 
 let ctrlTapArmed = false;
 
-let refusedCells = new Set<number>();
+let refusedCell: TempleCell | null = null;
+const [placementHint, setPlacementHint] = createSignal<string | null>(null);
+let cancelFeedbackExpiry: (() => void) | null = null;
 
-const REFUSED_KEY_STRIDE = 65536;
+const REFUSAL_VISIBLE_MS = 6000;
 
-function refusedKey(x: number, y: number): number {
-  return y * REFUSED_KEY_STRIDE + x;
+const GROUND_HINT = 'The temple and its apron need flat, dry ground fully inside unlocked land.';
+
+const REFUSAL_HINTS: Readonly<Record<number, string>> = {
+  [TEMPLE_REFUSED_STANDING]: 'A temple is already standing in this world.',
+  [TEMPLE_REFUSED_GROUND]: GROUND_HINT,
+  [TEMPLE_REFUSED_NO_SETTLERS]:
+    'Settlers need a clear home site they can reach from this temple. Clear room nearby, then try again.',
+};
+
+function resetPlacementFeedback(): void {
+  cancelFeedbackExpiry?.();
+  cancelFeedbackExpiry = null;
+  refusedCell = null;
+  setPlacementHint(!toolHeld ? null : temple === null
+    ? 'Choose flat, dry, unlocked land with room for settlers to build nearby.'
+    : 'Click the temple or tap Ctrl to take it down.');
+}
+
+function showPlacementRefusal(ctx: ClientPluginCtx, cell: TempleCell, reason: number): void {
+  cancelFeedbackExpiry?.();
+  refusedCell = cell;
+  setPlacementHint(REFUSAL_HINTS[reason] ??
+    'The temple could not be placed here. Try again or choose another site.');
+  cancelFeedbackExpiry = ctx.setTimeout(resetPlacementFeedback, REFUSAL_VISIBLE_MS);
 }
 
 let crownSeconds = 0;
@@ -56,6 +85,7 @@ let unsubscribeMessages: (() => void) | null = null;
 let unsubscribeRefusals: (() => void) | null = null;
 let unsubscribeFrames: (() => void) | null = null;
 let unsubscribePress: (() => void) | null = null;
+let unsubscribeTerrain: (() => void) | null = null;
 let onPointerMove: ((event: PointerEvent) => void) | null = null;
 let windowListeners: Array<[string, EventListener]> = [];
 
@@ -64,17 +94,10 @@ function worldX(cell: number): number {
 }
 
 function isGhostSite(ctx: ClientPluginCtx, cell: TempleCell): boolean {
-  if (refusedCells.has(refusedKey(cell.x, cell.y))) return false;
-  const centre = ctx.terrainSampleAt(cell.x, cell.y);
-  if (centre === null) return false;
-  const band = bandOf(centre);
-  for (let dy = -TEMPLE_SURVEY_RADIUS_CELLS; dy <= TEMPLE_SURVEY_RADIUS_CELLS; dy++) {
-    for (let dx = -TEMPLE_SURVEY_RADIUS_CELLS; dx <= TEMPLE_SURVEY_RADIUS_CELLS; dx++) {
-      const height = ctx.terrainSampleAt(cell.x + dx, cell.y + dy);
-      if (height === null || isWater(height) || bandOf(height) !== band) return false;
-    }
-  }
-  return true;
+  return isTempleGround({
+    worldSize: ctx.worldSize(),
+    heightAt: (x, y) => ctx.terrainSampleAt(x, y),
+  }, cell.x, cell.y);
 }
 
 function isOnTemple(cell: TempleCell): boolean {
@@ -121,7 +144,8 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     return;
   }
   models.ghost.visible = true;
-  models.setGhostLegal(isGhostSite(ctx, hoverCell));
+  const refused = refusedCell?.x === hoverCell.x && refusedCell.y === hoverCell.y;
+  models.setGhostLegal(isGhostSite(ctx, hoverCell) && !refused);
   models.ghost.position.set(worldX(hoverCell.x), hoverGroundY, worldX(hoverCell.y));
 }
 
@@ -131,12 +155,15 @@ function handlePress(ctx: ClientPluginCtx, event: PointerEvent): boolean {
 
   const cell = ctx.pickTerrainCell(event.clientX, event.clientY);
   if (cell === null) return true;
+  hoverCell = cell;
+  resetPlacementFeedback();
 
   if (temple !== null) {
     if (isOnTemple(cell)) ctx.send(TEMPLE_REMOVE_MESSAGE, {});
     return true;
   }
   if (isGhostSite(ctx, cell)) ctx.send(TEMPLE_PLACE_MESSAGE, { x: cell.x, y: cell.y });
+  else showPlacementRefusal(ctx, cell, TEMPLE_REFUSED_GROUND);
   return true;
 }
 
@@ -200,14 +227,19 @@ export const clientPlugin: TerraceClientPlugin = {
 
     unsubscribeMessages = ctx.onMessage(TEMPLE_STATE_MESSAGE, (payload) => {
       temple = parseTempleStatePayload(payload);
+      resetPlacementFeedback();
     });
 
     unsubscribeRefusals = ctx.onMessage(TEMPLE_REFUSED_MESSAGE, (payload) => {
       const refusal = parseTempleRefusalPayload(payload);
-      if (refusal === null) return;
-      if (refusal.reason === TEMPLE_REFUSED_STANDING) return;
-      refusedCells.add(refusedKey(refusal.x, refusal.y));
+      if (refusal === null || !toolHeld) return;
+      showPlacementRefusal(ctx, refusal, refusal.reason);
     });
+
+    unsubscribeTerrain = ctx.onTerrainChanged(() => { refusedCell = null; });
+    ctx.registerHudPanel(() => createComponent(PlacementHint, {
+      get message() { return placementHint(); },
+    }), { placement: 'bottom-center' });
 
     ctx.registerTool({
       id: TEMPLE_TOOL_ID,
@@ -216,9 +248,7 @@ export const clientPlugin: TerraceClientPlugin = {
       icon: TempleIcon,
       onSelected: (selected) => {
         toolHeld = selected;
-        if (selected) {
-          refusedCells = new Set();
-        }
+        resetPlacementFeedback();
         if (!selected) {
           hoverCell = null;
           if (models !== null) {
@@ -232,6 +262,8 @@ export const clientPlugin: TerraceClientPlugin = {
     onPointerMove = (event: PointerEvent): void => {
       if (!toolHeld) return;
       hoverCell = ctx.pickTerrainCell(event.clientX, event.clientY);
+      if (refusedCell !== null &&
+        (hoverCell?.x !== refusedCell.x || hoverCell?.y !== refusedCell.y)) refusedCell = null;
     };
 
     windowListeners = [
@@ -258,10 +290,12 @@ export const clientPlugin: TerraceClientPlugin = {
     unsubscribeRefusals?.();
     unsubscribeFrames?.();
     unsubscribePress?.();
+    unsubscribeTerrain?.();
     unsubscribeMessages = null;
     unsubscribeRefusals = null;
     unsubscribeFrames = null;
     unsubscribePress = null;
+    unsubscribeTerrain = null;
 
     for (const [type, handler] of windowListeners) window.removeEventListener(type, handler);
     windowListeners = [];
@@ -274,7 +308,7 @@ export const clientPlugin: TerraceClientPlugin = {
     temple = null;
     toolHeld = false;
     hoverCell = null;
-    refusedCells = new Set();
+    resetPlacementFeedback();
     crownSeconds = 0;
     ctrlTapArmed = false;
   },
