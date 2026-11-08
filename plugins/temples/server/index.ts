@@ -13,6 +13,7 @@ import {
   TEMPLE_REFUSED_NO_SETTLERS,
   TEMPLE_REFUSED_STANDING,
   TEMPLE_REMOVE_MESSAGE,
+  TEMPLE_REPLACE_MESSAGE,
   TEMPLE_STATE_MESSAGE,
   TEMPLE_SURVEY_RADIUS_CELLS,
   packTemple,
@@ -53,11 +54,15 @@ function publishClaim(): void {
   reserveStructureGround(temple === null ? [] : templeFootprintCells(temple));
 }
 
-function placeTemple(world: WorldApi, playerId: string, payload: unknown): void {
+function placeTemple(world: WorldApi, playerId: string, payload: unknown, replaceExisting = false): void {
   const cell = parseTemplePlacePayload(payload);
   if (cell === null) return;
-  if (temple !== null) {
+  if (temple !== null && !replaceExisting) {
     refuse(world, playerId, cell, TEMPLE_REFUSED_STANDING);
+    return;
+  }
+  if (temple !== null && temple.x === cell.x && temple.y === cell.y) {
+    broadcastState(world, playerId);
     return;
   }
   if (!isTempleSite(world, cell.x, cell.y)) {
@@ -66,14 +71,25 @@ function placeTemple(world: WorldApi, playerId: string, payload: unknown): void 
   }
 
   const door = templeDoorCell(cell);
-  if (!templeCanSettle(world, { x: cell.x, y: cell.y, doorX: door.x, doorY: door.y })) {
+  let canSettle: boolean;
+  reserveStructureGround(templeFootprintCells(cell));
+  try {
+    canSettle = templeCanSettle(world, { x: cell.x, y: cell.y, doorX: door.x, doorY: door.y });
+  } finally {
+    publishClaim();
+  }
+  if (!canSettle) {
     refuse(world, playerId, cell, TEMPLE_REFUSED_NO_SETTLERS);
     return;
   }
 
+  const previous = temple;
   temple = cell;
   publishClaim();
   broadcastState(world);
+  if (previous !== null) {
+    world.emitEvent('fallen', { x: previous.x, y: previous.y, cause: 'razed' });
+  }
   world.emitEvent('raised', { x: cell.x, y: cell.y });
 }
 
@@ -172,6 +188,7 @@ export const plugin: TerracePlugin = {
 
   messages: {
     [TEMPLE_PLACE_MESSAGE]: (world, player, payload) => placeTemple(world, player.id, payload),
+    [TEMPLE_REPLACE_MESSAGE]: (world, player, payload) => placeTemple(world, player.id, payload, true),
     [TEMPLE_REMOVE_MESSAGE]: (world) => removeTemple(world),
   },
 

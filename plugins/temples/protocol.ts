@@ -4,6 +4,8 @@ export const TEMPLE_STATE_MESSAGE = 'state';
 
 export const TEMPLE_PLACE_MESSAGE = 'place';
 
+export const TEMPLE_REPLACE_MESSAGE = 'replace';
+
 export const TEMPLE_REMOVE_MESSAGE = 'remove';
 
 export const TEMPLE_REFUSED_MESSAGE = 'refused';

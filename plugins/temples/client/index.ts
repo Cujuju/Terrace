@@ -13,6 +13,7 @@ import {
   TEMPLE_REFUSED_NO_SETTLERS,
   TEMPLE_REFUSED_STANDING,
   TEMPLE_REMOVE_MESSAGE,
+  TEMPLE_REPLACE_MESSAGE,
   TEMPLE_STATE_MESSAGE,
   TEMPLE_SURVEY_RADIUS_CELLS,
   parseTempleRefusalPayload,
@@ -32,7 +33,7 @@ const TEMPLE_TOOL_ID = 'place';
 const TEMPLE_TOOL_LABEL = 'Temple';
 
 const TEMPLE_TOOL_TITLE =
-  'Temple: place the settlers’ temple (Ctrl takes a standing one back down)';
+  'Temple: place the settlers’ temple (Ctrl-click to move it; tap Ctrl to take it down)';
 
 const PLACEMENT_BUTTON = 0;
 
@@ -46,8 +47,19 @@ let hoverCell: TempleCell | null = null;
 const RAZE_KEY = 'Control';
 
 let ctrlTapArmed = false;
+let ctrlTapStartedAt = 0;
+let ctrlHeld = false;
+
+const CTRL_TAP_MAX_MS = 250;
 
 let refusedCell: TempleCell | null = null;
+
+function updateControlModifier(event: Pick<KeyboardEvent, 'ctrlKey' | 'altKey' | 'shiftKey' | 'metaKey'>): void {
+  const held = event.ctrlKey && !event.altKey && !event.shiftKey && !event.metaKey;
+  if (held !== ctrlHeld) refusedCell = null;
+  ctrlHeld = held;
+}
+
 const [placementHint, setPlacementHint] = createSignal<string | null>(null);
 let cancelFeedbackExpiry: (() => void) | null = null;
 
@@ -56,7 +68,7 @@ const REFUSAL_VISIBLE_MS = 6000;
 const GROUND_HINT = 'The temple and its apron need flat, dry ground fully inside unlocked land.';
 
 const REFUSAL_HINTS: Readonly<Record<number, string>> = {
-  [TEMPLE_REFUSED_STANDING]: 'A temple is already standing in this world.',
+  [TEMPLE_REFUSED_STANDING]: 'A temple is already standing in this world. Ctrl-click to move it here, or tap Ctrl to take it down.',
   [TEMPLE_REFUSED_GROUND]: GROUND_HINT,
   [TEMPLE_REFUSED_NO_SETTLERS]:
     'Settlers need a clear home site they can reach from this temple. Clear room nearby, then try again.',
@@ -67,8 +79,8 @@ function resetPlacementFeedback(): void {
   cancelFeedbackExpiry = null;
   refusedCell = null;
   setPlacementHint(!toolHeld ? null : temple === null
-    ? 'Choose flat, dry, unlocked land with room for settlers to build nearby.'
-    : 'Click the temple or tap Ctrl to take it down.');
+    ? 'Choose flat, dry, unlocked land with room for settlers nearby. Ctrl-click moves an existing temple here.'
+    : 'Ctrl-click a new site to move the temple. Click the temple or tap Ctrl to take it down.');
 }
 
 function showPlacementRefusal(ctx: ClientPluginCtx, cell: TempleCell, reason: number): void {
@@ -87,7 +99,7 @@ let unsubscribeFrames: (() => void) | null = null;
 let unsubscribePress: (() => void) | null = null;
 let unsubscribeTerrain: (() => void) | null = null;
 let onPointerMove: ((event: PointerEvent) => void) | null = null;
-let windowListeners: Array<[string, EventListener]> = [];
+let windowListeners: Array<[string, EventListener, boolean?]> = [];
 
 function worldX(cell: number): number {
   return cell * CELL_WORLD_SIZE;
@@ -128,7 +140,7 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     return;
   }
 
-  if (temple !== null) {
+  if (temple !== null && !ctrlHeld) {
     const razing = isOnTemple(hoverCell);
     models.ghost.visible = razing && groundY !== null;
     if (models.ghost.visible && temple !== null && groundY !== null) {
@@ -152,17 +164,21 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
 function handlePress(ctx: ClientPluginCtx, event: PointerEvent): boolean {
   if (!toolHeld) return false;
   if (event.button !== PLACEMENT_BUTTON) return false;
+  ctrlTapArmed = false;
+  updateControlModifier(event);
 
   const cell = ctx.pickTerrainCell(event.clientX, event.clientY);
   if (cell === null) return true;
   hoverCell = cell;
   resetPlacementFeedback();
 
-  if (temple !== null) {
+  if (temple !== null && !ctrlHeld) {
     if (isOnTemple(cell)) ctx.send(TEMPLE_REMOVE_MESSAGE, {});
     return true;
   }
-  if (isGhostSite(ctx, cell)) ctx.send(TEMPLE_PLACE_MESSAGE, { x: cell.x, y: cell.y });
+  if (isGhostSite(ctx, cell)) {
+    ctx.send(ctrlHeld ? TEMPLE_REPLACE_MESSAGE : TEMPLE_PLACE_MESSAGE, { x: cell.x, y: cell.y });
+  }
   else showPlacementRefusal(ctx, cell, TEMPLE_REFUSED_GROUND);
   return true;
 }
@@ -170,14 +186,16 @@ function handlePress(ctx: ClientPluginCtx, event: PointerEvent): boolean {
 function armCtrlTap(event: KeyboardEvent): void {
   if (event.key !== RAZE_KEY || event.repeat) return;
   ctrlTapArmed =
-    !event.altKey && !event.shiftKey && !event.metaKey && !isTextEntry(event.target);
+    toolHeld && !event.altKey && !event.shiftKey && !event.metaKey && !isTextEntry(event.target);
+  ctrlTapStartedAt = event.timeStamp;
 }
 
 function fireCtrlTap(ctx: ClientPluginCtx, event: KeyboardEvent): void {
   if (event.key !== RAZE_KEY) return;
   const armed = ctrlTapArmed;
+  const elapsed = event.timeStamp - ctrlTapStartedAt;
   ctrlTapArmed = false;
-  if (!armed || !toolHeld || temple === null) return;
+  if (!armed || !toolHeld || elapsed < 0 || elapsed > CTRL_TAP_MAX_MS) return;
   ctx.send(TEMPLE_REMOVE_MESSAGE, {});
 }
 
@@ -248,6 +266,7 @@ export const clientPlugin: TerraceClientPlugin = {
       icon: TempleIcon,
       onSelected: (selected) => {
         toolHeld = selected;
+        ctrlTapArmed = false;
         resetPlacementFeedback();
         if (!selected) {
           hoverCell = null;
@@ -261,6 +280,8 @@ export const clientPlugin: TerraceClientPlugin = {
 
     onPointerMove = (event: PointerEvent): void => {
       if (!toolHeld) return;
+      ctrlTapArmed = false;
+      updateControlModifier(event);
       hoverCell = ctx.pickTerrainCell(event.clientX, event.clientY);
       if (refusedCell !== null &&
         (hoverCell?.x !== refusedCell.x || hoverCell?.y !== refusedCell.y)) refusedCell = null;
@@ -269,15 +290,19 @@ export const clientPlugin: TerraceClientPlugin = {
     windowListeners = [
       ['pointermove', onPointerMove as EventListener],
       ['keydown', ((event: KeyboardEvent) => {
+        updateControlModifier(event);
         if (event.key === RAZE_KEY) armCtrlTap(event);
         else ctrlTapArmed = false;
       }) as EventListener],
-      ['keyup', ((event: KeyboardEvent) => fireCtrlTap(ctx, event)) as EventListener],
-      ['pointerdown', (() => { ctrlTapArmed = false; }) as EventListener],
-      ['wheel', (() => { ctrlTapArmed = false; }) as EventListener],
-      ['blur', (() => { ctrlTapArmed = false; }) as EventListener],
+      ['keyup', ((event: KeyboardEvent) => {
+        updateControlModifier(event);
+        fireCtrlTap(ctx, event);
+      }) as EventListener],
+      ['pointerdown', (() => { ctrlTapArmed = false; }) as EventListener, true],
+      ['wheel', (() => { ctrlTapArmed = false; }) as EventListener, true],
+      ['blur', (() => { ctrlTapArmed = false; ctrlHeld = false; }) as EventListener],
     ];
-    for (const [type, handler] of windowListeners) window.addEventListener(type, handler);
+    for (const [type, handler, capture] of windowListeners) window.addEventListener(type, handler, capture);
 
     unsubscribePress = ctx.onCanvasPress((event) => handlePress(ctx, event));
     unsubscribeFrames = ctx.onFrame((dt) => renderFrame(ctx, dt));
@@ -297,7 +322,7 @@ export const clientPlugin: TerraceClientPlugin = {
     unsubscribePress = null;
     unsubscribeTerrain = null;
 
-    for (const [type, handler] of windowListeners) window.removeEventListener(type, handler);
+    for (const [type, handler, capture] of windowListeners) window.removeEventListener(type, handler, capture);
     windowListeners = [];
     onPointerMove = null;
 
@@ -311,5 +336,6 @@ export const clientPlugin: TerraceClientPlugin = {
     resetPlacementFeedback();
     crownSeconds = 0;
     ctrlTapArmed = false;
+    ctrlHeld = false;
   },
 };
