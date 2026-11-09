@@ -215,6 +215,14 @@ export function currentBalance(): number | null {
   return pool === null ? null : liveBalance(pool);
 }
 
+/** What the server will charge for a stroke, run on local ground; null where that ground is unknown. */
+function measuredCharge(pool: ManaPool, territory: LocalTerritory, intent: SculptIntent): number | null {
+  const measured = dryRunSculpt(territory, intent);
+  if (measured === null) return null;
+  return strokeChargeCost(measured.units, pool.manaPerBandCell, intent) +
+    chunkUnlockFee(openedChunksAt(territory, intent, measured.diff));
+}
+
 export function gateLocalSculpt(intent: SculptIntent, territory: LocalTerritory): boolean {
   const pool = manaPool();
   if (pool === null) return true;
@@ -226,7 +234,9 @@ export function gateLocalSculpt(intent: SculptIntent, territory: LocalTerritory)
     recordDenial(cost);
     return false;
   }
-  debitLocally(pool, cost);
-  inFlight.push({ seq: intent.seq ?? null, cost, debitedAtMs: nowMs() });
+  // Admit on the nominal, as the server does; debit what it will charge.
+  const charge = measuredCharge(pool, territory, intent) ?? cost;
+  debitLocally(pool, charge);
+  inFlight.push({ seq: intent.seq ?? null, cost: charge, debitedAtMs: nowMs() });
   return true;
 }
