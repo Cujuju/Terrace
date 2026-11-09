@@ -37,7 +37,7 @@ const AUTHORED_LENGTH_WORLD_UNITS: Readonly<Record<WildlifeSpecies, number>> = {
 /** Walkers have one body per species, so their scale needs no variant seed. */
 export function walkerModelScale(species: Exclude<WildlifeSpecies, 'whale'>): number {
   return (
-    drawnLengthWorldUnits(SPECIES_REAL_LENGTH_METRES[species], DEFAULT_SIZE_CLASS) /
+    drawnLengthWorldUnits(species, SPECIES_REAL_LENGTH_METRES[species], DEFAULT_SIZE_CLASS) /
     AUTHORED_LENGTH_WORLD_UNITS[species]
   );
 }
@@ -48,7 +48,7 @@ export function modelScaleFor(
   variantSeed: number,
 ): number {
   return (
-    drawnLengthWorldUnits(realLengthMetres(species, variantSeed), sizeClass) /
+    drawnLengthWorldUnits(species, realLengthMetres(species, variantSeed), sizeClass) /
     AUTHORED_LENGTH_WORLD_UNITS[species]
   );
 }

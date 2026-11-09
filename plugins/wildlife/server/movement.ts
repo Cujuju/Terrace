@@ -73,7 +73,7 @@ export function schoolLoosenessOf(entity: WildlifeEntity): number {
 }
 
 export function bodyLengthCellsOf(entity: WildlifeEntity): number {
-  return cellsAcross(drawnLengthWorldUnits(realLengthMetres(entity.species, entity.id), entity.size));
+  return cellsAcross(drawnLengthWorldUnits(entity.species, realLengthMetres(entity.species, entity.id), entity.size));
 }
 
 export function personalSpaceCellsOf(entity: WildlifeEntity): number {

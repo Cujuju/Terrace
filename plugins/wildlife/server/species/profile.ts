@@ -24,7 +24,7 @@ import {
 export type Habitat = 'land' | 'shallow' | 'deep';
 
 export function mediumBodyLengthCells(species: WildlifeHabitatSpecies): number {
-  return cellsAcross(drawnLengthWorldUnits(speciesRealLengthMetres(species), DEFAULT_SIZE_CLASS));
+  return cellsAcross(drawnLengthWorldUnits(species, speciesRealLengthMetres(species), DEFAULT_SIZE_CLASS));
 }
 
 export { DEEP_WATER_BANDS_BELOW_SEA, DEEP_WATER_MAX_HEIGHT };

@@ -24,7 +24,7 @@ export function hullHalfLengthCellsOf(
   species: WildlifeHabitatSpecies,
   size: WildlifeSizeClass,
 ): number {
-  return cellsAcross(drawnLengthWorldUnits(speciesRealLengthMetres(species), size)) / 2;
+  return cellsAcross(drawnLengthWorldUnits(species, speciesRealLengthMetres(species), size)) / 2;
 }
 
 export function hullHalfBeamCellsOf(

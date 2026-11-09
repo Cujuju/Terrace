@@ -101,13 +101,21 @@ export const WILDLIFE_MIN_LENGTH_OF_PEEP = 1 / 3;
 
 export const WILDLIFE_MIN_DRAWN_LENGTH_WORLD_UNITS = PEEP_HEIGHT_WORLD_UNITS * WILDLIFE_MIN_LENGTH_OF_PEEP;
 
+// Owner rule: anglerfish draw at twice their size from the real-length curve.
+const DEEPSEA_DRAW_SCALE = 2;
+
 // The floor lifts the medium body, and the classes scale from it, so a floored species keeps its size spread.
-export function drawnLengthWorldUnits(realMetres: number, sizeClass: WildlifeSizeClass): number {
+export function drawnLengthWorldUnits(
+  species: WildlifeSpecies,
+  realMetres: number,
+  sizeClass: WildlifeSizeClass,
+): number {
   const medium = Math.max(
     drawnWorldUnits(realMetres),
     WILDLIFE_MIN_DRAWN_LENGTH_WORLD_UNITS / SMALLEST_SIZE_MODEL_SCALE,
   );
-  return medium * WILDLIFE_SIZE_MODEL_SCALE[sizeClass];
+  const speciesScale = species === 'deepsea' ? DEEPSEA_DRAW_SCALE : 1;
+  return medium * WILDLIFE_SIZE_MODEL_SCALE[sizeClass] * speciesScale;
 }
 
 export {
