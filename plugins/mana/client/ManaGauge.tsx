@@ -137,6 +137,7 @@ const GAUGE_CSS = `
   animation-timing-function: linear;
   animation-iteration-count: infinite;
 }
+.mana-gauge__cost--unaffordable { color: ${DENIED_LIGHT}; }
 @keyframes mana-gauge-fall {
   0%   { transform: translateY(0); opacity: 0; }
   12%  { opacity: 1; }
@@ -236,8 +237,11 @@ export function ManaGauge(): JSX.Element {
     const opening = unlock > 0 ? `, including ${unlock} to open the frontier` : '';
     const denied = lastDeniedCost();
     const measured = quote().estimated ? ' (estimated)' : '';
-    const line = `Cost: one click of this brush${opening}${measured}`;
-    return denied === null ? line : `${line} — last denied cost ${formatSculptCost(denied)}`;
+    const requirement = quote().required > quote().cost
+      ? ` Needs ${quote().required} on hand to start; unused mana is kept.` : '';
+    const readiness = quote().affordable ? '' : ' Not enough mana.';
+    const line = `Costs ${quote().cost} per click${opening}${measured}.${requirement}${readiness}`;
+    return denied === null ? line : `${line} Last refused: needed ${denied}.`;
   };
 
   return (
@@ -247,7 +251,7 @@ export function ManaGauge(): JSX.Element {
       <div
         class="mana-gauge"
         role="img"
-        aria-label={`Mana ${Math.floor(displayed())} of ${manaPool()!.capacity}, refilling ${formatRegenRate(manaPool()!.regenPerSecond)}, current brush costs ${quote().cost}`}
+        aria-label={`Mana ${Math.floor(displayed())} of ${manaPool()!.capacity}, refilling ${formatRegenRate(manaPool()!.regenPerSecond)}, current brush costs ${quote().cost}${quote().required > quote().cost ? `, needs ${quote().required} to start` : ''}${quote().affordable ? '' : ', not enough mana'}`}
         title={`Mana: ${Math.floor(displayed())} of ${manaPool()!.capacity}`}
       >
         <style>{GAUGE_CSS}</style>
@@ -453,9 +457,13 @@ export function ManaGauge(): JSX.Element {
 }
           <span
             class="mana-gauge__cost"
+            classList={{ 'mana-gauge__cost--unaffordable': !quote().affordable }}
             title={costHint()}
           >
             {formatSculptCost(quote().cost)}
+            <Show when={quote().required > quote().cost}>
+              <span> · needs {quote().required}</span>
+            </Show>
           </span>
         </div>
       </div>

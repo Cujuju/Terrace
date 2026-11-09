@@ -149,6 +149,14 @@ function openedChunksAt(territory: LocalTerritory | null, intent: SculptIntent, 
   }, diff).length;
 }
 
+function admissionCost(pool: ManaPool, territory: LocalTerritory | null, intent: SculptIntent): number {
+  return sculptIntentCost(pool.manaPerBandCell, intent, openedChunksAt(territory, intent));
+}
+
+function admits(pool: ManaPool, required: number): boolean {
+  return pool.balance >= required;
+}
+
 function nominalAimIntent(tool: SculptTool): SculptIntent | null {
   const aim = hoverPick();
   return aim === null ? null : {
@@ -165,6 +173,8 @@ export interface BrushQuote {
   readonly cost: number;
   readonly estimated: boolean;
   readonly unlockCost: number;
+  readonly required: number;
+  readonly affordable: boolean;
 }
 
 /** The tools a hover alone fully describes; a carve and a drag need a grasp. */
@@ -178,7 +188,7 @@ function aimedIntent(tool: SculptTool): SculptIntent | null {
 
 export function currentBrushQuote(): BrushQuote {
   const pool = manaPool();
-  if (pool === null) return { cost: 0, estimated: false, unlockCost: 0 };
+  if (pool === null) return { cost: 0, estimated: false, unlockCost: 0, required: 0, affordable: true };
 
   const tool = brushTool();
   const intent = aimedIntent(tool);
@@ -189,10 +199,13 @@ export function currentBrushQuote(): BrushQuote {
   const unlock = unlockIntent === null ? 0
     : chunkUnlockFee(openedChunksAt(localTerritory, unlockIntent, measured?.diff));
   if (intent !== null && measured !== null) {
+    const required = admissionCost(pool, localTerritory, intent);
     return {
       cost: strokeChargeCost(measured.units, pool.manaPerBandCell, intent) + unlock,
       estimated: false,
       unlockCost: unlock,
+      required,
+      affordable: admits(pool, required),
     };
   }
 
@@ -203,7 +216,8 @@ export function currentBrushQuote(): BrushQuote {
     tool,
     carveDepthBands(),
   );
-  return { cost: nominal + unlock, estimated: true, unlockCost: unlock };
+  const required = intent === null ? nominal + unlock : admissionCost(pool, localTerritory, intent);
+  return { cost: nominal + unlock, estimated: true, unlockCost: unlock, required, affordable: admits(pool, required) };
 }
 
 export function currentBrushCost(): number {
@@ -227,15 +241,14 @@ export function gateLocalSculpt(intent: SculptIntent, territory: LocalTerritory)
   const pool = manaPool();
   if (pool === null) return true;
 
-  const opened = openedChunksAt(territory, intent);
-  const cost = sculptIntentCost(pool.manaPerBandCell, intent, opened);
+  const required = admissionCost(pool, territory, intent);
 
-  if (pool.balance < cost) {
-    recordDenial(cost);
+  if (!admits(pool, required)) {
+    recordDenial(required);
     return false;
   }
   // Admit on the nominal, as the server does; debit what it will charge.
-  const charge = measuredCharge(pool, territory, intent) ?? cost;
+  const charge = measuredCharge(pool, territory, intent) ?? required;
   debitLocally(pool, charge);
   inFlight.push({ seq: intent.seq ?? null, cost: charge, debitedAtMs: nowMs() });
   return true;
