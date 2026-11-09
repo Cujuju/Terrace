@@ -1,5 +1,5 @@
-import { sculptOptionsOf, strokeSweep } from '@terrace/shared';
-import type { SculptIntent, SculptProfile, SculptTool } from '@terrace/shared';
+import { chunksPerEdge, type SculptIntent } from '@terrace/shared';
+import { strokeUnlockChunks } from '../pricing.ts';
 import { MANA_BALANCE_MESSAGE } from '../protocol.ts';
 import { DEFAULT_WORLD_DIFFICULTY } from '../../../server/src/config.ts';
 import type { WorldApi } from '../../../server/src/plugins/types.ts';
@@ -28,14 +28,8 @@ export interface ManaPool {
  */
 export interface ManaQuote {
   readonly seq: number | null;
-  readonly x: number;
-  readonly y: number;
-  readonly fromX: number;
-  readonly fromY: number;
-  readonly radius: number;
-  readonly tool: SculptTool;
-  readonly profile: SculptProfile;
-  readonly openedChunks: readonly number[];
+  readonly bound: readonly number[];
+  readonly closed: readonly number[];
 }
 
 /**
@@ -44,36 +38,27 @@ export interface ManaQuote {
  */
 const SEQLESS_QUOTE = null;
 
-export function quoteFor(intent: SculptIntent, openedChunks: readonly number[]): ManaQuote {
-  const options = sculptOptionsOf(intent);
-  const sweep = strokeSweep(intent);
+export function quoteFor(
+  worldSize: number,
+  intent: SculptIntent,
+  isOpen: (cx: number, cy: number) => boolean,
+): ManaQuote {
+  const bound = strokeUnlockChunks(worldSize, intent);
+  const edge = chunksPerEdge(worldSize);
   return {
     seq: intent.seq ?? SEQLESS_QUOTE,
-    x: intent.x,
-    y: intent.y,
-    fromX: sweep.fromX,
-    fromY: sweep.fromY,
-    radius: intent.radius,
-    tool: options.tool,
-    profile: options.profile,
-    openedChunks,
+    bound,
+    closed: bound.filter((index) => !isOpen(index % edge, Math.floor(index / edge))),
   };
 }
 
-export function quotedOpenedChunksFor(pool: ManaPool, intent: SculptIntent): readonly number[] | null {
+export function quotedOpenedChunkCount(pool: ManaPool, intent: SculptIntent, touched: readonly number[]): number {
   const { quote } = pool;
-  if (quote === null || quote.seq !== (intent.seq ?? SEQLESS_QUOTE)) return null;
-  const options = sculptOptionsOf(intent);
-  const sweep = strokeSweep(intent);
-  const sameBrush =
-    quote.x === intent.x &&
-    quote.y === intent.y &&
-    quote.fromX === sweep.fromX &&
-    quote.fromY === sweep.fromY &&
-    quote.radius === intent.radius &&
-    quote.tool === options.tool &&
-    quote.profile === options.profile;
-  return sameBrush ? quote.openedChunks : null;
+  if (quote === null || quote.seq !== (intent.seq ?? SEQLESS_QUOTE)) return 0;
+  const bound = new Set(quote.bound);
+  if (touched.some((index) => !bound.has(index))) return 0;
+  const closed = new Set(quote.closed);
+  return touched.filter((index) => closed.has(index)).length;
 }
 
 function newPool(): ManaPool {

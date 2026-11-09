@@ -1,7 +1,6 @@
 import type { CellDiff, SculptIntent } from '@terrace/shared';
 import {
   chunkUnlockFee,
-  closedStrokeChunks,
   strokeUnlockChunks,
   sculptIntentCost,
   strokeChargeCost,
@@ -11,7 +10,6 @@ import type {
   AppliedIntentCtx,
   IntentCtx,
   IntentVerdict,
-  WorldApi,
 } from '../../../server/src/plugins/types.ts';
 import { manaPerBandCellFor } from './perks.ts';
 import {
@@ -20,7 +18,7 @@ import {
   noteSeq,
   poolFor,
   quoteFor,
-  quotedOpenedChunksFor,
+  quotedOpenedChunkCount,
   sendBalance,
 } from './pool.ts';
 
@@ -48,19 +46,14 @@ export function manaChargeFor(
   );
 }
 
-function openedChunksFor(world: WorldApi, token: string, intent: SculptIntent): number[] {
-  return closedStrokeChunks(world.worldSize, intent, (cx, cy) =>
-    world.isChunkUnlockedForToken(token, cx, cy),
-  );
-}
-
 export function checkAffordability(intent: SculptIntent, ctx: IntentCtx): IntentVerdict {
   const { world } = ctx;
   const pool = poolFor(ctx.player.id);
   pool.quote = null;
   noteSeq(pool, intent);
-  const opened = openedChunksFor(world, ctx.player.token, intent);
-  const cost = manaCostFor(ctx.player.id, intent, opened.length);
+  const quote = quoteFor(world.worldSize, intent, (cx, cy) =>
+    world.isChunkUnlockedForToken(ctx.player.token, cx, cy));
+  const cost = manaCostFor(ctx.player.id, intent, quote.closed.length);
 
   if (pool.balance < cost) {
     world.sendTo(ctx.player.id, MANA_DENIED_MESSAGE, {
@@ -73,7 +66,7 @@ export function checkAffordability(intent: SculptIntent, ctx: IntentCtx): Intent
 
   // Only a verdict that allowed leaves a quote, so nothing a refusal or a
   // fault aborts can strand one for a later stroke to spend.
-  pool.quote = quoteFor(intent, opened);
+  pool.quote = quote;
   return { kind: 'allow' };
 }
 
@@ -82,10 +75,8 @@ export function commitCharge(intent: SculptIntent, ctx: AppliedIntentCtx, diff: 
   const pool = poolFor(ctx.player.id);
   noteSeq(pool, intent);
 
-  const quoted = quotedOpenedChunksFor(pool, intent);
-  const pending = new Set(quoted ?? openedChunksFor(world, ctx.player.token, intent));
-  const opened = strokeUnlockChunks(world.worldSize, intent, diff)
-    .filter((index) => pending.has(index)).length;
+  // A faulted mana check is skipped by the host; without its receipt, no pre-effect unlock price is recoverable.
+  const opened = quotedOpenedChunkCount(pool, intent, strokeUnlockChunks(world.worldSize, intent, diff));
   pool.quote = null;
 
   // Charge follows effect: a stroke that moved nothing displaced nothing.
