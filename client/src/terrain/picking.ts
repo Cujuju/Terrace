@@ -117,8 +117,8 @@ export function pickTerrainInColumn(
   let hit: TerrainRayPick | null = null;
   marchCells(size, origin, direction, MARCH_CEILING_WORLD_Y, (i, j, from, to) => {
     const struck = terrainHitInCell(mirror, i, j, origin, direction, from, to, risers);
-    if (struck === null || struck.x !== x || struck.y !== y) return false;
-    hit = struck;
+    if (struck === null) return false;
+    if (struck.x === x && struck.y === y) hit = struck;
     return true;
   });
   if (hit !== null) return hit;
@@ -146,7 +146,7 @@ export function pickPointedCellByRay(
   const dy = direction.y;
 
   const ceilingY = MAX_TERRAIN_WORLD_Y + MAX_STANDING_WORLD_HEIGHT;
-  const chord = { fromX: 0, fromZ: 0, toX: 0, toZ: 0 };
+  const chord = { fromX: 0, fromY: 0, fromZ: 0, toX: 0, toY: 0, toZ: 0 };
 
   let found: PointedCellPick | null = null;
   marchCells(size, origin, direction, ceilingY, (i, j, tEnter, tExit) => {
@@ -157,8 +157,10 @@ export function pickPointedCellByRay(
 
     if (occupants.length > 0) {
       chord.fromX = origin.x + tEnter * direction.x;
+      chord.fromY = entryY;
       chord.fromZ = origin.z + tEnter * direction.z;
       chord.toX = origin.x + tExit * direction.x;
+      chord.toY = exitY;
       chord.toZ = origin.z + tExit * direction.z;
     }
 
@@ -169,22 +171,23 @@ export function pickPointedCellByRay(
       const insideOnEntry = entryY <= column.hiY && entryY >= column.loY;
       const faceY = insideOnEntry ? entryY : entryY > column.hiY ? column.hiY : column.loY;
       const t = insideOnEntry || dy === 0 ? tEnter : tEnter + (faceY - entryY) / dy;
-      found = { x: i, y: j, distance: t * dirLength };
-      return true;
+      const cell = column.cell ?? { x: i, y: j };
+      if (!Number.isInteger(cell.x) || !Number.isInteger(cell.y)
+        || cell.x < 0 || cell.y < 0 || cell.x >= size || cell.y >= size) continue;
+      const distance = t * dirLength;
+      if (found === null || distance < found.distance) found = { x: cell.x, y: cell.y, distance };
     }
 
     const terrain = terrainHitInCell(mirror, i, j, origin, direction, tEnter, tExit, risers);
-    if (terrain === null) return false;
-    found = {
-      x: terrain.x,
-      y: terrain.y,
-      distance: Math.hypot(
+    if (terrain !== null) {
+      const distance = Math.hypot(
         terrain.hitX - origin.x,
         terrain.hitY - origin.y,
         terrain.hitZ - origin.z,
-      ),
-    };
-    return true;
+      );
+      if (found === null || distance < found.distance) found = { x: terrain.x, y: terrain.y, distance };
+    }
+    return found !== null;
   });
   return found;
 }

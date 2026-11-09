@@ -17,7 +17,7 @@ import { placeName } from '../server/names.ts';
 import { SETTLER_DISTRICT_CELLS, settlementRace } from '../server/races.ts';
 import {
   CHRONICLE_CALAMITY_MIN_HOMES,
-  STRUCTURE_TIER_NAMES,
+  tierName,
   parseStructuresChanges,
 } from '../server/saga.ts';
 import {
@@ -123,8 +123,8 @@ describe('structures events', () => {
 
     const sagaTexts = texts().slice(1);
     expect(sagaTexts).toHaveLength(2);
-    expect(sagaTexts[0]).toContain(`world's first ${STRUCTURE_TIER_NAMES[1]}`);
-    expect(sagaTexts[1]).toContain(`world's first ${STRUCTURE_TIER_NAMES[2]}`);
+    expect(sagaTexts[0]).toContain(`world's first ${tierName(1)}`);
+    expect(sagaTexts[1]).toContain(`world's first ${tierName(2)}`);
 
     advanceDays(harness, 1);
     harness.host.notifyWorldEvent('structures:changes', {

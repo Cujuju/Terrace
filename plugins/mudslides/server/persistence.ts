@@ -60,6 +60,7 @@ function parseSlide(value: unknown): SerializedSlide | null {
     sculptTimerSeconds,
     headSteps,
     toeSteps,
+    toeCursor = 0,
     excavated,
     carried,
     gain,
@@ -70,6 +71,7 @@ function parseSlide(value: unknown): SerializedSlide | null {
   } = value as Record<string, unknown>;
 
   if (!Number.isInteger(id)) return null;
+  if (!Number.isInteger(toeCursor) || (toeCursor as number) < 0) return null;
   for (const integer of [headX, headY, x, y, nextX, nextY, headSteps, toeSteps, unmeasuredCells]) {
     if (!Number.isInteger(integer)) return null;
   }
@@ -102,6 +104,7 @@ function parseSlide(value: unknown): SerializedSlide | null {
     sculptTimerSeconds: sculptTimerSeconds as number,
     headSteps: headSteps as number,
     toeSteps: toeSteps as number,
+    toeCursor: toeCursor as number,
     excavated: excavated as number,
     carried: carried as number,
     gain: gain as number,

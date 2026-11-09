@@ -116,10 +116,26 @@ describe('ghost seqs — sent strokes that predict no-ops', () => {
     const { store } = createClient([chunkPayload(0, 0, 0)]);
     store.predict(raise(17), 0);
     expect(store.ghostSeqs()).toEqual([17]);
+    expect(store.nextExpiryAtMs()).toBe(PREDICTION_TTL_MS);
     store.expire(PREDICTION_TTL_MS - 1);
     expect(store.ghostSeqs()).toEqual([17]);
     store.expire(PREDICTION_TTL_MS);
     expect(store.ghostSeqs()).toEqual([]);
+    expect(store.nextExpiryAtMs()).toBeNull();
+  });
+
+  it('schedules the earlier of a ghost and a visible prediction, including after settlement', () => {
+    const { store } = createClient();
+    const noOp: SculptIntent = { ...raise(21), tool: 'smooth', dir: -1 };
+    store.predict(noOp, 10);
+    expect(store.ghostSeqs()).toEqual([21]);
+    store.predict(raise(22), 20);
+    expect(store.pendingCount()).toBe(1);
+    expect(store.nextExpiryAtMs()).toBe(10 + PREDICTION_TTL_MS);
+    store.resolveSeq(21);
+    expect(store.nextExpiryAtMs()).toBe(20 + PREDICTION_TTL_MS);
+    store.predict(noOp, 30);
+    expect(store.nextExpiryAtMs()).toBe(20 + PREDICTION_TTL_MS);
   });
 
   it('authoritative reconciliation prunes stale ghosts', () => {

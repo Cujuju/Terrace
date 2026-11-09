@@ -9,6 +9,7 @@ import {
 } from 'three';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
 import { SEA_SURFACE_WORLD_Y } from '../../../client/src/worldScale.ts';
+import { createPreloadAssets } from '../../../client/src/plugins/kit/preloadAssets.ts';
 import {
   assertAssetFits,
   loadRigAsset,
@@ -55,12 +56,24 @@ interface SkiffKit {
 }
 
 let kit: SkiffKit | null = null;
+const pendingAssets = createPreloadAssets<RigAsset>();
 
-export async function preloadSkiffModels(url: string): Promise<void> {
-  installSkiffKit(await loadRigAsset(url, null));
+export function preloadSkiffModels(url: string, signal: AbortSignal): Promise<void> {
+  return pendingAssets.load(signal, async () => {
+    const asset = await loadRigAsset(url, null);
+    try { inspectSkiffAsset(asset); return asset; }
+    catch (error) { asset.dispose(); throw error; }
+  });
 }
 
-export function installSkiffKit(asset: RigAsset): void {
+export function installSkiffForMount(signal: AbortSignal): void {
+  const asset = pendingAssets.take(signal);
+  if (asset === undefined) return;
+  try { installSkiffKit(asset); }
+  catch (error) { asset.dispose(); throw error; }
+}
+
+function inspectSkiffAsset(asset: RigAsset) {
   asset.scene.updateMatrixWorld(true);
 
   const waterline = asset.anchor('waterline');
@@ -92,7 +105,11 @@ export function installSkiffKit(asset: RigAsset): void {
   }
 
   assertAssetFits(asset, SKIFF_FOOTPRINT, SKIFF_FIT_TOLERANCE_WORLD_UNITS);
+  return { geometry, waterline };
+}
 
+export function installSkiffKit(asset: RigAsset): void {
+  const { geometry, waterline } = inspectSkiffAsset(asset);
   geometry.rotateY(SKIFF_FORWARD_AXIS_YAW_RADIANS);
   geometry.computeBoundingSphere();
   const sphere = geometry.boundingSphere;

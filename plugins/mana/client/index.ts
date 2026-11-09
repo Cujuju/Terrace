@@ -13,6 +13,8 @@ import {
   applyBalancePush,
   gateLocalSculpt,
   handleManaDenied,
+  invalidateHoverQuotes,
+  resetManaSession,
   setLocalTerritory,
 } from './state.ts';
 
@@ -24,6 +26,9 @@ export const clientPlugin: TerraceClientPlugin = {
   drawBudget: MANA_DRAW_OBJECTS,
 
   attach(ctx: ClientPluginCtx): void {
+    resetManaSession();
+    ctx.onWorldReset(resetManaSession);
+    ctx.onTerrainChanged(invalidateHoverQuotes);
     // The HUD quote prices the frontier under the aim, and has no intent to
     // read the reveal mask from; the gate still gets it per intent.
     setLocalTerritory(ctx);
@@ -40,5 +45,10 @@ export const clientPlugin: TerraceClientPlugin = {
     ctx.registerHudPanel(ManaGauge, { placement: 'bottom-right' });
 
     ctx.onLocalIntent((intent) => gateLocalSculpt(intent, ctx));
+  },
+
+  dispose(): void {
+    resetManaSession();
+    setLocalTerritory(null);
   },
 };

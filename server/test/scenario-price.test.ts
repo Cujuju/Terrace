@@ -21,7 +21,7 @@ import {
   plugin as manaPlugin,
   resetManaState,
 } from '../../plugins/mana/server/index.ts';
-import { plugin as revealPlugin } from '../../plugins/reveal/server/index.ts';
+import * as revealModule from '../../plugins/reveal/server/index.ts';
 import type { Player } from '../src/player.ts';
 import {
   entriesOfKind,
@@ -63,7 +63,8 @@ function frontierScenario(owned: readonly ChunkRef[] = HOME_CHUNK): Scenario {
     unlocked: EVERY_CHUNK,
     owned,
     players: [SCULPTOR],
-    plugins: [manaPlugin, revealPlugin],
+    plugins: [manaPlugin, revealModule.plugin],
+    pluginExports: { [revealModule.plugin.name]: revealModule },
   });
 }
 

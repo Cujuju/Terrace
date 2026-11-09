@@ -5,7 +5,8 @@ import {
   type MonsterKind,
   type YetiVariant,
 } from '../protocol.ts';
-import { newStillness } from '@terrace/shared';
+import { newStillness, type ClimbState } from '@terrace/shared';
+import { isPersistedClimb } from './persisted-climb.ts';
 import type { HabitatRegimeId } from './habitat.ts';
 import {
   type Monster,
@@ -15,7 +16,9 @@ import {
   restoreSummoning,
 } from './summoning.ts';
 
-export const MONSTERS_SLICE_VERSION = 3;
+export const MONSTERS_SLICE_VERSION = 4;
+
+export const MONSTERS_SLICE_V3_VERSION = 3;
 
 export const MONSTERS_SLICE_V2_VERSION = 2;
 
@@ -28,6 +31,7 @@ interface PersistedMonster {
   readonly y: number;
   readonly heading: number;
   readonly variant?: YetiVariant;
+  readonly climb?: ClimbState | null;
 }
 
 interface MonstersSlice {
@@ -67,13 +71,14 @@ export function saveMonsters(): MonstersSlice {
       x: monster.x,
       y: monster.y,
       heading: monster.heading,
+      climb: monster.climb === null ? null : structuredClone(monster.climb),
       ...(monster.variant === undefined ? {} : { variant: monster.variant }),
     })),
     cooldownSeconds: cooldowns,
   };
 }
 
-function parsePersistedMonster(raw: unknown): Monster | null {
+function parsePersistedMonster(raw: unknown, preservesClimb = false): Monster | null {
   if (typeof raw !== 'object' || raw === null) return null;
   const entry = raw as Partial<PersistedMonster>;
 
@@ -81,6 +86,7 @@ function parsePersistedMonster(raw: unknown): Monster | null {
   if (!isMonsterKind(entry.kind)) return null;
   if (!Number.isFinite(entry.x) || !Number.isFinite(entry.y)) return null;
   if (!Number.isFinite(entry.heading)) return null;
+  if (preservesClimb && (!isPersistedClimb(entry.climb) || (entry.kind !== 'yeti' && entry.climb !== null))) return null;
 
   const variant = yetiVariantOf(entry.kind, entry.variant);
 
@@ -90,7 +96,7 @@ function parsePersistedMonster(raw: unknown): Monster | null {
     x: entry.x as number,
     y: entry.y as number,
     heading: entry.heading as number,
-    climb: null,
+    climb: preservesClimb && entry.climb != null ? structuredClone(entry.climb) : null,
     idle: false,
     ...newStillness(entry.x as number, entry.y as number),
     ...(variant === undefined ? {} : { variant }),
@@ -136,28 +142,32 @@ function migrateLegacySlice(slice: Partial<LegacyMonstersSlice>): {
   return { monsters: monster === null ? [] : [monster], cooldowns };
 }
 
-export function loadMonsters(data: unknown): void {
+export function loadMonsters(data: unknown, fromVersion?: number): 'refuse' | undefined {
   let monsters: Monster[] = [];
   let cooldowns: Partial<Record<MonsterKind, number>> = {};
   let nextId = 0;
+  if (fromVersion === MONSTERS_SLICE_VERSION && (typeof data !== 'object' || data === null)) return 'refuse';
 
   if (typeof data === 'object' && data !== null) {
-    const version = (data as { version?: unknown }).version;
+    const version = (data as { version?: unknown }).version ?? fromVersion;
     const known =
       version === MONSTERS_SLICE_VERSION ||
+      version === MONSTERS_SLICE_V3_VERSION ||
       version === MONSTERS_SLICE_V2_VERSION ||
       version === MONSTERS_SLICE_LEGACY_VERSION;
 
-    if (version === MONSTERS_SLICE_VERSION || version === MONSTERS_SLICE_V2_VERSION) {
+    if (version === MONSTERS_SLICE_VERSION || version === MONSTERS_SLICE_V3_VERSION || version === MONSTERS_SLICE_V2_VERSION) {
       const slice = data as Partial<MonstersSlice>;
+      if (version === MONSTERS_SLICE_VERSION && !Array.isArray(slice.monsters)) return 'refuse';
       if (Array.isArray(slice.monsters)) {
         for (const raw of slice.monsters) {
-          const monster = parsePersistedMonster(raw);
+          const monster = parsePersistedMonster(raw, version === MONSTERS_SLICE_VERSION);
+          if (version === MONSTERS_SLICE_VERSION && monster === null) return 'refuse';
           if (monster !== null) monsters.push(monster);
         }
       }
       cooldowns =
-        version === MONSTERS_SLICE_VERSION
+        version !== MONSTERS_SLICE_V2_VERSION
           ? parseCooldowns(slice.cooldownSeconds)
           : migrateV2Cooldowns(
               (data as Partial<V2MonstersSlice>).cooldownSeconds as

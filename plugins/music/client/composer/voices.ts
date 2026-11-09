@@ -85,13 +85,27 @@ export function schedulePadChord(
   startTime: number,
   shape: PadShape,
 ): void {
-  const releaseStart = startTime + shape.holdSeconds;
-  const releaseEnd = releaseStart + shape.releaseSeconds;
+  const holdSeconds = Math.max(0, shape.holdSeconds);
+  const attackSeconds = Math.min(holdSeconds, Math.max(0, shape.attackSeconds));
+  const releaseSeconds = Math.max(0, shape.releaseSeconds);
+  const attackEnd = startTime + attackSeconds;
+  const releaseStart = startTime + holdSeconds;
+  const releaseEnd = releaseStart + releaseSeconds;
+  const voiceStart = Math.max(startTime, context.currentTime);
+  if (voiceStart >= releaseEnd) return;
+
+  const initialGain = voiceStart < attackEnd
+    ? ENVELOPE_PEAK_GAIN * (voiceStart - startTime) / attackSeconds
+    : voiceStart <= releaseStart
+      ? ENVELOPE_PEAK_GAIN
+      : ENVELOPE_PEAK_GAIN * (releaseEnd - voiceStart) / releaseSeconds;
 
   const applyEnvelope = (gain: GainNode): void => {
-    gain.gain.setValueAtTime(0, startTime);
-    gain.gain.linearRampToValueAtTime(ENVELOPE_PEAK_GAIN, startTime + shape.attackSeconds);
-    gain.gain.setValueAtTime(ENVELOPE_PEAK_GAIN, releaseStart);
+    gain.gain.setValueAtTime(initialGain, voiceStart);
+    if (voiceStart < attackEnd) gain.gain.linearRampToValueAtTime(ENVELOPE_PEAK_GAIN, attackEnd);
+    if (voiceStart < releaseStart && attackEnd < releaseStart) {
+      gain.gain.setValueAtTime(ENVELOPE_PEAK_GAIN, releaseStart);
+    }
     gain.gain.linearRampToValueAtTime(0, releaseEnd);
   };
 
@@ -104,11 +118,11 @@ export function schedulePadChord(
     for (let voice = 0; voice < PAD_VOICES_PER_TONE; voice += 1) {
       const oscillator = context.createOscillator();
       oscillator.type = PAD_WAVEFORM;
-      oscillator.frequency.setValueAtTime(midiToFrequency(note), startTime);
+      oscillator.frequency.setValueAtTime(midiToFrequency(note), voiceStart);
       const spread = voice - (PAD_VOICES_PER_TONE - 1) / 2;
-      oscillator.detune.setValueAtTime(spread * shape.detuneCents, startTime);
+      oscillator.detune.setValueAtTime(spread * shape.detuneCents, voiceStart);
       oscillator.connect(toneGain);
-      oscillator.start(startTime);
+      oscillator.start(voiceStart);
       oscillator.stop(releaseEnd + VOICE_STOP_MARGIN_SECONDS);
       sources.push(oscillator);
     }
@@ -118,10 +132,10 @@ export function schedulePadChord(
     shimmerGain.connect(shimmerDestination);
     const shimmer = context.createOscillator();
     shimmer.type = SHIMMER_WAVEFORM;
-    shimmer.frequency.setValueAtTime(midiToFrequency(note + SHIMMER_OCTAVE_SEMITONES), startTime);
-    shimmer.detune.setValueAtTime(SHIMMER_DETUNE_CENTS, startTime);
+    shimmer.frequency.setValueAtTime(midiToFrequency(note + SHIMMER_OCTAVE_SEMITONES), voiceStart);
+    shimmer.detune.setValueAtTime(SHIMMER_DETUNE_CENTS, voiceStart);
     shimmer.connect(shimmerGain);
-    shimmer.start(startTime);
+    shimmer.start(voiceStart);
     shimmer.stop(releaseEnd + VOICE_STOP_MARGIN_SECONDS);
     sources.push(shimmer);
     pool.adopt({ sources, others: [toneGain, shimmerGain] });
@@ -143,18 +157,26 @@ export function schedulePluck(
   shape: PluckShape,
 ): void {
   const endTime = startTime + shape.durationSeconds;
+  const voiceStart = Math.max(startTime, context.currentTime);
+  if (voiceStart >= endTime) return;
+  const attackEnd = Math.min(endTime, startTime + PLUCK_ATTACK_SECONDS);
+  const initialGain = voiceStart < attackEnd
+    ? shape.silentFloorGain + (velocity - shape.silentFloorGain) *
+      (voiceStart - startTime) / (attackEnd - startTime)
+    : velocity * Math.pow(shape.silentFloorGain / velocity,
+      (voiceStart - attackEnd) / (endTime - attackEnd));
 
   const noteGain = context.createGain();
-  noteGain.gain.setValueAtTime(shape.silentFloorGain, startTime);
-  noteGain.gain.linearRampToValueAtTime(velocity, startTime + PLUCK_ATTACK_SECONDS);
+  noteGain.gain.setValueAtTime(initialGain, voiceStart);
+  if (voiceStart < attackEnd) noteGain.gain.linearRampToValueAtTime(velocity, attackEnd);
   noteGain.gain.exponentialRampToValueAtTime(shape.silentFloorGain, endTime);
   noteGain.connect(destination);
 
   const oscillator = context.createOscillator();
   oscillator.type = PLUCK_WAVEFORM;
-  oscillator.frequency.setValueAtTime(midiToFrequency(note), startTime);
+  oscillator.frequency.setValueAtTime(midiToFrequency(note), voiceStart);
   oscillator.connect(noteGain);
-  oscillator.start(startTime);
+  oscillator.start(voiceStart);
   oscillator.stop(endTime + VOICE_STOP_MARGIN_SECONDS);
 
   pool.adopt({ sources: [oscillator], others: [noteGain] });

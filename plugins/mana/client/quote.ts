@@ -10,6 +10,7 @@ import {
   strokeReachBox,
   type SculptIntent,
   type CellDiff,
+  type Heightmap,
 } from '@terrace/shared';
 
 /** The ground the client knows, cell by cell. Null where no chunk has arrived. */
@@ -22,14 +23,33 @@ export interface LocalHeights {
 /** An applier reads one cell past everything it writes. */
 const SCRATCH_HALO_CELLS = 1;
 
-/**
- * The units a stroke would move, run on a copy of the ground it touches. Null
- * when any of that ground is unknown.
- */
-export function dryRunSculpt(
+export interface SculptSample {
+  readonly scratch: Heightmap;
+  readonly intent: SculptIntent;
+  readonly originX: number;
+  readonly originY: number;
+}
+
+export interface SculptMeasurement {
+  readonly units: number;
+  readonly diff: readonly CellDiff[];
+}
+
+export interface QuoteRequest {
+  readonly id: number;
+  readonly sample: SculptSample;
+}
+
+export interface QuoteReply {
+  readonly id: number;
+  readonly measurement: SculptMeasurement | null;
+}
+
+/** Copies every terrain column the stroke can read; null when any ground is unknown. */
+export function sampleSculpt(
   terrain: LocalHeights,
   intent: SculptIntent,
-): { readonly units: number; readonly diff: readonly CellDiff[] } | null {
+): SculptSample | null {
   const worldSize = terrain.worldSize();
   if (worldSize <= 0) return null;
 
@@ -54,14 +74,19 @@ export function dryRunSculpt(
     }
   }
 
-  const local: SculptIntent = {
+  return { scratch, originX, originY, intent: {
     ...intent,
     x: intent.x - originX,
     y: intent.y - originY,
     ...(intent.fromX !== undefined && intent.fromY !== undefined
       ? { fromX: intent.fromX - originX, fromY: intent.fromY - originY }
       : {}),
-  };
+  } };
+}
+
+export function measureSculpt(sample: SculptSample): SculptMeasurement {
+  const { scratch, intent: local, originX, originY } = sample;
+  const side = scratch.size;
   const reach = strokeReachBox(side, local);
   const measure = strokeSolidMeasure(sculptOptionsOf(local).tool);
   const before = snapshotSolidUnits(
@@ -84,6 +109,11 @@ export function dryRunSculpt(
     units: displacementOf(before, scratch, diff, measure),
     diff: diff.map((cell) => ({ ...cell, x: cell.x + originX, y: cell.y + originY })),
   };
+}
+
+export function dryRunSculpt(terrain: LocalHeights, intent: SculptIntent): SculptMeasurement | null {
+  const sample = sampleSculpt(terrain, intent);
+  return sample === null ? null : measureSculpt(sample);
 }
 
 export function dryRunDisplacement(terrain: LocalHeights, intent: SculptIntent): number | null {

@@ -21,20 +21,22 @@ export interface CameraBindings {
 
 function cameraVerb(
   button: MouseButtonName,
-  mods: ModifierState,
+  mods: ModifierState & { metaKey?: boolean },
 ): MOUSE | null {
   const eventButton = button === 'left' ? 0 : button === 'middle' ? 1 : 2;
+  // OrbitControls swaps ROTATE and PAN when any of these modifiers is held.
+  const swapsVerb = mods.shiftKey || mods.ctrlKey || mods.metaKey === true;
   switch (resolvePress(eventButton, mods)) {
     case 'orbit':
-      return MOUSE.ROTATE;
+      return swapsVerb ? MOUSE.PAN : MOUSE.ROTATE;
     case 'pan':
-      return MOUSE.PAN;
+      return swapsVerb ? MOUSE.ROTATE : MOUSE.PAN;
     default:
       return null;
   }
 }
 
-function applyBindings(controls: OrbitControls, mods: ModifierState): void {
+function applyBindings(controls: OrbitControls, mods: ModifierState & { metaKey?: boolean }): void {
   controls.mouseButtons = {
     LEFT: cameraVerb('left', mods),
     MIDDLE: cameraVerb('middle', mods),

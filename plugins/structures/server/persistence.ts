@@ -5,7 +5,7 @@ import {
   STRUCTURES_CAP,
   LEGACY_STRUCTURE_TIER_MAP,
 } from '../protocol.ts';
-import { buildingIdOf, buildingKindOf } from '../settlementRules.ts';
+import { buildingIdOf, buildingKindOf, tierOfKind } from '../settlementRules.ts';
 import { STRUCTURES_RNG_DEFAULT_SEED, type StructuresRng } from './rng.ts';
 import type { BoardCellRecord } from './growth-model.ts';
 
@@ -40,7 +40,7 @@ export function saveStructures(
   const stored: StoredLiveCell[] = [];
   for (const [key, record] of live) {
     const cell = cellOfKey(key);
-    const base = { x: cell.x, y: cell.y, age: record.age, tier: record.tier, building: buildingIdOf(record.kind) };
+    const base = { x: cell.x, y: cell.y, age: record.age, tier: tierOfKind(record.kind), building: buildingIdOf(record.kind) };
     stored.push(record.population === undefined ? base : { ...base, population: record.population });
   }
   return {
@@ -91,9 +91,12 @@ export function loadStructures(data: unknown): RestoredStructures {
       if (live.has(key)) continue;
       const known = beforeKinds || typeof building !== 'string' ? null : buildingKindOf(building);
       const kind = known ?? UNRESOLVED_KIND;
+      const resolvedTier = known === null ? tier : tierOfKind(known);
       live.set(
         key,
-        isNonNegativeInteger(population) ? { age, tier, kind, population } : { age, tier, kind },
+        isNonNegativeInteger(population)
+          ? { age, tier: resolvedTier, kind, population }
+          : { age, tier: resolvedTier, kind },
       );
     }
   }

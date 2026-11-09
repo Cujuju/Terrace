@@ -18,11 +18,15 @@ const MIX_ODD_MASK_B = 61;
 
 export interface Prng {
   next(): number;
+  skip(draws: number): void;
 }
 
 export function createPrng(seed: number): Prng {
   let state = Math.trunc(seed) >>> 0;
   return {
+    skip(draws: number): void {
+      state = (state + Math.imul(draws, STATE_INCREMENT)) >>> 0;
+    },
     next(): number {
       state = (state + STATE_INCREMENT) >>> 0;
       let mixed = state;

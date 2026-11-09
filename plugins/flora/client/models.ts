@@ -10,6 +10,7 @@ import {
   Vector3,
   type BufferAttribute,
   type BufferGeometry,
+  type Intersection,
   type Material,
 } from 'three';
 import { CELL_WORLD_SIZE, scaleToRealSize } from '@terrace/shared';
@@ -19,6 +20,7 @@ import {
   FLORA_TREE_SCALE_MAX,
   TREE_CLEARANCE_RADIUS_CELLS,
   treeKey,
+  treeCellOf,
   type FloraTreeKind,
   type TreeCell,
 } from '../protocol.ts';
@@ -94,6 +96,7 @@ export interface TreePlacement {
 
 export interface FloraModels {
   readonly root: Group;
+  cellOfHit(hit: Intersection): TreeCell | null;
   apply(placements: readonly TreePlacement[]): void;
   applyDelta(sprouted: readonly TreePlacement[], felled: readonly TreeCell[]): void;
   dispose(): void;
@@ -270,6 +273,16 @@ export function createFloraModels(): FloraModels {
 
   return {
     root,
+
+    cellOfHit(hit: Intersection): TreeCell | null {
+      if (hit.instanceId === undefined || !Number.isInteger(hit.instanceId)) return null;
+      const cells = hit.object === trunks ? cellOfTrunk
+        : hit.object === conifers ? cellOfKindSlot.conifer
+        : hit.object === pines ? cellOfKindSlot.pine
+        : hit.object === broadleaves ? cellOfKindSlot.broadleaf : null;
+      const key = cells?.[hit.instanceId];
+      return key === undefined ? null : treeCellOf(key);
+    },
 
     apply(placements: readonly TreePlacement[]): void {
       trunkOfCell.clear();

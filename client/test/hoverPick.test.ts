@@ -151,6 +151,35 @@ const bandY = (bands: number): number => bands * BAND_HEIGHT * HEIGHT_WORLD_SCAL
 const cellW = (cells: number): number => cells * CELL_WORLD_SIZE;
 
 describe('hoverTarget pins the cell and re-derives the pick', () => {
+  it('does not sculpt a press reserved by logical tool input', () => {
+    const mirror = flatWorld(() => 0);
+    const { fire, sent, dispose } = driveInput(mirror,
+      { x: cellW(30), y: bandY(20), z: cellW(30) },
+      { x: cellW(30), y: 0, z: cellW(30) });
+    try {
+      fire('pointerdown', { defaultPrevented: true });
+      fire('pointerup', {});
+      expect(sent).toEqual([]);
+    } finally { dispose(); }
+  });
+
+  it('releases a cached hover behind newly raised foreground terrain (#349)', () => {
+    const mirror = flatWorld(() => bandLevelHeight(1));
+    const origin = { x: cellW(1), y: bandY(12), z: cellW(8) };
+    const { input, dispose } = driveInput(mirror, origin, { x: origin.x + 1, y: origin.y - 0.3, z: origin.z });
+    try {
+      const before = input.hoverTarget()!;
+      expect(before.x).toBeGreaterThan(8);
+      for (let x = 4; x <= 8; x++) for (let y = 6; y <= 10; y++) {
+        setColumn(mirror.map, x, y, [{ floorBand: BEDROCK_BAND, ceiling: bandLevelHeight(20) }]);
+      }
+      const after = input.hoverTarget()!;
+      expect(after.x).toBe(4);
+      expect(after.y).toBe(8);
+      expect(pickTerrainInColumn(mirror, before.x, before.y, origin, { x: 1, y: -0.3, z: 0 })).toBeNull();
+    } finally { dispose(); }
+  });
+
   it('keeps the aimed cell when the ground under it is RAISED, and follows its new surface', () => {
     const mirror = flatWorld(() => 0);
     const target = { x: cellW(30), y: 0, z: cellW(30) };
@@ -485,6 +514,26 @@ describe('a held stroke with a still pointer keeps its press-time cell (#WALK)',
   const HOLD_REPEATS = 8;
   const EYE_DISTANCE_CELLS = 12;
   const DEGREES_TO_RADIANS = Math.PI / 180;
+
+  it('keeps its held stamp anchor when a terrain repick changes visible hover', () => {
+    vi.useFakeTimers();
+    setBrushTool('stamp');
+    setBrushRadius(1);
+    const mirror = flatWorld(() => bandLevelHeight(1));
+    const origin = { x: cellW(1), y: bandY(12), z: cellW(8) };
+    const { input, sent, fire, dispose } = driveInput(mirror, origin, { x: origin.x + 1, y: origin.y - 0.3, z: origin.z });
+    try {
+      fire('pointerdown', {});
+      const anchor = { x: sent[0]!.x, y: sent[0]!.y };
+      for (let x = 4; x <= 8; x++) for (let y = 6; y <= 10; y++) {
+        setColumn(mirror.map, x, y, [{ floorBand: BEDROCK_BAND, ceiling: bandLevelHeight(20) }]);
+      }
+      expect(input.hoverTarget()!.x).toBe(4);
+      vi.advanceTimersByTime(repeatDelayMs(0));
+      expect(sent).toHaveLength(2);
+      expect({ x: sent[1]!.x, y: sent[1]!.y }).toEqual(anchor);
+    } finally { dispose(); }
+  });
 
   const raiseHeld = (elevationDegrees: number): SculptIntent[] => {
     const mirror = flatWorld(() => 0);

@@ -9,6 +9,7 @@ import { CELL_WORLD_SIZE } from '@terrace/shared';
 import {
   CYCLONE_ALL_MESSAGE,
   CYCLONE_PLUGIN_NAME,
+  CYCLONE_EYE_RADIUS_FRACTION,
   parseAllPayload,
   MAX_ACTIVE_CYCLONES,
   type CycloneState,
@@ -103,6 +104,7 @@ function shadeDiscs(): readonly GroundShadeDisc[] {
     filled.z = centre.y * CELL_WORLD_SIZE;
     filled.y = CYCLONE_TOP_WORLD_Y;
     filled.radius = storm.radius * CELL_WORLD_SIZE;
+    filled.eyeRadius = filled.radius * CYCLONE_EYE_RADIUS_FRACTION;
     filled.darkness = CYCLONE_SHADE_DARKNESS * storm.intensity;
     filled.inner = CYCLONE_SHADE_CORE_FRACTION;
     shade.push(filled);

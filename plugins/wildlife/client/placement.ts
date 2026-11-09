@@ -7,9 +7,13 @@ import {
 import { SEA_SURFACE_WORLD_Y } from '../../../client/src/worldScale.ts';
 import {
   WILDLIFE_SIZE_MODEL_SCALE,
+  WHALE_BODIES,
+  whaleBodyOf,
+  type WhaleBody,
   type WildlifeSizeClass,
   type WildlifeSpecies,
 } from '../protocol.ts';
+import { SHARK_AUTHORED_BOUNDS, WHALE_AUTHORED_BOUNDS, SWIM_WATER_MARGIN_WORLD_UNITS } from '../swimmerBounds.ts';
 import { FISH_ENVELOPE } from './species/fish.ts';
 import { RAY_ENVELOPE } from './species/ray.ts';
 import { SHARK_ENVELOPE } from './species/shark.ts';
@@ -26,13 +30,11 @@ import { DEEPSEA_ENVELOPE } from './species/deepsea.ts';
 import { WHALE_ENVELOPE } from './whaleSpecies.ts';
 import { BIRD_ENVELOPE } from './species/bird.ts';
 
-const WATER_MARGIN_WORLD_UNITS = 0.12;
-
 const CLEARANCE_SIZE_CLASS: WildlifeSizeClass = 'medium';
 const CLEARANCE_MODEL_SCALE = WILDLIFE_SIZE_MODEL_SCALE[CLEARANCE_SIZE_CLASS];
 
 function clearanceFor(halfExtentAtScaleOne: number): number {
-  return halfExtentAtScaleOne * CLEARANCE_MODEL_SCALE + WATER_MARGIN_WORLD_UNITS;
+  return halfExtentAtScaleOne * CLEARANCE_MODEL_SCALE + SWIM_WATER_MARGIN_WORLD_UNITS;
 }
 
 export { SEA_SURFACE_WORLD_Y };
@@ -43,6 +45,7 @@ export interface SwimProfile {
   readonly minSubmergence: number;
   readonly halfLength: number;
   readonly halfWidth: number;
+  readonly bodyHeight?: number;
 }
 
 export const SWIM_PROFILES: Readonly<Record<WildlifeSpecies, SwimProfile | null>> = {
@@ -57,8 +60,8 @@ export const SWIM_PROFILES: Readonly<Record<WildlifeSpecies, SwimProfile | null>
     depthFraction: 0.5,
     minClearance: 0.7,
     minSubmergence: 0.7,
-    halfLength: 2.53,
-    halfWidth: 0.5,
+    halfLength: Math.max(WHALE_AUTHORED_BOUNDS.humpback.noseX, -WHALE_AUTHORED_BOUNDS.humpback.tailX),
+    halfWidth: Math.max(...WHALE_BODIES.map((body) => WHALE_AUTHORED_BOUNDS[body].halfWidth)),
   },
   deepsea: {
     depthFraction: 0.88,
@@ -82,8 +85,9 @@ export const SWIM_PROFILES: Readonly<Record<WildlifeSpecies, SwimProfile | null>
     depthFraction: 0.4,
     minClearance: clearanceFor(-SHARK_ENVELOPE.bellyY),
     minSubmergence: clearanceFor(SHARK_ENVELOPE.crownY),
-    halfLength: SHARK_ENVELOPE.halfLength,
+    halfLength: Math.max(SHARK_AUTHORED_BOUNDS.noseX, -SHARK_AUTHORED_BOUNDS.tailX),
     halfWidth: SHARK_ENVELOPE.halfWidth,
+    bodyHeight: SHARK_AUTHORED_BOUNDS.crownY - SHARK_AUTHORED_BOUNDS.bellyY,
   },
   eel: {
     depthFraction: 0.8,
@@ -101,6 +105,14 @@ export const SWIM_PROFILES: Readonly<Record<WildlifeSpecies, SwimProfile | null>
   },
   bird: null,
 };
+
+const WHALE_SWIM_PROFILES = Object.fromEntries(WHALE_BODIES.map((body) => [body, {
+  ...SWIM_PROFILES.whale!, halfWidth: WHALE_AUTHORED_BOUNDS[body].halfWidth,
+}])) as Readonly<Record<WhaleBody, SwimProfile>>;
+
+export function swimProfileOf(species: WildlifeSpecies, variantSeed: number): SwimProfile | null {
+  return species === 'whale' ? WHALE_SWIM_PROFILES[whaleBodyOf(variantSeed)] : SWIM_PROFILES[species];
+}
 
 export const MAX_TERRAIN_WORLD_Y = MAX_RELIEF_WORLD_UNITS;
 
@@ -219,6 +231,7 @@ export function swimmerSeabedY(
     if (support === null || support > SEA_SURFACE_WORLD_Y) return null;
     seabed = Math.max(seabed, support);
   }
+  if (profile.bodyHeight !== undefined && SEA_SURFACE_WORLD_Y - seabed < profile.bodyHeight * modelScale) return null;
   return seabed;
 }
 
@@ -234,7 +247,7 @@ export function creatureWorldY(
   if (altitude !== null) return altitude;
 
   const surfaceY = terrainY ?? UNKNOWN_TERRAIN_WORLD_Y;
-  const profile = SWIM_PROFILES[species];
+  const profile = swimProfileOf(species, variantSeed);
   return profile === null
     ? followGroundY(previousY, surfaceY, dt)
     : swimmerFrameY(previousY, surfaceY, profile, modelScaleFor(species, sizeClass, variantSeed), dt);

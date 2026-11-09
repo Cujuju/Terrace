@@ -37,10 +37,10 @@ import type { World } from '../../../server/src/world/world.ts';
 import { RIVER_RECOMPUTE_INTERVAL_MS } from '../../../server/src/world/world.ts';
 import {
   RecordingSink,
-  asLoadedPlugin,
+  asLoadedPlugin as loadedPlugin,
   worldWithUnlockedChunks,
 } from '../../../server/test/support/harness.ts';
-import { plugin as revealPlugin } from '../../reveal/server/index.ts';
+import * as revealModule from '../../reveal/server/index.ts';
 import { CHUNK_UNLOCK_MANA, chunkUnlockFee, displacementManaCost, sculptManaCost } from '../pricing.ts';
 import { MANA_PLUGIN_NAME } from '../protocol.ts';
 import {
@@ -78,6 +78,12 @@ import {
   setManaPerk,
   spendMana,
 } from '../server/index.ts';
+
+const revealPlugin = revealModule.plugin;
+
+function asLoadedPlugin(plugin: TerracePlugin) {
+  return { ...loadedPlugin(plugin), exports: plugin === revealPlugin ? revealModule : {} };
+}
 
 const ALL_REVEALED = { worldSize: () => 0, revealedAt: () => true, terrainSpansAt: () => null, terrainSampleAt: () => UNKNOWN_HEIGHT };
 
@@ -223,6 +229,7 @@ describe('mana plugin', () => {
       capacity: MANA_CAPACITY,
       manaPerBandCell: MANA_PER_BAND_CELL,
       regenPerSecond: SUITE_REGEN_PER_SECOND,
+      unlockPolicy: 'reveal' as const,
     });
   });
 
@@ -542,6 +549,7 @@ describe('mana regen configuration', () => {
     expect(manaRegenPerSecond()).toBe(SUITE_REGEN_PER_SECOND);
     expect(harness.sink.ofType(`mana:${MANA_BALANCE_MESSAGE}`)[0].payload).toMatchObject({
       regenPerSecond: SUITE_REGEN_PER_SECOND,
+      unlockPolicy: 'reveal' as const,
     });
   });
 
@@ -829,6 +837,7 @@ describe('client local intent gate', () => {
       capacity: MANA_CAPACITY,
       manaPerBandCell: MANA_PER_BAND_CELL,
       regenPerSecond: SUITE_REGEN_PER_SECOND,
+      unlockPolicy: 'reveal' as const,
     });
     expect(gateLocalSculpt(POINT_INTENT, ALL_REVEALED)).toBe(true);
     expect(manaPool()?.balance).toBe(GATE_FIXTURE_BALANCE - POINT_COST);
@@ -855,6 +864,7 @@ describe('client local intent gate', () => {
       capacity: MANA_CAPACITY,
       manaPerBandCell: MANA_PER_BAND_CELL,
       regenPerSecond: SUITE_REGEN_PER_SECOND,
+      unlockPolicy: 'reveal' as const,
     };
     setManaPool({ balance: GATE_FIXTURE_BALANCE, ...rate });
     expect(gateLocalSculpt({ ...POINT_INTENT, seq: 1 }, ALL_REVEALED)).toBe(true);
@@ -881,6 +891,7 @@ describe('client local intent gate', () => {
       capacity: MANA_CAPACITY,
       manaPerBandCell: MANA_PER_BAND_CELL,
       regenPerSecond: SUITE_REGEN_PER_SECOND,
+      unlockPolicy: 'reveal' as const,
     };
     const now = vi.spyOn(performance, 'now').mockReturnValue(0);
     setManaPool({ balance: POINT_COST - 1, ...rate });
@@ -907,6 +918,7 @@ describe('client local intent gate', () => {
       capacity: MANA_CAPACITY,
       manaPerBandCell: MANA_PER_BAND_CELL,
       regenPerSecond: SUITE_REGEN_PER_SECOND,
+      unlockPolicy: 'reveal' as const,
     });
 
     now.mockReturnValue(HALF_SECOND_MS);
@@ -927,6 +939,7 @@ describe('client local intent gate', () => {
       capacity: MANA_CAPACITY,
       manaPerBandCell: MANA_PER_BAND_CELL,
       regenPerSecond: SUITE_REGEN_PER_SECOND,
+      unlockPolicy: 'reveal' as const,
     };
 
     setManaPool(fullPool);
@@ -1327,6 +1340,7 @@ describe('gate / server parity — the same intent, the same fee', () => {
       capacity: MANA_CAPACITY,
       manaPerBandCell: MANA_PER_BAND_CELL,
       regenPerSecond: SUITE_REGEN_PER_SECOND,
+      unlockPolicy: 'reveal' as const,
     });
     expect(gateLocalSculpt(plateau, ALL_REVEALED)).toBe(false);
     expect(
@@ -1342,6 +1356,7 @@ describe('gate / server parity — the same intent, the same fee', () => {
       capacity: MANA_CAPACITY,
       manaPerBandCell: MANA_PER_BAND_CELL,
       regenPerSecond: SUITE_REGEN_PER_SECOND,
+      unlockPolicy: 'reveal' as const,
     });
     expect(gateLocalSculpt(plateau, ALL_REVEALED)).toBe(true);
   });
@@ -1433,6 +1448,7 @@ describe('the frontier price is quoted once, at verdict time', () => {
       capacity: MANA_CAPACITY,
       manaPerBandCell: manaPerBandCellFor(PLAYER.id),
       regenPerSecond: SUITE_REGEN_PER_SECOND,
+      unlockPolicy: 'reveal' as const,
     });
     expect(gateLocalSculpt(FRONTIER_INTENT, frontierTerritory(harness.world))).toBe(true);
     const clientFee = MANA_CAPACITY - (manaPool()?.balance ?? 0);

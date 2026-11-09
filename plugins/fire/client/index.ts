@@ -43,22 +43,11 @@ let marker: TorchMarker | null = null;
 
 let torchHeld = false;
 
-let torchCell: { x: number; y: number } | null = null;
-
-let pointerX = 0;
-let pointerY = 0;
-let pointerMoved = false;
-
-let pickedAtX = 0;
-let pickedAtY = 0;
-
-const TORCH_REPICK_TRAVEL_PX = 4;
-
-let onPointerMove: ((event: PointerEvent) => void) | null = null;
-let unsubscribePress: (() => void) | null = null;
+let toolInput: ReturnType<ClientPluginCtx['bindToolInput']> | null = null;
 let unsubscribeMessages: Array<() => void> = [];
 let unsubscribeFrames: (() => void) | null = null;
 let unsubscribeTerrain: (() => void) | null = null;
+let unsubscribeReset: (() => void) | null = null;
 
 const fires = new Map<number, LocalFire>();
 
@@ -173,17 +162,18 @@ const TORCH_TOOL_ID = 'ignite';
 const TORCH_TOOL_LABEL = 'Pyro';
 const TORCH_TOOL_TITLE = 'Pyro: set unlocked growth alight';
 
-const TORCH_BUTTON = 0;
-
-function handlePress(ctx: ClientPluginCtx, event: PointerEvent): boolean {
-  if (!torchHeld) return false;
-  if (event.button !== TORCH_BUTTON) return false;
-
-  const cell = ctx.pickWorldCell(event.clientX, event.clientY);
-  if (cell === null) return true;
-
-  ctx.send(FIRE_IGNITE_MESSAGE, { x: cell.x, y: cell.y });
-  return true;
+function clearWorld(): void {
+  fires.clear();
+  entityFires.clear();
+  instances.length = 0;
+  nextDrawKey = 1;
+  pendingGround = 0;
+  elapsedSeconds = 0;
+  flames?.apply(instances);
+  smoke?.clear();
+  scar?.clear();
+  lights?.darken();
+  marker?.hide();
 }
 
 const FLAME_DRAW_OBJECTS = 2;
@@ -202,10 +192,7 @@ export const clientPlugin: TerraceClientPlugin = {
     TORCH_MARKER_DRAW_OBJECTS,
 
   attach(ctx: ClientPluginCtx): void {
-    fires.clear();
-    entityFires.clear();
-    pendingGround = 0;
-    elapsedSeconds = 0;
+    clearWorld();
 
     flames = SHIPPED_FLAMES();
     ctx.layer.add(flames.root);
@@ -232,21 +219,19 @@ export const clientPlugin: TerraceClientPlugin = {
       onSelected: (selected) => {
         torchHeld = selected;
         if (!selected) {
-          torchCell = null;
           marker?.hide();
         }
       },
     });
 
-    onPointerMove = (event: PointerEvent): void => {
-      if (!torchHeld) return;
-      pointerX = event.clientX;
-      pointerY = event.clientY;
-      pointerMoved = true;
-    };
-    window.addEventListener('pointermove', onPointerMove);
-
-    unsubscribePress = ctx.onCanvasPress((event) => handlePress(ctx, event));
+    toolInput = ctx.bindToolInput({
+      active: () => torchHeld,
+      pick: 'world',
+      onPress: (cell) => {
+        if (cell !== null) ctx.send(FIRE_IGNITE_MESSAGE, { x: cell.x, y: cell.y });
+      },
+    });
+    unsubscribeReset = ctx.onWorldReset(clearWorld);
 
     unsubscribeMessages = [
       ctx.onMessage(FIRE_FIRES_MESSAGE, (payload) => {
@@ -280,6 +265,7 @@ export const clientPlugin: TerraceClientPlugin = {
 
     unsubscribeTerrain = ctx.onTerrainChanged(() => {
       if (pendingGround > 0) resolveGround(ctx);
+      if (scarGroundAt !== null) scar?.refreshGround(scarGroundAt);
     });
 
     unsubscribeFrames = ctx.onFrame((dt) => {
@@ -288,20 +274,7 @@ export const clientPlugin: TerraceClientPlugin = {
 
       elapsedSeconds += dt;
 
-      if (torchHeld && pointerMoved) {
-        const travelX = pointerX - pickedAtX;
-        const travelY = pointerY - pickedAtY;
-        const farEnough =
-          travelX * travelX + travelY * travelY >=
-          TORCH_REPICK_TRAVEL_PX * TORCH_REPICK_TRAVEL_PX;
-        if (torchCell === null || farEnough) {
-          pointerMoved = false;
-          pickedAtX = pointerX;
-          pickedAtY = pointerY;
-          torchCell = ctx.pickWorldCell(pointerX, pointerY);
-        }
-      }
-
+      const torchCell = toolInput?.aim() ?? null;
       if (torchHeld && torchCell !== null && marker !== null) {
         const groundY = ctx.drawnGroundYAt(torchCell.x, torchCell.y);
         if (groundY === null) marker.hide();
@@ -348,20 +321,12 @@ export const clientPlugin: TerraceClientPlugin = {
     unsubscribeTerrain = null;
     unsubscribeFrames?.();
     unsubscribeFrames = null;
-    unsubscribePress?.();
-    unsubscribePress = null;
-    if (onPointerMove !== null) window.removeEventListener('pointermove', onPointerMove);
-    onPointerMove = null;
+    unsubscribeReset?.();
+    unsubscribeReset = null;
+    toolInput?.dispose();
+    toolInput = null;
     torchHeld = false;
-    torchCell = null;
-    pointerMoved = false;
-    pickedAtX = 0;
-    pickedAtY = 0;
-
-    fires.clear();
-    entityFires.clear();
-    instances.length = 0;
-    pendingGround = 0;
+    clearWorld();
 
     flames?.dispose();
     flames = null;

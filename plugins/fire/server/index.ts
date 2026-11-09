@@ -1,4 +1,4 @@
-import { CHUNK_SIZE, type CellDiff } from '@terrace/shared';
+import { CHUNK_SIZE, cellCentre, type CellDiff } from '@terrace/shared';
 import type {
   PersistenceSlice,
   Player,
@@ -28,6 +28,7 @@ import {
 } from '../protocol.ts';
 import { Blaze, type FuelCell } from './blaze.ts';
 import { EntityBlaze } from './entityBlaze.ts';
+import { FireEpisode } from './episode.ts';
 import { clearEntityFuelRegistry, entityFuelAt, entityFuelSource } from './entityFuel.ts';
 import { clearFuelRegistry, fuelAt, fuelSources } from './fuel.ts';
 import { fireRandom, happensWithin } from './rng.ts';
@@ -58,8 +59,8 @@ let lastKeepaliveSeconds = 0;
 
 let lastEntityBroadcastSeconds = 0;
 
-let episodeConsumed = 0;
-let episodeOrigin: FuelCell | null = null;
+const episode = new FireEpisode();
+let restoredEpisode: unknown = null;
 
 const MAX_SPREAD_DEBT_SECONDS = SPREAD_INTERVAL_SECONDS * 2;
 
@@ -174,7 +175,10 @@ function announceIgnitions(world: WorldApi): void {
   if (cells.length === 0 && entities.length === 0) return;
 
   const ignited: number[] = [];
-  for (const at of cells) ignited.push(at.x, at.y);
+  for (const cell of cells) {
+    const at = cellCentre(cell);
+    ignited.push(at.x, at.y);
+  }
   for (const at of entities) ignited.push(at.x, at.y);
   world.emitEvent(FIRE_IGNITED_EVENT, { ignited });
 }
@@ -223,7 +227,7 @@ export function extinguishAt(cells: Iterable<{ readonly x: number; readonly y: n
   if (stopped.length === 0) return 0;
 
   broadcastChanges(world, [], stopped);
-  if (blaze.size === 0) endEpisode(world);
+  endEpisode(world);
   return stopped.length;
 }
 
@@ -240,13 +244,9 @@ export {
 } from './entityFuel.ts';
 
 function endEpisode(world: WorldApi): void {
-  const origin = episodeOrigin;
-  const consumed = episodeConsumed;
-  episodeOrigin = null;
-  episodeConsumed = 0;
-  if (origin === null || consumed === 0) return;
-
-  world.emitEvent(FIRE_BURNED_EVENT, { consumed, x: origin.x, y: origin.y });
+  if (blaze.size > 0 || entityBlaze.size > 0) return;
+  const ended = episode.finish();
+  if (ended !== null) world.emitEvent(FIRE_BURNED_EVENT, ended);
 }
 
 export const RAIN_SUPPRESSION_RATE_PER_SECOND = 0.25;
@@ -296,8 +296,19 @@ function onIgniteRequest(world: WorldApi, player: Player, payload: unknown): voi
     blaze.size < FIRE_CELL_CAP &&
     fuelAt(request.x, request.y) !== null;
 
-  const standing = entityFuelAt(request.x, request.y, (sourceName, id) =>
-    entityBlaze.isBurning(sourceName, id),
+  const standing = entityFuelAt(
+    request.x,
+    request.y,
+    (sourceName, id) => entityBlaze.isBurning(sourceName, id),
+    (source, id) => {
+      const at = source.positionOf(id);
+      if (at === null) return false;
+      const x = Math.floor(at.x);
+      const y = Math.floor(at.y);
+      return Number.isFinite(x) && Number.isFinite(y) &&
+        x >= 0 && y >= 0 && x < world.worldSize && y < world.worldSize &&
+        world.isCellVisibleTo(player.id, x, y);
+    },
   );
   const entityCatches = standing !== null && entityBlaze.size < FIRE_ENTITY_CAP;
 
@@ -306,20 +317,25 @@ function onIgniteRequest(world: WorldApi, player: Player, payload: unknown): voi
 
   inIgnitionBatch(world, () => {
     if (cellCatches) igniteAt(request.x, request.y);
-    if (entityCatches) igniteEntityAt(request.x, request.y);
+    if (entityCatches) {
+      const fire = entityBlaze.igniteResolved(standing);
+      if (fire !== null) broadcastEntities(world);
+    }
   });
 }
 
 const persistence: PersistenceSlice = {
-  version: 1,
+  version: 2,
   save(): unknown {
-    return { fires: blaze.entries(), entities: entityBlaze.entities() };
+    return { fires: blaze.entries(), entities: entityBlaze.entities(), episode: episode.save() };
   },
 
   load(data: unknown): void {
     restoredFires = [];
     restoredEntities = [];
+    restoredEpisode = null;
     if (typeof data !== 'object' || data === null) return;
+    restoredEpisode = (data as { episode?: unknown }).episode;
     const fires = (data as { fires?: unknown }).fires;
     if (!Array.isArray(fires)) return;
 
@@ -376,9 +392,11 @@ export const plugin: TerracePlugin = {
     currentWorld = world;
     simSeconds = 0;
     lastKeepaliveSeconds = 0;
+    lastEntityBroadcastSeconds = 0;
     spreadDebtSeconds = 0;
-    episodeConsumed = 0;
-    episodeOrigin = null;
+    resetSpreadSweep();
+    episode.restore(restoredEpisode);
+    restoredEpisode = null;
     blaze.restore(restoredFires);
     restoredFires = [];
     entityBlaze.restore(restoredEntities);
@@ -392,7 +410,7 @@ export const plugin: TerracePlugin = {
   },
 
   onWorldClose(): void {
-    currentWorld = null;
+    resetFireState();
     clearFuelRegistry();
     clearEntityFuelRegistry();
   },
@@ -460,9 +478,10 @@ export function resetFireState(): void {
   currentWorld = null;
   simSeconds = 0;
   lastKeepaliveSeconds = 0;
+  lastEntityBroadcastSeconds = 0;
   spreadDebtSeconds = 0;
-  episodeConsumed = 0;
-  episodeOrigin = null;
+  episode.clear();
+  restoredEpisode = null;
   restoredFires = [];
   restoredEntities = [];
   blaze.clear();
@@ -474,7 +493,7 @@ function tick(world: WorldApi, dt: number): void {
   simSeconds += dt;
 
   if (blaze.size === 0 && entityBlaze.size === 0) {
-    if (episodeConsumed > 0) endEpisode(world);
+    endEpisode(world);
     lastKeepaliveSeconds = simSeconds;
     resetSpreadSweep();
     return;
@@ -487,8 +506,7 @@ function tick(world: WorldApi, dt: number): void {
       const cells = burnedOut.get(source.name);
       if (cells === undefined || cells.length === 0) continue;
       source.onBurnedOut(cells);
-      episodeConsumed += cells.length;
-      episodeOrigin ??= cells[0]!;
+      episode.record(cells);
     }
     const burnedOutCells: FuelCell[] = [];
     for (const cells of burnedOut.values()) burnedOutCells.push(...cells);
@@ -521,7 +539,7 @@ function tick(world: WorldApi, dt: number): void {
   if (ignited.length > 0 || ended.length > 0) broadcastChanges(world, ignited, ended);
   if (entitiesChanged) broadcastEntities(world);
 
-  if (blaze.size === 0) endEpisode(world);
+  endEpisode(world);
 
   if (simSeconds - lastKeepaliveSeconds >= FIRE_KEEPALIVE_SECONDS) {
     broadcastSnapshot(world);

@@ -14,13 +14,16 @@ const pageHostname =
 const pageHost =
   typeof location === 'undefined' ? `${pageHostname}:${DEFAULT_SERVER_PORT}` : location.host;
 
+const pageSocketProtocol =
+  typeof location !== 'undefined' && location.protocol === 'https:' ? 'wss:' : 'ws:';
+
 const bundlerEnv = import.meta.env as ImportMetaEnv | undefined;
 
 const serverPort: string = bundlerEnv?.VITE_SERVER_PORT ?? String(DEFAULT_SERVER_PORT);
 
 export const DEFAULT_SERVER_URL = bundlerEnv?.DEV
   ? `ws://${pageHostname}:${serverPort}`
-  : `ws://${pageHost}`;
+  : `${pageSocketProtocol}//${pageHost}`;
 
 export const DEFAULT_ROOM_NAME = 'world';
 

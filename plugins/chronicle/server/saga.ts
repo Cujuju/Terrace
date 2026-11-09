@@ -13,17 +13,8 @@ export const EVENT_LIST_CAP = 4096;
 
 export const CHRONICLE_CALAMITY_MIN_HOMES = 3;
 
-export const STRUCTURE_TIER_NAMES = [
-  'camp',
-  'hut',
-  'timber house',
-  'longhouse',
-  'stone cottage',
-  'watchtower',
-] as const;
-
 export function tierName(tier: number): string {
-  return STRUCTURE_TIER_NAMES[tier] ?? `hall of the ${tier}th order`;
+  return `settlement of complexity rank ${tier}`;
 }
 
 function parseCellList(value: unknown): EventCell[] | null {
@@ -52,7 +43,7 @@ function parseTierCellList(value: unknown): EventTierCell[] | null {
 }
 
 export interface StructuresChangesEvent {
-  readonly cause: 'generation' | 'sculpt';
+  readonly cause: 'generation' | 'sculpt' | 'settled' | 'wind';
   readonly seeded: readonly EventCell[];
   readonly upgraded: readonly EventTierCell[];
   readonly died: readonly EventCell[];
@@ -66,7 +57,9 @@ export function parseStructuresChanges(payload: unknown): StructuresChangesEvent
     upgraded?: unknown;
     died?: unknown;
   };
-  if (cause !== 'generation' && cause !== 'sculpt') return null;
+  if (cause !== 'generation' && cause !== 'sculpt' && cause !== 'settled' && cause !== 'wind') {
+    return null;
+  }
 
   const seededCells = seeded === undefined ? [] : parseCellList(seeded);
   const upgradedCells = upgraded === undefined ? [] : parseTierCellList(upgraded);

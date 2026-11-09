@@ -143,3 +143,31 @@ describe('a fleeing grazer leaps what it can and deflects from the rest (advance
     expect(world.heightAt(Math.floor(entity.x), Math.floor(entity.y))).toBe(startHeight);
   });
 });
+
+describe('cornered ibex', () => {
+  it('starts a legal climb before a shortened probe can keep pacing inside the floor cell', () => {
+    const world: HabitatWorld = {
+      ...fakeWorld(() => bandLevelHeight(40), 64),
+      heightAt: (x, y) => bandLevelHeight(Math.floor(x) === 32 && Math.floor(y) === 32 ? 30 : 40),
+    };
+    for (const panic of [0, 8]) {
+      const entity = grazer(32.5, 32.5, { species: 'ibex', fleeSecondsRemaining: panic });
+      // Suppress idle selection without changing the movement speed or climb profile.
+      entity.huntTargetId = 2;
+      advanceEntity(world, entity, TICK_DT);
+      expect(entity.climb).not.toBeNull();
+      expect(entity.climb!.toX).toBe(33);
+    }
+  });
+
+  it('walks a valid full course instead of climbing a wall beside it', () => {
+    const world: HabitatWorld = {
+      ...fakeWorld(() => bandLevelHeight(30), 64),
+      heightAt: (_x, y) => bandLevelHeight(y < 32 ? 40 : 30),
+    };
+    const entity = grazer(32.5, 32.5, { species: 'ibex', huntTargetId: 2 });
+    advanceEntity(world, entity, TICK_DT);
+    expect(entity.climb).toBeNull();
+    expect(entity.x).toBeGreaterThan(32.5);
+  });
+});

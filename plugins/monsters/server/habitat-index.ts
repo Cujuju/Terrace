@@ -36,6 +36,7 @@ export interface RegimeIndex {
   readonly derivedRanges: readonly { readonly regime: HabitatRegime; readonly bits: Uint8Array }[];
   readonly fit: readonly Uint8Array[];
   readonly dirtyCells: number[];
+  readonly heightCells: Set<number>;
 }
 
 export interface HabitatIndex {
@@ -186,6 +187,7 @@ export function buildHabitatIndex(
       derivedRanges,
       fit,
       dirtyCells: [],
+      heightCells: new Set(),
     });
   }
 
@@ -358,27 +360,31 @@ export function noteTerrainChangedInIndex(diff: readonly CellDiff[]): void {
   if (index === null || diff.length === 0) return;
 
   const { size, heights, unlocked, regimes, repairStamp } = index;
-
-  for (const cell of diff) {
-    const x = cell.x;
-    const y = cell.y;
-    if (x < 0 || y < 0 || x >= size || y >= size) continue;
-    heights[y * size + x] = cell.h;
-  }
-
   const cap = repairableDirtyCellCap(size * size);
+  const rangeChanges = new Map<RegimeIndex, number[]>();
   for (const regimeIndex of regimes.values()) {
-    const { regime, habitat, derivedRanges } = regimeIndex;
-    for (const cell of diff) {
-      const x = cell.x;
-      const y = cell.y;
-      if (x < 0 || y < 0 || x >= size || y >= size) continue;
-      const cellIndex = y * size + x;
-      habitat[cellIndex] = habitatBitAt(regime, unlocked, heights, cellIndex);
+    rangeChanges.set(regimeIndex, []);
+  }
+  for (const cell of diff) {
+    const { x, y } = cell;
+    if (x < 0 || y < 0 || x >= size || y >= size) continue;
+    const cellIndex = y * size + x;
+    if (heights[cellIndex] === cell.h) continue;
+    heights[cellIndex] = cell.h;
+    for (const regimeIndex of regimes.values()) {
+      const { regime, habitat, derivedRanges } = regimeIndex;
+      const before = habitat[cellIndex];
+      const after = habitatBitAt(regime, unlocked, heights, cellIndex);
+      let rangeChanged = before !== after;
+      habitat[cellIndex] = after;
+      if (rangeChanged) markDirtyCell(regimeIndex, cellIndex, cap);
       for (const derived of derivedRanges) {
-        derived.bits[cellIndex] = habitatBitAt(derived.regime, unlocked, heights, cellIndex);
+        const next = habitatBitAt(derived.regime, unlocked, heights, cellIndex);
+        rangeChanged ||= next !== derived.bits[cellIndex];
+        derived.bits[cellIndex] = next;
       }
-      markDirtyCell(regimeIndex, cellIndex, cap);
+      if (rangeChanged) rangeChanges.get(regimeIndex)!.push(cellIndex);
+      if (after === HABITAT_BIT_SET) regimeIndex.heightCells.add(cellIndex);
     }
   }
 
@@ -390,10 +396,9 @@ export function noteTerrainChangedInIndex(diff: readonly CellDiff[]): void {
 
       const generation = nextRepairGeneration(repairStamp);
 
-      for (const cell of diff) {
-        const x = cell.x;
-        const y = cell.y;
-        if (x < 0 || y < 0 || x >= size || y >= size) continue;
+      for (const cellIndex of rangeChanges.get(regimeIndex)!) {
+        const x = cellIndex % size;
+        const y = Math.floor(cellIndex / size);
         const minX = Math.max(0, x - reach);
         const maxX = Math.min(size - 1, x + reach);
         const minY = Math.max(0, y - reach);

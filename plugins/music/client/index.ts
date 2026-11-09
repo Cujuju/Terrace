@@ -1,5 +1,6 @@
 import { createEffect, createRoot } from 'solid-js';
 import { createComposer, type Composer } from './composer/composer.ts';
+import { DEFAULT_DAY_PHASE } from './composer/theory.ts';
 import { MusicTuningPanel } from './MusicTuningPanel.tsx';
 import { musicTuning } from './tuning-state.ts';
 import type {
@@ -25,7 +26,6 @@ const MOOD_GAUGES = {
 
 const TENSION_GAUGE = { plugin: 'monsters', key: 'tension' } as const;
 
-const FALLBACK_DAY_PHASE = 0.5;
 const FALLBACK_WEATHER = 0;
 const FALLBACK_TENSION = 0;
 
@@ -59,7 +59,7 @@ function logTempoAnchor(running: Composer): void {
 function sampleMood(ctx: ClientPluginCtx): void {
   const running = composer;
   if (running === null) return;
-  const dayPhase = readGauge(ctx, MOOD_GAUGES.dayPhase) ?? FALLBACK_DAY_PHASE;
+  const dayPhase = readGauge(ctx, MOOD_GAUGES.dayPhase) ?? DEFAULT_DAY_PHASE;
   const weather = Math.max(
     readGauge(ctx, MOOD_GAUGES.rain) ?? FALLBACK_WEATHER,
     readGauge(ctx, MOOD_GAUGES.thunderstorm) ?? FALLBACK_WEATHER,

@@ -6,6 +6,7 @@ import type {
   WorldApi,
 } from '../../../server/src/plugins/types.ts';
 import { interpolateByDifficulty } from '../../../server/src/plugins/kit/difficultyCurve.ts';
+import type { CellDiff } from '@terrace/shared';
 import {
   MAX_LASER_BOLTS,
   SAUCERS_CRASHED_EVENT,
@@ -21,9 +22,11 @@ import {
   encounterBolts,
   encounterCrashes,
   encounterSaucers,
+  encounterVisibleTo,
   forceEncounterNear,
   hasEncounter,
   resetEncounter,
+  refreshEncounterTerrain,
   trySpawnEncounter,
   type EncounterKind,
   type EncounterStart,
@@ -139,6 +142,7 @@ function visibleItems(): VisibleItem[] {
 }
 
 function broadcastState(world: WorldApi, onlyPlayerId?: string): void {
+  const visibility = new Map<string, boolean>();
   world.broadcastVisible(
     SAUCERS_STATE_MESSAGE,
     visibleItems(),
@@ -154,7 +158,17 @@ function broadcastState(world: WorldApi, onlyPlayerId?: string): void {
       }
       return { saucers, lasers, crashes };
     },
-    { skipEmpty: false, onlyPlayerId },
+    {
+      skipEmpty: false, onlyPlayerId,
+      isVisibleTo: (id) => {
+        let visible = visibility.get(id);
+        if (visible === undefined) {
+          visible = encounterVisibleTo(world, id);
+          visibility.set(id, visible);
+        }
+        return visible;
+      },
+    },
   );
 }
 
@@ -279,6 +293,10 @@ export const plugin: TerracePlugin = {
 
   onTick(world: WorldApi, dt: number): void {
     simulate(world, dt);
+  },
+
+  onTerrainChanged(world: WorldApi, diff: readonly CellDiff[]): void {
+    if (refreshEncounterTerrain(world, diff)) broadcastState(world);
   },
 
   onPlayerJoin(world: WorldApi, player: Player): void {

@@ -12,6 +12,10 @@ export interface Point {
 
 export type Field = (x: number, y: number) => number;
 
+export function isClosedOutline(line: readonly Point[]): boolean {
+  return line.length > 2 && line[0]!.x === line[line.length - 1]!.x && line[0]!.y === line[line.length - 1]!.y;
+}
+
 function crossing(px: number, py: number, fp: number, qx: number, qy: number, fq: number, threshold: number): [number, number] {
   // From the outside node q toward the inside node p, where the field meets the threshold.
   let s = Math.floor(((threshold - fq) * OUTLINE_FIXED_POINT) / (fp - fq));

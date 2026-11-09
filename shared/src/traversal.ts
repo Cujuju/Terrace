@@ -9,6 +9,7 @@ import {
   SEA_LEVEL,
 } from './constants.ts';
 import { drawnBandOfSample } from './bands.ts';
+import { everyCrossedCell } from './grid.ts';
 import { NO_FRESHWATER, type Freshwater, type FreshwaterMap } from './freshwater.ts';
 
 export interface TerrainSampler {
@@ -219,24 +220,7 @@ export function canTraverseSegment(
   toX: number,
   toY: number,
 ): boolean {
-  const climbs = profile.climb !== undefined && profile.climb !== null;
-  if (!climbs && !Number.isFinite(profile.maxGradientPerCell)) return true;
-
-  const dx = toX - fromX;
-  const dy = toY - fromY;
-  const distance = Math.sqrt(dx * dx + dy * dy);
-  const steps = Math.max(1, Math.ceil(distance));
-
-  let previousHeight = world.heightAt(Math.floor(fromX), Math.floor(fromY));
-  for (let step = 1; step <= steps; step++) {
-    const t = step / steps;
-    const sampleX = Math.floor(fromX + dx * t);
-    const sampleY = Math.floor(fromY + dy * t);
-    const height = world.heightAt(sampleX, sampleY);
-    if (stepKind(profile, previousHeight, height) !== 'walk') return false;
-    previousHeight = height;
-  }
-  return true;
+  return canFollowSegment(world, profile, fromX, fromY, toX, toY, false);
 }
 
 export function canProceedAlong(
@@ -247,34 +231,31 @@ export function canProceedAlong(
   toX: number,
   toY: number,
 ): boolean {
-  const dx = toX - fromX;
-  const dy = toY - fromY;
-  const distance = Math.sqrt(dx * dx + dy * dy);
-  const steps = Math.max(1, Math.ceil(distance));
+  return canFollowSegment(world, profile, fromX, fromY, toX, toY, true);
+}
 
-  let previousHeight = world.heightAt(Math.floor(fromX), Math.floor(fromY));
-  for (let step = 1; step <= steps; step++) {
-    const t = step / steps;
-    const sampleX = Math.floor(fromX + dx * t);
-    const sampleY = Math.floor(fromY + dy * t);
-    if (
-      sampleX < 0 ||
-      sampleY < 0 ||
-      sampleX >= world.worldSize ||
-      sampleY >= world.worldSize
-    ) {
-      return false;
-    }
-
-    const height = world.heightAt(sampleX, sampleY);
-    if (stepKind(profile, previousHeight, height) !== 'walk') return false;
-    previousHeight = height;
-
-    if (!admitsHeight(profile, height)) return false;
-    const freshwater = (world.freshwater ?? NO_FRESHWATER).at(sampleX, sampleY);
-    if (!admitsFreshwater(profile.freshwater, freshwater)) return false;
-  }
-  return true;
+/** Segment traversal checks slopes; steering additionally checks habitat. Both use the same crossed cells and diagonal flanks. */
+function canFollowSegment(
+  world: TerrainSampler,
+  profile: TraversalProfile,
+  fromX: number,
+  fromY: number,
+  toX: number,
+  toY: number,
+  checkHabitat: boolean,
+): boolean {
+  const startX = Math.floor(fromX);
+  const startY = Math.floor(fromY);
+  const leavesStart = startX !== Math.floor(toX) || startY !== Math.floor(toY);
+  return everyCrossedCell(fromX, fromY, toX, toY, (x, y, previousX, previousY) => {
+    if (x < 0 || y < 0 || x >= world.worldSize || y >= world.worldSize) return false;
+    const height = world.heightAt(x, y);
+    if (stepKind(profile, world.heightAt(previousX, previousY), height) !== 'walk') return false;
+    // A mover can leave habitat invalidated under it; every cell it enters must still qualify.
+    if (!checkHabitat || (leavesStart && x === startX && y === startY)) return true;
+    return admitsHeight(profile, height) &&
+      admitsFreshwater(profile.freshwater, (world.freshwater ?? NO_FRESHWATER).at(x, y));
+  });
 }
 
 export const LAND_WALKER_PROFILE: TraversalProfile = {

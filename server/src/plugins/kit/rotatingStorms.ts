@@ -175,10 +175,11 @@ export function createRotatingStorms(spec: RotatingStormsSpec): RotatingStorms {
 
           hostile = hostileTerrainFraction(storm, world);
           const terrainDecay = hostile * profile.hostileTerrainDecayPerSecond * dt;
+          const spinUp = terrainDecay > 0 ? 0 : dt / profile.spinUpSeconds;
           storm.envelope = clampEnvelope(
             storm.retiring
               ? storm.envelope - dt / profile.fadeSeconds - terrainDecay
-              : storm.envelope + dt / profile.spinUpSeconds - terrainDecay,
+              : storm.envelope + spinUp - terrainDecay,
           );
         }
 

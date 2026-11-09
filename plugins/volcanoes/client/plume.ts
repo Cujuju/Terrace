@@ -59,7 +59,7 @@ export const PLUME_RENDER_ORDER = 2;
 interface Plume {
   readonly x: number;
   readonly y: number;
-  readonly groundY: number;
+  groundY: number;
   readonly seed: number;
   alive: boolean;
   strength: number;
@@ -78,6 +78,7 @@ export interface PlumeRenderer {
   readonly root: Group;
   apply(erupting: readonly PlumeSource[]): void;
   update(dt: number, elapsed: number): void;
+  clear(): void;
   dispose(): void;
 }
 
@@ -217,6 +218,10 @@ export function createPlume(): PlumeRenderer {
         const existing = plumes.get(vent.id);
         if (existing !== undefined) {
           existing.alive = true;
+          if (existing.groundY !== vent.groundY) {
+            existing.groundY = vent.groundY;
+            layoutDirty = true;
+          }
           continue;
         }
         if (plumes.size >= MAX_PLUMES) continue;
@@ -277,6 +282,14 @@ export function createPlume(): PlumeRenderer {
         touched = true;
       }
       if (touched) markUploaded(strengths, drawn);
+    },
+
+    clear(): void {
+      plumes.clear();
+      layoutDirty = false;
+      drawn = 0;
+      mesh.count = 0;
+      elapsedUniform.value = 0;
     },
 
     dispose(): void {

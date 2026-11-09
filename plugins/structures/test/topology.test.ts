@@ -586,12 +586,15 @@ describe('labels built from the sweep bitmap', () => {
     const survey = new GenerationSurvey();
     let ticks = 0;
     let outcome = survey.advance(world, empty, ONE_CHUNK_BUDGET);
+    expect(surveys).toBe(cellsPerChunk);
     while (outcome === null) {
       ticks++;
+      const before = surveys;
       outcome = survey.advance(world, empty, ONE_CHUNK_BUDGET);
+      expect(surveys - before).toBeLessThanOrEqual(cellsPerChunk);
     }
     ticks++;
-    expect(ticks).toBe(totalChunks);
+    expect(ticks).toBeGreaterThan(totalChunks);
     expect(surveys).toBe(2 * cellsPerSweep);
 
     const beforeFirstTick = surveys;

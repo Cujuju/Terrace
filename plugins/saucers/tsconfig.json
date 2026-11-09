@@ -11,5 +11,5 @@
     // types explicitly is deterministic and costs nothing.
     "types": ["node"]
   },
-  "include": ["protocol.ts", "server", "client"]
+  "include": ["protocol.ts", "server", "client", "test"]
 }

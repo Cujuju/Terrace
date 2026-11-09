@@ -408,13 +408,16 @@ describe('pickTerrainInColumn', () => {
     const ROOF_TOP = BAND_HEIGHT * 9;
     const mirror = world(() => ROOF_TOP);
     const ROOF = { floorBand: ROOF_BAND, ceiling: ROOF_TOP };
-    setColumn(mirror.map, CELL_X, CELL_Z, [
-      { floorBand: BEDROCK_BAND, ceiling: FLOOR_TOP },
-      ROOF,
-    ]);
+    const APPROACH_X = CELL_X - 3;
+    for (let x = APPROACH_X; x <= CELL_X; x++) {
+      setColumn(mirror.map, x, CELL_Z, [
+        { floorBand: BEDROCK_BAND, ceiling: FLOOR_TOP },
+        ROOF,
+      ]);
+    }
     // F5: level ray misses; descending ray hits floor tread.
     const gapY = ((FLOOR_TOP + spanUndersideLevel(ROOF)) / 2) * HEIGHT_WORLD_SCALE;
-    const origin = { x: (CELL_X - 3) * CELL_WORLD_SIZE, y: gapY, z: CELL_Z * CELL_WORLD_SIZE };
+    const origin = { x: APPROACH_X * CELL_WORLD_SIZE, y: gapY, z: CELL_Z * CELL_WORLD_SIZE };
     const level = { x: 1, y: 0, z: 0 };
     expect(pickTerrainInColumn(mirror, CELL_X, CELL_Z, origin, level)).toBeNull();
     const descending = { x: 1, y: -0.5, z: 0 };

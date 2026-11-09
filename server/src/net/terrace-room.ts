@@ -18,7 +18,8 @@ import { setTickTimingEnabled } from '../tick-timing.ts';
 import { containWorldAdminMessage } from '../world/world-admin.ts';
 import { buildJoinSnapshot } from './join-snapshot.ts';
 import { isPluginMessageType, routePluginMessage } from './plugin-message-routing.ts';
-import { NULL_SINK, type MessageSink } from './message-sink.ts';
+import type { MessageSink } from './message-sink.ts';
+import type { RoomBridge } from '../world/world-manager.ts';
 import { SculptRateLimiter } from './sculpt-rate-limit.ts';
 import {
   LogThrottle,
@@ -74,6 +75,7 @@ interface HitchSummary {
 
 export class TerraceRoom extends Room<{ client: TerraceClient }> {
   private context!: RoomContext;
+  private bridge: RoomBridge | null = null;
 
   private readonly sculptRate = new SculptRateLimiter();
 
@@ -96,11 +98,15 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
     this.patchRate = null;
 
     const sink = this.createSink();
-    this.context.manager.attachRoom({
+    const bridge: RoomBridge = {
       sink,
       clientCount: () => this.clients.length,
       players: () => this.roster(),
-    });
+    };
+    if (!this.context.manager.attachRoom(bridge)) {
+      throw new Error('the authoritative world room already exists');
+    }
+    this.bridge = bridge;
     this.context.restart.attachRoom({ sink, clientCount: () => this.clients.length });
 
     this.registerMessages();
@@ -289,8 +295,10 @@ export class TerraceRoom extends Room<{ client: TerraceClient }> {
   }
 
   override onDispose(): void {
-    this.context.manager.detachRoom(NULL_SINK);
-    this.context.restart.detachRoom();
+    if (this.bridge !== null && this.context.manager.detachRoom(this.bridge)) {
+      this.context.restart.detachRoom();
+    }
+    this.bridge = null;
     if (this.hitchReport !== undefined) clearInterval(this.hitchReport);
     this.hitchReport = undefined;
   }

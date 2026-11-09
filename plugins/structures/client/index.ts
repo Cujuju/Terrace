@@ -13,12 +13,13 @@ import {
 } from '../protocol.ts';
 import { buildingQuality, registerBuildingQualityConsumer } from '../../../client/src/state/buildingQualityPrefs.ts';
 import type { BuildingAssetKit } from '../../../client/src/render/buildingAssetKit.ts';
+import { createPreloadAssets } from '../../../client/src/plugins/kit/preloadAssets.ts';
 import { preloadAuthoredStructures } from './authoredAssets.ts';
 import {
   createStructureModels,
   type StructureModels,
 } from './models.ts';
-import { placementsFor, type PlacementResult } from './placement.ts';
+import { placementsFor } from './placement.ts';
 import {
   createSiteSurveyCache,
   neighbourhoodRevision,
@@ -29,11 +30,13 @@ import {
   createSkiffModels,
   disposeSkiffKit,
   preloadSkiffModels,
+  installSkiffForMount,
   type SkiffModels,
 } from './skiffModels.ts';
 
 let models: StructureModels | null = null;
 let assetKit: BuildingAssetKit | null = null;
+const pendingKits = createPreloadAssets<BuildingAssetKit>();
 let unsubscribeQuality: (() => void) | null = null;
 let skiffModels: SkiffModels | null = null;
 let siteSurveys: SiteSurveyCache | null = null;
@@ -41,15 +44,15 @@ let unsubscribeMessages: Array<() => void> = [];
 let unsubscribeFrames: (() => void) | null = null;
 let unsubscribeTerrain: (() => void) | null = null;
 let unsubscribeReset: (() => void) | null = null;
+let unmarkBuildings: (() => void) | null = null;
 
 const buildings = new Map<number, StructureCell>();
 
-let pendingCells: PlacementResult['pendingCells'] = [];
-let pendingRevision = 0;
+let placementRevision = 0;
 
-function pendingRevisionOf(ctx: ClientPluginCtx): number {
+function placementRevisionOf(ctx: ClientPluginCtx): number {
   let sum = 0;
-  for (const cell of pendingCells) {
+  for (const cell of buildings.values()) {
     sum += neighbourhoodRevision((x, y) => ctx.terrainRevisionAt(x, y), cell.x, cell.y);
   }
   return sum;
@@ -64,8 +67,7 @@ function rebuild(ctx: ClientPluginCtx): void {
   );
   models.apply(result.placements);
   skiffModels?.apply(result.skiffs);
-  pendingCells = result.pendingCells;
-  pendingRevision = pendingRevisionOf(ctx);
+  placementRevision = placementRevisionOf(ctx);
 }
 
 function replaceAll(cells: readonly StructureCell[]): void {
@@ -92,26 +94,30 @@ export const clientPlugin: TerraceClientPlugin = {
 
   drawBudget: STRUCTURE_SURFACE_DRAW_OBJECTS + SKIFF_SURFACE_DRAW_OBJECTS,
 
-  preload(): Promise<void> {
+  preload(ctx: ClientPluginCtx): Promise<void> {
     return Promise.all([
-      preloadSkiffModels(skiffUrl),
-      preloadAuthoredStructures(buildingQuality()).then((kit) => {
-        assetKit?.dispose();
-        assetKit = kit;
-      }),
+      preloadSkiffModels(skiffUrl, ctx.signal),
+      pendingKits.load(ctx.signal, () => preloadAuthoredStructures(buildingQuality())),
     ]).then(() => undefined);
   },
 
   attach(ctx: ClientPluginCtx): void {
+    if (ctx.signal.aborted) return;
+    assetKit = pendingKits.take(ctx.signal) ?? null;
+    installSkiffForMount(ctx.signal);
     buildings.clear();
-    pendingCells = [];
-    pendingRevision = 0;
+    placementRevision = 0;
 
     siteSurveys = createSiteSurveyCache((x, y) => ctx.terrainRevisionAt(x, y));
     models = createStructureModels(assetKit ?? undefined);
     ctx.layer.add(models.root);
+    unmarkBuildings = ctx.markPickable(models.root, undefined, (hit) => models?.cellAtHit(hit) ?? null);
     unsubscribeQuality = registerBuildingQualityConsumer(async (quality) => {
       const nextKit = await preloadAuthoredStructures(quality);
+      if (ctx.signal.aborted) {
+        nextKit.dispose();
+        throw new DOMException('Structures mount closed', 'AbortError');
+      }
       let nextModels: StructureModels;
       try { nextModels = createStructureModels(nextKit); }
       catch (error) { nextKit.dispose(); throw error; }
@@ -122,6 +128,8 @@ export const clientPlugin: TerraceClientPlugin = {
           models = nextModels;
           assetKit = nextKit;
           ctx.layer.add(models.root);
+          unmarkBuildings?.();
+          unmarkBuildings = ctx.markPickable(models.root, undefined, (hit) => models?.cellAtHit(hit) ?? null);
           if (previousModels !== null) ctx.layer.remove(previousModels.root);
           rebuild(ctx);
           previousModels?.dispose();
@@ -158,8 +166,8 @@ export const clientPlugin: TerraceClientPlugin = {
     });
 
     unsubscribeTerrain = ctx.onTerrainChanged(() => {
-      if (pendingCells.length === 0) return;
-      if (pendingRevisionOf(ctx) === pendingRevision) return;
+      if (buildings.size === 0) return;
+      if (placementRevisionOf(ctx) === placementRevision) return;
       rebuild(ctx);
     });
 
@@ -170,6 +178,8 @@ export const clientPlugin: TerraceClientPlugin = {
   },
 
   dispose(): void {
+    unmarkBuildings?.();
+    unmarkBuildings = null;
     unsubscribeQuality?.();
     unsubscribeQuality = null;
     for (const unsubscribe of unsubscribeMessages) unsubscribe();
@@ -182,8 +192,7 @@ export const clientPlugin: TerraceClientPlugin = {
     unsubscribeFrames = null;
 
     buildings.clear();
-    pendingCells = [];
-    pendingRevision = 0;
+    placementRevision = 0;
 
     siteSurveys?.clear();
     siteSurveys = null;

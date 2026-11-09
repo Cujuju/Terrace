@@ -112,6 +112,14 @@ export const CONTOUR_CELL_CENTRE_GUARD = 1 / 8;
 
 export const MAX_RELIEF_WORLD_UNITS = 16;
 
+/** Height samples to rendered world units. */
+export const HEIGHT_WORLD_SCALE = MAX_RELIEF_WORLD_UNITS / MAX_HEIGHT;
+
+/** Below band 0's cap, so shore polygons occlude the water plane. */
+export const WATER_SURFACE_CLEARANCE = 1 / 32;
+
+export const SEA_SURFACE_WORLD_Y = SEA_LEVEL * HEIGHT_WORLD_SCALE - WATER_SURFACE_CLEARANCE;
+
 export const WORLD_UNITS_PER_BAND = MAX_RELIEF_WORLD_UNITS / (MAX_HEIGHT / BAND_HEIGHT);
 
 export const SNOW_LINE_HEIGHT = 576;

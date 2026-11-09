@@ -14,6 +14,7 @@ import {
   Vector3,
   type BufferGeometry,
   type InstancedBufferAttribute,
+  type Intersection,
   type Material,
 } from 'three';
 import type { BuildingAssetKit } from '../../../client/src/render/buildingAssetKit.ts';
@@ -1797,6 +1798,7 @@ export const RACE_TINTS: Readonly<Record<SettlerRace, number>> = {
 export interface StructureModels {
   readonly root: Group;
   apply(placements: readonly StructurePlacement[]): void;
+  cellAtHit(hit: Intersection): { x: number; y: number } | null;
   animate(dt: number): void;
   dispose(): void;
 }
@@ -1860,6 +1862,7 @@ export function createStructureModels(kit?: BuildingAssetKit): StructureModels {
   const materials: Material[] = [];
   const root = new Group();
   root.name = 'structures:buildings';
+  const instanceCells = new Map<InstancedMesh, Array<{ x: number; y: number }>>();
 
   const kindMeshes: InstancedMesh[][] = kindParts.map((parts, kind) =>
     parts.map((part, partIndex) => {
@@ -1868,6 +1871,7 @@ export function createStructureModels(kit?: BuildingAssetKit): StructureModels {
       const mesh = new InstancedMesh(part.geometry, part.material, STRUCTURES_CAP * part.localMatrices.length);
       mesh.name = `structures:${buildingIdOf(kind)}:part${String(partIndex)}`;
       mesh.count = 0;
+      instanceCells.set(mesh, []);
       root.add(mesh);
       return mesh;
     }),
@@ -1891,6 +1895,7 @@ export function createStructureModels(kit?: BuildingAssetKit): StructureModels {
     meshes: InstancedMesh[],
     counts: number[],
     tint: Color | null,
+    cell: { x: number; y: number },
   ): void {
     for (let partIndex = 0; partIndex < parts.length; partIndex++) {
       const part = parts[partIndex];
@@ -1899,6 +1904,7 @@ export function createStructureModels(kit?: BuildingAssetKit): StructureModels {
       for (const local of part.localMatrices) {
         instanceMatrix.multiplyMatrices(buildingMatrix, local);
         if (tint !== null) mesh.setColorAt(count, tint);
+        instanceCells.get(mesh)![count] = cell;
         mesh.setMatrixAt(count++, instanceMatrix);
       }
       counts[partIndex] = count;
@@ -1909,6 +1915,7 @@ export function createStructureModels(kit?: BuildingAssetKit): StructureModels {
     for (let partIndex = 0; partIndex < meshes.length; partIndex++) {
       const mesh = meshes[partIndex];
       mesh.count = counts[partIndex];
+      instanceCells.get(mesh)!.length = mesh.count;
       uploadInstancePrefix(mesh.instanceMatrix, mesh.count, MATRIX_ELEMENT_COUNT);
       if (mesh.instanceColor !== null) {
         uploadInstancePrefix(mesh.instanceColor, mesh.count, COLOR_ELEMENT_COUNT);
@@ -1919,6 +1926,11 @@ export function createStructureModels(kit?: BuildingAssetKit): StructureModels {
 
   return {
     root,
+
+    cellAtHit(hit: Intersection): { x: number; y: number } | null {
+      if (hit.instanceId === undefined) return null;
+      return instanceCells.get(hit.object as InstancedMesh)?.[hit.instanceId] ?? null;
+    },
 
     apply(placements: readonly StructurePlacement[]): void {
       const counts = kindMeshes.map((meshes) => meshes.map(() => 0));
@@ -1935,6 +1947,7 @@ export function createStructureModels(kit?: BuildingAssetKit): StructureModels {
           kindMeshes[placement.kind]!,
           counts[placement.kind]!,
           kindTinted[placement.kind] ? raceTints[placement.race] : null,
+          { x: placement.cellX, y: placement.cellY },
         );
       }
 
@@ -1969,6 +1982,7 @@ export function createStructureModels(kit?: BuildingAssetKit): StructureModels {
       for (const meshes of kindMeshes) for (const mesh of meshes) mesh.dispose();
       for (const geometry of geometries) geometry.dispose();
       for (const material of materials) material.dispose();
+      instanceCells.clear();
       root.clear();
     },
   };

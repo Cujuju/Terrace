@@ -62,8 +62,7 @@ export interface StrokeState {
   hoverCell: { x: number; y: number } | null;
   hoverRay: PointerRay | null;
 
-  // Bumped whenever the aim re-marches, so a held stroke can tell "same pinned
-  // column, new surface" from "the pin moved".
+  // Only a changed pointer ray releases the held anchor; terrain repicks update visible hover independently.
   hoverPin: number;
 
   nextSeq: number;

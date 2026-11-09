@@ -82,6 +82,27 @@ describe('the home guard leaves something to explore', () => {
 });
 
 describe('assembly', () => {
+  it('preserves the full crew and flagship while incremental launches form bounded crews', () => {
+    const roster: SquadronBoat[] = [];
+    let originalCrew: number | null = null;
+    const launchCount = SQUADRON_MAX_SHIPS * 4;
+    for (let rank = 0; rank < launchCount; rank++) {
+      roster.push({ id: nextId++, x: 100 + rank, y: 100, homeX: 100 + rank, homeY: 100 });
+      advanceSquadrons(roster, openSea(), TICK_DT);
+      if (roster.length < SQUADRON_MIN_SHIPS) continue;
+      originalCrew ??= squadronOf(roster[0].id);
+      expect(squadronOf(roster[0].id)).toBe(originalCrew);
+      for (const boat of roster) expect(squadronOf(boat.id)).not.toBeNull();
+      const crews = new Set(roster.map((boat) => squadronOf(boat.id)!));
+      for (const id of crews) {
+        const members = squadronMembers(id);
+        expect(members.length).toBeGreaterThanOrEqual(SQUADRON_MIN_SHIPS);
+        expect(members.length).toBeLessThanOrEqual(SQUADRON_MAX_SHIPS);
+        for (const member of members) expect(squadronOf(member)).toBe(id);
+      }
+    }
+  });
+
   it('forms nothing from a lone boat', () => {
     const solo: SquadronBoat[] = [
       { id: nextId++, x: 100, y: 100, homeX: 100, homeY: 100 },

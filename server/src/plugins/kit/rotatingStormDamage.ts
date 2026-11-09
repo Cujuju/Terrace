@@ -8,6 +8,13 @@ const MAX_STORMS_PER_DAMAGE_EVENT = 100;
 export const MAX_DAMAGE_SAMPLE_CELLS_PER_EVENT =
   ROTATING_STORM_DAMAGE_SAMPLE_CELLS * MAX_STORMS_PER_DAMAGE_EVENT;
 
+export const STORM_WIND_FALLOFF_EYEWALL = 'eyewall';
+export const STORM_WIND_FALLOFF_QUADRATIC = 'quadratic';
+
+export type StormWindFalloff =
+  | typeof STORM_WIND_FALLOFF_EYEWALL
+  | typeof STORM_WIND_FALLOFF_QUADRATIC;
+
 export interface StruckCell {
   readonly x: number;
   readonly y: number;
@@ -23,6 +30,7 @@ export interface ParsedStormDamage {
   readonly intensity: number;
   readonly durationSeconds: number;
   readonly cells: readonly StruckCell[];
+  readonly windFalloff?: StormWindFalloff;
 }
 
 function isExtent(value: unknown): value is number {
@@ -46,7 +54,10 @@ function parseStruckCells(value: unknown): StruckCell[] | null {
   return cells;
 }
 
-export function parseStormDamage(payload: unknown): ParsedStormDamage | null {
+export function parseStormDamage(
+  payload: unknown,
+  windFalloff: StormWindFalloff = STORM_WIND_FALLOFF_EYEWALL,
+): ParsedStormDamage | null {
   if (typeof payload !== 'object' || payload === null) return null;
   const { stormId, x, y, radius, eyeRadius, intensity, durationSeconds, cells } = payload as {
     stormId?: unknown;
@@ -69,15 +80,19 @@ export function parseStormDamage(payload: unknown): ParsedStormDamage | null {
   const struck = parseStruckCells(cells);
   if (struck === null) return null;
 
-  return { stormId, x, y, radius, eyeRadius, intensity, durationSeconds, cells: struck };
+  return { stormId, x, y, radius, eyeRadius, intensity, durationSeconds, cells: struck, windFalloff };
 }
 
 export function severityAt(damage: ParsedStormDamage, cellX: number, cellY: number): number {
   const dx = cellX - damage.x;
   const dy = cellY - damage.y;
   const distance = Math.sqrt(dx * dx + dy * dy);
+  const radiusFraction = distance / damage.radius;
+  if (damage.windFalloff === STORM_WIND_FALLOFF_QUADRATIC) {
+    return damage.intensity * Math.max(0, 1 - radiusFraction * radiusFraction);
+  }
   return (
-    damage.intensity * eyewallWindFalloff(distance / damage.radius, damage.eyeRadius / damage.radius)
+    damage.intensity * eyewallWindFalloff(radiusFraction, damage.eyeRadius / damage.radius)
   );
 }
 

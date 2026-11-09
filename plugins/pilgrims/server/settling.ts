@@ -13,7 +13,6 @@ import type { ClimbState, Occupant, ReachableRegion, RouteBudget, RouteCell } fr
 import { SETTLERS_CAP, hashCell, settlementRace, type PilgrimEntityState } from '../protocol.ts';
 import type { SettlerRace } from '../protocol.ts';
 import {
-  ARRIVAL_RADIUS_CELLS,
   PILGRIM_STUCK_SECONDS,
   PILGRIM_WALKER_PROFILE,
   WalkerIdAllocator,
@@ -22,6 +21,7 @@ import {
   panicStep,
   planRoute,
   walkerOccupants,
+  walkerHasArrived,
   type MovingWalker,
   type PanickingWalker,
   type PilgrimWorld,
@@ -97,6 +97,7 @@ function scanSettleSites<T>(
     const sin = Math.sin(angle);
 
     for (let d = 0; d < SETTLE_DISTANCE_STEPS; d++) {
+      if (scanBudget.remaining <= 0) return null;
       const distance =
         SETTLE_MIN_DISTANCE_CELLS + (span * d) / Math.max(1, SETTLE_DISTANCE_STEPS - 1);
       const anchorX = Math.floor(origin.x + cos * distance);
@@ -164,6 +165,7 @@ interface Settler {
   route: RouteCell[] | null;
   routeIndex: number;
   climb: ClimbState | null;
+  climbCount: number;
   stillSeconds: number;
   stillX: number;
   stillY: number;
@@ -236,9 +238,7 @@ export class Settling {
       if (advance === 'progressed') settler.stuckSeconds = 0;
       else settler.stuckSeconds += dt;
 
-      const dx = settler.goalX - settler.x;
-      const dy = settler.goalY - settler.y;
-      if (dx * dx + dy * dy <= ARRIVAL_RADIUS_CELLS * ARRIVAL_RADIUS_CELLS) {
+      if (walkerHasArrived(world, settler)) {
         this.arrive(world, settler, temple, epoch);
         continue;
       }
@@ -342,6 +342,7 @@ export class Settling {
       route,
       routeIndex: 0,
       climb: null,
+      climbCount: 0,
     });
   }
 
@@ -385,6 +386,7 @@ export class Settling {
       route,
       routeIndex: 0,
       climb: null,
+      climbCount: 0,
     });
     return true;
   }

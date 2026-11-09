@@ -75,7 +75,7 @@ function unitFromSeed(seed: number, salt: number): number {
 interface BurnScar {
   x: number;
   z: number;
-  drawnY: number;
+  drawnY: number | null;
   radius: number;
   seed: number;
   strength: number;
@@ -89,6 +89,8 @@ export interface FireScar {
   apply(fires: readonly FireInstance[], groundAt: DrawnGroundAt): void;
   readonly drawnCount: number;
   update(dt: number): void;
+  refreshGround(groundAt: DrawnGroundAt): void;
+  clear(): void;
   dispose(): void;
 }
 
@@ -240,6 +242,7 @@ export const createFireScar = (): FireScar => {
           }
         }
 
+        if (scar.drawnY === null) continue;
         position.set(scar.x, scar.drawnY + SCAR_HOVER_HEIGHT, scar.z);
         scale.set(scar.radius, 1, scar.radius);
         matrix.compose(position, rotation, scale);
@@ -254,6 +257,17 @@ export const createFireScar = (): FireScar => {
       mesh.instanceMatrix.needsUpdate = true;
       seeds.needsUpdate = true;
       strengths.needsUpdate = true;
+    },
+
+    refreshGround(groundAt: DrawnGroundAt): void {
+      for (const scar of scars.values()) scar.drawnY = groundAt(scar.x, scar.z);
+    },
+
+    clear(): void {
+      scars.clear();
+      pending.length = 0;
+      pendingDrawnY.length = 0;
+      mesh.count = 0;
     },
 
     dispose(): void {

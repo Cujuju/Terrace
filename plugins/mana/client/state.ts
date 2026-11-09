@@ -13,8 +13,9 @@ import {
   strokeChargeCost,
 } from '../pricing.ts';
 import { dryRunSculpt, type LocalHeights } from './quote.ts';
+import { createHoverQuoteCache } from './hoverQuote.ts';
 import { pointSculptIntent } from '../../../client/src/input/sculpt/intent.ts';
-import { parseManaDeniedPayload, type ManaBalanceMessage, type ManaDeniedMessage } from '../protocol.ts';
+import { parseManaDeniedPayload, type ManaBalanceMessage, type ManaDeniedMessage, type ManaUnlockPolicy } from '../protocol.ts';
 import {
   brushProfile,
   brushRadius,
@@ -31,26 +32,40 @@ export interface ManaPool {
   readonly capacity: number;
   readonly manaPerBandCell: number;
   readonly regenPerSecond: number;
+  readonly unlockPolicy?: ManaUnlockPolicy;
 }
 
-let balanceAsOfMs = 0;
+let displayBalanceAsOfMs = 0;
+let displayBalanceAtDebit = 0;
 
 const nowMs = (): number => performance.now();
 
 export function liveBalance(pool: ManaPool, at: number = nowMs()): number {
-  const earned = ((at - balanceAsOfMs) / 1000) * pool.regenPerSecond;
-  const grown = earned > 0 ? pool.balance + earned : pool.balance;
+  const earned = ((at - displayBalanceAsOfMs) / 1000) * pool.regenPerSecond;
+  const base = pool === manaPool() ? displayBalanceAtDebit : pool.balance;
+  const grown = earned > 0 ? base + earned : base;
   return grown > pool.capacity ? pool.capacity : grown;
 }
 
 const [manaPool, setPoolSignal] = createSignal<ManaPool | null>(null);
 
-const setManaPool: typeof setPoolSignal = ((value) => {
-  balanceAsOfMs = nowMs();
-  return setPoolSignal(value as never);
-}) as typeof setPoolSignal;
+const [quoteRevision, setQuoteRevision] = createSignal(0);
+const hoverQuotes = createHoverQuoteCache(() => setQuoteRevision((revision) => revision + 1));
+
+export function invalidateHoverQuotes(): void {
+  hoverQuotes.invalidate();
+}
+
+function setManaPool(value: ManaPool | null | ((previous: ManaPool | null) => ManaPool | null)): ManaPool | null {
+  const pool = typeof value === 'function' ? value(manaPool()) : value;
+  displayBalanceAsOfMs = nowMs();
+  displayBalanceAtDebit = pool?.balance ?? 0;
+  return setPoolSignal(pool);
+}
 
 function debitLocally(pool: ManaPool, cost: number): void {
+  displayBalanceAtDebit = Math.max(0, liveBalance(pool) - cost);
+  displayBalanceAsOfMs = nowMs();
   setPoolSignal({ ...pool, balance: pool.balance - cost });
 }
 
@@ -83,6 +98,7 @@ export function applyBalancePush(msg: ManaBalanceMessage): void {
     capacity: msg.capacity,
     manaPerBandCell: msg.manaPerBandCell,
     regenPerSecond: msg.regenPerSecond,
+    unlockPolicy: msg.unlockPolicy ?? 'none',
   });
 }
 
@@ -116,6 +132,14 @@ const [lastDeniedCost, setLastDeniedCost] = createSignal<number | null>(null);
 
 export { manaPool, setManaPool, deniedCount, lastDeniedCost };
 
+export function resetManaSession(): void {
+  clearInFlightDebits();
+  setManaPool(null);
+  hoverQuotes.dispose();
+  setDeniedCount(0);
+  setLastDeniedCost(null);
+}
+
 /**
  * Brush-refused pulse: every denial, local gate or server `mana:denied`, bumps
  * deniedCount and records the cost the hint shows.
@@ -137,10 +161,11 @@ let localTerritory: LocalTerritory | null = null;
 
 export function setLocalTerritory(territory: LocalTerritory | null): void {
   localTerritory = territory;
+  hoverQuotes.dispose();
 }
 
-function openedChunksAt(territory: LocalTerritory | null, intent: SculptIntent, diff?: readonly CellDiff[]): number {
-  if (territory === null) return 0;
+function openedChunksAt(pool: ManaPool, territory: LocalTerritory | null, intent: SculptIntent, diff?: readonly CellDiff[]): number {
+  if (pool.unlockPolicy !== 'reveal' || territory === null) return 0;
   const worldSize = territory.worldSize();
   if (worldSize <= 0) return 0;
   return closedStrokeChunks(worldSize, intent, (cx, cy) => {
@@ -150,7 +175,7 @@ function openedChunksAt(territory: LocalTerritory | null, intent: SculptIntent, 
 }
 
 function admissionCost(pool: ManaPool, territory: LocalTerritory | null, intent: SculptIntent): number {
-  return sculptIntentCost(pool.manaPerBandCell, intent, openedChunksAt(territory, intent));
+  return sculptIntentCost(pool.manaPerBandCell, intent, openedChunksAt(pool, territory, intent));
 }
 
 function admits(pool: ManaPool, required: number): boolean {
@@ -187,6 +212,7 @@ function aimedIntent(tool: SculptTool): SculptIntent | null {
 }
 
 export function currentBrushQuote(): BrushQuote {
+  quoteRevision();
   const pool = manaPool();
   if (pool === null) return { cost: 0, estimated: false, unlockCost: 0, required: 0, affordable: true };
 
@@ -194,10 +220,10 @@ export function currentBrushQuote(): BrushQuote {
   const intent = aimedIntent(tool);
   const measured = intent === null || localTerritory === null
     ? null
-    : dryRunSculpt(localTerritory, intent);
+    : hoverQuotes.read(localTerritory, intent);
   const unlockIntent = intent ?? nominalAimIntent(tool);
   const unlock = unlockIntent === null ? 0
-    : chunkUnlockFee(openedChunksAt(localTerritory, unlockIntent, measured?.diff));
+    : chunkUnlockFee(openedChunksAt(pool, localTerritory, unlockIntent, measured?.diff));
   if (intent !== null && measured !== null) {
     const required = admissionCost(pool, localTerritory, intent);
     return {
@@ -234,7 +260,7 @@ function measuredCharge(pool: ManaPool, territory: LocalTerritory, intent: Sculp
   const measured = dryRunSculpt(territory, intent);
   if (measured === null) return null;
   return strokeChargeCost(measured.units, pool.manaPerBandCell, intent) +
-    chunkUnlockFee(openedChunksAt(territory, intent, measured.diff));
+    chunkUnlockFee(openedChunksAt(pool, territory, intent, measured.diff));
 }
 
 export function gateLocalSculpt(intent: SculptIntent, territory: LocalTerritory): boolean {

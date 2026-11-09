@@ -178,10 +178,12 @@ export function ManaGauge(): JSX.Element {
 
   createEffect<number>((previous) => {
     const count = deniedCount();
-    if (previous !== undefined && count !== previous) {
+    if (previous !== undefined && count > previous) {
       setFlashing(true);
       const timer = setTimeout(() => setFlashing(false), DENIAL_FLASH_MS);
       onCleanup(() => clearTimeout(timer));
+    } else if (count === 0) {
+      setFlashing(false);
     }
     return count;
   });
@@ -222,7 +224,7 @@ export function ManaGauge(): JSX.Element {
   const sandSurface = () => (flashing() ? DENIED_LIGHT : SAND_SURFACE);
   const glassColor = () => (flashing() ? DENIED_MID : GLASS_STROKE);
 
-  // One dry-run sculpt per aim change, shared by every reader below.
+  // Terrain measurements are cached; balance changes only reprice them.
   const quote = createMemo(() => currentBrushQuote());
 
   const periodSeconds = () => {

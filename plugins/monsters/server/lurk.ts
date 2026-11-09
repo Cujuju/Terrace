@@ -108,6 +108,7 @@ export function advanceMonster(
 
   const lookahead = lookaheadCellsFor(profile);
   const stepCells = profile.lurkSpeedCellsPerSecond * dt;
+  if (!monster.idle && climbOut(world, monster, desired, stepCells)) return 'moved';
   const steered = steerToValidHeading(
     world,
     monster,
@@ -120,7 +121,6 @@ export function advanceMonster(
 
   if (steered === null) {
     monster.heading = desired;
-    climbOut(world, monster, desired, stepCells);
     return 'moved';
   }
 
@@ -144,10 +144,13 @@ export type MonsterAdvance = 'moved' | 'fell';
 
 function climbOut(world: LairWorld, monster: Monster, desired: number, stepCells: number): boolean {
   const profile = profileOf(monster.kind);
+  if (profile.traversal.climb == null) return false;
   const target = {
     x: Math.floor(monster.x) + Math.round(Math.cos(desired)),
     y: Math.floor(monster.y) + Math.round(Math.sin(desired)),
   };
+  if (!isLairPose(profile.range, world, target.x + CELL_CENTRE_OFFSET,
+    target.y + CELL_CENTRE_OFFSET, bodyRadiusCells(profile))) return false;
   return (
     approachAndClimb(
       world,

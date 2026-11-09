@@ -130,7 +130,7 @@ export function sculptIntentCost(
   return nominalStrokeCost(manaPerBandCell, intent) + chunkUnlockFee(openedChunks);
 }
 
-/** Reveal opens the core reach; creep opens changed columns, bounded by the write sweep before application. */
+/** Client copy of reveal's sculptUnlockChunks contract; the balance declares whether that policy is active. */
 export function strokeUnlockChunks(
   worldSize: number,
   intent: SculptIntent,

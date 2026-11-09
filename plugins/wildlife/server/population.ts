@@ -1,4 +1,4 @@
-import { climbWireOf, newStillness, stanceWireOf } from '@terrace/shared';
+import { cellCentre, climbWireOf, newStillness, stanceWireOf } from '@terrace/shared';
 import type { ClimbState } from '@terrace/shared';
 import { CHUNK_SIZE, nearestWithinReach } from '@terrace/shared';
 import { erodedSamplerFor, isHullPoseValid } from './hull.ts';
@@ -28,6 +28,7 @@ import {
 } from './census.ts';
 import { reconcileCensus } from './census-index.ts';
 import { randomSigned } from './rng.ts';
+import { incrementIdentity } from './identity.ts';
 import { type SizeWeights, type SpeciesProfile, profileOf, spawnGroundConstrains } from './species.ts';
 
 export interface WildlifeEntity {
@@ -121,7 +122,15 @@ export function nextEntityIdValue(): number {
 }
 
 export function allocateEntityId(): number {
-  return nextEntityId++;
+  const id = nextEntityId;
+  nextEntityId = incrementIdentity(id);
+  return id;
+}
+
+function allocateSchoolId(): number {
+  const id = nextSchoolId;
+  nextSchoolId = incrementIdentity(id);
+  return id;
 }
 
 export function nextSchoolIdValue(): number {
@@ -150,9 +159,11 @@ function countOf(species: WildlifeHabitatSpecies): number {
   return count;
 }
 
-function creditsFor(species: WildlifeHabitatSpecies): number {
+function creditsFor(species: WildlifeHabitatSpecies, readyOnly = false): number {
   let count = 0;
-  for (const credit of credits) if (credit.species === species) count++;
+  for (const credit of credits) {
+    if (credit.species === species && (!readyOnly || credit.readyAt <= simSeconds)) count++;
+  }
   return count;
 }
 
@@ -246,7 +257,7 @@ function spawnGroup(world: HabitatWorld, species: WildlifeHabitatSpecies, wanted
   const profile = profileOf(species);
   const sizes = drawGroupSizes(profile, wanted);
   const cohesive = Math.random() < profile.schoolingProbabilityBySize[groupSizeClassOf(sizes)];
-  const groupSchoolId = nextSchoolId++;
+  const groupSchoolId = allocateSchoolId();
 
   const scatter = profile.bodyLengthCells * GROUP_SCATTER_BODY_LENGTHS;
   const heading = Math.random() * Math.PI * 2;
@@ -257,16 +268,17 @@ function spawnGroup(world: HabitatWorld, species: WildlifeHabitatSpecies, wanted
     const y = n === 0 ? seed.y : seed.y + randomSigned(scatter);
     if (!canSettleAt(world, species, x, y)) continue;
     const size = sizes[n]!;
+    const id = nextEntityIdValue();
     // The whole capsule at the group's heading must fit, not just the centre.
     if (
-      !isHullPoseValid(world, erodedSamplerFor(world, species, size), species, size, x, y, heading)
+      !isHullPoseValid(world, erodedSamplerFor(world, species, size, id), species, size, x, y, heading, id)
     ) {
       continue;
     }
     entities.push({
       id: allocateEntityId(),
       species,
-      schoolId: cohesive ? groupSchoolId : nextSchoolId++,
+      schoolId: cohesive ? groupSchoolId : allocateSchoolId(),
       size,
       x,
       y,
@@ -309,7 +321,7 @@ function spawnOneGroup(world: HabitatWorld): boolean {
     const species = credits[index].species;
     const wanted = Math.min(
       profileOf(species).groupSize,
-      creditsFor(species),
+      creditsFor(species, true),
       WILDLIFE_POPULATION_CAP - entities.length,
     );
     const created = spawnGroup(world, species, wanted);
@@ -358,12 +370,13 @@ export function despawnInvalidHabitat(world: HabitatWorld): number {
     if (
       isHullPoseValid(
         world,
-        erodedSamplerFor(world, entity.species, entity.size),
+        erodedSamplerFor(world, entity.species, entity.size, entity.id),
         entity.species,
         entity.size,
         entity.x,
         entity.y,
         entity.heading,
+        entity.id,
       )
     ) {
       continue;
@@ -412,11 +425,13 @@ const FIRE_CELL_REACH = 0.5;
 export function burnableEntityAt(
   x: number,
   y: number,
+  accepts?: (id: number) => boolean,
 ): { entity: WildlifeEntity; distanceCells: number } | null {
+  const target = cellCentre({ x, y });
   const nearest = nearestWithinReach(
-    entities.filter((entity) => profileOf(entity.species).habitat === 'land'),
-    x,
-    y,
+    entities.filter((entity) => profileOf(entity.species).habitat === 'land' && (accepts?.(entity.id) ?? true)),
+    target.x,
+    target.y,
     FIRE_CELL_REACH,
     (entity) => entity,
   );

@@ -199,7 +199,10 @@ describe('PluginHost', () => {
       },
     };
 
-    const world = worldWithUnlockedChunks(WORLD_SIZE, [[0, 0], [1, 0], [0, 1], [1, 1]]);
+    const chunkEdge = WORLD_SIZE / CHUNK_SIZE;
+    const unlocked = Array.from({ length: chunkEdge * chunkEdge }, (_, index) =>
+      [index % chunkEdge, Math.floor(index / chunkEdge)] as const);
+    const world = worldWithUnlockedChunks(WORLD_SIZE, unlocked);
     new PluginHost(world, [plugin].map(asLoadedPlugin)).worldCreate();
     expect(api).toBeDefined();
     if (!api) return;

@@ -102,21 +102,22 @@ function playThunder(ctx: ClientPluginCtx, cellX: number, cellY: number): void {
   ctx.audio.playSfx(nextThunderSfxUrl(), { at, delaySeconds: thunderDelaySeconds(ctx, at) });
 }
 
-// True when a bolt was drawn; the governor may refuse a strike that comes too soon.
-function applyStrike(systemId: number, cellX: number, cellY: number): boolean {
+function applyStrike(ctx: ClientPluginCtx, systemId: number, cellX: number, cellY: number): void {
   const rig = systemId === STRIKE_NO_SYSTEM ? undefined : view.rigFor(systemId);
   const disc = rig === undefined ? undefined : view.poseFor(systemId);
+  const onFlash = (): void => playThunder(ctx, cellX, cellY);
 
-  if (rig === undefined || disc === undefined) {
+  if (rig === undefined || disc === undefined || disc.intensity <= 0) {
     const dryBolt = rigs?.dryBolt;
-    if (dryBolt === undefined) return false;
-    return dryBolt.strike(cellX * CELL_WORLD_SIZE, cellY * CELL_WORLD_SIZE, governor);
+    dryBolt?.strike(cellX * CELL_WORLD_SIZE, cellY * CELL_WORLD_SIZE, governor, onFlash);
+    return;
   }
 
-  return rig.strike(
+  rig.strike(
     (cellX - disc.x) * CELL_WORLD_SIZE,
     (cellY - disc.y) * CELL_WORLD_SIZE,
     governor,
+    onFlash,
   );
 }
 
@@ -132,6 +133,10 @@ export const clientPlugin: TerraceClientPlugin = {
     for (const url of THUNDER_SFX_URLS) ctx.audio.preload(url);
     ctx.publishGroundShade(deckShadeFrom(view, THUNDERSTORM_SHADE_DARKNESS));
     ctx.publishGauge(WEIGHT_GAUGE_KEY, () => discWeightUnderCamera(view, ctx));
+    ctx.onWorldReset(() => {
+      rigs?.dryBolt.reset();
+      rigs?.flashLight.park();
+    });
 
     ctx.onMessage(THUNDERSTORM_STRIKES_MESSAGE, (payload) => {
       const strikes = parseStrikesPayload(payload);
@@ -139,7 +144,7 @@ export const clientPlugin: TerraceClientPlugin = {
       // No flash, no thunder: sound and light always agree.
       if (view.isReduced()) return;
       for (const strike of strikes) {
-        if (applyStrike(strike.systemId, strike.x, strike.y)) playThunder(ctx, strike.x, strike.y);
+        applyStrike(ctx, strike.systemId, strike.x, strike.y);
       }
     });
   },

@@ -13,6 +13,7 @@ import {
 } from '../protocol.ts';
 import { type HabitatWorld, isValidCellFor, walkerProfileOf } from './census.ts';
 import { profileOf } from './species.ts';
+import { authoredSwimmerBounds, measuredSwimmerScale } from '../swimmerBounds.ts';
 
 /**
  * Oriented capsule collision for swimmers: bow/stern/beam/centre probes at the
@@ -23,14 +24,22 @@ import { profileOf } from './species.ts';
 export function hullHalfLengthCellsOf(
   species: WildlifeHabitatSpecies,
   size: WildlifeSizeClass,
+  variantSeed?: number,
 ): number {
+  const bounds = authoredSwimmerBounds(species, variantSeed);
+  const scale = measuredSwimmerScale(species, size, variantSeed);
+  if (bounds !== null && scale !== null) return cellsAcross(Math.max(bounds.noseX, -bounds.tailX) * scale);
   return cellsAcross(drawnLengthWorldUnits(species, speciesRealLengthMetres(species), size)) / 2;
 }
 
 export function hullHalfBeamCellsOf(
   species: WildlifeHabitatSpecies,
   size: WildlifeSizeClass,
+  variantSeed?: number,
 ): number {
+  const bounds = authoredSwimmerBounds(species, variantSeed);
+  const scale = measuredSwimmerScale(species, size, variantSeed);
+  if (bounds !== null && scale !== null) return cellsAcross(bounds.halfWidth * scale);
   const profile = profileOf(species);
   if (profile.hullBeamCells === undefined) return 0;
   return hullHalfLengthCellsOf(species, size) * (profile.hullBeamCells / profile.bodyLengthCells);
@@ -51,8 +60,9 @@ export function erodedSamplerFor(
   world: HabitatWorld,
   species: WildlifeHabitatSpecies,
   size: WildlifeSizeClass,
+  variantSeed?: number,
 ): TerrainSampler {
-  const halfBeam = hullHalfBeamCellsOf(species, size);
+  const halfBeam = hullHalfBeamCellsOf(species, size, variantSeed);
   if (halfBeam < 1) return world;
   let byRadius = erodedByWorld.get(world);
   if (byRadius === undefined) {
@@ -94,11 +104,12 @@ export function isHullPoseValid(
   x: number,
   y: number,
   heading: number,
+  variantSeed?: number,
 ): boolean {
   if (!hasHull(species)) return isValidCellFor(world, species, x, y);
-  const profile = walkerProfileOf(species);
-  const halfLength = hullHalfLengthCellsOf(species, size);
-  const halfBeam = hullHalfBeamCellsOf(species, size);
+  const profile = walkerProfileOf(species, size);
+  const halfLength = hullHalfLengthCellsOf(species, size, variantSeed);
+  const halfBeam = hullHalfBeamCellsOf(species, size, variantSeed);
   const cos = Math.cos(heading);
   const sin = Math.sin(heading);
   if (!probeValid(world, eroded, profile, x + cos * halfLength, y + sin * halfLength)) {

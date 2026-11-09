@@ -2,6 +2,7 @@ import { Box3, Group, Matrix4, type Object3D } from 'three';
 import type { MoverGait } from '../../../../client/src/plugins/kit/moverGait.ts';
 import type { RigAsset } from '../../../../client/src/render/rigAsset.ts';
 import type { AuthoredSpecies, SpeciesJoints, SpeciesModelBuilder } from './speciesModel.ts';
+import type { AuthoredSwimmerBounds } from '../../swimmerBounds.ts';
 
 export interface SpeciesEnvelope {
   readonly length: number;
@@ -16,6 +17,7 @@ export interface SpeciesAssetSpec {
   readonly file: string;
   readonly joints: readonly string[];
   readonly envelope: SpeciesEnvelope;
+  readonly bounds?: AuthoredSwimmerBounds;
   readonly rigidified?: boolean;
   readonly adopt?: readonly { readonly node: string; readonly under: string }[];
 }
@@ -47,6 +49,10 @@ interface InstalledSpecies {
 const installed = new Map<string, InstalledSpecies>();
 
 export function installSpeciesAsset(spec: SpeciesAssetSpec, asset: RigAsset): void {
+  installPreparedSpecies(spec.species, prepareSpeciesAsset(spec, asset));
+}
+
+export function prepareSpeciesAsset(spec: SpeciesAssetSpec, asset: RigAsset) {
   asset.scene.updateMatrixWorld(true);
 
   if (!spec.joints.includes('rig')) {
@@ -82,17 +88,26 @@ export function installSpeciesAsset(spec: SpeciesAssetSpec, asset: RigAsset): vo
   }
 
   const envelope = spec.envelope;
+  if (spec.bounds !== undefined) {
+    assertClose(spec, 'full nose', max.x, spec.bounds.noseX, 'bounds.noseX');
+    assertClose(spec, 'full tail', min.x, spec.bounds.tailX, 'bounds.tailX');
+    assertClose(spec, 'full width', zExtent, spec.bounds.halfWidth, 'bounds.halfWidth');
+    assertClose(spec, 'full crown', max.y, spec.bounds.crownY, 'bounds.crownY');
+    assertClose(spec, 'full belly', min.y, spec.bounds.bellyY, 'bounds.bellyY');
+  }
   assertClose(spec, 'length', measured.nose! - measured.tail_tip!, envelope.length, 'envelope.length');
   assertClose(spec, 'halfLength', (measured.nose! - measured.tail_tip!) / 2, envelope.halfLength, 'envelope.halfLength');
   assertClose(spec, 'crownY', measured.crown!, envelope.crownY, 'envelope.crownY');
   assertClose(spec, 'bellyY', measured.belly!, envelope.bellyY, 'envelope.bellyY');
   assertClose(spec, 'halfWidth', halfWidth, envelope.halfWidth, 'envelope.halfWidth');
 
-  installed.get(spec.species)?.asset.dispose();
-  installed.set(
-    spec.species,
-    spec.rigidified === true ? prepareRigidified(spec, asset) : prepareAuthored(spec, asset),
-  );
+  const prepared = spec.rigidified === true ? prepareRigidified(spec, asset) : prepareAuthored(spec, asset);
+  return { ...prepared, dispose: () => asset.dispose() };
+}
+
+export function installPreparedSpecies(species: string, prepared: InstalledSpecies): void {
+  installed.get(species)?.asset.dispose();
+  installed.set(species, prepared);
 }
 
 function prepareAuthored(spec: SpeciesAssetSpec, asset: RigAsset): InstalledSpecies {

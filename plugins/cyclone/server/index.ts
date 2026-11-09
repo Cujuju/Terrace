@@ -135,9 +135,7 @@ const persistence: PersistenceSlice = {
   save(): unknown {
     return saveCyclones();
   },
-  load(data: unknown): void {
-    loadCyclones(data);
-  },
+  load: loadCyclones,
 };
 
 export const plugin: TerracePlugin = {

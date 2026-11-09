@@ -52,7 +52,7 @@ describe('stamp quotes describe the edited surface', () => {
       sculptTarget: { x: CENTRE, y: CENTRE, spanBand: null } });
     const capacity = 1000;
     state.setManaPool({ balance: required - (funded ? 0 : 1), capacity,
-      manaPerBandCell: MANA_PER_CELL, regenPerSecond: capacity });
+      manaPerBandCell: MANA_PER_CELL, regenPerSecond: capacity, unlockPolicy: 'reveal' });
     const quote = state.currentBrushQuote();
     expect(quote.cost).toBeLessThan(required);
     expect(quote).toMatchObject({ required, affordable: funded, estimated: false });

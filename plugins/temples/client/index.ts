@@ -26,7 +26,7 @@ import { isTempleGround } from '../suitability.ts';
 import { createTempleModels, type TempleModels } from './temple.ts';
 import { buildingQuality, registerBuildingQualityConsumer } from '../../../client/src/state/buildingQualityPrefs.ts';
 import type { BuildingAssetKit } from '../../../client/src/render/buildingAssetKit.ts';
-import { preloadAuthoredTemple } from './authoredAssets.ts';
+import { preloadAuthoredTemple, preloadTempleForMount, takeTempleForMount } from './authoredAssets.ts';
 
 const TEMPLE_TOOL_ID = 'place';
 
@@ -208,9 +208,8 @@ const TEMPLE_BEACON_DRAW_OBJECTS = 2;
 const TEMPLES_PER_WORLD = 1;
 
 export const clientPlugin: TerraceClientPlugin = {
-  async preload(): Promise<void> {
-    assetKit?.dispose();
-    assetKit = await preloadAuthoredTemple(buildingQuality());
+  preload(ctx: ClientPluginCtx): Promise<void> {
+    return preloadTempleForMount(ctx.signal, buildingQuality());
   },
   name: TEMPLES_PLUGIN_NAME,
 
@@ -219,10 +218,16 @@ export const clientPlugin: TerraceClientPlugin = {
     (TEMPLE_STANDING_DRAW_OBJECTS + TEMPLE_GHOST_DRAW_OBJECTS + TEMPLE_BEACON_DRAW_OBJECTS),
 
   attach(ctx: ClientPluginCtx): void {
+    if (ctx.signal.aborted) return;
+    assetKit = takeTempleForMount(ctx.signal) ?? null;
     models = createTempleModels(assetKit ?? undefined);
     ctx.layer.add(models.standing, models.ghost);
     unsubscribeQuality = registerBuildingQualityConsumer(async (quality) => {
       const nextKit = await preloadAuthoredTemple(quality);
+      if (ctx.signal.aborted) {
+        nextKit.dispose();
+        throw new DOMException('Temple mount closed', 'AbortError');
+      }
       let nextModels: TempleModels;
       try { nextModels = createTempleModels(nextKit); }
       catch (error) { nextKit.dispose(); throw error; }

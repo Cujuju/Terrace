@@ -44,6 +44,7 @@ export const clientPlugin: TerraceClientPlugin = {
     ctx.audio.preload(rainLoopUrl);
     ctx.publishGroundShade(deckShadeFrom(view, RAIN_SHADE_DARKNESS));
     ctx.publishGauge(WEIGHT_GAUGE_KEY, () => discWeightUnderCamera(view, ctx));
+    ctx.onWorldReset(() => ctx.audio.ambience(rainLoopUrl, 0));
     ctx.onFrame(() => {
       ctx.audio.ambience(rainLoopUrl, discWeightUnderCamera(view, ctx));
     });

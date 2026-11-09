@@ -7,7 +7,7 @@
   },
   "scripts": {
     "typecheck": "pnpm -r --if-present run typecheck",
-    "test": "pnpm -r --if-present run test",
+    "test": "pnpm -r --workspace-concurrency=1 --if-present run test",
     "electron:dev": "pnpm --filter @terrace/client electron:dev",
     "electron:stage": "node scripts/electron-package.mjs",
     "electron:pack:dir": "node scripts/electron-package.mjs && pnpm --filter @terrace/client exec electron-builder --config electron-builder.ts --dir",

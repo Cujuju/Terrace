@@ -48,24 +48,24 @@ function parseLavaCell(value: unknown): { x: number; y: number; ageSeconds: numb
   return { x: x as number, y: y as number, ageSeconds: ageSeconds as number };
 }
 
-export function loadVolcanoes(data: unknown): void {
-  if (typeof data !== 'object' || data === null) return;
+export function loadVolcanoes(data: unknown): boolean {
+  if (typeof data !== 'object' || data === null) return false;
   const { seeded, nextVentId, rngState, vents, lava, pendingConeSculpts } = data as Record<
     string,
     unknown
   >;
-  if (typeof seeded !== 'boolean') return;
-  if (!Number.isInteger(nextVentId) || !Number.isInteger(rngState)) return;
+  if (typeof seeded !== 'boolean') return false;
+  if (!Number.isInteger(nextVentId) || !Number.isInteger(rngState)) return false;
   const parsedVents = parseRecordArray(vents, parseVent);
-  if (parsedVents === null) return;
+  if (parsedVents === null) return false;
 
   const parsedLava = parseRecordArray(lava, parseLavaCell);
-  if (parsedLava === null) return;
+  if (parsedLava === null) return false;
 
   let parsedPending: Array<{ x: number; y: number; radius: number; amount: number }> = [];
   if (pendingConeSculpts !== undefined) {
     const steps = parseRecordArray(pendingConeSculpts, parsePendingConeSculpt);
-    if (steps === null) return;
+    if (steps === null) return false;
     parsedPending = steps;
   }
 
@@ -78,4 +78,5 @@ export function loadVolcanoes(data: unknown): void {
     pendingConeSculpts: parsedPending,
   };
   restoreVolcanoes(snapshot);
+  return true;
 }

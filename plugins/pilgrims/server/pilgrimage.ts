@@ -8,8 +8,9 @@ import {
   ROUTE_NODE_BUDGET,
   WORLD_UNIT_CELLS,
   cellsAcross,
+  canProceedAlong,
   createRouteBudget,
-  findRoute,
+  drawnBandOfSample,
   findRouteWithStatus,
   followRoute,
   isWalkableCell as sharedIsWalkableCell,
@@ -28,6 +29,7 @@ import {
 } from '@terrace/shared';
 import {
   PILGRIMS_CAP,
+  hashCell,
   settlementRace,
   type PilgrimEntityState,
   type SettlerRace,
@@ -61,9 +63,7 @@ export const ARRIVAL_RADIUS_CELLS = cellsAcross(0.75);
 
 export const PILGRIM_DISPATCH_EXPANSION_POOL = ROUTE_NODE_BUDGET;
 
-/** Trial expansions per pilgrim search. Local routes finish far below it;
- * maze searches exhaust it and defer. Real-pool callers keep exact fallback
- * semantics. */
+/** Searches without a caller pool stop at the local-route allowance. */
 export const PILGRIM_ROUTE_TRIAL_EXPANSIONS = 1024;
 
 const SETTLEMENT_KEY_STRIDE = 65536;
@@ -165,26 +165,28 @@ export function planRoute(
   toY: number,
   budget?: RouteBudget,
 ): RouteCell[] | null {
-  const trial = createRouteBudget(PILGRIM_ROUTE_TRIAL_EXPANSIONS);
-  const attempt = findRouteWithStatus(
-    world,
-    PILGRIM_WALKER_PROFILE,
-    { x: fromX, y: fromY },
-    { x: toX, y: toY },
-    trial,
-  );
-  if (attempt.status !== 'exhausted') {
-    return attempt.plan === null ? null : [...attempt.plan.cells];
-  }
-  if (budget === undefined) return null;
-  const plan = findRoute(
-    world,
-    PILGRIM_WALKER_PROFILE,
-    { x: fromX, y: fromY },
-    { x: toX, y: toY },
-    budget,
-  );
+  const { plan } = searchRoute(world, fromX, fromY, toX, toY, budget);
   return plan === null ? null : [...plan.cells];
+}
+
+function searchRoute(
+  world: PilgrimWorld,
+  fromX: number,
+  fromY: number,
+  toX: number,
+  toY: number,
+  budget?: RouteBudget,
+) {
+  if (budget !== undefined && budget.remaining <= 0) {
+    return { status: 'exhausted' as const, plan: null };
+  }
+  return findRouteWithStatus(
+    world,
+    PILGRIM_WALKER_PROFILE,
+    { x: fromX, y: fromY },
+    { x: toX, y: toY },
+    budget ?? PILGRIM_ROUTE_TRIAL_EXPANSIONS,
+  );
 }
 
 export type PilgrimLeg = 'outbound' | 'lingering' | 'homebound';
@@ -221,6 +223,7 @@ export interface Pilgrim {
   route: RouteCell[] | null;
   routeIndex: number;
   climb: ClimbState | null;
+  climbCount: number;
   stillSeconds: number;
   stillX: number;
   stillY: number;
@@ -240,7 +243,22 @@ export interface MovingWalker {
 
 export type WalkerAdvance = 'progressed' | 'held' | 'fell';
 
-export interface RoutedWalker extends MovingWalker, RoutedMover {}
+export interface RoutedWalker extends MovingWalker, RoutedMover {
+  readonly id: number;
+  climbCount: number;
+}
+
+export function walkerHasArrived(world: PilgrimWorld, walker: MovingWalker): boolean {
+  if (walker.climb !== null) return false;
+  const dx = walker.goalX - walker.x;
+  const dy = walker.goalY - walker.y;
+  if (dx * dx + dy * dy > ARRIVAL_RADIUS_CELLS * ARRIVAL_RADIUS_CELLS) return false;
+  if (!isWalkableCell(world, walker.x, walker.y)) return false;
+  const here = world.heightAt(Math.floor(walker.x), Math.floor(walker.y));
+  const goal = world.heightAt(Math.floor(walker.goalX), Math.floor(walker.goalY));
+  return drawnBandOfSample(here) === drawnBandOfSample(goal) &&
+    canProceedAlong(world, PILGRIM_WALKER_PROFILE, walker.x, walker.y, walker.goalX, walker.goalY);
+}
 
 export const WALKER_PERSONAL_SPACE_CELLS = cellsAcross(0.17);
 
@@ -344,6 +362,7 @@ function climbTowardWall(
     PILGRIM_WALK_SPEED_CELLS_PER_SECOND * dt,
     climbSeedFor(walker, target),
   );
+  if (outcome === 'climbing') walker.climbCount++;
   return outcome === null ? null : 'progressed';
 }
 
@@ -383,7 +402,7 @@ function goalwardNeighbourOf(walker: RoutedWalker): RouteCell | null {
 
 function climbSeedFor(walker: RoutedWalker, target: RouteCell): number {
   return climbSeed(
-    walker.routeIndex,
+    hashCell(walker.id, walker.climbCount),
     Math.floor(walker.x),
     Math.floor(walker.y),
     target.x,
@@ -416,6 +435,8 @@ export function panicStep(
   if (walker.panicSecondsRemaining <= 0) return false;
 
   walker.panicSecondsRemaining = Math.max(0, walker.panicSecondsRemaining - dt);
+  // Active climbs and fatal falls keep advancing through the normal movement path.
+  if (walker.climb !== null) return false;
 
   const awayX = walker.x - walker.panicFromX;
   const awayY = walker.y - walker.panicFromY;
@@ -482,12 +503,6 @@ export function panicWalkers(
     panicked++;
   }
   return panicked;
-}
-
-function goalDistanceSq(pilgrim: Pilgrim): number {
-  const dx = pilgrim.goalX - pilgrim.x;
-  const dy = pilgrim.goalY - pilgrim.y;
-  return dx * dx + dy * dy;
 }
 
 export class Pilgrimage {
@@ -565,10 +580,9 @@ export class Pilgrimage {
 
         const homeX = cell.x + 0.5;
         const homeY = cell.y + 0.5;
-        const allowanceBefore = dispatchBudget.remaining;
-        const route = planRoute(world, homeX, homeY, viewpoint.x, viewpoint.y, dispatchBudget);
-        if (route === null) {
-          if (allowanceBefore < ROUTE_NODE_BUDGET) {
+        const outcome = searchRoute(world, homeX, homeY, viewpoint.x, viewpoint.y, dispatchBudget);
+        if (outcome.plan === null) {
+          if (outcome.status === 'exhausted') {
             dispatchAllowanceSpent = true;
             break;
           }
@@ -599,9 +613,10 @@ export class Pilgrimage {
           panicSecondsRemaining: 0,
           panicFromX: 0,
           panicFromY: 0,
-          route,
+          route: [...outcome.plan.cells],
           routeIndex: 0,
           climb: null,
+          climbCount: 0,
         });
       }
     }
@@ -639,9 +654,7 @@ export class Pilgrimage {
       if (advance === 'progressed') pilgrim.stuckSeconds = 0;
       else pilgrim.stuckSeconds += dt;
 
-      const after = goalDistanceSq(pilgrim);
-
-      if (after <= ARRIVAL_RADIUS_CELLS * ARRIVAL_RADIUS_CELLS) {
+      if (walkerHasArrived(world, pilgrim)) {
         if (pilgrim.leg === 'outbound') {
           pilgrim.leg = 'lingering';
           pilgrim.lingerSeconds = 0;

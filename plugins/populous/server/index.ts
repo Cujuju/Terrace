@@ -1,6 +1,7 @@
 import type { TerracePlugin, WorldApi } from '../../../server/src/plugins/types.ts';
 import {
   stepPopulous,
+  GROWTH_MODEL_VERSION,
   type PopulousCellRecord,
   type PopulousContext,
   type PopulousStepResult,
@@ -20,6 +21,7 @@ export const POPULOUS_REGISTERED_MESSAGE =
 
 const model = {
   name: POPULOUS_PLUGIN_NAME,
+  contractVersion: GROWTH_MODEL_VERSION,
   step(
     world: PopulousWorld,
     live: ReadonlyMap<number, PopulousCellRecord>,

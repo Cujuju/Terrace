@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { Group, PointLight } from 'three';
+import { Group, PointLight, type Mesh } from 'three';
 import { CELL_WORLD_SIZE } from '@terrace/shared';
 import { countDrawObjects } from '../src/plugins/host.ts';
 import type { ClientPluginCtx } from '../src/plugins/types.ts';
@@ -43,12 +43,14 @@ interface Harness {
   readonly sfx: string[];
   send(type: string, payload: unknown): void;
   frame(dt: number): void;
+  resetWorld(): void;
 }
 
 function harness(): Harness {
   const layer = new Group();
   const handlers = new Map<string, ((payload: unknown) => void)[]>();
   const frames: ((dt: number) => void)[] = [];
+  const resets: (() => void)[] = [];
   const sfx: string[] = [];
 
   const ctx = {
@@ -72,7 +74,10 @@ function harness(): Harness {
       frames.push(handler);
       return () => {};
     },
-    onWorldReset: (): (() => void) => () => {},
+    onWorldReset: (handler: () => void): (() => void) => {
+      resets.push(handler);
+      return () => {};
+    },
     cameraPosition: () => ({ x: 0, y: 40, z: 0 }),
     applyRevealClip: (): void => {},
     publishGroundShade: (): (() => void) => () => {},
@@ -88,6 +93,9 @@ function harness(): Harness {
     },
     frame(dt: number): void {
       for (const handler of frames) handler(dt);
+    },
+    resetWorld(): void {
+      for (const handler of resets) handler();
     },
   };
 }
@@ -198,6 +206,51 @@ describe('the thunderstorm draw budget', () => {
 });
 
 describe('a strike with no storm the client knows about', () => {
+  it('plays no sound while frames are held and sounds once its flash is drawable', () => {
+    const live = attach();
+    live.send(THUNDERSTORM_STRIKES_MESSAGE, {
+      strikes: packStrikes([{ systemId: UNSEEN_SYSTEM_ID, x: 10, y: 10 }]),
+    });
+    expect(live.sfx).toHaveLength(0);
+    live.frame(FRAME_SECONDS);
+    expect(flashLightIn(live.layer).intensity).toBeGreaterThan(0);
+    expect(live.sfx).toHaveLength(1);
+    live.frame(FRAME_SECONDS);
+    expect(live.sfx).toHaveLength(1);
+  });
+
+  it('uses a drawable dry bolt when a known storm has not gathered intensity', () => {
+    const live = attach();
+    live.send(THUNDERSTORM_SYSTEMS_MESSAGE, { systems: [{ ...storm(STORM_ID), intensity: 0 }] });
+    live.frame(FRAME_SECONDS);
+    live.send(THUNDERSTORM_STRIKES_MESSAGE, {
+      strikes: packStrikes([{ systemId: STORM_ID, x: 45, y: 62 }]),
+    });
+    live.frame(FRAME_SECONDS);
+    expect(flashLightIn(live.layer).intensity).toBeGreaterThan(0);
+    expect(live.sfx).toHaveLength(1);
+    const dryBolt = live.layer.getObjectByName(DRY_BOLT_NAME)!;
+    expect(dryBolt.children[0]!.children[0]!.visible).toBe(true);
+  });
+
+  it('clears an active dry bolt and parks the same permanently visible light on reset', () => {
+    const live = attach();
+    live.send(THUNDERSTORM_STRIKES_MESSAGE, {
+      strikes: packStrikes([{ systemId: UNSEEN_SYSTEM_ID, x: 10, y: 10 }]),
+    });
+    live.frame(FRAME_SECONDS);
+    const light = flashLightIn(live.layer);
+    expect(light.intensity).toBeGreaterThan(0);
+    live.resetWorld();
+    expect(light.intensity).toBe(0);
+    expect(light.visible).toBe(true);
+    expect(light.parent).toBe(live.layer);
+    expect(countDrawObjects(live.layer)).toBe(0);
+    live.frame(FRAME_SECONDS);
+    expect(light.intensity).toBe(0);
+    expect(live.sfx).toHaveLength(1);
+  });
+
   it('routes to the dry bolt at the strike cell', () => {
     const live = attach();
     const cell = { x: 48, y: 96 };
@@ -231,5 +284,20 @@ describe('a strike with no storm the client knows about', () => {
     expect(live.sfx).toHaveLength(1);
     const pivot = live.layer.getObjectByName(DRY_BOLT_NAME)!.children[0]!;
     expect(pivot.position.x).toBeCloseTo(10 * CELL_WORLD_SIZE, 9);
+  });
+});
+
+describe('the attach-time shader catalogue', () => {
+  it('keeps every prebuilt storm glow in the scene for the hidden-drawable warmup', () => {
+    const live = attach();
+    const glowMaterials = new Set();
+    live.layer.getObjectByName('thunderstorm:warmup')!.traverse((object) => {
+      const mesh = object as Mesh;
+      if (mesh.isMesh && !Array.isArray(mesh.material) && mesh.material.vertexColors) {
+        glowMaterials.add(mesh.material);
+      }
+    });
+    expect(glowMaterials.size).toBe(MAX_ACTIVE_SYSTEMS);
+    expect(countDrawObjects(live.layer)).toBe(0);
   });
 });

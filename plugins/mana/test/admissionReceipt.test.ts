@@ -7,7 +7,7 @@ import { handleSculptIntent } from '../../../server/src/intent/pipeline.ts';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
 import type { TerracePlugin, WorldApi } from '../../../server/src/plugins/types.ts';
 import { RecordingSink, asLoadedPlugin, worldWithUnlockedChunks } from '../../../server/test/support/harness.ts';
-import { plugin as reveal } from '../../reveal/server/index.ts';
+import * as revealModule from '../../reveal/server/index.ts';
 import {
   INSUFFICIENT_MANA_REASON, manaBalanceOf, MANA_CAPACITY, MANA_DENIED_MESSAGE,
   MANA_PER_BAND_CELL, plugin as mana, resetManaState,
@@ -15,6 +15,8 @@ import {
 import { commitCharge, manaCostFor } from '../server/charging.ts';
 import { poolFor, quoteFor } from '../server/pool.ts';
 import { closedStrokeChunks, strokeChargeCost, strokeUnlockChunks } from '../pricing.ts';
+
+const reveal = revealModule.plugin;
 
 const SIZE = 128;
 const HOME = [3, 3] as const;
@@ -28,7 +30,7 @@ function boot(modifierFirst: boolean) {
   const sink = new RecordingSink(); world.setSink(sink);
   const modifier: TerracePlugin = { name: 'rewrite', onIntent: () => ({ kind: 'modify', intent: FINAL }) };
   const plugins = modifierFirst ? [modifier, mana, reveal] : [mana, modifier, reveal];
-  const host = new PluginHost(world, plugins.map(asLoadedPlugin)); host.worldCreate();
+  const host = new PluginHost(world, plugins.map((plugin) => ({ ...asLoadedPlugin(plugin), exports: plugin === reveal ? revealModule : {} }))); host.worldCreate();
   world.addPlayer(PLAYER); world.seedChunkForToken(PLAYER.token, ...HOME); host.playerJoined(PLAYER);
   return { world, host, sink };
 }
@@ -91,7 +93,7 @@ describe('final-intent admission receipts', () => {
   it('rejects receipt coverage that misses effective unlock chunks', () => {
     const pool = poolFor(PLAYER.id);
     const remote = { ...FINAL, x: SIZE - 1, y: SIZE - 1 };
-    pool.quote = quoteFor(SIZE, ORIGINAL, () => false);
+    pool.quote = quoteFor(SIZE, ORIGINAL, () => false, strokeUnlockChunks(SIZE, ORIGINAL));
     const touched = strokeUnlockChunks(SIZE, remote, []);
     expect(touched.some((chunk) => !pool.quote?.bound.includes(chunk))).toBe(true);
     const world = new Proxy({} as WorldApi, { get: (_target, property) => {

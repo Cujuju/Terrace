@@ -7,9 +7,9 @@ import type {
 import { LIBRARY_SCULPT_TOOL } from '@terrace/shared';
 import type { Player } from '../player.ts';
 import type { TerrainChangeListener } from '../world/sculpt-service.ts';
-import { applyServerSculpt } from '../world/sculpt-service.ts';
+import { applyServerSculpt, applyServerSculptBatch } from '../world/sculpt-service.ts';
 import type { World } from '../world/world.ts';
-import type { SiblingModule, WorldApi } from './types.ts';
+import type { BroadcastVisibleOptions, PluginSculptResult, SiblingModule, WorldApi } from './types.ts';
 
 export const PLUGIN_SCULPT_OPTIONS: SculptOptions = {
   tool: LIBRARY_SCULPT_TOOL,
@@ -105,7 +105,7 @@ export function createWorldApi(
     isCellVisibleTo(playerId: string, x: number, y: number): boolean {
       return bound('isCellVisibleTo').world.isCellVisibleTo(playerId, x, y);
     },
-    sculpt(x: number, y: number, radius: number, amount: number): CellDiff[] {
+    sculpt(x: number, y: number, radius: number, amount: number, canWrite?: (x: number, y: number) => boolean): CellDiff[] {
       const live = bound('sculpt');
       return applyServerSculpt(
         live.world,
@@ -115,7 +115,13 @@ export function createWorldApi(
         radius,
         amount,
         PLUGIN_SCULPT_OPTIONS,
+        undefined,
+        canWrite === undefined ? {} : { canWrite },
       );
+    },
+    sculptBatch(steps, canWrite): PluginSculptResult {
+      const live = bound('sculptBatch');
+      return applyServerSculptBatch(live.world, live.listener, steps, PLUGIN_SCULPT_OPTIONS, canWrite);
     },
     unlockChunk(cx: number, cy: number): boolean {
       return bound('unlockChunk').world.unlockChunk(cx, cy);
@@ -140,7 +146,7 @@ export function createWorldApi(
       items: readonly T[],
       positionOf: (item: T) => { readonly x: number; readonly y: number },
       buildPayload: (visible: readonly T[]) => unknown,
-      options?: { readonly skipEmpty?: boolean; readonly onlyPlayerId?: string },
+      options?: BroadcastVisibleOptions<T>,
     ): void {
       const live = bound('broadcastVisible');
       const skipEmpty = options?.skipEmpty ?? false;
@@ -154,7 +160,9 @@ export function createWorldApi(
         for (const item of items) {
           const { x, y } = positionOf(item);
           if (!isInsideWorld(live.world.size, x, y)) continue;
-          if (live.world.isCellVisibleTo(player.id, x, y)) visible.push(item);
+          if (!live.world.isCellVisibleTo(player.id, x, y)) continue;
+          if (options?.isVisibleTo !== undefined && !options.isVisibleTo(player.id, item)) continue;
+          visible.push(item);
         }
         if (skipEmpty && visible.length === 0) continue;
 

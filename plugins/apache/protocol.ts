@@ -11,10 +11,13 @@ export const ROOFTOP_CLEARANCE = 3;
 // Authored extents of apache.glb (nose to tail, rotor disc radius); the client checks the GLB against them.
 export const APACHE_AUTHORED_LENGTH_WORLD_UNITS = 0.997;
 export const APACHE_AUTHORED_ROTOR_RADIUS_WORLD_UNITS = 0.388;
+// Origin-centred sphere covering the airframe and both complete rotor sweeps; checked at preload.
+export const APACHE_AUTHORED_CLEARANCE_RADIUS_WORLD_UNITS = 0.55;
 
 export const APACHE_REAL_LENGTH_METRES = 17.7;
 
 export const APACHE_DRAW_SCALE = scaleToRealSize(APACHE_AUTHORED_LENGTH_WORLD_UNITS, APACHE_REAL_LENGTH_METRES);
+export const APACHE_CLEARANCE_RADIUS_WORLD_UNITS = APACHE_AUTHORED_CLEARANCE_RADIUS_WORLD_UNITS * APACHE_DRAW_SCALE;
 
 export interface ApacheFlight {
   readonly id: number;

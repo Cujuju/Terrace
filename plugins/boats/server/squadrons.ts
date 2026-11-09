@@ -245,8 +245,7 @@ function formSquadrons(candidates: readonly SquadronBoat[]): void {
       createCrew(memberIds);
     }
   }
-  // Every boat joins a fleet: loners attach to the nearest crew with room,
-  // or the nearest crew outright when all are full.
+  // Full crews retain their flagship and identity; a tail member crews a new pair with the stray.
   for (const stray of strays) {
     let bestId: number | null = null;
     let bestFullId: number | null = null;
@@ -269,10 +268,15 @@ function formSquadrons(candidates: readonly SquadronBoat[]): void {
         bestId = squadronId;
       }
     }
-    const join = bestId ?? bestFullId;
-    if (join === null) continue;
-    squadrons.get(join)?.members.push(stray.id);
-    squadronOfBoat.set(stray.id, join);
+    if (bestId !== null) {
+      squadrons.get(bestId)?.members.push(stray.id);
+      squadronOfBoat.set(stray.id, bestId);
+    } else if (bestFullId !== null) {
+      const full = squadrons.get(bestFullId)!;
+      const transferCount = SQUADRON_MIN_SHIPS - 1;
+      const transferred = full.members.splice(full.members.length - transferCount);
+      createCrew([...transferred, stray.id]);
+    }
   }
   lastFormation = {
     candidates: candidates.length,

@@ -18,6 +18,7 @@ import { STRUCTURES_CHANGES_MESSAGE, STRUCTURES_PLUGIN_NAME, structureKey } from
 import { buildingKindOf, tierOfKind } from '../settlementRules.ts';
 import {
   STRUCTURES_MODEL_LIFE,
+  GROWTH_MODEL_VERSION,
   STRUCTURES_MODEL_POPULOUS,
   setGrowthModel,
   type BoardCellRecord,
@@ -107,6 +108,7 @@ function countingModel(): GrowthModel & { readonly calls: number[] } {
   const calls: number[] = [];
   return {
     name: 'counting',
+    contractVersion: GROWTH_MODEL_VERSION,
     step(_world, live): GrowthStepResult {
       calls.push(live.size);
       return { nextLive: new Map(live), born: [], upgraded: [], died: [], emitted: [] };
@@ -179,5 +181,19 @@ describe('a closed world leaves nothing behind in this plugin', () => {
     advance(second, CA_GENERATION_INTERVAL_SECONDS);
     expect(model.calls).toHaveLength(3);
     closeOn(second);
+  });
+
+  it('does not flush a queued founding after the building was demolished', () => {
+    const world = worldWithTerrain(WORLD_SIZE, OPEN_TERRAIN);
+    const running = openOn(world, true);
+    const { x, y } = GHOST_HOUSE;
+    expect(foundStructure(asStructuresWorld(world), x, y)).toBe(true);
+    world.map.cells[y * WORLD_SIZE + x] = 0;
+    running.host.notifyTerrainChanged([{ x, y, h: 0 }]);
+    running.sink.clear();
+    running.host.tick(DT);
+    expect(currentLive().has(structureKey(x, y))).toBe(false);
+    expect(running.sink.ofType(CHANGES_WIRE_TYPE)).toEqual([]);
+    closeOn(running);
   });
 });

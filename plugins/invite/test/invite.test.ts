@@ -137,6 +137,14 @@ describe('client fallback derivation', () => {
   it('never shares a loopback address — it would point friends at themselves', () => {
     expect(deriveLocalShareUrl('localhost', 'http://localhost:5173')).toBeNull();
     expect(deriveLocalShareUrl('127.0.0.1', 'http://127.0.0.1:5173')).toBeNull();
+    expect(deriveLocalShareUrl('127.0.0.2', 'http://127.0.0.2:5173')).toBeNull();
+    expect(deriveLocalShareUrl('127.255.255.255', 'http://127.255.255.255:5173')).toBeNull();
     expect(deriveLocalShareUrl('[::1]', 'http://[::1]:5173')).toBeNull();
+  });
+
+  it('does not mistake a hostname beginning with 127 for a loopback address', () => {
+    expect(deriveLocalShareUrl('127.example.test', 'http://127.example.test')).toBe(
+      'http://127.example.test',
+    );
   });
 });

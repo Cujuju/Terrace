@@ -37,7 +37,7 @@ export const FLASH_DRAW_OBJECTS = 2;
 export interface ThunderstormRig {
   readonly root: Group;
   update(disc: InterpolatedDisc, elapsed: number, dt: number, reduced: boolean): void;
-  strike(offsetX: number, offsetZ: number, governor: LightningGovernor): boolean;
+  strike(offsetX: number, offsetZ: number, governor: LightningGovernor, onFlash?: () => void): boolean;
   reset(): void;
   dispose(): void;
 }
@@ -88,6 +88,7 @@ function createThunderstormRig(
   let wasFlashing = false;
   let strikeOffsetX = 0;
   let strikeOffsetZ = 0;
+  let pendingFlash: (() => void) | null = null;
 
   function park(): void {
     if (!wasFlashing) return;
@@ -123,10 +124,14 @@ function createThunderstormRig(
         root.position.z + strikeOffsetZ,
         brightness,
       );
+      const onFlash = pendingFlash;
+      pendingFlash = null;
+      onFlash?.();
     },
 
-    strike(offsetX: number, offsetZ: number, governor: LightningGovernor): boolean {
+    strike(offsetX, offsetZ, governor, onFlash): boolean {
       if (!lightning.strike(governor)) return false;
+      pendingFlash = onFlash ?? null;
 
       boltPivot.position.set(offsetX, 0, offsetZ);
       boltPivot.rotation.y = Math.atan2(offsetZ, offsetX);
@@ -137,6 +142,7 @@ function createThunderstormRig(
 
     reset(): void {
       lightning.reset();
+      pendingFlash = null;
       body.park();
       bolt.visible = false;
       glowSheet.visible = false;
@@ -179,11 +185,22 @@ export function createThunderstormRigs(ctx: ClientPluginCtx): ThunderstormRigs {
     applyRevealClip: clip,
   });
 
+  const warmup = new Group();
+  warmup.name = `${THUNDERSTORM_PLUGIN_NAME}:warmup`;
+  warmup.visible = false;
+
   // Every rig is built here: a storm arriving mid-play must never trigger a
   // material and node-graph build, unlike every other weather kind.
   const pool = createRigPool<ThunderstormRig>(
-    () => createThunderstormRig(hazeGeometry, boltGeometry, flashLight, kind.acquire(), clip),
-    (rig) => rig.reset(),
+    () => {
+      const rig = createThunderstormRig(hazeGeometry, boltGeometry, flashLight, kind.acquire(), clip);
+      warmup.add(rig.root);
+      return rig;
+    },
+    (rig) => {
+      rig.reset();
+      warmup.add(rig.root);
+    },
     MAX_ACTIVE_SYSTEMS,
   );
 
@@ -191,11 +208,12 @@ export function createThunderstormRigs(ctx: ClientPluginCtx): ThunderstormRigs {
     flashLight,
     deck: kind.deck,
     dryBolt,
-    kindObjects: () => kind.kindObjects(),
+    kindObjects: () => [...kind.kindObjects(), warmup],
     acquire: pool.acquire,
     release: pool.release,
     dispose(): void {
       pool.dispose();
+      warmup.clear();
       dryBolt.dispose();
       flashLight.dispose();
       kind.dispose();

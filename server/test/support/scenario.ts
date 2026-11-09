@@ -35,12 +35,12 @@ import {
 } from '../../src/net/room-sculpt-handler.ts';
 import { SculptRateLimiter } from '../../src/net/sculpt-rate-limit.ts';
 import { PluginHost } from '../../src/plugins/host.ts';
-import type { TerracePlugin } from '../../src/plugins/types.ts';
+import type { SiblingModule, TerracePlugin } from '../../src/plugins/types.ts';
 import type { Player } from '../../src/player.ts';
 import type { WorldSession } from '../../src/world/session.ts';
 import { World } from '../../src/world/world.ts';
 import type { WorldManager } from '../../src/world/world-manager.ts';
-import { asLoadedPlugin, RecordingSink, TEST_WORLD_NAME } from './harness.ts';
+import { asLoadedPluginExporting, RecordingSink, TEST_WORLD_NAME } from './harness.ts';
 
 export type ChunkRef = readonly [number, number];
 
@@ -69,6 +69,7 @@ export interface ScenarioSpec {
   readonly owned: readonly ChunkRef[];
   readonly players: readonly Player[];
   readonly plugins?: readonly TerracePlugin[];
+  readonly pluginExports?: Readonly<Record<string, SiblingModule>>;
   readonly difficulty?: number;
   /** The room's own gate. Omit for one that never fires; pass one to assert it. */
   readonly rate?: SculptRateLimiter;
@@ -290,7 +291,8 @@ export class Scenario {
     this.world.setSink(this.wrapSink(this.sink));
     for (const [cx, cy] of spec.unlocked) this.world.unlockChunk(cx, cy);
 
-    this.watchingHost = new WatchingPluginHost(this.world, (spec.plugins ?? []).map(asLoadedPlugin));
+    this.watchingHost = new WatchingPluginHost(this.world, (spec.plugins ?? []).map((plugin) =>
+      asLoadedPluginExporting(plugin, spec.pluginExports?.[plugin.name] ?? {})));
     this.host = this.watchingHost;
     this.host.worldCreate();
 

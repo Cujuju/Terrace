@@ -1,4 +1,5 @@
 export const CYCLONE_DAMAGE_EVENT_NAME = 'cyclone:damage';
+export const TORNADO_DAMAGE_EVENT_NAME = 'tornado:damage';
 
 export const STRUCTURES_WIND_MIN_SEVERITY = 0.35;
 

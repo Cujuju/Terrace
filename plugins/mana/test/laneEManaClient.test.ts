@@ -33,6 +33,7 @@ function fundedPool(balance: number): void {
     capacity: POOL_CAPACITY,
     manaPerBandCell: POOL_MANA_PER_BAND_CELL,
     regenPerSecond: 1,
+    unlockPolicy: 'reveal',
   });
 }
 

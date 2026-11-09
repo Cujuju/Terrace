@@ -1,6 +1,7 @@
 import { BOAT_SPEED_CELLS_PER_SECOND } from '../protocol.ts';
 
 export const CYCLONE_DAMAGE_EVENT_NAME = 'cyclone:damage';
+export const TORNADO_DAMAGE_EVENT_NAME = 'tornado:damage';
 
 export const BOAT_WIND_PUSH_FRACTION_OF_TOP_SPEED = 1.5;
 

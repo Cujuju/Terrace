@@ -5,6 +5,8 @@ import {
   CARVE_MAX_DEPTH_BANDS,
   EDGELESS_SCULPT_PROFILE,
   MAX_BAND,
+  MAX_HEIGHT,
+  drawnBandOfSample,
   MAX_BRUSH_RADIUS,
   MAX_ROLLBACK_KEY_LENGTH,
   LIBRARY_SCULPT_TOOL,
@@ -277,6 +279,17 @@ describe('validateRollbackRequest', () => {
 });
 
 describe('targetBand — the drag field on the wire', () => {
+  it('rejects every band above the highest representable drawn ceiling', () => {
+    const highestDrawnBand = drawnBandOfSample(MAX_HEIGHT);
+    expect(MAX_BAND).toBe(highestDrawnBand);
+    const base = { type: 'sculpt', x: 2, y: 2, radius: 1, dir: 1 };
+    expect(validateSculptIntent({ ...base, tool: 'drag', targetBand: highestDrawnBand, floorBand: BEDROCK_BAND }, 16)).not.toBeNull();
+    expect(validateSculptIntent({ ...base, tool: 'stamp', spanBand: highestDrawnBand }, 16)).not.toBeNull();
+    for (const band of [highestDrawnBand + 1, highestDrawnBand + 2]) {
+      expect(validateSculptIntent({ ...base, tool: 'drag', targetBand: band, floorBand: BEDROCK_BAND }, 16)).toBeNull();
+      expect(validateSculptIntent({ ...base, tool: 'stamp', spanBand: band }, 16)).toBeNull();
+    }
+  });
   const base = { type: 'sculpt', x: 10, y: 20, radius: 1, dir: 1 } as const;
   const drag = { ...base, tool: 'drag' } as const;
 

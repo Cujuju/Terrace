@@ -8,27 +8,27 @@ import { buildLayerView, commitLayerView } from './layerView.ts';
 import { SMOOTH_KINK_HALF_CELLS_MAX } from './options.ts';
 import {
   edgeUnits,
-  nearestPoint,
-  ringArea,
-  ringContains,
-  signedDistance,
+  createOutlineDistanceQuery,
+  createDroppedRingQuery,
+  createNearestPointQuery,
   traceBandOutlines,
   vertexKey,
 } from './outlineField.ts';
-import { OUTLINE_FIXED_POINT, type Point } from './outlineTrace.ts';
+import { OUTLINE_FIXED_POINT, isClosedOutline as isClosed, type Point } from './outlineTrace.ts';
+import { medianReachSamples, SAMPLE_FIXED, SAMPLES_PER_CELL, smoothLine } from './outlineMedian.ts';
+
+function sameOutlines(a: readonly Point[][], b: readonly Point[][]): boolean {
+  return a.length === b.length && a.every((line, k) => {
+    const other = b[k]!;
+    return line.length === other.length && line.every((p, i) => {
+      const q = other[i]!;
+      return p.x === q.x && p.y === q.y && p.pinned === q.pinned;
+    });
+  });
+}
 
 // Player smooth: trace each band outline, drop bumps narrower than about twice
 // the kink with a median along it (wider arcs stay), rebuild cells.
-
-/** Outlines are resampled two points per cell, so windows are set in cells. */
-const SAMPLES_PER_CELL = 2;
-const SAMPLE_FIXED = OUTLINE_FIXED_POINT / SAMPLES_PER_CELL;
-
-/** Blurred coordinates carry 16x precision, so repeated passes round nothing away. */
-const BLUR_PRECISION = 16;
-
-/** The median reaches twice the kink each way, so a bump up to twice the kink wide is outvoted. */
-const MEDIAN_REACH_KINKS = 2;
 
 /** A cell farther than the widest outvoted bump plus this keeps its side of the smoothed outline. */
 const RECLASSIFY_MARGIN_CELLS = 1;
@@ -36,14 +36,9 @@ const RECLASSIFY_MARGIN_CELLS = 1;
 /** The outline is traced a cell past the farthest point a brush cell reclassifies by. */
 const TRACE_MARGIN_CELLS = 1;
 
-/** Half the median window, in samples. */
-function medianReachSamples(kinkHalfCells: number): number {
-  return (MEDIAN_REACH_KINKS * kinkHalfCells * SAMPLES_PER_CELL) / 2;
-}
-
 /** How far from a smoothed outline, in cells, a brush cell takes that outline's side. */
 function reclassifyCells(kinkHalfCells: number): number {
-  return Math.ceil((MEDIAN_REACH_KINKS * kinkHalfCells) / 2) + RECLASSIFY_MARGIN_CELLS;
+  return Math.ceil(medianReachSamples(kinkHalfCells) / SAMPLES_PER_CELL) + RECLASSIFY_MARGIN_CELLS;
 }
 
 /** Cells past the brush a smooth reads; blurs never read past the pinned rim. */
@@ -53,127 +48,6 @@ function smoothReachCells(kinkHalfCells: number): number {
 
 /** Every cell past the brush a smooth reads, at the largest kink size. */
 export const OUTLINE_SMOOTH_READ_MARGIN_CELLS = smoothReachCells(SMOOTH_KINK_HALF_CELLS_MAX);
-
-function isClosed(line: readonly Point[]): boolean {
-  return line.length > 2 && line[0]!.x === line[line.length - 1]!.x && line[0]!.y === line[line.length - 1]!.y;
-}
-
-/** Points every SAMPLE_FIXED along the line, on it; one is pinned when the stretch it falls in is. A closed ring comes back unclosed. */
-function resample(line: Point[]): Point[] {
-  const out: Point[] = [];
-  let carry = 0;
-  for (let i = 1; i < line.length; i++) {
-    const a = line[i - 1]!;
-    const b = line[i]!;
-    const dx = b.x - a.x;
-    const dy = b.y - a.y;
-    const length = Math.floor(Math.sqrt(dx * dx + dy * dy));
-    const pinned = a.pinned && b.pinned;
-    for (; carry < length; carry += SAMPLE_FIXED) {
-      out.push({ x: a.x + Math.trunc((dx * carry) / length), y: a.y + Math.trunc((dy * carry) / length), pinned: pinned || (carry === 0 && a.pinned) });
-    }
-    carry -= length;
-  }
-  if (!isClosed(line)) out.push(line[line.length - 1]!);
-  return out;
-}
-
-/**
- * `passes` rounds of the [1 2 1] blur: a binomial kernel, variance passes / 2
- * samples². Pinned points hold; an open line's ends see themselves past the end.
- */
-function blur(values: Int32Array, pinned: Uint8Array, closed: boolean, passes: number): Int32Array {
-  const n = values.length;
-  let current = values.slice();
-  let next = new Int32Array(n);
-  for (let pass = 0; pass < passes; pass++) {
-    for (let i = 0; i < n; i++) {
-      if (pinned[i] === 1) {
-        next[i] = values[i]!;
-        continue;
-      }
-      const before = i > 0 ? current[i - 1]! : closed ? current[n - 1]! : current[i]!;
-      const after = i < n - 1 ? current[i + 1]! : closed ? current[0]! : current[i]!;
-      next[i] = Math.floor((before + 2 * current[i]! + after + 2) / 4);
-    }
-    [current, next] = [next, current];
-  }
-  return current;
-}
-
-/** Blurred precision back to fixed-point outline units, rounded. */
-function unblurred(v: number): number {
-  return Math.floor((v + BLUR_PRECISION / 2) / BLUR_PRECISION);
-}
-
-/**
- * Each point takes the median of its neighbours' offsets from a wide low-pass:
- * a narrow bump is outvoted outright, while an arc's offsets vary smoothly and stay.
- */
-function smoothLine(line: Point[], kinkHalfCells: number): Point[] {
-  const closed = isClosed(line);
-  const samples = resample(line);
-  const n = samples.length;
-  const pinned = Uint8Array.from(samples, (p) => (p.pinned ? 1 : 0));
-  if (n < 3 || !pinned.includes(0)) return line;
-  const reach = medianReachSamples(kinkHalfCells);
-  // Twice the blur less the blur twice keeps arcs' radius; sigma is the median's reach, variance passes / 2.
-  const passes = 2 * reach * reach;
-  const reference = (raw: Int32Array): Int32Array => {
-    const once = blur(raw, pinned, closed, passes);
-    const twice = blur(once, pinned, closed, passes);
-    return raw.map((v, i) => (pinned[i] === 1 ? v : 2 * once[i]! - twice[i]!));
-  };
-  const xs = Int32Array.from(samples, (p) => p.x * BLUR_PRECISION);
-  const ys = Int32Array.from(samples, (p) => p.y * BLUR_PRECISION);
-  const refX = reference(xs);
-  const refY = reference(ys);
-
-  // Each point's offset from the reference along its normal; pinned points sit on it.
-  const normalX = new Int32Array(n);
-  const normalY = new Int32Array(n);
-  const normalLength = new Int32Array(n);
-  const offsets = new Int32Array(n);
-  for (let i = 0; i < n; i++) {
-    const before = i > 0 ? i - 1 : closed ? n - 1 : i;
-    const after = i < n - 1 ? i + 1 : closed ? 0 : i;
-    const tx = refX[after]! - refX[before]!;
-    const ty = refY[after]! - refY[before]!;
-    const length = Math.floor(Math.sqrt(tx * tx + ty * ty));
-    normalX[i] = -ty;
-    normalY[i] = tx;
-    normalLength[i] = length;
-    if (length > 0) offsets[i] = Math.trunc(((xs[i]! - refX[i]!) * -ty + (ys[i]! - refY[i]!) * tx) / length);
-  }
-
-  // A ring's window stops short of meeting itself, so no sample votes twice.
-  const span = closed ? Math.min(reach, (n - 1) >> 1) : reach;
-  const window = new Int32Array(2 * span + 1);
-  const out: Point[] = [];
-  for (let i = 0; i < n; i++) {
-    if (pinned[i] === 1) {
-      out.push(samples[i]!);
-      continue;
-    }
-    if (normalLength[i] === 0) {
-      out.push({ x: unblurred(refX[i]!), y: unblurred(refY[i]!), pinned: false });
-      continue;
-    }
-    let count = 0;
-    for (let d = -span; d <= span; d++) {
-      const j = i + d;
-      if (closed) window[count++] = offsets[(j + n) % n]!;
-      else if (j >= 0 && j < n) window[count++] = offsets[j]!;
-    }
-    const votes = window.subarray(0, count).sort();
-    const median = votes[(count - 1) >> 1]!;
-    const x = refX[i]! + Math.trunc((median * normalX[i]!) / normalLength[i]!);
-    const y = refY[i]! + Math.trunc((median * normalY[i]!) / normalLength[i]!);
-    out.push({ x: unblurred(x), y: unblurred(y), pinned: false });
-  }
-  if (closed) out.push(out[0]!);
-  return out;
-}
 
 /** A ring wholly inside the brush, no wider than a bump the median outvotes, is one bump: it goes whole. */
 function isOutvotedRing(line: readonly Point[], outvoteFixed: number): boolean {
@@ -237,7 +111,14 @@ export function applyOutlineSmooth(
   // Level b's outline, the inside on each segment's positive-cross side; points past the rim are pinned.
   let outlines = traceBandOutlines(heightAt, lowBand, highBand, x0, y0, x1, y1);
   const dropped = new Map<number, Point[][]>();
+  const partitioned = new Map<Point[][], { kept: Point[][]; gone: Point[][] }>();
   for (const [band, raw] of outlines) {
+    const cached = partitioned.get(raw);
+    if (cached !== undefined) {
+      outlines.set(band, cached.kept);
+      dropped.set(band, cached.gone);
+      continue;
+    }
     const kept: Point[][] = [];
     const gone: Point[][] = [];
     for (const line of raw) {
@@ -250,19 +131,38 @@ export function applyOutlineSmooth(
     }
     outlines.set(band, kept);
     dropped.set(band, gone);
+    partitioned.set(raw, { kept, gone });
   }
   // Ascending, so an alt smooth can lay each level's shared wall on the level below's smoothed one.
   const smoothed = new Map<number, Point[][]>();
+  const filtered = new Map<Point[][], Point[][]>();
+  const projections = new Map<Point[][], (p: Point) => Point | null>();
   for (let band = lowBand + 1; band <= highBand; band++) {
     let lines = outlines.get(band)!;
     const below = smoothed.get(band - 1);
     if (walls && below !== undefined) {
       const shared = new Set(outlines.get(band - 1)!.flatMap((line) => line.map(vertexKey)));
-      lines = lines.map((line) => line.map((p) => (shared.has(vertexKey(p)) ? (nearestPoint(below, p) ?? p) : p)));
+      const project = projections.get(below) ?? createNearestPointQuery(below);
+      projections.set(below, project);
+      lines = lines.map((line) => line.map((p) => (shared.has(vertexKey(p)) ? (project(p) ?? p) : p)));
     }
-    smoothed.set(band, lines.map((line) => smoothLine(line, kinkHalfCells)));
+    let result = filtered.get(lines);
+    if (result === undefined) {
+      result = lines.map((line) => smoothLine(line, kinkHalfCells));
+      filtered.set(lines, result);
+    }
+    if (below !== undefined && sameOutlines(result, below)) result = below;
+    smoothed.set(band, result);
   }
   outlines = smoothed;
+  const queries = new Map<Point[][], (px: number, py: number) => number | null>();
+  for (const lines of outlines.values()) {
+    if (!queries.has(lines)) queries.set(lines, createOutlineDistanceQuery(lines, reclassifyFixed));
+  }
+  const droppedQueries = new Map<Point[][], (px: number, py: number) => boolean | null>();
+  for (const rings of dropped.values()) {
+    if (!droppedQueries.has(rings)) droppedQueries.set(rings, createDroppedRingQuery(rings));
+  }
 
   for (let dy = -radius; dy <= radius; dy++) {
     for (let dx = -radius; dx <= radius; dx++) {
@@ -283,13 +183,17 @@ export function applyOutlineSmooth(
       let unbroken = true;
       let nearEdge = false;
       const distances = new Map<number, number | null>();
+      const queried = new Map<Point[][], number | null>();
       for (let level = lowBand + 1; level <= highBand; level++) {
-        const d = signedDistance(outlines.get(level)!, px, py);
+        const lines = outlines.get(level)!;
+        const cached = queried.get(lines);
+        const d = cached === undefined ? queries.get(lines)!(px, py) : cached;
+        if (cached === undefined) queried.set(lines, d);
         distances.set(level, d);
         const reclassifies = d !== null && Math.abs(d) <= reclassifyFixed;
         // A dropped island's cells leave the level; a dropped hole's join it.
-        const ring = dropped.get(level)!.find((r) => ringContains(r, px, py));
-        const inside = ring !== undefined ? ringArea(ring) < 0 : reclassifies ? d >= 0 : band >= level;
+        const side = droppedQueries.get(dropped.get(level)!)!(px, py);
+        const inside = side !== null ? side : reclassifies ? d >= 0 : band >= level;
         if (inside) up = level;
         if (inside && unbroken) down = level;
         else unbroken = false;

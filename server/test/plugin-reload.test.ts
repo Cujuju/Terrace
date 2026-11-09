@@ -154,6 +154,15 @@ afterEach(() => {
 });
 
 describe('reloading one plugin in place', () => {
+  it('rejects overlapping reloads and releases ownership after a rejected probe', async () => {
+    writeProbe(pluginsDir, { mark: 'bad', messageType: 'bad', throwOnTick: true });
+    const first = manager.reloadPlugin(PLUGIN_DIRECTORY);
+    expect(await manager.reloadPlugin(PLUGIN_DIRECTORY)).toBe('switchInProgress');
+    expect(await first).toBe('reloadFailed');
+    writeProbe(pluginsDir, { mark: 'good', messageType: 'good' });
+    expect(await manager.reloadPlugin(PLUGIN_DIRECTORY)).not.toBe('switchInProgress');
+    expect(markOfLiveSibling()).toBe('good');
+  });
   it('replaces the module everywhere on success', async () => {
     const before = manager.installedPluginVersions[PLUGIN_DIRECTORY];
     expect(markOfLiveSibling()).toBe('v1');

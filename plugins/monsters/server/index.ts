@@ -125,8 +125,7 @@ const persistence: PersistenceSlice = {
     if ((selfDescribedSliceVersion(data) ?? fromVersion) > MONSTERS_SLICE_VERSION) {
       return 'refuse';
     }
-    loadMonsters(data);
-    return undefined;
+    return loadMonsters(data, fromVersion);
   },
 };
 

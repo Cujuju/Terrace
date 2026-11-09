@@ -99,7 +99,9 @@ export class CropField {
 
     for (const key of this.staged) {
       const cell = cropCellOf(key);
-      if (isBarred(cell.x, cell.y)) this.staged.delete(key);
+      if (isBarred(cell.x, cell.y) || !isFarmlandPlot(world, cell.x, cell.y, CROP_PLOT_TREAD_RING_CELLS)) {
+        this.staged.delete(key);
+      }
     }
 
     const sprouted: CropCell[] = [];

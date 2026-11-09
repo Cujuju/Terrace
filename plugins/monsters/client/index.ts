@@ -31,6 +31,7 @@ import { createDreadRigs, type Dread, type DreadRigs } from './atmosphere.ts';
 import { FLASH_COLOR, FLASH_LIGHT_RANGE_CELLS, dreadSpecOf } from './dread.ts';
 import {
   createLightBank,
+  PARKED_LIGHT_INTENSITY,
   type LightBank,
 } from '../../../client/src/plugins/kit/lightBank.ts';
 import { NO_SAMPLE, reconcileById } from '../../../client/src/plugins/kit/viewReconcile.ts';
@@ -221,9 +222,15 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     const root = view.model.root;
     const placedY = monsterOriginY(monster.kind, groundAt, monster.x, monster.y);
     // Continuous climb progress joins drawn support at both ends.
-    const drawnY = followClimbGroundY(view.climbGround, ctx, monster, view.drawnY, placedY, dt);
+    const drawnY = placedY === null ? null
+      : followClimbGroundY(view.climbGround, ctx, monster, view.drawnY, placedY, dt);
     root.visible = drawnY !== null;
-    if (drawnY === null) continue;
+    if (view.dread !== null) view.dread.root.visible = drawnY !== null;
+    if (drawnY === null) {
+      view.drawnY = null;
+      if (view.flash !== null) view.flash.intensity = PARKED_LIGHT_INTENSITY;
+      continue;
+    }
     view.drawnY = drawnY;
     advanceClimbRiserShift(view.riserShift, ctx, monster, drawnY, dt);
     root.position.set(
@@ -251,8 +258,10 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
 
   for (let index = retiringDread.length - 1; index >= 0; index--) {
     const retiring = retiringDread[index]!;
-    retiring.dread.update(animationSeconds, step, false);
-    if (!retiring.dread.isFaded()) continue;
+    if (retiring.dread.root.visible) {
+      retiring.dread.update(animationSeconds, step, false);
+      if (!retiring.dread.isFaded()) continue;
+    }
     const kind = retiring.kind;
     freeDread.get(kind)?.push(endRetirement(index));
   }

@@ -29,7 +29,7 @@ export function chunksPerEdge(worldSize: number): number {
 
 export function chunkIndex(worldSize: number, cx: number, cy: number): number {
   const n = chunksPerEdge(worldSize);
-  if (cx < 0 || cy < 0 || cx >= n || cy >= n) {
+  if (!Number.isInteger(cx) || !Number.isInteger(cy) || cx < 0 || cy < 0 || cx >= n || cy >= n) {
     throw new RangeError(`chunk (${cx},${cy}) out of bounds for ${n}×${n} chunks`);
   }
   return cy * n + cx;
@@ -63,8 +63,14 @@ const HOST_IS_LITTLE_ENDIAN = new Uint8Array(new Uint16Array([1]).buffer)[0] ===
 const BYTES_PER_HEIGHT = 2;
 
 export function chunkHeightsAsCells(heights: ChunkHeights): ArrayLike<number> {
+  if (!Array.isArray(heights) && !(heights instanceof Int16Array) && !(heights instanceof Uint8Array)) {
+    throw new RangeError('chunk heights must be an array of cells or packed height bytes');
+  }
   if (!(heights instanceof Uint8Array)) return heights;
-  const cells = Math.floor(heights.byteLength / BYTES_PER_HEIGHT);
+  if (heights.byteLength % BYTES_PER_HEIGHT !== 0) {
+    throw new RangeError('chunk height bytes must hold complete int16 cells');
+  }
+  const cells = heights.byteLength / BYTES_PER_HEIGHT;
   if (!HOST_IS_LITTLE_ENDIAN || heights.byteOffset % BYTES_PER_HEIGHT !== 0) {
     const bytes = new Uint8Array(cells * BYTES_PER_HEIGHT);
     bytes.set(heights.subarray(0, bytes.length));
@@ -187,6 +193,12 @@ export function writeChunkPayload(
   wire: ChunkHeights,
   layered?: ChunkLayeredSpans,
 ): number {
+  if (layered !== undefined && (
+    typeof layered !== 'object' || layered === null ||
+    !Array.isArray(layered.at) || !Array.isArray(layered.runs)
+  )) {
+    throw new RangeError('chunk layered spans must hold at and runs arrays');
+  }
   const heights = writeChunkHeights(map, cx, cy, wire);
   if (layered === undefined) return 0;
 

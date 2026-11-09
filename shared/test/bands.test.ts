@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   BAND_HEIGHT,
+  HEIGHT_WORLD_SCALE,
+  MAX_HEIGHT,
+  MAX_RELIEF_WORLD_UNITS,
+  SEA_LEVEL,
+  SEA_SURFACE_WORLD_Y,
+  WATER_SURFACE_CLEARANCE,
   bandFloorHeight,
   bandLevelHeight,
   createHeightmap,
@@ -17,6 +23,12 @@ import {
 } from '../src/index.ts';
 
 describe('drawn-band contract (lane A)', () => {
+  it('exports one canonical height scale and sea plane below the shore cap', () => {
+    expect(HEIGHT_WORLD_SCALE).toBe(MAX_RELIEF_WORLD_UNITS / MAX_HEIGHT);
+    expect(WATER_SURFACE_CLEARANCE).toBe(1 / 32);
+    expect(SEA_SURFACE_WORLD_Y).toBe(SEA_LEVEL * HEIGHT_WORLD_SCALE - WATER_SURFACE_CLEARANCE);
+    expect(SEA_SURFACE_WORLD_Y).toBeLessThan(SEA_LEVEL * HEIGHT_WORLD_SCALE);
+  });
   it('band floors are uniform: band k starts at 16k+1, the shore', () => {
     expect(bandFloorHeight(0)).toBe(DRAWN_SHORE_HEIGHT);
     for (const band of [-4, -2, -1, 1, 2, 7]) {

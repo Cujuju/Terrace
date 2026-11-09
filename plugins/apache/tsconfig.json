@@ -4,5 +4,5 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "types": ["node"]
   },
-  "include": ["protocol.ts", "flight.ts", "server", "client"]
+  "include": ["protocol.ts", "flight.ts", "clearance.ts", "server", "client", "test"]
 }

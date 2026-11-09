@@ -45,6 +45,16 @@ function world(lockedCell?: (x: number, y: number) => boolean): FarmlandWorld {
 }
 
 describe('isFarmlandCell', () => {
+  it('accepts encoded heights on one drawn tread and refuses heights across a drawn riser', () => {
+    const sample = (neighbour: number): FarmlandWorld => ({
+      worldSize: WORLD_SIZE, isCellUnlocked: () => true,
+      heightAt: (x, y) => x === 2 && y === 3 ? DEEP : x === 3 && y === 3 ? 48 : neighbour,
+    });
+    expect(isFarmlandCell(sample(41), 3, 3)).toBe(true);
+    expect(isFarmlandCell(sample(49), 3, 3)).toBe(false);
+    expect(isFarmlandPlot(sample(41), 3, 3, 0)).toBe(true);
+    expect(isFarmlandPlot(sample(49), 3, 3, 0)).toBe(false);
+  });
   it('accepts a flat terrace edged by ordinary (deep) water', () => {
     expect(isFarmlandCell(world(), 10, 10)).toBe(true);
   });

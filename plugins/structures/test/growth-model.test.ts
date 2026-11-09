@@ -24,6 +24,7 @@ import {
 } from '../settlementRules.ts';
 import {
   STRUCTURES_MODEL_ENV,
+  GROWTH_MODEL_VERSION,
   STRUCTURES_MODEL_LIFE,
   STRUCTURES_MODEL_POPULOUS,
   growthModel,
@@ -106,6 +107,11 @@ describe('the growth-model registry', () => {
     setGrowthModel(null);
     expect(growthModel()).toBeNull();
   });
+
+  it('rejects an older module generation without stepping its incompatible context', () => {
+    setGrowthModel({ ...stubModel(), contractVersion: GROWTH_MODEL_VERSION - 1 });
+    expect(growthModel()).toBeNull();
+  });
 });
 
 interface Harness {
@@ -138,6 +144,7 @@ function stubModel(): GrowthModel & {
   const calls: Array<{ live: number; buildableHere: boolean }> = [];
   return {
     name: 'stub',
+    contractVersion: GROWTH_MODEL_VERSION,
     calls,
     step(world, live, ctx: GrowthContext): GrowthStepResult {
       calls.push({ live: live.size, buildableHere: ctx.isBuildable(20, 20) });
@@ -211,6 +218,7 @@ describe('STRUCTURES_MODEL=populous', () => {
     let answered: { near: boolean; far: boolean } | null = null;
     setGrowthModel({
       name: 'clearance-probe',
+      contractVersion: GROWTH_MODEL_VERSION,
       step(world, live, ctx: GrowthContext): GrowthStepResult {
         const kind = rankedKindAt(world, 20, 20, RANKED_TIER);
         const board = new Map<number, BoardCellRecord>([
@@ -219,8 +227,8 @@ describe('STRUCTURES_MODEL=populous', () => {
         // Both footprints are the open ground's building for that tier.
         const separation = lotSeparationCells(kind, kind);
         answered = {
-          near: ctx.hasBuildingWithinSeparation(board, 20 + separation - 1, 20, RANKED_TIER),
-          far: ctx.hasBuildingWithinSeparation(board, 20 + separation, 20, RANKED_TIER),
+          near: ctx.hasBuildingWithinSeparation(board, 20 + separation - 1, 20, kind),
+          far: ctx.hasBuildingWithinSeparation(board, 20 + separation, 20, kind),
         };
         return { nextLive: new Map(live), born: [], upgraded: [], died: [], emitted: [] };
       },
@@ -235,6 +243,7 @@ describe('STRUCTURES_MODEL=populous', () => {
     let observed: { onBoard: boolean; generation: number; emitted: number } | null = null;
     setGrowthModel({
       name: 'emitter',
+      contractVersion: GROWTH_MODEL_VERSION,
       step(_world, live): GrowthStepResult {
         const nextLive = new Map<number, GrowthCellRecord>(live);
         nextLive.set(CELL, { age: 0, tier: 2, population: 0 });
@@ -262,6 +271,7 @@ describe('STRUCTURES_MODEL=populous', () => {
   it('does not seed or stir: under this model, houses come only from the model', () => {
     const inert: GrowthModel = {
       name: 'inert',
+      contractVersion: GROWTH_MODEL_VERSION,
       step(_world, live): GrowthStepResult {
         return { nextLive: new Map(live), born: [], upgraded: [], died: [], emitted: [] };
       },
@@ -277,6 +287,16 @@ describe('STRUCTURES_MODEL=populous', () => {
 describe('population persistence', () => {
   const GRANARY = buildingKindOf('prehistoric-granary')!;
   const GRANARY_TIER = tierOfKind(GRANARY);
+
+  it('uses the resolved building rank on both save and restore', () => {
+    const live = new Map<number, BoardCellRecord>([
+      [structureKey(9, 9), { age: 2, tier: GRANARY_TIER + 1, kind: GRANARY, population: 5 }],
+    ]);
+    const slice = saveStructures(live, 4, createStructuresRng(1), -1);
+    expect(slice.live[0].tier).toBe(GRANARY_TIER);
+    const conflicting = { ...slice, live: slice.live.map((cell) => ({ ...cell, tier: GRANARY_TIER + 1 })) };
+    expect(loadStructures(conflicting).live.get(structureKey(9, 9))?.tier).toBe(GRANARY_TIER);
+  });
 
   it('survives a restart', () => {
     const live = new Map<number, BoardCellRecord>([

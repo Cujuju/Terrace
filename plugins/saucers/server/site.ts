@@ -1,12 +1,14 @@
 import { BAND_HEIGHT, SEA_LEVEL } from '@terrace/shared';
-import { ARENA_RADIUS_CELLS, CRUISE_ALTITUDE_WORLD_UNITS, HEIGHT_WORLD_SCALE } from '../protocol.ts';
+import {
+  ARENA_RADIUS_CELLS,
+  BREATHE_RADIUS_FRACTION,
+  HEIGHT_WORLD_SCALE,
+  ORBIT_RADIUS_FRACTION_MAX,
+} from '../protocol.ts';
+import { FlightTerrain, type FlightWorld } from './flight-terrain.ts';
 import { isClearOfSettlements } from './structures-bridge.ts';
 
-export interface SiteWorld {
-  readonly worldSize: number;
-  heightAt(x: number, y: number): number;
-  isCellUnlocked(x: number, y: number): boolean;
-}
+export type SiteWorld = FlightWorld;
 
 const ARENA_SITE_ATTEMPTS = 24;
 
@@ -21,9 +23,8 @@ const CLEARANCE_BEARINGS: readonly (readonly [number, number])[] = [
   [0, -1],
 ];
 
-const ALTITUDE_SAMPLE_SPOKES = 16;
-
-const ALTITUDE_SAMPLE_RADII: readonly number[] = [0.5, 1];
+export const FLIGHT_ARENA_RADIUS_CELLS =
+  ARENA_RADIUS_CELLS * (ORBIT_RADIUS_FRACTION_MAX + BREATHE_RADIUS_FRACTION);
 
 export interface CrashCell {
   readonly x: number;
@@ -38,6 +39,7 @@ export interface ArenaSite {
   readonly centreY: number;
   readonly crashCells: readonly CrashCell[];
   readonly altitude: number;
+  readonly terrain: FlightTerrain;
 }
 
 function isRevealed(world: SiteWorld, x: number, y: number): boolean {
@@ -58,19 +60,23 @@ function hasArenaClearance(world: SiteWorld, x: number, y: number): boolean {
   return true;
 }
 
-function arenaAltitude(world: SiteWorld, x: number, y: number): number {
-  let peak = world.heightAt(x, y);
-  for (let spoke = 0; spoke < ALTITUDE_SAMPLE_SPOKES; spoke++) {
-    const angle = (spoke * 2 * Math.PI) / ALTITUDE_SAMPLE_SPOKES;
-    for (const fraction of ALTITUDE_SAMPLE_RADII) {
-      const sx = Math.round(x + Math.cos(angle) * ARENA_RADIUS_CELLS * fraction);
-      const sy = Math.round(y + Math.sin(angle) * ARENA_RADIUS_CELLS * fraction);
-      if (sx < 0 || sy < 0 || sx >= world.worldSize || sy >= world.worldSize) continue;
-      const height = world.heightAt(sx, sy);
-      if (height > peak) peak = height;
-    }
-  }
-  return peak * HEIGHT_WORLD_SCALE + CRUISE_ALTITUDE_WORLD_UNITS;
+function arenaSite(world: SiteWorld, centreX: number, centreY: number, crashCells: CrashCell[]): ArenaSite {
+  const terrain = new FlightTerrain();
+  const centre = { x: centreX, y: centreY };
+  terrain.includeCorridor(world, centre, centre, FLIGHT_ARENA_RADIUS_CELLS);
+  return { centreX, centreY, crashCells, terrain, get altitude() { return terrain.altitude(); } };
+}
+
+export function crashCellAt(world: SiteWorld, x: number, y: number): CrashCell | null {
+  if (!isRevealed(world, x, y)) return null;
+  const height = world.heightAt(x, y);
+  const water = height <= SEA_LEVEL;
+  return {
+    x, y,
+    groundY: Math.max(height, SEA_LEVEL) * HEIGHT_WORLD_SCALE,
+    water,
+    depthBands: water ? (SEA_LEVEL - height) / BAND_HEIGHT : 0,
+  };
 }
 
 function findCrashCells(
@@ -90,18 +96,11 @@ function findCrashCells(
     const y = Math.round(centreY + Math.sin(angle) * distance);
     const key = y * world.worldSize + x;
     if (taken.has(key)) continue;
-    if (!isRevealed(world, x, y)) continue;
     if (!isClearOfSettlements(x, y)) continue;
+    const cell = crashCellAt(world, x, y);
+    if (cell === null) continue;
     taken.add(key);
-    const height = world.heightAt(x, y);
-    const water = height <= SEA_LEVEL;
-    cells.push({
-      x,
-      y,
-      groundY: Math.max(height, SEA_LEVEL) * HEIGHT_WORLD_SCALE,
-      water,
-      depthBands: water ? (SEA_LEVEL - height) / BAND_HEIGHT : 0,
-    });
+    cells.push(cell);
   }
   return cells.length === wanted ? cells : null;
 }
@@ -120,7 +119,7 @@ export function findArenaSite(
     const crashCells = findCrashCells(world, centreX, centreY, random, crashCellsWanted);
     if (crashCells === null) continue;
 
-    return { centreX, centreY, crashCells, altitude: arenaAltitude(world, centreX, centreY) };
+    return arenaSite(world, centreX, centreY, crashCells);
   }
   return null;
 }
@@ -143,7 +142,7 @@ export function findArenaSiteNear(
       const crashCells = findCrashCells(world, centreX, centreY, random, crashCellsWanted);
       if (crashCells === null) continue;
 
-      return { centreX, centreY, crashCells, altitude: arenaAltitude(world, centreX, centreY) };
+      return arenaSite(world, centreX, centreY, crashCells);
     }
   }
   return null;

@@ -35,6 +35,7 @@ import {
   CA_FIXED_SEED_PATTERNS,
   CA_STIR_MAX_SPARKS,
   CA_STIR_PROBABILITY_PER_GENERATION,
+  CA_GENERATION_INTERVAL_SECONDS,
   attemptSeed,
   attemptStir,
   placePatternAt,
@@ -1163,7 +1164,13 @@ describe('world events (structures:changes)', () => {
       [32, 30],
     ]);
 
-    for (let elapsed = 0; elapsed < 20; elapsed += DT) host.tick(DT);
+    // Cold eligibility, component labels and the first generation each consume a scan sweep.
+    const INITIAL_SCAN_SWEEPS = 3;
+    const firstGenerationDeadline = CA_GENERATION_INTERVAL_SECONDS * INITIAL_SCAN_SWEEPS + DT;
+    for (let elapsed = 0; currentGeneration() === 0 && elapsed < firstGenerationDeadline; elapsed += DT) {
+      host.tick(DT);
+    }
+    expect(currentGeneration()).toBeGreaterThan(0);
 
     const changes = events.filter((heard) => heard.event === 'structures:changes');
     expect(changes.length).toBeGreaterThan(0);

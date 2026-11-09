@@ -6,8 +6,8 @@ import {
 } from '@terrace/shared';
 import { handleSculptIntent } from '../../../server/src/intent/pipeline.ts';
 import { PluginHost } from '../../../server/src/plugins/host.ts';
-import { RecordingSink, asLoadedPlugin, worldWithUnlockedChunks } from '../../../server/test/support/harness.ts';
-import { plugin as reveal } from '../server/index.ts';
+import { RecordingSink, asLoadedPlugin, asLoadedPluginExporting, worldWithUnlockedChunks } from '../../../server/test/support/harness.ts';
+import * as revealModule from '../server/index.ts';
 import {
   MANA_CAPACITY, MANA_PER_BAND_CELL, manaBalanceOf, plugin as mana, resetManaState,
 } from '../../mana/server/index.ts';
@@ -34,7 +34,7 @@ function boot(peak = true) {
   world.setSink(new RecordingSink());
   world.addPlayer(PLAYER);
   world.seedChunkForToken(PLAYER.token, 3, 3);
-  const host = new PluginHost(world, [mana, reveal].map(asLoadedPlugin));
+  const host = new PluginHost(world, [asLoadedPlugin(mana), asLoadedPluginExporting(revealModule.plugin, revealModule)]);
   host.worldCreate();
   host.playerJoined(PLAYER);
   return { world, host };

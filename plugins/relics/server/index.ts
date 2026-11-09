@@ -1,6 +1,7 @@
 import {
   BAND_HEIGHT,
   MAX_BRUSH_RADIUS,
+  MIN_BRUSH_RADIUS,
   WORLD_UNIT_CELLS,
   cellsAcross,
   strokeWriteSweep,
@@ -24,6 +25,7 @@ import {
   CAST_DENIED_TARGET,
   CAST_DENIED_UNOWNED,
   CAST_DENIED_UNSUITABLE,
+  CAST_DENIED_UNAVAILABLE,
   CAST_DENIED_WARDED,
   CAST_MESSAGE,
   COLLECT_MESSAGE,
@@ -53,6 +55,7 @@ import {
   dropWardsOf,
   resetWards,
   claimWardCells,
+  isCellWardedAgainst,
   sweepWards,
   wardHolderAgainst,
 } from './ward.ts';
@@ -303,7 +306,17 @@ function handleCast(world: WorldApi, player: Player, payload: unknown): void {
     if (wardRefuses(world, player.id, sweepAt(x + step.dx, y + step.dy, step.radius))) return;
   }
 
-  applyTerraform(world, x, y, steps);
+  const result = applyTerraform(world, x, y, steps,
+    (cx, cy) => !isCellWardedAgainst(world.worldSize, player.id, cx, cy));
+  if (!result.ok) {
+    if (result.reason === 'forbidden') {
+      wardRefuses(world, player.id, sweepAt(result.cell.x, result.cell.y, MIN_BRUSH_RADIUS));
+    } else {
+      denyCast(world, player.id, skill,
+        result.reason === 'locked' ? CAST_DENIED_TARGET : CAST_DENIED_UNAVAILABLE);
+    }
+    return;
+  }
   startCooldown(player.id, skill);
   sendSkills(world, player.id);
 }

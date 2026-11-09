@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Scene } from 'three';
 import { createClientPluginHost } from '../src/plugins/host.ts';
-import type { TerraceClientPlugin } from '../src/plugins/types.ts';
+import type { ClientPluginCtx, TerraceClientPlugin } from '../src/plugins/types.ts';
 import type { Viewport } from '../src/render/scene.ts';
 import type { World } from '../src/world.ts';
 import type { Connection } from '../src/net/connection.ts';
@@ -56,6 +56,35 @@ function deferredPlugin(): {
 }
 
 describe("a plugin's preload", () => {
+  it('aborts a canceled pending preload immediately and gives a remount a fresh signal', async () => {
+    const contexts: ClientPluginCtx[] = [];
+    const plugin: TerraceClientPlugin = {
+      name: 'cancelable', drawBudget: 0,
+      preload: (ctx) => { contexts.push(ctx); return new Promise<void>(() => {}); },
+      attach: () => {},
+    };
+    const host = hostWith(plugin);
+    await Promise.resolve();
+    expect(contexts[0]!.signal.aborted).toBe(false);
+    host.syncLivePlugins([]);
+    expect(contexts[0]!.signal.aborted).toBe(true);
+    host.syncLivePlugins(['cancelable']);
+    await Promise.resolve();
+    expect(contexts[1]!.signal).not.toBe(contexts[0]!.signal);
+    expect(contexts[1]!.signal.aborted).toBe(false);
+    host.dispose();
+    expect(contexts[1]!.signal.aborted).toBe(true);
+  });
+
+  it('aborts a mounted context before plugin disposal', () => {
+    let context!: ClientPluginCtx;
+    const disposed = vi.fn(() => expect(context.signal.aborted).toBe(true));
+    const host = hostWith({ name: 'mounted', drawBudget: 0, attach: (ctx) => { context = ctx; }, dispose: disposed });
+    expect(context.signal.aborted).toBe(false);
+    host.dispose();
+    expect(disposed).toHaveBeenCalledOnce();
+  });
+
   it('holds attach until it resolves', async () => {
     const { plugin, attach, resolve } = deferredPlugin();
     const host = hostWith(plugin);

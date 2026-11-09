@@ -1,9 +1,10 @@
 import { BEDROCK_BAND } from '../columns.ts';
 import { MAX_HEIGHT, MIN_HEIGHT } from '../constants.ts';
 import { bandOf } from '../grid.ts';
+import { drawnBandOfSample } from '../bands.ts';
 
 export const MIN_BAND = bandOf(MIN_HEIGHT);
-export const MAX_BAND = bandOf(MAX_HEIGHT);
+export const MAX_BAND = drawnBandOfSample(MAX_HEIGHT);
 
 export const FULL_HEIGHT_SPAN = MAX_HEIGHT - MIN_HEIGHT;
 

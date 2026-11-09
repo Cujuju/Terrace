@@ -31,6 +31,7 @@ import {
   createSaucerModels,
   disposeSaucerAssets,
   preloadSaucerModels,
+  installSaucerForMount,
   SAUCER_MODEL_DRAW_OBJECTS,
   type SaucerFleet,
   type SaucerModels,
@@ -206,6 +207,8 @@ export const clientPlugin: TerraceClientPlugin = {
   },
 
   attach(ctx: ClientPluginCtx): void {
+    if (ctx.signal.aborted) return;
+    installSaucerForMount(ctx.signal);
     models = createSaucerModels();
     reducedMotion = watchReducedMotion();
     animationSeconds = 0;

@@ -21,6 +21,7 @@ import type { World } from '../../../server/src/world/world.ts';
 import {
   RecordingSink,
   asLoadedPlugin,
+  asLoadedPluginExporting,
   worldWithUnlockedChunks,
 } from '../../../server/test/support/harness.ts';
 import {
@@ -30,7 +31,7 @@ import {
   plugin as manaPlugin,
   resetManaState,
 } from '../../mana/server/index.ts';
-import { plugin as revealPlugin } from '../server/index.ts';
+import * as revealModule from '../server/index.ts';
 
 const WORLD_SIZE = 128;
 
@@ -63,7 +64,7 @@ function boot(): Harness {
 
   const world = worldWithUnlockedChunks(WORLD_SIZE, HOME_CHUNKS);
   world.setSink(new RecordingSink());
-  const host = new PluginHost(world, [manaPlugin, revealPlugin].map(asLoadedPlugin));
+  const host = new PluginHost(world, [asLoadedPlugin(manaPlugin), asLoadedPluginExporting(revealModule.plugin, revealModule)]);
   host.worldCreate();
   world.addPlayer(PLAYER);
   host.playerJoined(PLAYER);

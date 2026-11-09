@@ -57,7 +57,9 @@ export function createFunnel(
     stand: slots.stand,
 
     apply(live): void {
-      for (const funnel of funnels.values()) funnel.alive = false;
+      for (const [id, funnel] of funnels) {
+        funnel.alive = live.some((storm) => storm.id === id);
+      }
 
       for (const storm of live) {
         const existing = funnels.get(storm.id);
@@ -69,7 +71,20 @@ export function createFunnel(
           existing.intensity = storm.intensity;
           continue;
         }
-        const slot = slots.claim();
+        let slot = slots.claim();
+        if (slot < 0) {
+          let faintest: [number, Funnel] | undefined;
+          for (const entry of funnels) {
+            if (!entry[1].alive && (faintest === undefined || entry[1].presence < faintest[1].presence)) {
+              faintest = entry;
+            }
+          }
+          if (faintest !== undefined) {
+            slots.release(faintest[1].slot);
+            funnels.delete(faintest[0]);
+            slot = slots.claim();
+          }
+        }
         if (slot < 0) continue;
         funnels.set(storm.id, {
           x: storm.x,

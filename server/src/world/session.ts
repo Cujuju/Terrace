@@ -36,15 +36,17 @@ export interface SnapshotOptions {
 export function snapshotIfDirty(session: WorldSession, options?: SnapshotOptions): boolean {
   const { world, host, store } = session;
   const blocking = options?.defer !== true;
+  const pluginSlices = host.collectPersistence();
   // A blocking save also covers background saves whose outcome is still unknown.
-  if (!world.dirty && !(blocking && world.hasUnconfirmedSnapshot)) return false;
+  if (!world.dirty && !host.persistenceChanged(pluginSlices) && !(blocking && world.hasUnconfirmedSnapshot)) return false;
+  const persistenceGeneration = host.beginPersistenceSave();
   const input = {
     worldSize: world.size,
     name: world.name,
     cells: world.heightsForPersistence(),
     columnSpans: world.spansForPersistence(),
     mask: world.mask,
-    pluginSlices: host.collectPersistence(),
+    pluginSlices,
     tokenMasks: world.tokenMasks(),
     simMillis: world.simMillis,
     genesisMillis: world.genesisMillis,
@@ -57,6 +59,7 @@ export function snapshotIfDirty(session: WorldSession, options?: SnapshotOptions
       store.saveSnapshotDeferred(input, (error) => {
         settled = true;
         world.markSnapshotSettled(error === null);
+        if (error === null) host.notePersistenceSaved(pluginSlices, persistenceGeneration);
         if (error !== null) logError(`snapshot of world "${session.id}" failed to write: ${error}`);
       });
     } catch (error) {
@@ -70,6 +73,7 @@ export function snapshotIfDirty(session: WorldSession, options?: SnapshotOptions
     thumbnail: buildThumbnail(world.map.cells, world.size),
   });
   world.markSnapshotted();
+  host.notePersistenceSaved(pluginSlices, persistenceGeneration);
   return true;
 }
 

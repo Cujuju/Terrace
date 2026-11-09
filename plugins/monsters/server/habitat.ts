@@ -7,7 +7,8 @@ import {
   indexAnswers,
   repairableDirtyCellCap,
 } from './habitat-index.ts';
-import { hashToIndex } from './rng.ts';
+import { LairMeasurements } from './lair-measurements.ts';
+export { SUMMON_CANDIDATE_SAMPLE_CELLS } from './lair-candidates.ts';
 
 export type HabitatRegimeId = 'water' | 'land';
 
@@ -158,20 +159,6 @@ export interface LairRegion {
   readonly summonCandidates: readonly (readonly number[])[];
 }
 
-export const SUMMON_CANDIDATE_SAMPLE_CELLS = 64;
-
-const CANDIDATE_REGION_MIX = 0x9e3779b1;
-const CANDIDATE_RULE_MIX = 0x85ebca6b;
-
-function candidateReservoirDraw(seedIndex: number, ruleIndex: number, ordinal: number): number {
-  const seed =
-    (Math.imul(seedIndex, CANDIDATE_REGION_MIX) ^
-      Math.imul(ruleIndex + 1, CANDIDATE_RULE_MIX) ^
-      ordinal) |
-    0;
-  return hashToIndex(seed, ordinal + 1);
-}
-
 export interface LairFitRule {
   readonly radiusCells: number;
   readonly rangeBands: number;
@@ -194,10 +181,12 @@ interface SurveyComponent {
   id: number;
   seedIndex: number;
   region: LairRegion;
+  measurements?: LairMeasurements;
 }
 
 interface SurveyTable {
   readonly labels: Int32Array;
+  readonly ordinals: Int32Array;
   readonly components: Map<number, SurveyComponent>;
   nextComponentId: number;
   regions: LairRegion[];
@@ -238,10 +227,9 @@ function walkComponent(
   seedIndex: number,
   ownerId: number,
   claimFrom: number,
-): { readonly minIndex: number; readonly region: LairRegion } {
+): { readonly minIndex: number; readonly measurements: LairMeasurements | null } {
   const size = index.size;
-  const { heights } = index;
-  const { habitat, fit, rules } = regimeIndex;
+  const { habitat } = regimeIndex;
   const labels = table.labels;
   const claimFresh = claimFrom === WALK_CLAIM_FRESH;
   const claimUnowned = claimFrom === WALK_CLAIM_UNOWNED;
@@ -251,46 +239,14 @@ function walkComponent(
   labels[seedIndex] = ownerId;
   queue[tail++] = seedIndex;
 
-  let cells = 0;
   let minIndex = seedIndex;
-  let extremeReach = Number.NEGATIVE_INFINITY;
-  let extremeHeight = 0;
-  let extremeX = seedIndex % size;
-  let extremeY = (seedIndex - extremeX) / size;
-  const fittingCells = rules.map(() => 0);
-  const summonableCells = rules.map(() => 0);
-  const summonCandidates: number[][] = rules.map(() => []);
 
   while (head < tail) {
-    const cellIndex = queue[head++]!;
+    const cellIndex = queue[head]!;
+    table.ordinals[cellIndex] = head++;
     const x = cellIndex % size;
     const y = (cellIndex - x) / size;
-    cells++;
     if (cellIndex < minIndex) minIndex = cellIndex;
-
-    const height = heights[cellIndex]!;
-    const reach = habitatReachHeightUnits(regime, height);
-    if (reach > extremeReach) {
-      extremeReach = reach;
-      extremeHeight = height;
-      extremeX = x;
-      extremeY = y;
-    }
-
-    for (let rule = 0; rule < rules.length; rule++) {
-      if (fit[rule]![cellIndex] !== HABITAT_BIT_SET) continue;
-      fittingCells[rule]!++;
-      if (!reachesIntoHabitat(regime, height, rules[rule]!.minReachBands)) continue;
-      const ordinal = summonableCells[rule]!;
-      summonableCells[rule]!++;
-      const reservoir = summonCandidates[rule]!;
-      if (ordinal < SUMMON_CANDIDATE_SAMPLE_CELLS) {
-        reservoir.push(cellIndex);
-        continue;
-      }
-      const slot = candidateReservoirDraw(seedIndex, rule, ordinal);
-      if (slot < SUMMON_CANDIDATE_SAMPLE_CELLS) reservoir[slot] = cellIndex;
-    }
 
     if (x > 0) {
       const next = cellIndex - 1;
@@ -348,15 +304,8 @@ function walkComponent(
 
   return {
     minIndex,
-    region: {
-      cells,
-      x: extremeX,
-      y: extremeY,
-      extremeHeight,
-      fittingCells,
-      summonableCells,
-      summonCandidates,
-    },
+    measurements: minIndex !== seedIndex ? null : new LairMeasurements(seedIndex,
+      queue.subarray(0, tail), index.heights, regimeIndex.fit, regimeIndex.rules, regime, size),
   };
 }
 
@@ -368,10 +317,10 @@ function remeasureFromSeed(
   queue: Int32Array,
   minIndex: number,
   claimedId: number,
-): { readonly id: number; readonly region: LairRegion } {
+): { readonly id: number; readonly measurements: LairMeasurements } {
   const id = table.nextComponentId++;
   const walk = walkComponent(regime, index, regimeIndex, table, queue, minIndex, id, claimedId);
-  return { id, region: walk.region };
+  return { id, measurements: walk.measurements! };
 }
 
 const EMPTY_LAIR_REGION: LairRegion = {
@@ -416,8 +365,9 @@ function rebuildTable(
         id,
         WALK_CLAIM_FRESH,
       );
-      components.set(id, { id, seedIndex, region: walk.region });
-      regions.push(walk.region);
+      const measurements = walk.measurements!;
+      components.set(id, { id, seedIndex, region: measurements.region, measurements });
+      regions.push(measurements.region);
     }
   }
   table.regions = regions;
@@ -498,7 +448,8 @@ function reclaimFrom(
   );
 
   if (walk.minIndex === seedIndex) {
-    table.components.set(claimedId, { id: claimedId, seedIndex, region: walk.region });
+    const measurements = walk.measurements!;
+    table.components.set(claimedId, { id: claimedId, seedIndex, region: measurements.region, measurements });
     return;
   }
 
@@ -515,7 +466,8 @@ function reclaimFrom(
   table.components.set(measured.id, {
     id: measured.id,
     seedIndex: walk.minIndex,
-    region: measured.region,
+    region: measured.measurements.region,
+    measurements: measured.measurements,
   });
 }
 
@@ -545,6 +497,7 @@ export function surveyLairs(
   if (table === undefined || table.labels.length !== cellCount) {
     table = {
       labels: new Int32Array(cellCount),
+      ordinals: new Int32Array(cellCount),
       components: new Map<number, SurveyComponent>(),
       nextComponentId: 0,
       regions: [],
@@ -561,6 +514,12 @@ export function surveyLairs(
     }
     dirtyCells.length = 0;
   }
+
+  for (const cell of regimeIndex.heightCells) {
+    const component = table.components.get(table.labels[cell]!);
+    component?.measurements?.update(table.ordinals[cell]!, view.heights[cell]!);
+  }
+  regimeIndex.heightCells.clear();
 
   const labels = table.labels;
   const components = table.components;

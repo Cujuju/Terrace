@@ -1,5 +1,6 @@
 import { TWO_PI } from './speciesModel.ts';
 import { SWIM_PACE_SCALE } from '../../protocol.ts';
+import { SHARK_AUTHORED_BOUNDS } from '../../swimmerBounds.ts';
 import {
   SWIMMER_JOINTS,
   assetSpeciesBuilder,
@@ -10,16 +11,14 @@ const TAIL_HZ = 1.1 * SWIM_PACE_SCALE;
 const TAIL_SWING_RADIANS = 0.30;
 const BODY_COUNTER_YAW_FRACTION = 0.28;
 
-const SHARK_NOSE_X = 0.70;
-const SHARK_TAIL_TIP_X = -1.02;
-const SHARK_LENGTH = SHARK_NOSE_X - SHARK_TAIL_TIP_X;
+const SHARK_LENGTH = SHARK_AUTHORED_BOUNDS.noseX - SHARK_AUTHORED_BOUNDS.tailX;
 
 export const SHARK_ENVELOPE = {
   length: SHARK_LENGTH,
   halfLength: SHARK_LENGTH / 2,
-  halfWidth: 0.42,
-  crownY: 0.40,
-  bellyY: -0.26,
+  halfWidth: SHARK_AUTHORED_BOUNDS.halfWidth,
+  crownY: SHARK_AUTHORED_BOUNDS.crownY,
+  bellyY: SHARK_AUTHORED_BOUNDS.bellyY,
 } as const;
 
 export const SHARK_ASSET: SpeciesAssetSpec = {
@@ -27,6 +26,7 @@ export const SHARK_ASSET: SpeciesAssetSpec = {
   file: 'shark.glb',
   joints: SWIMMER_JOINTS,
   envelope: SHARK_ENVELOPE,
+  bounds: SHARK_AUTHORED_BOUNDS,
 };
 
 export const buildShark = assetSpeciesBuilder(SHARK_ASSET, (joints, seconds, phase) => {

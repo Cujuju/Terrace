@@ -211,7 +211,7 @@ export class Desktop {
 
   /** Starts the embedded server with no window to show it in. */
   async startServer(): Promise<boolean> {
-    this.supervisor.start();
+    await this.supervisor.start();
     if (await this.supervisor.ready()) return true;
     this.fail('The world server did not start in time.');
     return false;

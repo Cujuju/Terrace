@@ -88,6 +88,22 @@ afterEach(() => {
 });
 
 describe('a world reset clears the funnels', () => {
+  it('admits every live storm ahead of fading ghosts, including retained IDs later in the roster', () => {
+    const funnel = createFunnel(() => {});
+    const source = (id: number) => ({ id, x: id, groundY: GROUND_Y, z: id, intensity: 1 });
+    funnel.apply([source(1), source(2)]);
+    funnel.update(FRAME_SECONDS, 0);
+    funnel.apply([source(3), source(4)]);
+    funnel.update(FRAME_SECONDS, 0);
+    funnel.apply([source(5), source(4)]);
+    funnel.update(FRAME_SECONDS, 0);
+    const visible = funnel.stand.filter((slot) => slot.w > 0).map((slot) => slot.x);
+    expect(visible).toContain(5);
+    expect(visible).toContain(4);
+    expect(funnel.stand).toHaveLength(MAX_FUNNELS);
+    funnel.dispose();
+  });
+
   it('stops drawing, then redraws id 1 where the new world put it', () => {
     const live = harness();
     clientPlugin.attach(live.ctx);

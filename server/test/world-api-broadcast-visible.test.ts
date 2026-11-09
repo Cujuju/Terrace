@@ -35,6 +35,32 @@ function worldWithOnePlayer() {
 }
 
 describe('broadcastVisible and the world edge', () => {
+  it('applies recipient selection only after terrain visibility, preserving empty replacement messages', () => {
+    const { world, sink, api } = worldWithOnePlayer();
+    const second = { id: 'session-2', token: 'token-2', name: 'Second' };
+    world.addPlayer(second);
+    world.unlockChunkForToken(second.token, 0, 0);
+    sink.clear();
+    const near: Thing = { id: 1, x: 8, y: 8 };
+    const far: Thing = { id: 2, x: 40, y: 40 };
+    const checked: string[] = [];
+    api.broadcastVisible('all', [near, far], (item) => item, (things) => ({ things }), {
+      isVisibleTo(playerId, item) {
+        checked.push(`${playerId}:${item.id}`);
+        return playerId === second.id;
+      },
+    });
+    expect(checked).toEqual([`${PLAYER.id}:1`, `${PLAYER.id}:2`, `${second.id}:1`]);
+    expect(sink.ofType('test:all').map(({ target, payload }) => ({ target, payload }))).toEqual([
+      { target: PLAYER.id, payload: { things: [] } },
+      { target: second.id, payload: { things: [near] } },
+    ]);
+    sink.clear();
+    api.broadcastVisible('delta', [near], (item) => item, (things) => ({ things }), {
+      skipEmpty: true, isVisibleTo: () => false,
+    });
+    expect(sink.ofType('test:delta')).toEqual([]);
+  });
   it('sends an off-map item to nobody, and does not throw', () => {
     const { sink, api } = worldWithOnePlayer();
     const onMap: Thing = { id: 1, x: 8, y: 8 };

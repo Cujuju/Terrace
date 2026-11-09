@@ -1,7 +1,7 @@
 import './support/headlessCanvas.ts';
 
 import { describe, expect, it } from 'vitest';
-import { InstancedMesh, Matrix4, Vector3 } from 'three';
+import { InstancedMesh, Matrix4, Raycaster, Vector3 } from 'three';
 import {
   STRUCTURE_LEGACY_SURVEYED_GROUND_RADIUS,
   STRUCTURE_SCALE_MAX,
@@ -210,6 +210,23 @@ describe('merging: the authored part list is not the drawn part list', () => {
 });
 
 describe('the client draws the building the server chose', () => {
+  it('resolves an elevated mesh hit to its authoritative building anchor', () => {
+    const models = createStructureModels();
+    try {
+      const kind = buildingKindOf('watchtower')!;
+      models.apply([{ ...placementOf(kind), x: 2.5, z: 2.5, cellX: 10, cellY: 10 }]);
+      models.root.updateMatrixWorld(true);
+      const ray = new Raycaster(new Vector3(2.5, 6, 7.5), new Vector3(0, -1, -1).normalize());
+      const hit = ray.intersectObject(models.root, true)[0];
+      expect(hit).toBeDefined();
+      expect(models.cellAtHit(hit)).toEqual({ x: 10, y: 10 });
+      models.apply([]);
+      expect(models.cellAtHit(hit)).toBeNull();
+    } finally {
+      models.dispose();
+    }
+  });
+
   it('site never changes the model: one kind draws alike on the coast and inland', () => {
     const models = createStructureModels();
     try {

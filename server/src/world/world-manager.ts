@@ -1,4 +1,5 @@
 import type { MessageSink } from '../net/message-sink.ts';
+import { NULL_SINK } from '../net/message-sink.ts';
 import type { WorldPluginAction, WorldPluginSetting, WorldSwitchStatus } from '@terrace/shared';
 import type { SnapshotStore } from '../persistence/snapshot-store.ts';
 import { buildJoinSnapshot } from '../net/join-snapshot.ts';
@@ -92,6 +93,7 @@ export class WorldManager {
   private session: WorldSession | null = null;
   private bridge: RoomBridge | null = null;
   private pending: PendingSwitch | null = null;
+  private reloadInProgress = false;
 
   constructor(deps: WorldManagerDeps) {
     this.deps = deps;
@@ -114,14 +116,18 @@ export class WorldManager {
     };
   }
 
-  attachRoom(bridge: RoomBridge): void {
+  attachRoom(bridge: RoomBridge): boolean {
+    if (this.bridge !== null && this.bridge !== bridge) return false;
     this.bridge = bridge;
     this.session?.world.setSink(bridge.sink);
+    return true;
   }
 
-  detachRoom(nullSink: MessageSink): void {
+  detachRoom(bridge: RoomBridge): boolean {
+    if (this.bridge !== bridge) return false;
     this.bridge = null;
-    this.session?.world.setSink(nullSink);
+    this.session?.world.setSink(NULL_SINK);
+    return true;
   }
 
   tick(dt: number): void {
@@ -316,6 +322,16 @@ export class WorldManager {
   }
 
   async reloadPlugin(name: string): Promise<PluginReloadOutcome | PluginReloadRefusal> {
+    if (this.reloadInProgress) return 'switchInProgress';
+    this.reloadInProgress = true;
+    try {
+      return await this.reloadPluginExclusive(name);
+    } finally {
+      this.reloadInProgress = false;
+    }
+  }
+
+  private async reloadPluginExclusive(name: string): Promise<PluginReloadOutcome | PluginReloadRefusal> {
     const previous = this.deps.plugins.find(name);
     if (previous === undefined) return 'unknownPlugin';
     const refusal = this.reloadPrecondition();

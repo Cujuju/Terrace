@@ -1,5 +1,6 @@
 import { assetSpeciesBuilder, type SpeciesAssetSpec } from './assetSpecies.ts';
 import { WHALE_JOINTS, animateWhale, whaleEnvelope } from './whale.ts';
+import { WHALE_AUTHORED_BOUNDS } from '../../swimmerBounds.ts';
 
 export const HUMPBACK_HALF_WIDTH = 0.47;
 
@@ -10,6 +11,7 @@ export const HUMPBACK_ASSET: SpeciesAssetSpec = {
   file: 'humpback.glb',
   joints: WHALE_JOINTS,
   envelope: HUMPBACK_ENVELOPE,
+  bounds: WHALE_AUTHORED_BOUNDS.humpback,
 };
 
 export const buildHumpback = assetSpeciesBuilder(HUMPBACK_ASSET, animateWhale);

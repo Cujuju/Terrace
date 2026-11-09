@@ -14,8 +14,6 @@ const interpolator = new DayNightInterpolator();
 let reducedMotion: { matches(): boolean; stop(): void } | null = null;
 let hasPushedInitialSky = false;
 let hasReceivedClock = false;
-let calendarDay: number | null = null;
-let calendarGenesisDay: number | null = null;
 let unsubscribeMessages: (() => void) | null = null;
 let unsubscribeFrames: (() => void) | null = null;
 let unsubscribeReset: (() => void) | null = null;
@@ -29,8 +27,6 @@ function resetClock(): void {
   interpolator.clear();
   hasReceivedClock = false;
   hasPushedInitialSky = false;
-  calendarDay = null;
-  calendarGenesisDay = null;
   setWorldClock(null);
 }
 
@@ -48,24 +44,23 @@ export const clientPlugin: TerraceClientPlugin = {
     unsubscribeMessages = ctx.onMessage(DAYNIGHT_CLOCK_MESSAGE, (payload) => {
       const clock = parseClockPayload(payload);
       if (clock === null) return;
-      interpolator.receive(clock.phase);
+      interpolator.receive(clock);
       hasReceivedClock = true;
-      calendarDay = clock.day;
-      calendarGenesisDay = clock.genesisDay;
     });
 
     unsubscribeFrames = ctx.onFrame((dt) => {
       if (!hasReceivedClock) return;
       interpolator.advance(dt);
+      const clock = interpolator.sampleClock();
 
       setWorldClock(
-        worldClockReading(interpolator.samplePhase(), calendarDay, calendarGenesisDay),
+        worldClockReading(clock.phase, clock.day, clock.genesisDay),
       );
 
       const reduced = reducedMotion?.matches() ?? false;
       if (reduced && hasPushedInitialSky) return;
 
-      ctx.setSkyRig(skyStateAtPhase(interpolator.samplePhase()));
+      ctx.setSkyRig(skyStateAtPhase(clock.phase));
       hasPushedInitialSky = true;
     });
   },

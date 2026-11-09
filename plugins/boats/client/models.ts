@@ -17,6 +17,7 @@ import {
 import { bakeRig, type RigBlueprint } from '../../../client/src/render/rigSkin.ts';
 import { createRigHerd } from '../../../client/src/render/rigHerd.ts';
 import type { ClientPluginCtx } from '../../../client/src/plugins/types.ts';
+import { createPreloadAssets } from '../../../client/src/plugins/kit/preloadAssets.ts';
 import {
   assertAssetFits,
   type AssetFootprint,
@@ -139,15 +140,27 @@ interface BoatKit {
 }
 
 let kit: BoatKit | null = null;
+const pendingAssets = createPreloadAssets<RigAsset>();
 
 export async function preloadBoatModels(
-  ctx: Pick<ClientPluginCtx, 'loadRigAsset'>,
+  ctx: Pick<ClientPluginCtx, 'loadRigAsset' | 'signal'>,
   url: string,
 ): Promise<void> {
-  installBoatKit(await ctx.loadRigAsset(url, 'lamps-only'));
+  await pendingAssets.load(ctx.signal, async () => {
+    const asset = await ctx.loadRigAsset(url, 'lamps-only');
+    try { inspectBoatAsset(asset); return asset; }
+    catch (error) { asset.dispose(); throw error; }
+  });
 }
 
-export function installBoatKit(asset: RigAsset): void {
+export function installBoatForMount(signal: AbortSignal): void {
+  const asset = pendingAssets.take(signal);
+  if (asset === undefined) return;
+  try { installBoatKit(asset); }
+  catch (error) { asset.dispose(); throw error; }
+}
+
+function inspectBoatAsset(asset: RigAsset) {
   asset.scene.updateMatrixWorld(true);
 
   const waterline = asset.anchor('waterline');
@@ -177,7 +190,11 @@ export function installBoatKit(asset: RigAsset): void {
     throw new Error('boat asset: the sail needs one standard material to recolour per boat');
   }
   for (const pivot of OAR_PIVOTS) asset.node(pivot.name);
+  return { waterline, deckTop, fireTop, sailNode, sailMaterial };
+}
 
+export function installBoatKit(asset: RigAsset): void {
+  const { waterline, deckTop, fireTop, sailNode, sailMaterial } = inspectBoatAsset(asset);
   disposeBoatKit();
   shape = {
     waterlineLift: -waterline.y * BOAT_DRAW_SCALE,

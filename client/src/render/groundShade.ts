@@ -1,4 +1,4 @@
-import { Vector3 } from 'three';
+import { Vector3, Vector4 } from 'three';
 import type { NodeMaterial } from 'three/webgpu';
 import {
   Break,
@@ -56,7 +56,10 @@ export function groundShadeAt(
     const ray = (disc.y - py) / sy;
     const hitX = px + sx * ray;
     const hitZ = pz + sz * ray;
-    const d = Math.hypot(hitX - disc.x, hitZ - disc.z) / disc.radius;
+    const distance = Math.hypot(hitX - disc.x, hitZ - disc.z);
+    const eyeRadius = disc.eyeRadius ?? 0;
+    if (eyeRadius > 0 && distance <= eyeRadius) continue;
+    const d = distance / disc.radius;
     shade = Math.max(shade, disc.darkness * (1 - smoothstep(disc.inner, 1, d)));
   }
   return shade;
@@ -79,7 +82,7 @@ export interface GroundShadeUniforms {
   readonly uShadeCount: { value: number };
   readonly uShadeSun: { value: Vector3 };
   readonly uShadeA: { value: Vector3[] };
-  readonly uShadeB: { value: Vector3[] };
+  readonly uShadeB: { value: Vector4[] };
 }
 
 let configuredMax = GROUND_SHADE_MIN_ARRAY_LENGTH;
@@ -99,7 +102,7 @@ function resizeUniformArrays(max: number): void {
   b.length = 0;
   for (let i = 0; i < max; i++) {
     a.push(new Vector3());
-    b.push(new Vector3());
+    b.push(new Vector4());
   }
 }
 resizeUniformArrays(configuredMax);
@@ -139,7 +142,7 @@ export function setGroundShade(
   for (let i = 0; i < count; i++) {
     const disc = discs[i];
     uniforms.uShadeA.value[i].set(disc.x, disc.z, disc.y);
-    uniforms.uShadeB.value[i].set(disc.darkness, disc.inner, disc.radius);
+    uniforms.uShadeB.value[i].set(disc.darkness, disc.inner, disc.radius, disc.eyeRadius ?? 0);
   }
   setShadeCount(count);
 }
@@ -147,9 +150,9 @@ export function setGroundShade(
 const shadeCountNode = uniform(0, 'int');
 const shadeSunNode = uniform(uniforms.uShadeSun.value);
 const shadeANode = uniformArray<'vec3'>(uniforms.uShadeA.value, 'vec3');
-const shadeBNode = uniformArray<'vec3'>(uniforms.uShadeB.value, 'vec3');
+const shadeBNode = uniformArray<'vec4'>(uniforms.uShadeB.value, 'vec4');
 
-// uShadeA is (x, z, deckY); uShadeB is (darkness, inner, radius).
+// uShadeA is (x, z, deckY); uShadeB is (darkness, inner, radius, eyeRadius).
 const shadeAt = Fn(() => {
   compiledAgainstMax = true;
   const shade = float(0).toVar();
@@ -162,8 +165,11 @@ const shadeAt = Fn(() => {
       const shape = shadeBNode.element(i);
       const travel = disc.z.sub(positionWorld.y).div(shadeSunNode.y);
       const hit = positionWorld.add(shadeSunNode.mul(travel));
-      const reach = hit.xz.distance(disc.xy).div(shape.z);
-      shade.assign(max(shade, shape.x.mul(smoothstepNode(shape.y, 1, reach).oneMinus())));
+      const distance = hit.xz.distance(disc.xy);
+      const reach = distance.div(shape.z);
+      If(shape.w.lessThanEqual(0).or(distance.greaterThan(shape.w)), () => {
+        shade.assign(max(shade, shape.x.mul(smoothstepNode(shape.y, 1, reach).oneMinus())));
+      });
     });
   });
   return shade;

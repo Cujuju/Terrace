@@ -5,6 +5,7 @@ import type { TempleWorld } from './suitability.ts';
 export interface BridgedTempleSite {
   readonly x: number;
   readonly y: number;
+  /** Continuous server-frame door center, not integer cell indices. */
   readonly doorX: number;
   readonly doorY: number;
 }

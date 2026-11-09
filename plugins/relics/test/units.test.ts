@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  applySculpt,
   BAND_HEIGHT,
+  createChunkMask,
   createHeightmap,
   forEachFootprintOffset,
   MAX_BRUSH_RADIUS,
@@ -10,9 +10,9 @@ import {
   SEA_LEVEL,
   cellsAcross,
   cellsOverArea,
-  type CellDiff,
 } from '@terrace/shared';
-import { PLUGIN_SCULPT_OPTIONS } from '../../../server/src/plugins/world-api.ts';
+import { createWorldApi } from '../../../server/src/plugins/world-api.ts';
+import { World } from '../../../server/src/world/world.ts';
 import type { WorldApi } from '../../../server/src/plugins/types.ts';
 import {
   AZURE_HEART_COST_MULTIPLIER,
@@ -230,6 +230,13 @@ describe('terraform shapes', () => {
     ]);
   });
 
+  it('refuses an older host instead of partially applying sequential sculpts', () => {
+    let calls = 0;
+    const world = { worldSize: 64, sculpt: () => { calls++; return []; } } as unknown as WorldApi;
+    expect(applyTerraform(world, 32, 32, GENESIS_STEPS)).toEqual({ ok: false, reason: 'unavailable' });
+    expect(calls).toBe(0);
+  });
+
   it('stays inside a small footprint on real terrain, through the plugin sculpt path', { timeout: 60_000 }, () => {
     const OVER_STEEP_SLOPE = Math.ceil(MAX_STEP * 1.5);
     const LEGAL_SLOPE = Math.floor(MAX_STEP * 0.75);
@@ -248,19 +255,22 @@ describe('terraform shapes', () => {
       }
       return map;
     };
-    const mkWorld = (map: ReturnType<typeof createHeightmap>) =>
-      ({ worldSize: size,
-        heightAt(x: number, y: number): number {
-          return map.cells[y * size + x] ?? 0;
-        },
-        sculpt(x: number, y: number, radius: number, amount: number): CellDiff[] {
-        return applySculpt(map, x, y, radius, amount, PLUGIN_SCULPT_OPTIONS);
-      } }) as unknown as WorldApi;
+    const mkWorld = (map: ReturnType<typeof createHeightmap>) => {
+      const mask = createChunkMask(size);
+      const ALL_CHUNKS_UNLOCKED = 0xff;
+      mask.fill(ALL_CHUNKS_UNLOCKED);
+      const server = World.restore(size, map.cells, mask, undefined, 'Terraform regression');
+      const listener = {
+        notifyTerrainChanged(): void {},
+        notifyChunkUnlockedForToken(): void {},
+        notifyWorldEvent(): void {},
+      };
+      return { map: server.map, world: createWorldApi(server, listener, 'relics').api };
+    };
 
     for (const [skill, spec] of TERRAFORM_BY_SKILL) {
       {
-        const map = mkMap(OVER_STEEP_SLOPE);
-        const world = mkWorld(map);
+        const { map, world } = mkWorld(mkMap(OVER_STEEP_SLOPE));
         const steps = spec.plan(world, cx, cy);
 
         const footprint = new Set<number>();
@@ -273,7 +283,7 @@ describe('terraform shapes', () => {
         }
 
         const before = map.cells.slice();
-        applyTerraform(world, cx, cy, steps);
+        expect(applyTerraform(world, cx, cy, steps).ok).toBe(true);
 
         let maxOutsideDelta = 0;
         for (let i = 0; i < map.cells.length; i++) {
@@ -284,10 +294,12 @@ describe('terraform shapes', () => {
       }
 
       {
-        const map = mkMap(LEGAL_SLOPE);
-        const world = mkWorld(map);
+        const { world } = mkWorld(mkMap(LEGAL_SLOPE));
         const steps = spec.plan(world, cx, cy);
-        expect(applyTerraform(world, cx, cy, steps)).toBeLessThanOrEqual(CAST_CELL_BUDGET);
+        const result = applyTerraform(world, cx, cy, steps);
+        expect(result.ok).toBe(true);
+        if (!result.ok) throw new Error('terraform shape was refused on fully unlocked terrain');
+        expect(result.cells.length).toBeLessThanOrEqual(CAST_CELL_BUDGET);
       }
 
       expect(['bulwark', 'genesis', 'landslide', 'quake']).toContain(skill);

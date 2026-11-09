@@ -1,5 +1,7 @@
+import { WHALE_AUTHORED_BOUNDS } from '../swimmerBounds.ts';
+
 export const WHALE_ENVELOPE = {
-  crownY: 0.670,
-  bellyY: -0.575,
-  length: 5.05,
+  crownY: WHALE_AUTHORED_BOUNDS.humpback.crownY,
+  bellyY: WHALE_AUTHORED_BOUNDS.humpback.bellyY,
+  length: WHALE_AUTHORED_BOUNDS.humpback.noseX - WHALE_AUTHORED_BOUNDS.humpback.tailX,
 } as const;

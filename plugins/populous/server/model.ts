@@ -2,27 +2,40 @@ export interface PopulousWorld {
   readonly worldSize: number;
 }
 
+// Copied agreement with the structures growth context; plugins remain independently loadable.
+export const GROWTH_MODEL_VERSION = 3;
+
 export interface PopulousCellRecord {
   readonly age: number;
   readonly tier: number;
   readonly population?: number;
+  readonly kind?: number;
+}
+
+export interface PopulousStage {
+  readonly kind: number;
+  readonly tier: number;
 }
 
 export interface PopulousStructureCell {
   readonly x: number;
   readonly y: number;
   readonly tier: number;
+  readonly kind?: number;
 }
 
 export interface PopulousContext {
-  isBuildable(x: number, y: number): boolean;
+  isBuildable(x: number, y: number, kind?: number): boolean;
+  resolveStage(x: number, y: number, tier: number, current?: PopulousCellRecord): PopulousStage;
+  nextStage(x: number, y: number, ceiling: number, current: PopulousCellRecord): PopulousStage;
   readonly maxTier: number;
   hasBuildingWithinSeparation(
     cells: ReadonlyMap<number, PopulousCellRecord>,
     x: number,
     y: number,
-    tier: number,
+    kind: number,
   ): boolean;
+  absorbedByUpgrade(cells: ReadonlyMap<number, PopulousCellRecord>, x: number, y: number, kind: number): readonly number[];
 }
 
 export interface PopulousStepResult {
@@ -55,12 +68,6 @@ export const POPULOUS_GROWTH_PER_STEP = 1;
 export const POPULOUS_CAPACITY_BY_TIER: readonly number[] = [8, 7, 6, 5, 4, 3];
 
 export const POPULOUS_POPULATION_AFTER_EMIT = 0;
-
-export const POPULOUS_TIER_CLIMB_PER_STEP = 1;
-
-export function rampedTier(current: number, earned: number): number {
-  return Math.min(earned, current + POPULOUS_TIER_CLIMB_PER_STEP);
-}
 
 export function populousTierFor(flatNeighbors: number, maxTier: number): number {
   const index = Math.max(0, Math.min(POPULOUS_TIER_BY_FLAT_NEIGHBORS.length - 1, flatNeighbors));
@@ -106,11 +113,13 @@ export function stepPopulous(
   const surviving = new Map<number, PopulousCellRecord>();
   for (const key of keys) {
     const { x, y } = cellOfKey(key);
-    if (!ctx.isBuildable(x, y)) {
+    const record = live.get(key)!;
+    const stage = ctx.resolveStage(x, y, record.tier, record);
+    if (!ctx.isBuildable(x, y, stage.kind)) {
       died.push({ x, y });
       continue;
     }
-    surviving.set(key, live.get(key)!);
+    surviving.set(key, { ...record, ...stage });
   }
 
   const undecided = new Map(surviving);
@@ -120,17 +129,25 @@ export function stepPopulous(
     const { x, y } = cellOfKey(key);
     undecided.delete(key);
 
-    if (
-      ctx.hasBuildingWithinSeparation(nextLive, x, y, record.tier) ||
-      ctx.hasBuildingWithinSeparation(undecided, x, y, record.tier)
-    ) {
+    const blocked = (kind: number): boolean =>
+      ctx.hasBuildingWithinSeparation(nextLive, x, y, kind) ||
+      ctx.hasBuildingWithinSeparation(undecided, x, y, kind);
+    const earned = populousTierFor(flatNeighborsAround(world, ctx, x, y), ctx.maxTier);
+    let stage = ctx.nextStage(x, y, earned, record);
+    if (!ctx.isBuildable(x, y, stage.kind) || blocked(stage.kind)) {
+      stage = ctx.resolveStage(x, y, record.tier, record);
+    }
+    if (blocked(stage.kind)) {
       died.push({ x, y });
       continue;
     }
+    for (const absorbed of ctx.absorbedByUpgrade(nextLive, x, y, stage.kind)) {
+      nextLive.delete(absorbed);
+      died.push(cellOfKey(absorbed));
+    }
 
-    const earned = populousTierFor(flatNeighborsAround(world, ctx, x, y), ctx.maxTier);
-    const tier = rampedTier(record.tier, earned);
-    if (tier !== record.tier) upgraded.push({ x, y, tier });
+    const { tier } = stage;
+    if (tier !== record.tier || stage.kind !== record.kind) upgraded.push({ x, y, ...stage });
 
     const capacity = capacityForTier(tier, ctx.maxTier);
     let population = (record.population ?? 0) + POPULOUS_GROWTH_PER_STEP;
@@ -139,8 +156,10 @@ export function stepPopulous(
       emitted.push({ x, y });
     }
 
-    nextLive.set(key, { ...record, age: record.age + 1, tier, population });
+    nextLive.set(key, { ...record, ...stage, age: record.age + 1, population });
   }
 
-  return { nextLive, born: [], upgraded, died, emitted };
+  return { nextLive, born: [],
+    upgraded: upgraded.filter(({ x, y }) => nextLive.has(y * POPULOUS_CELL_KEY_STRIDE + x)),
+    died, emitted: emitted.filter(({ x, y }) => nextLive.has(y * POPULOUS_CELL_KEY_STRIDE + x)) };
 }

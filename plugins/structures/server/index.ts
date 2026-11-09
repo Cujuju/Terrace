@@ -11,7 +11,6 @@ import {
   STRUCTURES_CHANGES_MESSAGE,
   STRUCTURES_CAP,
   MAX_FOOTPRINT_RADIUS_CELLS,
-  MAX_STRUCTURE_TIER,
   STRUCTURES_PLUGIN_NAME,
   cellOfKey,
   packCells,
@@ -21,15 +20,9 @@ import {
   type StructureCell,
 } from '../protocol.ts';
 import {
-  SETTLEMENT_RULES,
   buildingIdOf,
-  categoryAt,
-  kindForTier,
   tierOfKind,
 } from '../settlementRules.ts';
-
-/** Drawn when neither a saved kind nor a category exists: the first category's founding building. */
-const SETTLEMENT_FALLBACK_KIND = SETTLEMENT_RULES.categories[0]!.chain[0]!;
 import {
   CA_GENERATION_INTERVAL_SECONDS,
   shouldSeed,
@@ -49,9 +42,9 @@ import {
   isStructuresModel,
   readStructuresModel,
   type BoardCellRecord,
-  type GrowthContext,
   type StructuresModel,
 } from './growth-model.ts';
+import { createGrowthContext, resolveGrowthStage } from './growth-context.ts';
 import { resetBlessings } from './blessings.ts';
 import { resetReservations } from './reservations.ts';
 import { STRUCTURES_SLICE_VERSION, UNRESOLVED_KIND, loadStructures, saveStructures } from './persistence.ts';
@@ -62,9 +55,12 @@ import { closeFireBridge, loadFireBridge, registerStructuresFuel } from './fire-
 import {
   parseStormDamage,
   severityAt,
+  STORM_WIND_FALLOFF_EYEWALL,
+  STORM_WIND_FALLOFF_QUADRATIC,
 } from '../../../server/src/plugins/kit/rotatingStormDamage.ts';
 import {
   CYCLONE_DAMAGE_EVENT_NAME,
+  TORNADO_DAMAGE_EVENT_NAME,
   STRUCTURES_WIND_MIN_SEVERITY,
   windDemolishChance,
 } from './cyclone-event.ts';
@@ -116,21 +112,10 @@ let lastKeepaliveSeconds = 0;
 
 let scanCredit = 0;
 
-let pendingFounded: StructureCell[] = [];
+const pendingFounded = new Map<number, BoardCellRecord>();
 
 let restoredLive: Map<number, BoardCellRecord> = new Map();
 let restoredGeneration = 0;
-
-/**
- * The building for a settlement known by tier alone (an old save, a growth model's ranking):
- * its category's step for that tier, else the known kind.
- */
-function kindForSettlement(world: StructuresWorld, x: number, y: number, tier: number, known: number | undefined): number {
-  if (known !== undefined && tierOfKind(known) === tier) return known;
-  const category = categoryAt(world, x, y);
-  if (category !== null) return kindForTier(category, tier);
-  return known ?? SETTLEMENT_FALLBACK_KIND;
-}
 
 function liveCells(): StructureCell[] {
   const cells: StructureCell[] = [];
@@ -223,7 +208,7 @@ function advanceLife(world: WorldApi, dt: number): void {
       const today = dayOfSimMillis(world.simMillis);
       if (shouldSeed(live, today, lastSeedDay)) {
         lastSeedDay = today;
-        const placement = attemptSeed(world, live, rng);
+        const placement = attemptSeed(world, live, rng, survey.buildableChunks());
         if (placement !== null) {
           for (const cell of placement) live.set(structureKey(cell.x, cell.y), { age: 0, tier: cell.tier, kind: cell.kind });
           seeded = placement;
@@ -268,56 +253,63 @@ function advanceGrowthModel(world: WorldApi): void {
     return;
   }
 
-  const ctx: GrowthContext = {
-    isBuildable: (x: number, y: number) => isBuildableCell(world, x, y),
-    maxTier: MAX_STRUCTURE_TIER,
-    hasBuildingWithinSeparation: (cells, x: number, y: number, tier: number) =>
-      hasBuildingWithinSeparation(
-        cells,
-        world,
-        x,
-        y,
-        footprintRadiusOfKind(kindForSettlement(world, x, y, tier, cells.get(structureKey(x, y))?.kind)),
-      ),
-  };
+  const ctx = createGrowthContext(world);
   const outcome = model.step(world, live, ctx);
 
-  // A growth model ranks settlements by tier; the building drawn for each comes from its category.
   const nextLive = new Map<number, BoardCellRecord>();
   for (const [key, record] of outcome.nextLive) {
+    if (nextLive.size >= STRUCTURES_CAP) break;
     const cell = cellOfKey(key);
-    nextLive.set(key, { ...record, kind: kindForSettlement(world, cell.x, cell.y, record.tier, record.kind) });
+    const stage = ctx.resolveStage(cell.x, cell.y, record.tier, record);
+    if (ctx.isBuildable(cell.x, cell.y, stage.kind)) {
+      nextLive.set(key, { ...record, ...stage });
+    } else {
+      const previous = live.get(key);
+      if (previous !== undefined && ctx.isBuildable(cell.x, cell.y, previous.kind)) {
+        nextLive.set(key, previous);
+      }
+    }
   }
-  const upgradedWithKinds: StructureCell[] = outcome.upgraded.map((cell) => ({
-    ...cell,
-    kind: nextLive.get(structureKey(cell.x, cell.y))?.kind ??
-      kindForSettlement(world, cell.x, cell.y, cell.tier, cell.kind),
-  }));
+  const born: StructureCell[] = [];
+  const upgraded: StructureCell[] = [];
+  const died: Array<{ x: number; y: number }> = [];
+  for (const [key, record] of nextLive) {
+    const cell = { ...cellOfKey(key), tier: record.tier, kind: record.kind };
+    const previous = live.get(key);
+    if (previous === undefined) born.push(cell);
+    else if (previous.kind !== record.kind || previous.tier !== record.tier) upgraded.push(cell);
+  }
+  for (const key of live.keys()) if (!nextLive.has(key)) died.push(cellOfKey(key));
 
   live = nextLive;
   generation++;
   syncSupportBands(world);
-  broadcastChanges(world, outcome.born, upgradedWithKinds, outcome.died);
-  if (outcome.born.length > 0 || outcome.upgraded.length > 0 || outcome.died.length > 0) {
+  broadcastChanges(world, born, upgraded, died);
+  if (born.length > 0 || upgraded.length > 0 || died.length > 0) {
     world.emitEvent('changes', {
       cause: 'generation',
-      seeded: outcome.born,
-      upgraded: upgradedWithKinds,
-      died: outcome.died,
+      seeded: born,
+      upgraded,
+      died,
     });
   }
 
-  model.afterSwap?.(outcome.emitted);
+  model.afterSwap?.(outcome.emitted.filter((cell) => nextLive.has(structureKey(cell.x, cell.y))));
 }
 
 function simulate(world: WorldApi, dt: number): void {
   simSeconds += dt;
 
-  if (pendingFounded.length > 0) {
-    const founded = pendingFounded;
-    pendingFounded = [];
-    broadcastChanges(world, founded, [], []);
-    world.emitEvent('changes', { cause: 'settled', seeded: founded, upgraded: [], died: [] });
+  if (pendingFounded.size > 0) {
+    const founded: StructureCell[] = [];
+    for (const [key, record] of pendingFounded) {
+      if (live.get(key) === record) founded.push({ ...cellOfKey(key), tier: record.tier, kind: record.kind });
+    }
+    pendingFounded.clear();
+    if (founded.length > 0) {
+      broadcastChanges(world, founded, [], []);
+      world.emitEvent('changes', { cause: 'settled', seeded: founded, upgraded: [], died: [] });
+    }
   }
 
   if (selectedModel === STRUCTURES_MODEL_LIFE) advanceLife(world, dt);
@@ -353,8 +345,9 @@ function structuresBurnedOut(cells: readonly { readonly x: number; readonly y: n
   world.emitEvent('changes', { cause: 'fire', died: burned });
 }
 
-function reactToCycloneDamage(world: WorldApi, payload: unknown): void {
-  const damage = parseStormDamage(payload);
+function reactToWindDamage(world: WorldApi, event: string, payload: unknown): void {
+  const damage = parseStormDamage(payload, event === TORNADO_DAMAGE_EVENT_NAME
+    ? STORM_WIND_FALLOFF_QUADRATIC : STORM_WIND_FALLOFF_EYEWALL);
   if (damage === null) return;
 
   const demolished: Array<{ x: number; y: number }> = [];
@@ -469,7 +462,7 @@ function resetSessionState(): void {
   lastGrowthSeconds = 0;
   lastKeepaliveSeconds = 0;
   warnedNoGrowthModel = false;
-  pendingFounded = [];
+  pendingFounded.clear();
 }
 
 export const plugin: TerracePlugin = {
@@ -492,10 +485,10 @@ export const plugin: TerracePlugin = {
     supportBands.clear();
     for (const [key, record] of restoredLive) {
       const cell = cellOfKey(key);
-      if (!isBuildableCell(world, cell.x, cell.y)) continue;
       const known = record.kind === UNRESOLVED_KIND ? undefined : record.kind;
-      const kind = kindForSettlement(world, cell.x, cell.y, record.tier, known);
-      live.set(key, { ...record, kind, tier: tierOfKind(kind) });
+      const stage = resolveGrowthStage(world, cell.x, cell.y, record.tier, { ...record, kind: known });
+      if (!isBuildableCell(world, cell.x, cell.y, footprintRadiusOfKind(stage.kind))) continue;
+      live.set(key, { ...record, ...stage });
       noteSupportBand(world, cell.x, cell.y);
     }
     generation = restoredGeneration;
@@ -529,7 +522,9 @@ export const plugin: TerracePlugin = {
   },
 
   onWorldEvent(world: WorldApi, event: string, payload: unknown): void {
-    if (event === CYCLONE_DAMAGE_EVENT_NAME) reactToCycloneDamage(world, payload);
+    if (event === CYCLONE_DAMAGE_EVENT_NAME || event === TORNADO_DAMAGE_EVENT_NAME) {
+      reactToWindDamage(world, event, payload);
+    }
   },
 
   onPlayerJoin(world: WorldApi, player: Player): void {
@@ -558,14 +553,16 @@ export function foundStructure(world: StructuresWorld, x: number, y: number): bo
   const kind = foundingKindAt(world, x, y)!;
   const tier = tierOfKind(kind);
 
-  live.set(structureKey(x, y), { age: 0, tier, kind });
+  const key = structureKey(x, y);
+  const record = { age: 0, tier, kind };
+  live.set(key, record);
   noteSupportBand(world, x, y);
-  pendingFounded.push({ x, y, tier, kind });
+  pendingFounded.set(key, record);
   return true;
 }
 
 export function canFoundStructure(world: StructuresWorld, x: number, y: number): boolean {
-  if (live.size >= STRUCTURES_CAP) return false;
+  if (survey.reservedSize(live) >= STRUCTURES_CAP) return false;
   if (live.has(structureKey(x, y))) return false;
   if (hasBuildingWithinSeparation(live, world, x, y)) return false;
   return isBuildableCell(world, x, y) && foundingKindAt(world, x, y) !== null;
@@ -600,7 +597,7 @@ export function currentLive(): ReadonlyMap<number, BoardCellRecord> {
   return live;
 }
 
-export { setGrowthModel } from './growth-model.ts';
+export { GROWTH_MODEL_VERSION, setGrowthModel } from './growth-model.ts';
 
 export function structuresModel(): StructuresModel {
   return selectedModel;

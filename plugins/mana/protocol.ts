@@ -4,12 +4,16 @@ export const MANA_BALANCE_MESSAGE = 'balance';
 
 export const MANA_DENIED_MESSAGE = 'denied';
 
+export type ManaUnlockPolicy = 'none' | 'reveal';
+
 export interface ManaBalanceMessage {
   readonly balance: number;
   readonly asOfSeq?: number;
   readonly capacity: number;
   readonly manaPerBandCell: number;
   readonly regenPerSecond: number;
+  /** Missing metadata never enables frontier charging. */
+  readonly unlockPolicy?: ManaUnlockPolicy;
 }
 
 export interface ManaDeniedMessage {
@@ -37,6 +41,7 @@ export function parseManaBalancePayload(payload: unknown): ManaBalanceMessage | 
     manaPerBandCell?: unknown;
     regenPerSecond?: unknown;
     asOfSeq?: unknown;
+    unlockPolicy?: unknown;
   };
   const asOf = parseAsOfSeq(p.asOfSeq);
   const balance = finiteNonNegative(p.balance);
@@ -51,11 +56,13 @@ export function parseManaBalancePayload(payload: unknown): ManaBalanceMessage | 
     manaPerBandCell === 0 ||
     regenPerSecond === null ||
     regenPerSecond === 0 ||
-    asOf === null
+    asOf === null ||
+    (p.unlockPolicy !== undefined && p.unlockPolicy !== 'none' && p.unlockPolicy !== 'reveal')
   ) {
     return null;
   }
-  return { balance, capacity, manaPerBandCell, regenPerSecond, ...asOf };
+  return { balance, capacity, manaPerBandCell, regenPerSecond, ...asOf,
+    ...(p.unlockPolicy === undefined ? {} : { unlockPolicy: p.unlockPolicy }) };
 }
 
 export function parseManaDeniedPayload(payload: unknown): ManaDeniedMessage | null {

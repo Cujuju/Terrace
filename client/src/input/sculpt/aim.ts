@@ -16,6 +16,7 @@ export const pointerRay = (s: StrokeState): PointerRay | null => {
   if (device === null) return null;
 
   s.ndc.set(device.x, device.y);
+  s.options.camera.updateWorldMatrix(true, false);
   s.raycaster.setFromCamera(s.ndc, s.options.camera);
   const o = s.raycaster.ray.origin;
   const d = s.raycaster.ray.direction;
@@ -75,7 +76,6 @@ export const dragAim = (s: StrokeState): TerrainRayPick | null => {
 };
 
 export const repick = (s: StrokeState): TerrainRayPick | null => {
-  s.hoverPin++;
   const ray = pointerRay(s);
   s.hoverRay = ray;
   if (ray === null) {
@@ -94,10 +94,11 @@ export const hoverTarget = (s: StrokeState): TerrainRayPick | null => {
   const { width, height } = s.options.canvas;
   const projection = s.options.camera.projectionMatrix.elements.join(',');
   const key = s.havePointer
-    ? `${s.pointerClientX},${s.pointerClientY},${s.options.worldSize()},${width},${height},${projection},${p.x.toFixed(2)},${p.y.toFixed(2)},${p.z.toFixed(2)},${q.x.toFixed(3)},${q.y.toFixed(3)},${q.z.toFixed(3)},${q.w.toFixed(3)}`
+    ? `${s.pointerClientX},${s.pointerClientY},${s.options.worldSize()},${width},${height},${projection},${p.x},${p.y},${p.z},${q.x},${q.y},${q.z},${q.w}`
     : 'away';
   if (key !== s.hoverKey) {
     s.hoverKey = key;
+    s.hoverPin++;
     return repick(s);
   }
   if (s.hoverCell === null || s.hoverRay === null) return repick(s);

@@ -82,12 +82,18 @@ function createGemPool(ctx: ClientPluginCtx): void {
 }
 
 function syncGems(next: readonly RelicView[]): void {
-  const wanted = new Set(next.map((relic) => relic.id));
+  const wanted = new Map(next.map((relic) => [relic.id, relic]));
 
   for (const [id, entry] of gems) {
-    if (wanted.has(id)) continue;
+    const replacement = wanted.get(id);
+    if (
+      replacement?.skill === entry.relic.skill &&
+      replacement.x === entry.relic.x && replacement.y === entry.relic.y
+    ) continue;
     entry.mesh.visible = false;
     entry.spire.visible = false;
+    entry.mesh.name = `relic:${entry.relic.skill}`;
+    entry.spire.name = `relic-spire:${entry.relic.skill}`;
     gems.delete(id);
   }
 
@@ -101,6 +107,12 @@ function syncGems(next: readonly RelicView[]): void {
     gems.set(relic.id, { ...meshes, phaseS: gemPhaseFor(relic.id), relic });
     occupiedSkills.add(relic.skill);
   }
+}
+
+function resetWorldViews(): void {
+  syncGems([]);
+  elapsedS = 0;
+  resetRelicsClientState();
 }
 
 function animateGems(ctx: ClientPluginCtx, dt: number): void {
@@ -177,8 +189,9 @@ export const clientPlugin: TerraceClientPlugin = {
   drawBudget: RELIC_COUNT * RELIC_DRAW_OBJECTS,
 
   attach(ctx: ClientPluginCtx): void {
-    resetRelicsClientState();
+    resetWorldViews();
     createGemPool(ctx);
+    ctx.onWorldReset(resetWorldViews);
 
     ctx.onMessage(RELICS_MESSAGE, (payload) => {
       const next = parseRelicsPayload(payload);
@@ -211,17 +224,16 @@ export const clientPlugin: TerraceClientPlugin = {
   },
 
   dispose(): void {
+    resetWorldViews();
     for (const entry of gemPool.values()) {
       for (const mesh of [entry.mesh, entry.spire]) {
         mesh.removeFromParent();
         (mesh.material as NodeMaterial).dispose();
       }
     }
-    gems.clear();
     gemPool.clear();
     disposeRelicGeometries();
     spireShape?.dispose();
     spireShape = null;
-    elapsedS = 0;
   },
 };

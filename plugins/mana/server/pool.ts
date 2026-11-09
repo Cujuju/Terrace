@@ -1,9 +1,9 @@
 import { chunksPerEdge, type SculptIntent } from '@terrace/shared';
-import { strokeUnlockChunks } from '../pricing.ts';
 import { MANA_BALANCE_MESSAGE } from '../protocol.ts';
 import { DEFAULT_WORLD_DIFFICULTY } from '../../../server/src/config.ts';
 import type { WorldApi } from '../../../server/src/plugins/types.ts';
 import { manaPerBandCellFor, manaPerkOf } from './perks.ts';
+import { manaUnlockPolicy } from './reveal-policy.ts';
 import {
   MANA_CAPACITY,
   MANA_INSTANT_REGEN_ENV,
@@ -42,8 +42,8 @@ export function quoteFor(
   worldSize: number,
   intent: SculptIntent,
   isOpen: (cx: number, cy: number) => boolean,
+  bound: readonly number[],
 ): ManaQuote {
-  const bound = strokeUnlockChunks(worldSize, intent);
   const edge = chunksPerEdge(worldSize);
   return {
     seq: intent.seq ?? SEQLESS_QUOTE,
@@ -85,6 +85,12 @@ const NO_BALANCE_SENT = -1;
 export const MANA_BALANCE_HEARTBEAT_MS = 1000;
 
 const poolsByPlayer = new Map<string, ManaPool>();
+
+let manaWorld: WorldApi | null = null;
+
+export function bindManaWorld(world: WorldApi | null): void {
+  manaWorld = world;
+}
 
 let regenPerSecond: number = manaRegenForDifficulty(DEFAULT_WORLD_DIFFICULTY);
 
@@ -128,6 +134,7 @@ export function sendBalance(world: WorldApi, playerId: string, pool: ManaPool): 
     ...asOfSeqOf(pool),
     manaPerBandCell: manaPerBandCellFor(playerId),
     regenPerSecond: manaRegenFor(playerId),
+    unlockPolicy: manaUnlockPolicy(),
   });
 }
 
@@ -150,14 +157,15 @@ export function closePoolFor(playerId: string): void {
   poolsByPlayer.delete(playerId);
 }
 
-export function spendMana(world: WorldApi, playerId: string, amount: number): boolean {
-  if (!Number.isFinite(amount) || amount < 0) return false;
+/** The caller view remains for bridge compatibility; publishing uses mana's current view. */
+export function spendMana(_callerWorld: WorldApi, playerId: string, amount: number): boolean {
+  if (manaWorld === null || !Number.isFinite(amount) || amount < 0) return false;
 
   const pool = poolFor(playerId);
   if (pool.balance < amount) return false;
 
   pool.balance -= amount;
-  sendBalance(world, playerId, pool);
+  sendBalance(manaWorld, playerId, pool);
   return true;
 }
 

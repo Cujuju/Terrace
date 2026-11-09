@@ -9,7 +9,6 @@ import {
 import type { ClimbState, Occupant, RouteCell } from '@terrace/shared';
 import { WANDERERS_CAP, hashCell, settlementRace, type PilgrimEntityState } from '../protocol.ts';
 import {
-  ARRIVAL_RADIUS_CELLS,
   PILGRIM_STUCK_SECONDS,
   WalkerIdAllocator,
   advanceWalker,
@@ -17,6 +16,7 @@ import {
   panicStep,
   planRoute,
   walkerOccupants,
+  walkerHasArrived,
   type MovingWalker,
   type PanickingWalker,
   type PilgrimWorld,
@@ -74,6 +74,7 @@ interface Wanderer {
   route: RouteCell[] | null;
   routeIndex: number;
   climb: ClimbState | null;
+  climbCount: number;
   stillSeconds: number;
   stillX: number;
   stillY: number;
@@ -140,11 +141,7 @@ export class Wandering {
       if (advance === 'progressed') wanderer.stuckSeconds = 0;
       else wanderer.stuckSeconds += dt;
 
-      const afterDx = wanderer.goalX - wanderer.x;
-      const afterDy = wanderer.goalY - wanderer.y;
-      const after = afterDx * afterDx + afterDy * afterDy;
-
-      if (after <= ARRIVAL_RADIUS_CELLS * ARRIVAL_RADIUS_CELLS) {
+      if (walkerHasArrived(world, wanderer)) {
         if (wanderer.leg === 'outbound') {
           wanderer.leg = 'visiting';
           wanderer.visitSeconds = 0;
@@ -231,7 +228,8 @@ export class Wandering {
         panicFromY: 0,
         route,
         routeIndex: 0,
-      climb: null,
+        climb: null,
+        climbCount: 0,
       });
     }
   }

@@ -16,6 +16,7 @@ import {
 import { MeshStandardNodeMaterial } from 'three/webgpu';
 import { attribute } from 'three/tsl';
 import type { ClientPluginCtx } from '../../../client/src/plugins/types.ts';
+import { createPreloadAssets } from '../../../client/src/plugins/kit/preloadAssets.ts';
 import type { RigAsset } from '../../../client/src/render/rigAsset.ts';
 import { compose } from '../../../client/src/render/materialSlots.ts';
 import {
@@ -67,9 +68,10 @@ export interface SaucerModels {
 }
 
 let installed: readonly RigAsset[] | null = null;
+const pendingAssets = createPreloadAssets<{ assets: RigAsset[]; drawObjects: number; dispose(): void }>();
 
 export async function preloadSaucerModels(
-  ctx: Pick<ClientPluginCtx, 'loadRigAsset'>,
+  ctx: Pick<ClientPluginCtx, 'loadRigAsset' | 'signal'>,
 ): Promise<void> {
   const found: Record<string, () => Promise<unknown>> = import.meta.glob('./assets/*.glb', {
     query: '?url',
@@ -84,28 +86,32 @@ export async function preloadSaucerModels(
     loaders.push(loader);
   }
 
-  const assets: RigAsset[] = [];
   try {
-    for (const loader of loaders) {
-      const url = await loader();
-      if (typeof url !== 'string') throw new Error(`asset loader returned ${typeof url}, not a URL`);
-      assets.push(await ctx.loadRigAsset(url, 'sky-environment'));
-    }
-    const rejected = measureInstalled(assets);
-    if (rejected !== null) {
-      console.error(`[saucers] ${rejected} — drawing primitives instead`);
-      for (const asset of assets) asset.dispose();
-      return;
-    }
-    installed = assets;
+    await pendingAssets.load(ctx.signal, async () => {
+      const assets: RigAsset[] = [];
+      const dispose = () => { for (const asset of assets.splice(0)) asset.dispose(); };
+      ctx.signal.addEventListener('abort', dispose, { once: true });
+      try {
+        for (const loader of loaders) {
+          ctx.signal.throwIfAborted();
+          const url = await loader();
+          if (typeof url !== 'string') throw new Error(`asset loader returned ${typeof url}, not a URL`);
+          const asset = await ctx.loadRigAsset(url, 'sky-environment');
+          if (ctx.signal.aborted) { asset.dispose(); ctx.signal.throwIfAborted(); }
+          assets.push(asset);
+        }
+        const measured = measureInstalled(assets);
+        if (typeof measured === 'string') throw new Error(measured);
+        return { assets, drawObjects: measured, dispose };
+      } catch (error) { dispose(); throw error; }
+      finally { ctx.signal.removeEventListener('abort', dispose); }
+    });
   } catch (error) {
-    console.error('[saucers] could not load an authored hull — drawing primitives instead', error);
-    for (const asset of assets) asset.dispose();
-    installed = null;
+    if (!ctx.signal.aborted) console.error('[saucers] could not load an authored hull — drawing primitives instead', error);
   }
 }
 
-function measureInstalled(assets: readonly RigAsset[]): string | null {
+function measureInstalled(assets: readonly RigAsset[]): string | number {
   const limit = SAUCER_AUTHORED_DIAMETER_UNITS * (1 + AUTHORED_FIT_TOLERANCE_FRACTION);
   let meshes = 0;
   for (const asset of assets) {
@@ -125,13 +131,21 @@ function measureInstalled(assets: readonly RigAsset[]): string | null {
   if (meshes > SAUCER_MESHES_MAX) {
     return `an authored hull holds ${meshes} meshes against a ceiling of ${SAUCER_MESHES_MAX}`;
   }
-  SAUCER_MODEL_DRAW_OBJECTS = meshes > 0 ? meshes : SAUCER_MESHES_MAX;
-  return null;
+  return meshes > 0 ? meshes : SAUCER_MESHES_MAX;
 }
 
 export function clearSaucerAssets(): void {
+  for (const asset of installed ?? []) asset.dispose();
   installed = null;
   SAUCER_MODEL_DRAW_OBJECTS = SAUCER_MESHES_MAX;
+}
+
+export function installSaucerForMount(signal: AbortSignal): void {
+  const pending = pendingAssets.take(signal);
+  if (pending === undefined) return;
+  clearSaucerAssets();
+  installed = pending.assets;
+  SAUCER_MODEL_DRAW_OBJECTS = pending.drawObjects;
 }
 
 const HULL_FLATTEN = 0.22;
@@ -457,7 +471,5 @@ export function createSaucerFleet(bank: SaucerModels, parent: Group): SaucerFlee
 }
 
 export function disposeSaucerAssets(): void {
-  if (installed === null) return;
-  for (const asset of installed) asset.dispose();
   clearSaucerAssets();
 }

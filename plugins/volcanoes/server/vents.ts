@@ -1,4 +1,4 @@
-import { BAND_HEIGHT, MAX_BRUSH_RADIUS, type FreshwaterMap } from '@terrace/shared';
+import { BAND_HEIGHT, MAX_BRUSH_RADIUS } from '@terrace/shared';
 import type { WorldApi } from '../../../server/src/plugins/types.ts';
 import {
   GENESIS_CONE_BANDS,
@@ -85,7 +85,6 @@ interface Front {
   advance: number;
   laid: number;
   visited: Set<number>;
-  readonly freshwater: FreshwaterMap;
 }
 
 let vents: Vent[] = [];
@@ -291,7 +290,6 @@ function beginEruption(vent: Vent, world: WorldApi): void {
     advance: 0,
     laid: 0,
     visited: new Set<number>([lavaKey(vent.x, vent.y)]),
-    freshwater: world.freshwater,
   });
 }
 
@@ -322,16 +320,16 @@ function endEruption(vent: Vent, world: WorldApi): void {
   fronts.delete(vent.id);
 }
 
-function meltCell(world: WorldApi, x: number, y: number): LavaCellState | null {
+function meltCell(world: WorldApi, x: number, y: number): LavaCellState {
   sculptAsVolcano(world, x, y, FLOW_BRUSH_RADIUS, FLOW_THICKNESS);
 
   const key = lavaKey(x, y);
   const existing = lava.get(key);
   if (existing !== undefined) {
     existing.ageSeconds = 0;
-    return null;
+  } else {
+    lava.set(key, { x, y, ageSeconds: 0 });
   }
-  lava.set(key, { x, y, ageSeconds: 0 });
   return { x, y, ageSeconds: 0 };
 }
 
@@ -358,7 +356,7 @@ function advanceFront(world: WorldApi, vent: Vent, dt: number, molten: LavaCellS
       return;
     }
 
-    const next = nextFlowCell(world, front.freshwater, front.x, front.y, front.visited);
+    const next = nextFlowCell(world, world.freshwater, front.x, front.y, front.visited);
     if (typeof next === 'string') {
       stopFront(vent, next);
       return;
@@ -369,8 +367,7 @@ function advanceFront(world: WorldApi, vent: Vent, dt: number, molten: LavaCellS
     front.laid++;
     front.visited.add(lavaKey(next.x, next.y));
 
-    const state = meltCell(world, next.x, next.y);
-    if (state !== null) molten.push(state);
+    molten.push(meltCell(world, next.x, next.y));
   }
 }
 

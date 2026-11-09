@@ -21,7 +21,7 @@ import { installRigTextureTranscoder } from './render/rigTextureTranscoder.ts';
 import {
   BOAT_SHAPE,
   createBoatModels,
-  preloadBoatModels,
+  installBoatKit,
 } from '../../plugins/boats/client/models.ts';
 
 const SKY_COLOR = 0x9fc7e8;
@@ -113,10 +113,7 @@ async function main(): Promise<void> {
   await renderer.init();
   installRigTextureTranscoder(renderer);
 
-  await preloadBoatModels(
-    { loadRigAsset: (url) => loadRigAsset(url, null) },
-    warBoatUrl,
-  );
+  installBoatKit(await loadRigAsset(warBoatUrl, null));
   const models = createBoatModels();
   const subject = new Group();
   for (const object of models.objects) subject.add(object);

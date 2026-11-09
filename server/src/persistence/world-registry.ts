@@ -30,6 +30,7 @@ export const ACTIVE_POINTER_FILE = '.active';
 const FIRST_UNIQUE_SUFFIX = 2;
 
 const MAX_UNIQUE_SUFFIX = 999;
+const SQLITE_MAX_INTEGRITY_ERRORS = 1;
 
 function archiveStamp(now: number): string {
   return String(now);
@@ -298,14 +299,29 @@ export class WorldRegistry {
     copyFileSync(source, target);
   }
 
-  private checkpoint(path: string): void {
+  private checkpoint(path: string, preserveUnreadable = false): void {
     if (!existsSync(path)) return;
     let db: DatabaseConstructor.Database | null = null;
     try {
+      // Writable access can discard corrupt WAL; inspect data pages read-only first.
+      db = new DatabaseConstructor(path, { readonly: true, fileMustExist: true });
+      const integrity = db.pragma(`quick_check(${SQLITE_MAX_INTEGRITY_ERRORS})`) as { quick_check: string }[];
+      if (integrity.length !== 1 || integrity[0]!.quick_check !== 'ok') {
+        if (!preserveUnreadable) throw new Error(`refusing to copy unreadable world ${path}`);
+        logWarn(`preserving unreadable world ${path} without a checkpoint`);
+        return;
+      }
+      db.close();
+      db = null;
       db = new DatabaseConstructor(path);
-      db.pragma('wal_checkpoint(TRUNCATE)');
+      const result = db.pragma('wal_checkpoint(TRUNCATE)') as { busy: number }[];
+      if (result.length !== 1 || result[0]!.busy !== 0) {
+        throw new Error(`refusing to copy or move ${path}: its WAL checkpoint is busy`);
+      }
     } catch (error) {
-      logWarn(`could not checkpoint ${path} before moving it: ${String(error)}`);
+      const code = (error as { code?: string }).code;
+      if (!preserveUnreadable || (code !== 'SQLITE_NOTADB' && !code?.startsWith('SQLITE_CORRUPT'))) throw error;
+      logWarn(`preserving unreadable world ${path} without a checkpoint: ${String(error)}`);
     } finally {
       db?.close();
     }
@@ -315,7 +331,7 @@ export class WorldRegistry {
     const source = this.pathFor(id);
     if (!existsSync(source)) throw new Error(`world "${id}" has no file`);
 
-    this.checkpoint(source);
+    this.checkpoint(source, true);
 
     const stamp = archiveStamp(now);
     const tail = `-${stamp}`;
@@ -379,8 +395,13 @@ export class WorldRegistry {
     const id = this.uniqueIdFor(name);
     if (id === null) return null;
 
-    this.checkpoint(absolute);
+    this.checkpoint(absolute, !readable);
     copyFileSync(absolute, this.pathFor(id));
+    if (!readable) {
+      for (const suffix of ['-wal', '-shm']) {
+        if (existsSync(absolute + suffix)) copyFileSync(absolute + suffix, this.pathFor(id) + suffix);
+      }
+    }
     // The copy carries the name it was imported under, as a duplicate does.
     if (readable && name !== stored.name) {
       const store = SnapshotStore.open(this.pathFor(id));
@@ -412,6 +433,15 @@ export class WorldRegistry {
       return null;
     }
     return raw;
+  }
+
+  hasActiveSelection(): boolean {
+    const path = join(this.worldsDir, ACTIVE_POINTER_FILE);
+    try {
+      return readFileSync(path, 'utf8').trim() !== '';
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code !== 'ENOENT';
+    }
   }
 
   writeActive(id: string | null): void {

@@ -88,6 +88,18 @@ function runMerge(): { status: number | null; output: string } {
 }
 
 describe('merge-world-history', () => {
+  it('refuses divergent overlapping snapshot ids despite a shared ancestor', () => {
+    seedInto();
+    copyFileSync(intoPath, fromPath);
+    const raw = new DatabaseConstructor(fromPath);
+    raw.prepare('UPDATE snapshots SET heightmap = zeroblob(length(heightmap)) WHERE id = 2').run();
+    raw.close();
+    const before = snapshotIds(intoPath);
+    const result = runMerge();
+    expect(result.status).toBe(REFUSAL_EXIT_CODE);
+    expect(result.output).toContain('divergent snapshot #2');
+    expect(snapshotIds(intoPath)).toEqual(before);
+  });
   it('refuses a source missing a column the target holds, and writes nothing', () => {
     const layered = seedInto();
     expect(layered).toBeGreaterThan(0);

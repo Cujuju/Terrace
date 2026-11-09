@@ -1,8 +1,8 @@
-import { chunkIndexOfCell, drawnSampleCellIndex } from '@terrace/shared';
+import { DRAWN_GROUND_CELL_CENTRE, chunkIndexOfCell, drawnSampleCellIndex } from '@terrace/shared';
 import type { ClientPluginCtx } from '../../../client/src/plugins/types.ts';
 import { treeCellOf, treeKey } from '../protocol.ts';
 
-type GroundContext = Pick<ClientPluginCtx, 'drawnGroundYAt' | 'worldSize'>;
+export type GroundContext = Pick<ClientPluginCtx, 'drawnGroundYAt' | 'worldSize'>;
 type GroundResolver = (ctx: GroundContext, x: number, y: number) => number | null;
 
 const groundAt: GroundResolver = (ctx, x, y) => ctx.drawnGroundYAt(x, y);
@@ -17,11 +17,8 @@ export class FloraGroundChanges {
   private readonly cellsByChunk = new Map<number, Set<number>>();
 
   private readonly resolveGround: GroundResolver;
-  private readonly radius: number;
-
-  constructor(resolveGround: GroundResolver = groundAt, radius = 0) {
+  constructor(resolveGround: GroundResolver = groundAt) {
     this.resolveGround = resolveGround;
-    this.radius = radius;
   }
 
   clear(): void {
@@ -42,24 +39,23 @@ export class FloraGroundChanges {
 
   sample(ctx: GroundContext, x: number, y: number): number | null {
     const key = treeKey(x, y);
-    const height = this.resolveGround(ctx, x, y);
-    const previous = this.entries.get(key);
-    if (previous !== undefined) {
-      this.entries.set(key, { chunks: previous.chunks, height });
-      return height;
-    }
     const size = ctx.worldSize();
     const clamp = (cell: number): number => Math.max(0, Math.min(size - 1, cell));
-    const x0 = drawnSampleCellIndex(x - this.radius);
-    const y0 = drawnSampleCellIndex(y - this.radius);
-    const x1 = drawnSampleCellIndex(x + this.radius) + 1;
-    const y1 = drawnSampleCellIndex(y + this.radius) + 1;
     const chunks = new Set<number>();
-    for (let sampleY = y0; sampleY <= y1; sampleY++) {
-      for (let sampleX = x0; sampleX <= x1; sampleX++) {
-        chunks.add(chunkIndexOfCell(size, clamp(sampleX), clamp(sampleY)));
-      }
-    }
+    const height = this.resolveGround({
+      worldSize: () => size,
+      drawnGroundYAt: (sx, sy) => {
+        const x0 = drawnSampleCellIndex(sx + DRAWN_GROUND_CELL_CENTRE);
+        const y0 = drawnSampleCellIndex(sy + DRAWN_GROUND_CELL_CENTRE);
+        for (let dy = 0; dy <= 1; dy++) {
+          for (let dx = 0; dx <= 1; dx++) {
+            chunks.add(chunkIndexOfCell(size, clamp(x0 + dx), clamp(y0 + dy)));
+          }
+        }
+        return ctx.drawnGroundYAt(sx, sy);
+      },
+    }, x, y);
+    this.delete(key);
     for (const chunk of chunks) {
       let cells = this.cellsByChunk.get(chunk);
       if (cells === undefined) {
@@ -72,19 +68,23 @@ export class FloraGroundChanges {
     return height;
   }
 
-  invalidate(ctx: GroundContext, dirty: ReadonlySet<number>, pending: Set<number>): void {
-    const checked = new Set<number>();
+  heightAt(x: number, y: number): number | null {
+    return this.entries.get(treeKey(x, y))?.height ?? null;
+  }
+
+  invalidate(ctx: GroundContext, dirty: ReadonlySet<number>): number[] {
+    const affected = new Set<number>();
     for (const chunk of dirty) {
       const cells = this.cellsByChunk.get(chunk);
       if (cells === undefined) continue;
-      for (const key of cells) {
-        if (checked.has(key)) continue;
-        checked.add(key);
-        const cell = treeCellOf(key);
-        if (this.resolveGround(ctx, cell.x, cell.y) !== this.entries.get(key)!.height) {
-          pending.add(key);
-        }
-      }
+      for (const key of cells) affected.add(key);
     }
+    const changed: number[] = [];
+    for (const key of affected) {
+      const cell = treeCellOf(key);
+      const previous = this.entries.get(key)!.height;
+      if (this.sample(ctx, cell.x, cell.y) !== previous) changed.push(key);
+    }
+    return changed;
   }
 }

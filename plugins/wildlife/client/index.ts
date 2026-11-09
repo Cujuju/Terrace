@@ -16,8 +16,8 @@ import { WildlifeInterpolator, type InterpolatedEntity } from './interpolation.t
 import type { MoverPose } from '../../../client/src/plugins/types.ts';
 import { NO_SAMPLE, reconcileById } from '../../../client/src/plugins/kit/viewReconcile.ts';
 import { createWildlifeModels, type WildlifeModels } from './models.ts';
-import { loadRigAsset } from '../../../client/src/render/rigAsset.ts';
-import { disposeSpeciesAssets, installSpeciesAsset } from './species/assetSpecies.ts';
+import { createPreloadAssets } from '../../../client/src/plugins/kit/preloadAssets.ts';
+import { disposeSpeciesAssets, prepareSpeciesAsset, installPreparedSpecies } from './species/assetSpecies.ts';
 import { SPECIES_ASSETS } from './species/assets.ts';
 import { modelScaleFor } from './modelScale.ts';
 import {
@@ -36,14 +36,17 @@ import { leapProgressOf, moverGaitOf, type MoverGait } from '../../../client/src
 import { moverStanceFromWire } from '@terrace/shared';
 import {
   BODY_COLUMNS,
-  SWIM_PROFILES,
   WALKER_CLIMB_REACH_BY_SPECIES,
   creatureWorldY,
   placementKindOf,
   swimmerSeabedY,
+  swimProfileOf,
   walkerGroundY,
   walkerStrideRadians,
 } from './placement.ts';
+
+const pendingAssets = SPECIES_ASSETS.map(({ spec, url }) => ({ spec, url,
+  assets: createPreloadAssets<ReturnType<typeof prepareSpeciesAsset>>() }));
 
 const PHASE_RADIANS_PER_ID = Math.PI * (3 - Math.sqrt(5));
 
@@ -179,7 +182,7 @@ function renderFrame(ctx: ClientPluginCtx, dt: number): void {
     }
     const sizeClass = sizeClassAt(entity.size);
     const kind = placementKindOf(entity.species);
-    const swimProfile = SWIM_PROFILES[entity.species];
+    const swimProfile = swimProfileOf(entity.species, id);
     const terrainY =
       kind === 'flyer'
         ? null
@@ -275,13 +278,22 @@ export const clientPlugin: TerraceClientPlugin = {
 
   drawBudget: WILDLIFE_SPECIES_DRAW_OBJECTS,
 
-  async preload(): Promise<void> {
-    for (const { spec, url } of SPECIES_ASSETS) {
-      installSpeciesAsset(spec, await loadRigAsset(url, null));
+  async preload(ctx: ClientPluginCtx): Promise<void> {
+    for (const { spec, url, assets } of pendingAssets) {
+      await assets.load(ctx.signal, async () => {
+        const asset = await ctx.loadRigAsset(url, 'lamps-only');
+        try { return prepareSpeciesAsset(spec, asset); }
+        catch (error) { asset.dispose(); throw error; }
+      });
     }
   },
 
   attach(ctx: ClientPluginCtx): void {
+    if (ctx.signal.aborted) return;
+    for (const { spec, assets } of pendingAssets) {
+      const prepared = assets.take(ctx.signal);
+      if (prepared !== undefined) installPreparedSpecies(spec.species, prepared);
+    }
     models = createWildlifeModels(WILDLIFE_POPULATION_CAP + MAX_BIRDS_ALOFT);
     if (models.objects.length !== WILDLIFE_SPECIES_DRAW_OBJECTS) {
       throw new Error(

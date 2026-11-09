@@ -236,7 +236,10 @@ export function createPredictionStore(mirror: TerrainMirror): PredictionStore {
     },
 
     nextExpiryAtMs(): number | null {
-      return pending.length === 0 ? null : pending[0].createdAtMs + PREDICTION_TTL_MS;
+      const prediction = pending.length === 0 ? null : pending[0].createdAtMs + PREDICTION_TTL_MS;
+      const ghost = ghosts.nextExpiryAtMs();
+      if (prediction === null) return ghost;
+      return ghost === null ? prediction : Math.min(prediction, ghost);
     },
 
     pendingCount(): number {

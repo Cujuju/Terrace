@@ -114,6 +114,7 @@ export interface FireSmoke {
   apply(fires: readonly FireInstance[]): void;
   readonly drawnCount: number;
   update(dt: number, elapsed: number): void;
+  clear(): void;
   dispose(): void;
 }
 
@@ -373,6 +374,12 @@ export const createFireSmoke = (): FireSmoke => {
       mesh.instanceMatrix.needsUpdate = true;
       seeds.needsUpdate = true;
       strengths.needsUpdate = true;
+    },
+
+    clear(): void {
+      columns.clear();
+      pending.length = 0;
+      mesh.count = 0;
     },
 
     dispose(): void {

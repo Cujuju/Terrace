@@ -25,7 +25,6 @@ import { hasNearbyFarmland } from './farmland.ts';
 import {
   IncrementalLandmassLabeller,
   LABEL_UNITS_PER_BOARD_CELL,
-  computeLandmassLabels,
   wrappedNeighborIndex,
   type LandmassLabels,
 } from './topology.ts';
@@ -171,6 +170,18 @@ export class GenerationSurvey {
 
   private masks: [Uint8Array, Uint8Array] | null = null;
   private maskThisSweep = 0;
+  private eligibilityCursor = 0;
+  private readonly eligibleChunks = new Set<number>();
+
+  reservedSize(live: ReadonlyMap<number, LiveCellRecord>): number {
+    let size = live.size;
+    for (const key of this.staged.keys()) if (!live.has(key)) size++;
+    return size;
+  }
+
+  buildableChunks(): readonly number[] {
+    return [...this.eligibleChunks].sort((a, b) => a - b);
+  }
 
   evict(key: number): void {
     this.staged.delete(key);
@@ -204,17 +215,15 @@ export class GenerationSurvey {
    */
   private claimUpgradeLot(
     world: StructuresWorld,
-    live: ReadonlyMap<number, LiveCellRecord>,
     x: number,
     y: number,
     currentStep: number,
     nextKind: number,
   ): boolean {
     if (!isBuildableCell(world, x, y, footprintRadiusOfKind(nextKind))) return false;
-    const onBoard = surveyUpgradeLot(live, world, x, y, currentStep, nextKind);
     const staged = surveyUpgradeLot(this.staged, world, x, y, currentStep, nextKind);
-    if (onBoard.blocked || staged.blocked) return false;
-    for (const key of [...onBoard.absorbed, ...staged.absorbed]) {
+    if (staged.blocked) return false;
+    for (const key of staged.absorbed) {
       this.staged.delete(key);
       this.demolishedThisSweep.add(key);
     }
@@ -276,14 +285,15 @@ export class GenerationSurvey {
     if (!isReadyToUpgrade(age, step, neighbours, isBlessedStructureCell(key))) {
       return null;
     }
-    const next = nextKindInChain(category, current.kind) ?? this.landmarkFor(world, live, x, y, category, current);
-    if (next === null || !this.claimUpgradeLot(world, live, x, y, step, next)) return null;
+    const next = nextKindInChain(category, current.kind) ?? this.landmarkFor(world, this.staged, x, y, category, current);
+    if (next === null || !this.claimUpgradeLot(world, x, y, step, next)) return null;
     return { age, tier: tierOfKind(next), kind: next };
   }
 
   private scanChunk(
     world: StructuresWorld,
     live: ReadonlyMap<number, LiveCellRecord>,
+    currentLive: ReadonlyMap<number, LiveCellRecord>,
     labels: LandmassLabels,
     buildable: Uint8Array,
     cx: number,
@@ -291,6 +301,7 @@ export class GenerationSurvey {
   ): void {
     const baseX = cx * CHUNK_SIZE;
     const baseY = cy * CHUNK_SIZE;
+    let anyBuildable = false;
     for (let dy = 0; dy < CHUNK_SIZE; dy++) {
       const y = baseY + dy;
       for (let dx = 0; dx < CHUNK_SIZE; dx++) {
@@ -299,6 +310,7 @@ export class GenerationSurvey {
         const isBuildable = isBuildableCell(world, x, y);
         buildable[y * world.worldSize + x] = isBuildable ? 1 : 0;
         if (!isBuildable) continue;
+        anyBuildable = true;
 
         const key = structureKey(x, y);
         if (this.demolishedThisSweep.has(key)) continue;
@@ -326,16 +338,37 @@ export class GenerationSurvey {
 
         if (current !== undefined) {
           const age = current.age + 1;
-          const upgraded = this.upgradeOf(world, live, x, y, key, current, age);
-          this.staged.set(key, upgraded ?? { age, tier: current.tier, kind: current.kind });
+          this.staged.set(key, { age, tier: current.tier, kind: current.kind });
         } else {
-          if (this.staged.size >= STRUCTURES_CAP) continue;
+          if (this.reservedSize(currentLive) >= STRUCTURES_CAP) continue;
           const kind = foundingKindAt(world, x, y);
           if (kind === null) continue;
           this.staged.set(key, { age: 0, tier: tierOfKind(kind), kind });
         }
       }
     }
+    this.noteEligibleChunk(cy * world.chunksPerEdge + cx, anyBuildable);
+  }
+
+  private noteEligibleChunk(index: number, buildable: boolean): void {
+    if (buildable) this.eligibleChunks.add(index);
+    else this.eligibleChunks.delete(index);
+  }
+
+  private scanEligibilityChunk(world: StructuresWorld, buildable: Uint8Array, index: number): void {
+    const baseX = (index % world.chunksPerEdge) * CHUNK_SIZE;
+    const baseY = Math.floor(index / world.chunksPerEdge) * CHUNK_SIZE;
+    let anyBuildable = false;
+    for (let dy = 0; dy < CHUNK_SIZE; dy++) {
+      for (let dx = 0; dx < CHUNK_SIZE; dx++) {
+        const x = baseX + dx;
+        const y = baseY + dy;
+        const fits = isBuildableCell(world, x, y);
+        buildable[y * world.worldSize + x] = fits ? 1 : 0;
+        anyBuildable ||= fits;
+      }
+    }
+    this.noteEligibleChunk(index, anyBuildable);
   }
 
   private spendOnLabelling(budget: number): number {
@@ -364,29 +397,42 @@ export class GenerationSurvey {
     if (budget <= 0) return null;
 
     const cellCount = world.worldSize * world.worldSize;
-    if (this.board === null) {
-      this.board = new Map(live);
-    }
-    const board = this.board;
     if (this.masks === null || this.masks[0].length !== cellCount) {
       this.masks = [new Uint8Array(cellCount), new Uint8Array(cellCount)];
       this.maskThisSweep = 0;
       this.labeller.abandon();
       this.pendingLabels = null;
+      this.labels = null;
+      this.eligibilityCursor = 0;
+      this.eligibleChunks.clear();
     }
-    if (this.labels === null || this.labels.worldSize !== world.worldSize) {
-      this.labels = computeLandmassLabels(world);
+    const labelCredit = budget * CHUNK_SIZE * CHUNK_SIZE * LABEL_UNITS_PER_BOARD_CELL;
+    if (this.labels === null) {
+      while (budget > 0 && this.eligibilityCursor < totalChunks) {
+        this.scanEligibilityChunk(world, this.masks[0], this.eligibilityCursor++);
+        budget--;
+      }
+      if (this.eligibilityCursor < totalChunks) return null;
+      if (!this.labeller.active) {
+        this.labeller.begin(world.worldSize, this.masks[0]);
+        this.maskThisSweep = 1;
+      }
+      this.spendOnLabelling(labelCredit);
+      this.installPendingLabels();
+      return null;
     }
+    this.board ??= new Map(live);
+    const board = this.board;
     const labels = this.labels;
     const buildable = this.masks[this.maskThisSweep];
 
-    const labelCredit = budget * CHUNK_SIZE * CHUNK_SIZE * LABEL_UNITS_PER_BOARD_CELL;
     const labelBudgetLeft = this.spendOnLabelling(labelCredit);
 
     while (budget > 0 && this.cursor < totalChunks) {
       this.scanChunk(
         world,
         board,
+        live,
         labels,
         buildable,
         this.cursor % world.chunksPerEdge,
@@ -397,29 +443,28 @@ export class GenerationSurvey {
     }
     if (this.cursor < totalChunks) return null;
 
-    const carriedOntoClaimedGround: number[] = [];
     for (const [key, record] of live) {
-      if (board.has(key) || this.staged.has(key)) continue;
+      if (board.get(key) === record) continue;
+      this.staged.set(key, record);
+    }
+    // Lot claims commit only after the incremental scan, against current terrain and staged occupancy.
+    for (const [key, record] of this.staged) {
       const cell = cellOfKey(key);
-      if (hasBuildingWithinSeparation(this.staged, world, cell.x, cell.y, footprintRadiusOfKind(record.kind))) {
-        carriedOntoClaimedGround.push(key);
+      if (!isBuildableCell(world, cell.x, cell.y, footprintRadiusOfKind(record.kind))) {
+        this.staged.delete(key);
         continue;
       }
-      this.staged.set(key, record);
+      if (board.get(key) !== live.get(key)) continue;
+      const upgraded = this.upgradeOf(world, board, cell.x, cell.y, key, record, record.age);
+      if (upgraded !== null) this.staged.set(key, upgraded);
     }
 
     const born: StructureCell[] = [];
     const upgraded: StructureCell[] = [];
     const died: Array<{ x: number; y: number }> = [];
 
-    for (const key of carriedOntoClaimedGround) {
-      const cell = cellOfKey(key);
-      died.push({ x: cell.x, y: cell.y });
-    }
-
     for (const [key, record] of this.staged) {
-      if (!board.has(key) && live.has(key)) continue;
-      const previous = board.get(key);
+      const previous = live.get(key);
       const cell = cellOfKey(key);
       if (previous === undefined) {
         born.push({ x: cell.x, y: cell.y, tier: record.tier, kind: record.kind });
@@ -427,7 +472,7 @@ export class GenerationSurvey {
         upgraded.push({ x: cell.x, y: cell.y, tier: record.tier, kind: record.kind });
       }
     }
-    for (const key of board.keys()) {
+    for (const key of live.keys()) {
       if (this.staged.has(key)) continue;
       const cell = cellOfKey(key);
       died.push({ x: cell.x, y: cell.y });
@@ -453,8 +498,13 @@ export function stepGeneration(
   phantom: PhantomWallWeight = WALL_PHANTOM_WEIGHT,
 ): GenerationOutcome {
   const survey = new GenerationSurvey(phantom);
-  const result = survey.advance(world, live, world.chunksPerEdge * world.chunksPerEdge);
-  return result as GenerationOutcome;
+  const chunkBudget = world.chunksPerEdge * world.chunksPerEdge;
+  if (!Number.isSafeInteger(chunkBudget) || chunkBudget <= 0) {
+    throw new RangeError('a generation needs a positive whole chunk count');
+  }
+  let result: GenerationOutcome | null = null;
+  while (result === null) result = survey.advance(world, live, chunkBudget);
+  return result;
 }
 
 export function generationChunksPerTick(world: StructuresWorld, dt: number): number {
@@ -543,12 +593,19 @@ export function attemptSeed(
   world: StructuresWorld,
   live: ReadonlyMap<number, LiveCellRecord>,
   rng: StructuresRng,
+  eligibleChunks?: readonly number[],
 ): StructureCell[] | null {
   const unlocked: number[] = [];
-  for (let cy = 0; cy < world.chunksPerEdge; cy++) {
-    for (let cx = 0; cx < world.chunksPerEdge; cx++) {
-      if (world.isChunkUnlocked(cx, cy) && chunkHasBuildableCell(world, cx, cy)) {
-        unlocked.push(cy * world.chunksPerEdge + cx);
+  if (eligibleChunks !== undefined) {
+    for (const index of eligibleChunks) {
+      if (world.isChunkUnlocked(index % world.chunksPerEdge, Math.floor(index / world.chunksPerEdge))) unlocked.push(index);
+    }
+  } else {
+    for (let cy = 0; cy < world.chunksPerEdge; cy++) {
+      for (let cx = 0; cx < world.chunksPerEdge; cx++) {
+        if (world.isChunkUnlocked(cx, cy) && chunkHasBuildableCell(world, cx, cy)) {
+          unlocked.push(cy * world.chunksPerEdge + cx);
+        }
       }
     }
   }

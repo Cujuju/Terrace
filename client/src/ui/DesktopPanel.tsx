@@ -91,12 +91,23 @@ export function DesktopPanel(props: {
 }): JSX.Element {
   const [error, setError] = createSignal<string | null>(null);
   const [capturing, setCapturing] = createSignal(false);
+  const [changingServer, setChangingServer] = createSignal(false);
 
   const call = (run: Promise<unknown> | undefined): void => {
     setError(null);
     void run?.catch((err: unknown) => setError(desktopErrorMessage(err)));
   };
+  const changeServer = (run: () => Promise<unknown> | undefined): void => {
+    if (changingServer()) return;
+    setChangingServer(true);
+    setError(null);
+    void Promise.resolve().then(run)
+      .catch((err: unknown) => setError(desktopErrorMessage(err)))
+      .finally(() => setChangingServer(false));
+  };
   const set = (patch: Partial<DesktopSettings>): void => call(desktopBridge?.invoke('set', patch));
+  const setServer = (patch: Partial<DesktopSettings>): void =>
+    changeServer(() => desktopBridge?.invoke('set', patch));
 
   return (
     <div class="desktop-panel">
@@ -112,8 +123,8 @@ export function DesktopPanel(props: {
           type="button"
           class="controls-reset"
           title="Data folder: where worlds, logs and server settings are kept"
-          disabled={props.host.dataDirLocked}
-          onClick={() => call(desktopBridge?.invoke('chooseDataDir'))}
+          disabled={props.host.dataDirLocked || changingServer()}
+          onClick={() => changeServer(() => desktopBridge?.invoke('chooseDataDir'))}
         >
           Change…
         </button>
@@ -124,8 +135,8 @@ export function DesktopPanel(props: {
         title="Port: where this machine's server listens"
         type="number"
         value={String(props.host.port)}
-        disabled={props.host.portLocked}
-        onCommit={(value) => set({ port: Number(value) })}
+        disabled={props.host.portLocked || changingServer()}
+        onCommit={(value) => setServer({ port: Number(value) })}
       />
       <TextRow
         label="Rollback key"
@@ -133,7 +144,8 @@ export function DesktopPanel(props: {
         type="password"
         placeholder="none"
         value={props.host.settings.rollbackKey}
-        onCommit={(value) => set({ rollbackKey: value })}
+        disabled={changingServer()}
+        onCommit={(value) => setServer({ rollbackKey: value })}
       />
       <TextRow
         label="World admin key"
@@ -141,7 +153,8 @@ export function DesktopPanel(props: {
         type="password"
         placeholder="none"
         value={props.host.settings.worldAdminKey}
-        onCommit={(value) => set({ worldAdminKey: value })}
+        disabled={changingServer()}
+        onCommit={(value) => setServer({ worldAdminKey: value })}
       />
       <p class="hud-hint">
         A change here restarts the world server. Worlds in the old folder stay there.

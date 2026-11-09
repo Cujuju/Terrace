@@ -1,4 +1,4 @@
-import { chunkIndex, chunkIndexOfCell, type CellDiff } from '@terrace/shared';
+import { cellCentre, chunkIndex, chunkIndexOfCell, type CellDiff } from '@terrace/shared';
 import type {
   PersistenceSlice,
   Player,
@@ -34,6 +34,28 @@ let temple: TempleCell | null = null;
 
 let restoredTemple: TempleCell | null = null;
 
+interface PlacementIntent {
+  readonly cell: TempleCell;
+  readonly replaceExisting: boolean;
+}
+
+// One pending intent per player; one authoritative site evaluation per simulation tick.
+const pendingPlacements = new Map<string, PlacementIntent>();
+
+function queuePlacement(playerId: string, payload: unknown, replaceExisting = false): void {
+  const cell = parseTemplePlacePayload(payload);
+  if (cell !== null) pendingPlacements.set(playerId, { cell, replaceExisting });
+}
+
+function advancePlacement(world: WorldApi): void {
+  const next = pendingPlacements.entries().next();
+  if (next.done) return;
+  const [playerId, intent] = next.value;
+  pendingPlacements.delete(playerId);
+  if (!world.players().some((player) => player.id === playerId)) return;
+  placeTemple(world, playerId, intent.cell, intent.replaceExisting);
+}
+
 function broadcastState(world: WorldApi, onlyPlayerId?: string): void {
   world.broadcastVisible(
     TEMPLE_STATE_MESSAGE,
@@ -54,9 +76,7 @@ function publishClaim(): void {
   reserveStructureGround(temple === null ? [] : templeFootprintCells(temple));
 }
 
-function placeTemple(world: WorldApi, playerId: string, payload: unknown, replaceExisting = false): void {
-  const cell = parseTemplePlacePayload(payload);
-  if (cell === null) return;
+function placeTemple(world: WorldApi, playerId: string, cell: TempleCell, replaceExisting: boolean): void {
   if (temple !== null && !replaceExisting) {
     refuse(world, playerId, cell, TEMPLE_REFUSED_STANDING);
     return;
@@ -70,11 +90,10 @@ function placeTemple(world: WorldApi, playerId: string, payload: unknown, replac
     return;
   }
 
-  const door = templeDoorCell(cell);
   let canSettle: boolean;
   reserveStructureGround(templeFootprintCells(cell));
   try {
-    canSettle = templeCanSettle(world, { x: cell.x, y: cell.y, doorX: door.x, doorY: door.y });
+    canSettle = templeCanSettle(world, settlerSite(cell));
   } finally {
     publishClaim();
   }
@@ -94,6 +113,7 @@ function placeTemple(world: WorldApi, playerId: string, payload: unknown, replac
 }
 
 function removeTemple(world: WorldApi): void {
+  pendingPlacements.clear();
   if (temple === null) return;
   const fallen = temple;
   temple = null;
@@ -148,6 +168,7 @@ export const plugin: TerracePlugin = {
   name: TEMPLES_PLUGIN_NAME,
 
   onWorldCreate(world: WorldApi): void {
+    pendingPlacements.clear();
     loadPilgrimsBridge(world);
     loadStructuresBridge(world);
 
@@ -172,8 +193,16 @@ export const plugin: TerracePlugin = {
     reactToTerrain(world, diff);
   },
 
+  onTick(world: WorldApi): void {
+    advancePlacement(world);
+  },
+
   onPlayerJoin(world: WorldApi, player: Player): void {
     broadcastState(world, player.id);
+  },
+
+  onPlayerLeave(_world: WorldApi, player: Player): void {
+    pendingPlacements.delete(player.id);
   },
 
   // State is sent per viewer, so a player who reveals the temple's chunk must be told.
@@ -187,8 +216,8 @@ export const plugin: TerracePlugin = {
   },
 
   messages: {
-    [TEMPLE_PLACE_MESSAGE]: (world, player, payload) => placeTemple(world, player.id, payload),
-    [TEMPLE_REPLACE_MESSAGE]: (world, player, payload) => placeTemple(world, player.id, payload, true),
+    [TEMPLE_PLACE_MESSAGE]: (_world, player, payload) => queuePlacement(player.id, payload),
+    [TEMPLE_REPLACE_MESSAGE]: (_world, player, payload) => queuePlacement(player.id, payload, true),
     [TEMPLE_REMOVE_MESSAGE]: (world) => removeTemple(world),
   },
 
@@ -196,17 +225,22 @@ export const plugin: TerracePlugin = {
 };
 
 export function standingTemple(): StandingTemple | null {
-  if (temple === null) return null;
-  const door = templeDoorCell(temple);
-  return { x: temple.x, y: temple.y, doorX: door.x, doorY: door.y };
+  return temple === null ? null : settlerSite(temple);
+}
+
+function settlerSite(cell: TempleCell): StandingTemple {
+  const door = cellCentre(templeDoorCell(cell));
+  return { x: cell.x, y: cell.y, doorX: door.x, doorY: door.y };
 }
 
 export interface StandingTemple extends TempleCell {
+  /** Continuous server-frame coordinates; x/y remain integer temple cell indices. */
   readonly doorX: number;
   readonly doorY: number;
 }
 
 export function resetTemplesState(): void {
+  pendingPlacements.clear();
   temple = null;
   restoredTemple = null;
 }

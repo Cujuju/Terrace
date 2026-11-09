@@ -18,6 +18,7 @@ import { RAY_ENVELOPE } from './species/ray.ts';
 import { SHARK_ENVELOPE } from './species/shark.ts';
 import { WOLF_ENVELOPE } from './species/wolf.ts';
 import { WHALE_ENVELOPE } from './whaleSpecies.ts';
+import { measuredSwimmerScale } from '../swimmerBounds.ts';
 
 const AUTHORED_LENGTH_WORLD_UNITS: Readonly<Record<WildlifeSpecies, number>> = {
   fish: FISH_ENVELOPE.length,
@@ -47,6 +48,8 @@ export function modelScaleFor(
   sizeClass: WildlifeSizeClass,
   variantSeed: number,
 ): number {
+  const measured = measuredSwimmerScale(species, sizeClass, variantSeed);
+  if (measured !== null) return measured;
   return (
     drawnLengthWorldUnits(species, realLengthMetres(species, variantSeed), sizeClass) /
     AUTHORED_LENGTH_WORLD_UNITS[species]

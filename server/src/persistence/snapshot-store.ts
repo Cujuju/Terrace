@@ -45,6 +45,7 @@ function isReadableSchemaVersion(version: number): boolean {
 }
 
 export const SNAPSHOT_RETENTION = 10;
+const MIN_RETENTION_WITH_PREVIOUS = 2;
 
 export const IN_MEMORY_DB_PATH = ':memory:';
 
@@ -403,10 +404,13 @@ export class SnapshotStore {
     }
   }
 
-  saveSnapshot(input: SnapshotInput): number {
+  saveSnapshot(input: SnapshotInput, options?: { readonly retainPrevious?: boolean }): number {
     this.settle();
+    const retention = options?.retainPrevious
+      ? Math.max(this.retention, MIN_RETENTION_WITH_PREVIOUS)
+      : this.retention;
     return timePhase('store.write', () =>
-      writeSnapshot(this.db, this.writeStatements, this.retention, snapshotWritePayloadOf(input)),
+      writeSnapshot(this.db, this.writeStatements, retention, snapshotWritePayloadOf(input)),
     );
   }
 

@@ -1,7 +1,6 @@
 import type { CellDiff, SculptIntent } from '@terrace/shared';
 import {
   chunkUnlockFee,
-  strokeUnlockChunks,
   sculptIntentCost,
   strokeChargeCost,
 } from '../pricing.ts';
@@ -12,6 +11,7 @@ import type {
   IntentVerdict,
 } from '../../../server/src/plugins/types.ts';
 import { manaPerBandCellFor } from './perks.ts';
+import { activeUnlockChunks } from './reveal-policy.ts';
 import {
   asOfSeqOf,
   displayBalance,
@@ -52,7 +52,7 @@ export function checkAffordability(intent: SculptIntent, ctx: IntentCtx): Intent
   pool.quote = null;
   noteSeq(pool, intent);
   const quote = quoteFor(world.worldSize, intent, (cx, cy) =>
-    world.isChunkUnlockedForToken(ctx.player.token, cx, cy));
+    world.isChunkUnlockedForToken(ctx.player.token, cx, cy), activeUnlockChunks(world.worldSize, intent));
   const cost = manaCostFor(ctx.player.id, intent, quote.closed.length);
 
   if (pool.balance < cost) {
@@ -76,11 +76,11 @@ export function commitCharge(intent: SculptIntent, ctx: AppliedIntentCtx, diff: 
   noteSeq(pool, intent);
 
   // A faulted mana check is skipped by the host; without its receipt, no pre-effect unlock price is recoverable.
-  const opened = quotedOpenedChunkCount(pool, intent, strokeUnlockChunks(world.worldSize, intent, diff));
+  const opened = quotedOpenedChunkCount(pool, intent, activeUnlockChunks(world.worldSize, intent, diff));
   pool.quote = null;
 
   // Charge follows effect: a stroke that moved nothing displaced nothing.
-  // Reveal opens the sweep whatever the diff, so the unlock fee still stands.
+  // Only the active territory policy contributes an unlock fee.
   pool.balance -= manaChargeFor(ctx.player.id, ctx.displacementUnits, opened, intent);
   sendBalance(world, ctx.player.id, pool);
 }

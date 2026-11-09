@@ -3,6 +3,7 @@ import type { LiveCellRecord } from './life.ts';
 import type { StructuresWorld } from './suitability.ts';
 
 export const STRUCTURES_MODEL_ENV = 'STRUCTURES_MODEL';
+export const GROWTH_MODEL_VERSION = 3;
 
 export const STRUCTURES_MODEL_SETTING_KEY = 'model';
 
@@ -39,27 +40,40 @@ export type GrowthCellRecord = Omit<BoardCellRecord, 'kind'> & { readonly kind?:
 
 export type GrowthCell = Omit<StructureCell, 'kind'> & { readonly kind?: number };
 
+export interface GrowthStage {
+  readonly kind: number;
+  readonly tier: number;
+}
+
 export interface GrowthStepResult {
   readonly nextLive: Map<number, GrowthCellRecord>;
-  readonly born: StructureCell[];
+  readonly born: GrowthCell[];
   readonly upgraded: GrowthCell[];
   readonly died: Array<{ x: number; y: number }>;
   readonly emitted: ReadonlyArray<{ x: number; y: number }>;
 }
 
 export interface GrowthContext {
-  isBuildable(x: number, y: number): boolean;
+  /** Omitting kind surveys founding ground; a resolved kind surveys its complete lot. */
+  isBuildable(x: number, y: number, kind?: number): boolean;
+  resolveStage(x: number, y: number, tier: number, current?: GrowthCellRecord): GrowthStage;
+  /** One authored chain entry, constrained by the site's complexity ceiling. */
+  nextStage(x: number, y: number, ceiling: number, current: GrowthCellRecord): GrowthStage;
   readonly maxTier: number;
+  /** The proposed kind is resolved before testing either current or staged occupancy. */
   hasBuildingWithinSeparation(
     cells: ReadonlyMap<number, BoardCellRecord>,
     x: number,
     y: number,
-    tier: number,
+    kind: number,
   ): boolean;
+  /** Earlier accepted camps relinquish the lot claimed by an upgraded building. */
+  absorbedByUpgrade(cells: ReadonlyMap<number, BoardCellRecord>, x: number, y: number, kind: number): readonly number[];
 }
 
 export interface GrowthModel {
   readonly name: string;
+  readonly contractVersion: number;
   step(
     world: StructuresWorld,
     live: ReadonlyMap<number, BoardCellRecord>,
@@ -71,6 +85,11 @@ export interface GrowthModel {
 let registered: GrowthModel | null = null;
 
 export function setGrowthModel(model: GrowthModel | null): void {
+  if (model !== null && model.contractVersion !== GROWTH_MODEL_VERSION) {
+    registered = null;
+    console.warn('[structures] incompatible growth-model contract — reload both growth plugins');
+    return;
+  }
   registered = model;
 }
 

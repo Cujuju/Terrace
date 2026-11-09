@@ -35,22 +35,53 @@ export interface ServerLaunch {
 
 export const serverLogPath = (dataDir: string): string => join(dataDir, LOG_DIR_NAME, LOG_FILE_NAME);
 
+interface ServerChild {
+  proc: ChildProcess;
+  port: number;
+  exited: Promise<void>;
+}
+
 export class ServerSupervisor {
-  private proc: ChildProcess | null = null;
+  private child: ServerChild | null = null;
   private log: WriteStream | null = null;
   private logPath: string | null = null;
   private crashRestart: NodeJS.Timeout | null = null;
-  private listening = false;
+  private wanted = false;
   private stopping = false;
   private crashes = 0;
+  private transition: Promise<void> = Promise.resolve();
+  private restartTask: Promise<void> | null = null;
+  private readonly launch: () => ServerLaunch;
+  private readonly onGaveUp: (logPath: string) => void;
 
   /** `launch` is read at each start, so a restart picks up changed settings; `onGaveUp` runs once crash restarts are spent. */
   constructor(
-    private readonly launch: () => ServerLaunch,
-    private readonly onGaveUp: (logPath: string) => void,
-  ) {}
+    launch: () => ServerLaunch,
+    onGaveUp: (logPath: string) => void,
+  ) {
+    this.launch = launch;
+    this.onGaveUp = onGaveUp;
+  }
 
-  start(): void {
+  start(): Promise<void> {
+    this.wanted = true;
+    return this.enqueue(() => this.startChild());
+  }
+
+  private enqueue(run: () => void | Promise<void>): Promise<void> {
+    const task = this.transition.then(run);
+    this.transition = task.catch(() => {});
+    return task;
+  }
+
+  private cancelCrashRestart(): void {
+    if (this.crashRestart !== null) clearTimeout(this.crashRestart);
+    this.crashRestart = null;
+  }
+
+  private startChild(): void {
+    if (!this.wanted || this.stopping || this.child !== null) return;
+    this.cancelCrashRestart();
     const { port, dataDir, rollbackKey, worldAdminKey } = this.launch();
     mkdirSync(join(dataDir, LOG_DIR_NAME), { recursive: true });
     const logPath = serverLogPath(dataDir);
@@ -85,18 +116,24 @@ export class ServerSupervisor {
       stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
       windowsHide: true,
     });
-    this.proc = proc;
-    this.listening = false;
+    let resolveExit!: () => void;
+    const child: ServerChild = {
+      proc,
+      port,
+      exited: new Promise<void>((resolve) => { resolveExit = resolve; }),
+    };
+    this.child = child;
     const startedAt = Date.now();
     proc.stdout?.on('data', (chunk: Buffer) => this.record(chunk, process.stdout));
     proc.stderr?.on('data', (chunk: Buffer) => this.record(chunk, process.stderr));
-    proc.once('exit', (code, signal) => {
+    const onExit = (code: number | null, signal: NodeJS.Signals | null): void => {
+      resolveExit();
+      if (this.child !== child) return;
       this.note(`server exited code=${String(code)} signal=${String(signal)}`);
-      this.proc = null;
-      this.listening = false;
-      if (this.stopping) return;
+      this.child = null;
+      if (!this.wanted || this.stopping) return;
       if (code === TERRACE_RESTART_EXIT_CODE || code === TERRACE_STACK_RESTART_EXIT_CODE) {
-        this.start();
+        void this.enqueue(() => this.startChild());
         return;
       }
       if (Date.now() - startedAt >= CRASH_WINDOW_MS) this.crashes = 0;
@@ -108,18 +145,24 @@ export class ServerSupervisor {
       this.note(`restart ${this.crashes}/${MAX_CRASH_RESTARTS} after a crash`);
       this.crashRestart = setTimeout(() => {
         this.crashRestart = null;
-        this.start();
+        void this.enqueue(() => this.startChild());
       }, CRASH_BACKOFF_MS * this.crashes);
+    };
+    proc.once('exit', onExit);
+    proc.once('error', (error) => {
+      this.note(`server process error: ${error.message}`);
+      if (proc.pid === undefined) onExit(null, null);
     });
   }
 
   /** Resolves true once a Terrace server answers on the port; false when none has within the timeout, or this one is not running. */
   async ready(): Promise<boolean> {
-    const origin = loopbackOrigin(this.launch().port);
     const deadline = Date.now() + SERVER_READY_TIMEOUT_MS;
-    while (Date.now() < deadline && !this.stopping) {
-      if (this.proc !== null && (await probeServer(origin)).kind === 'terrace') {
-        this.listening = true;
+    while (Date.now() < deadline && this.wanted && !this.stopping) {
+      await this.transition;
+      const child = this.child;
+      if (child !== null && (await probeServer(loopbackOrigin(child.port))).kind === 'terrace'
+        && this.child === child && this.wanted && !this.stopping) {
         return true;
       }
       await new Promise((r) => setTimeout(r, PORT_POLL_INTERVAL_MS));
@@ -127,28 +170,49 @@ export class ServerSupervisor {
     return false;
   }
 
-  /** Stops the server, letting a listening one write its shutdown snapshot first. */
-  async stop(): Promise<void> {
-    const proc = this.proc;
-    this.stopping = true;
-    if (this.crashRestart !== null) clearTimeout(this.crashRestart);
-    this.crashRestart = null;
-    if (proc !== null) {
-      const exited = new Promise<void>((resolve) => proc.once('exit', () => resolve()));
-      // A server still loading holds nothing unsaved, and has no listener for the request yet.
-      if (this.listening && proc.connected) proc.send(SUPERVISOR_SHUTDOWN_MESSAGE);
-      else proc.kill();
-      const timer = setTimeout(() => proc.kill('SIGKILL'), GRACEFUL_STOP_TIMEOUT_MS);
-      await exited;
-      clearTimeout(timer);
-    }
-    this.stopping = false;
+  /** Every connected generation gets the shutdown request, including automatic replacements. */
+  stop(): Promise<void> {
+    this.wanted = false;
+    this.cancelCrashRestart();
+    return this.enqueue(() => this.stopChild());
   }
 
-  async restart(): Promise<void> {
-    await this.stop();
-    this.crashes = 0;
-    this.start();
+  private async stopChild(): Promise<void> {
+    const child = this.child;
+    if (child === null) return;
+    const { proc } = child;
+    this.stopping = true;
+    const timer = setTimeout(() => proc.kill('SIGKILL'), GRACEFUL_STOP_TIMEOUT_MS);
+    try {
+      if (proc.connected) {
+        proc.send(SUPERVISOR_SHUTDOWN_MESSAGE, (error) => {
+          if (error !== null && this.child === child) proc.kill();
+        });
+      } else proc.kill();
+    } catch {
+      if (this.child === child) proc.kill();
+    }
+    try {
+      await child.exited;
+    } finally {
+      clearTimeout(timer);
+      this.stopping = false;
+    }
+  }
+
+  restart(): Promise<void> {
+    if (this.restartTask !== null) return this.restartTask;
+    this.wanted = true;
+    this.cancelCrashRestart();
+    const task = this.enqueue(async () => {
+      await this.stopChild();
+      this.crashes = 0;
+      this.startChild();
+    });
+    this.restartTask = task;
+    const clear = (): void => { if (this.restartTask === task) this.restartTask = null; };
+    void task.then(clear, clear);
+    return task;
   }
 
   /** Ends the log; call once the server has stopped for good. */

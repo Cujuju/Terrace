@@ -4,6 +4,8 @@ import type { Component } from 'solid-js';
 import { FPS_SAMPLE_INTERVAL_MS } from '../config.ts';
 import { BOOT_MARKS, bootMarked } from '../bootMarks.ts';
 import { createAudioEngine } from '../audio/audioEngine.ts';
+import { cameraPressVerb } from '../input/cameraPointerLock.ts';
+import { createToolInputRouter } from '../input/toolInput.ts';
 import type { Connection } from '../net/connection.ts';
 import type { FramePhase, Viewport } from '../render/scene.ts';
 import { FRAME_DELTA_CAP_S } from '../render/scene.ts';
@@ -172,6 +174,7 @@ export function createClientPluginHost(
   const audioEngine = createAudioEngine(viewport);
 
   const pressHandlers: ((event: PointerEvent) => boolean)[] = [];
+  const mountControllers = new Map<string, AbortController>();
   const localIntentHandlers: ((intent: SculptIntent) => boolean)[] = [];
 
   let skyRigClaimant: string | null = null;
@@ -202,6 +205,11 @@ export function createClientPluginHost(
 
   const onCanvasPointerDown = (event: PointerEvent): void => {
     audioEngine.unlock();
+    if (event.pointerType !== 'touch' && cameraPressVerb(event.button, event) !== null) return;
+    if (toolInput.press(event)) {
+      if (event.pointerType !== 'touch') event.stopImmediatePropagation();
+      return;
+    }
     for (const handler of pressHandlers) {
       let claimed = false;
       try {
@@ -227,12 +235,14 @@ export function createClientPluginHost(
     const device = pointerToNdc(clientX, clientY, canvas.getBoundingClientRect());
     if (device === null) return null;
     const raycaster = new Raycaster();
+    viewport.camera.updateWorldMatrix(true, false);
     raycaster.setFromCamera(new Vector2(device.x, device.y), viewport.camera);
     const hit = world.pickCell(raycaster.ray.origin, raycaster.ray.direction);
     return hit === null ? null : { x: hit.x, y: hit.y };
   };
 
   const pickableObjects: Object3D[] = [];
+  const hitResolvers = new Map<Object3D, (hit: Intersection) => { x: number; y: number } | null>();
 
   const pickableOccupancy: CellOccupancy[] = [];
 
@@ -245,6 +255,7 @@ export function createClientPluginHost(
     const device = pointerToNdc(clientX, clientY, canvas.getBoundingClientRect());
     if (device === null) return null;
     const raycaster = new Raycaster();
+    viewport.camera.updateWorldMatrix(true, false);
     raycaster.setFromCamera(new Vector2(device.x, device.y), viewport.camera);
     const { ray } = raycaster;
     const ground = world.pickPointedCell(ray.origin, ray.direction, NO_OCCUPANTS);
@@ -272,6 +283,7 @@ export function createClientPluginHost(
 
     const device = pointerToNdc(clientX, clientY, canvas.getBoundingClientRect());
     if (device === null) return null;
+    viewport.camera.updateWorldMatrix(true, false);
     pickRaycaster.setFromCamera(pickNdc.set(device.x, device.y), viewport.camera);
     const ray = pickRaycaster.ray;
 
@@ -287,13 +299,24 @@ export function createClientPluginHost(
       pickRaycaster.far = pointed === null ? Infinity : pointed.distance;
       const hits: Intersection[] = pickRaycaster.intersectObjects(pickableObjects, true);
       for (const hit of hits) {
-        const cell = worldPointToCell(hit.point.x, hit.point.z, size);
+        let resolver: ((hit: Intersection) => { x: number; y: number } | null) | undefined;
+        for (let node: Object3D | null = hit.object; node !== null; node = node.parent) {
+          if (!pickableObjects.includes(node)) continue;
+          resolver = hitResolvers.get(node);
+          break;
+        }
+        const cell = resolver === undefined
+          ? worldPointToCell(hit.point.x, hit.point.z, size) : resolver(hit);
+        if (cell !== null && (!Number.isInteger(cell.x) || !Number.isInteger(cell.y)
+          || cell.x < 0 || cell.y < 0 || cell.x >= size || cell.y >= size)) continue;
         if (cell !== null) return { x: cell.x, y: cell.y };
       }
     }
 
     return pointed === null ? null : { x: pointed.x, y: pointed.y };
   };
+
+  const toolInput = createToolInputRouter(canvas, { terrain: pickTerrainCell, world: pickWorldCell });
 
   const moverLookups = new Map<string, (id: number) => MoverPose | null>();
 
@@ -445,8 +468,11 @@ export function createClientPluginHost(
       console.error(`[terrace] client plugin "${plugin.name}" mounted twice; leaking runners`);
     }
     const undo: (() => void)[] = [];
+    const controller = new AbortController();
+    mountControllers.set(plugin.name, controller);
     const track = (unregister: () => void): (() => void) => {
-      undo.push(unregister);
+      if (controller.signal.aborted) unregister();
+      else undo.push(unregister);
       return unregister;
     };
     const deferredFrameHandlers: FrameHandler[] = [];
@@ -459,6 +485,7 @@ export function createClientPluginHost(
     track(audioHandle.release);
 
     const ctx: ClientPluginCtx = {
+      signal: controller.signal,
       layer,
       audio: audioHandle.audio,
       worldSize: () => world.worldSize(),
@@ -599,6 +626,11 @@ export function createClientPluginHost(
         });
       },
       aimRay,
+      bindToolInput(options) {
+        const input = toolInput.bind(options);
+        track(input.dispose);
+        return input;
+      },
       pickTerrainCell,
       pickWorldCell,
       cameraPosition,
@@ -628,18 +660,22 @@ export function createClientPluginHost(
           if (moverLookups.get(plugin.name) === lookup) moverLookups.delete(plugin.name);
         });
       },
-      markPickable(object: Object3D, occupancy?: CellOccupancy): () => void {
+      markPickable(object, occupancy, resolveHit) {
         if (occupancy !== undefined) {
           pickableOccupancy.push(occupancy);
-          return track(() => {
+        }
+        if (occupancy === undefined || resolveHit !== undefined) {
+          if (!pickableObjects.includes(object)) pickableObjects.push(object);
+          if (resolveHit !== undefined) hitResolvers.set(object, resolveHit);
+        }
+        return track(() => {
+          if (occupancy !== undefined) {
             const index = pickableOccupancy.indexOf(occupancy);
             if (index !== -1) pickableOccupancy.splice(index, 1);
-          });
-        }
-        if (!pickableObjects.includes(object)) pickableObjects.push(object);
-        return track(() => {
+          }
           const index = pickableObjects.indexOf(object);
           if (index !== -1) pickableObjects.splice(index, 1);
+          hitResolvers.delete(object);
         });
       },
       onLocalIntent(handler) {
@@ -768,7 +804,12 @@ export function createClientPluginHost(
       if (warmedOnce) void runWarmup();
     };
 
+    let dropped = false;
     const dropUnattached = (): void => {
+      if (dropped) return;
+      dropped = true;
+      controller.abort();
+      if (mountControllers.get(plugin.name) === controller) mountControllers.delete(plugin.name);
       for (const unregister of undo) {
         try {
           unregister();
@@ -790,8 +831,9 @@ export function createClientPluginHost(
     mountGenerations.set(plugin.name, generation);
     pendingMounts.add(plugin.name);
     heldMessages.set(plugin.name, []);
+    controller.signal.addEventListener('abort', dropUnattached, { once: true });
     void Promise.resolve()
-      .then(() => preload(ctx))
+      .then(() => controller.signal.aborted ? undefined : preload(ctx))
       .then(
         () => {
           // A stale preload leaves pendingMounts alone: it may belong to a newer mount.
@@ -800,6 +842,7 @@ export function createClientPluginHost(
             return;
           }
           pendingMounts.delete(plugin.name);
+          controller.signal.removeEventListener('abort', dropUnattached);
           finishMount();
           const held = heldMessages.get(plugin.name) ?? [];
           heldMessages.delete(plugin.name);
@@ -810,7 +853,7 @@ export function createClientPluginHost(
             pendingMounts.delete(plugin.name);
             heldMessages.delete(plugin.name);
           }
-          console.error(`[terrace] client plugin "${plugin.name}" threw in preload`, error);
+          if (!controller.signal.aborted) console.error(`[terrace] client plugin "${plugin.name}" threw in preload`, error);
           dropUnattached();
         },
       );
@@ -829,6 +872,8 @@ export function createClientPluginHost(
   };
 
   const unmountPlugin = (name: string): void => {
+    mountControllers.get(name)?.abort();
+    mountControllers.delete(name);
     mountGenerations.set(name, (mountGenerations.get(name) ?? 0) + 1);
     pendingMounts.delete(name);
     heldMessages.delete(name);
@@ -985,6 +1030,7 @@ export function createClientPluginHost(
     resetWorld(worldGeneration?: number): void {
       if (worldGeneration !== undefined && worldGeneration === joinedGeneration) return;
       joinedGeneration = worldGeneration;
+      toolInput.reset();
       // Held messages describe the old world; the new one's follow this snapshot.
       for (const held of heldMessages.values()) held.length = 0;
       for (const [handler, name] of worldResetHandlers) {
@@ -1028,12 +1074,15 @@ export function createClientPluginHost(
         mountGenerations.set(name, (mountGenerations.get(name) ?? 0) + 1);
       }
       pendingMounts.clear();
+      for (const controller of mountControllers.values()) controller.abort();
+      mountControllers.clear();
       heldMessages.clear();
       worldResetHandlers.clear();
       canvas.removeEventListener('pointerdown', onCanvasPointerDown, {
         capture: true,
       });
       pressHandlers.length = 0;
+      toolInput.dispose();
       localIntentHandlers.length = 0;
       handlers.clear();
       skyRigClaimant = null;

@@ -14,7 +14,11 @@ export interface FlammableIndividual {
 export interface EntityFuelSource {
   readonly name: string;
 
-  entityAt(x: number, y: number): { id: number; fuel: EntityFuel; distanceCells: number } | null;
+  entityAt(
+    x: number,
+    y: number,
+    accepts?: (id: number) => boolean,
+  ): { id: number; fuel: EntityFuel; distanceCells: number } | null;
 
   positionOf(id: number): { x: number; y: number } | null;
 
@@ -28,6 +32,12 @@ export interface EntityFuelSource {
 }
 
 const sources: EntityFuelSource[] = [];
+
+export interface ResolvedEntityFuel {
+  readonly id: number;
+  readonly fuel: EntityFuel;
+  readonly source: EntityFuelSource;
+}
 
 export function registerEntityFuel(source: EntityFuelSource): void {
   const existing = sources.findIndex((candidate) => candidate.name === source.name);
@@ -56,16 +66,19 @@ export function entityFuelAt(
   x: number,
   y: number,
   alreadyBurning?: (sourceName: string, id: number) => boolean,
-): { id: number; fuel: EntityFuel; source: EntityFuelSource } | null {
-  let best: { id: number; fuel: EntityFuel; source: EntityFuelSource } | null = null;
+  accepts?: (source: EntityFuelSource, id: number) => boolean,
+): ResolvedEntityFuel | null {
+  let best: ResolvedEntityFuel | null = null;
   let bestDistance = Infinity;
 
   for (const source of sources) {
-    const found = source.entityAt(x, y);
+    const eligible = (id: number): boolean =>
+      alreadyBurning?.(source.name, id) !== true && accepts?.(source, id) !== false;
+    const found = source.entityAt(x, y, eligible);
     if (found === null) continue;
     if (found.fuel.burnSeconds <= 0) continue;
     if (!Number.isFinite(found.distanceCells)) continue;
-    if (alreadyBurning?.(source.name, found.id) === true) continue;
+    if (!eligible(found.id)) continue;
     if (found.distanceCells >= bestDistance) continue;
     best = { id: found.id, fuel: found.fuel, source };
     bestDistance = found.distanceCells;

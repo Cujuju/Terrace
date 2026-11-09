@@ -29,7 +29,7 @@ import {
   vec4,
 } from 'three/tsl';
 import { radianceForDisplay } from '../../../client/src/render/displayRadiance.ts';
-import { CELL_WORLD_SIZE, cellsAcross } from '@terrace/shared';
+import { CELL_WORLD_SIZE, CHUNK_SIZE, cellsAcross } from '@terrace/shared';
 import {
   FLOW_RADIUS_WORLD_UNITS,
   LAVA_COOL_SECONDS,
@@ -138,7 +138,9 @@ export interface LavaFlowRenderer {
     groundAt: DrawnGroundAtCell,
   ): void;
   readonly pendingGround: boolean;
+  refreshGround(dirtyChunks: ReadonlySet<number>, worldSize: number, groundAt: DrawnGroundAtCell): void;
   retryPending(groundAt: DrawnGroundAtCell): void;
+  clear(): void;
   update(elapsed: number): void;
   dispose(): void;
 }
@@ -423,6 +425,17 @@ export function createLavaFlow(): LavaFlowRenderer {
     dirtySlots.clear();
   }
 
+  function adoptGround(entry: CoveredCell, key: number, ground: number | null): boolean {
+    const hasCap = ground !== null;
+    const capY = ground === null ? 0 : ground + LAVA_HOVER_HEIGHT;
+    if (hasCap) pendingCells.delete(key);
+    else pendingCells.add(key);
+    const changed = entry.hasCap !== hasCap || entry.capY !== capY;
+    entry.hasCap = hasCap;
+    entry.capY = capY;
+    return changed;
+  }
+
   function restamp(groundAt: DrawnGroundAtCell): void {
     for (let i = 0; i < dirtyX.length; i++) {
       const x = dirtyX[i]!;
@@ -457,20 +470,14 @@ export function createLavaFlow(): LavaFlowRenderer {
       entry.strength = nearestStrength;
       entry.birth = nearestBirth;
 
-      const ground = groundAt(x, y);
-      if (ground === null) {
-        entry.hasCap = false;
-        entry.capY = 0;
-        pendingCells.add(key);
-      } else {
-        entry.hasCap = true;
-        entry.capY = ground + LAVA_HOVER_HEIGHT;
-        pendingCells.delete(key);
-      }
-
+      adoptGround(entry, key, groundAt(x, y));
       dirtySlots.add(slot);
     }
 
+    flushPlanChanges();
+  }
+
+  function flushPlanChanges(): void {
     for (let i = 0; i < dirtyX.length; i++) {
       const x = dirtyX[i]!;
       const y = dirtyY[i]!;
@@ -497,6 +504,13 @@ export function createLavaFlow(): LavaFlowRenderer {
     geometry.setDrawRange(0, slotWatermark * LAVA_SLOT_VERTICES);
     uploadDirtySlots();
     clearScratch();
+  }
+
+  function refreshSlotGround(slot: number, groundAt: DrawnGroundAtCell): void {
+    const entry = slotCell[slot]!;
+    if (!adoptGround(entry, lavaKey(entry.x, entry.y), groundAt(entry.x, entry.y))) return;
+    markPlanCell(entry.x, entry.y);
+    dirtySlots.add(slot);
   }
 
   function remember(list: readonly LavaCellState[], elapsed: number): boolean {
@@ -560,19 +574,51 @@ export function createLavaFlow(): LavaFlowRenderer {
       return pendingCells.size > 0;
     },
 
+    refreshGround(dirtyChunks, worldSize, groundAt): void {
+      if (dirtyChunks.size === 0 || covered.size === 0) return;
+      const edge = worldSize / CHUNK_SIZE;
+      const last = worldSize - 1;
+      for (const slot of covered.values()) {
+        const cell = slotCell[slot]!;
+        const cx = Math.floor(Math.min(last, cell.x) / CHUNK_SIZE);
+        const cy = Math.floor(Math.min(last, cell.y) / CHUNK_SIZE);
+        // Drawn-ground arrival also depends on the east/south sample at a chunk seam.
+        const east = Math.floor(Math.min(last, cell.x + 1) / CHUNK_SIZE);
+        const south = Math.floor(Math.min(last, cell.y + 1) / CHUNK_SIZE);
+        if (
+          dirtyChunks.has(cy * edge + cx) || dirtyChunks.has(cy * edge + east) ||
+          dirtyChunks.has(south * edge + cx) || dirtyChunks.has(south * edge + east)
+        ) refreshSlotGround(slot, groundAt);
+      }
+      if (dirtySlots.size > 0) flushPlanChanges();
+    },
+
     retryPending(groundAt): void {
       if (pendingCells.size === 0) return;
       for (const key of pendingCells) {
         const slot = covered.get(key);
         if (slot === undefined) continue;
-        const entry = slotCell[slot]!;
-        markPlanCell(entry.x, entry.y);
+        refreshSlotGround(slot, groundAt);
       }
-      restamp(groundAt);
+      if (dirtySlots.size > 0) flushPlanChanges();
     },
 
     update(elapsed): void {
       elapsedUniform.value = elapsed;
+    },
+
+    clear(): void {
+      cells.clear();
+      covered.clear();
+      pendingCells.clear();
+      freeSlots.length = 0;
+      slotWatermark = 0;
+      changedFlowX.length = 0;
+      changedFlowY.length = 0;
+      sortedSlots.length = 0;
+      clearScratch();
+      geometry.setDrawRange(0, 0);
+      elapsedUniform.value = 0;
     },
 
     dispose(): void {

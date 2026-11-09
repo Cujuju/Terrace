@@ -1,5 +1,5 @@
 import type { SculptIntent } from '@terrace/shared';
-import type { Group, Object3D, Ray } from 'three';
+import type { Group, Intersection, Object3D, Ray } from 'three';
 import type { NodeMaterial } from 'three/webgpu';
 import type { Component } from 'solid-js';
 import type { CellOccupancy } from '../terrain/occupancy.ts';
@@ -9,6 +9,18 @@ import type { RigAsset } from '../render/rigAsset.ts';
 export type { CellColumn, CellOccupancy, CellRayChord } from '../terrain/occupancy.ts';
 
 export type RigLighting = 'sky-environment' | 'lamps-only';
+
+export interface ToolCell { readonly x: number; readonly y: number }
+export interface ToolInputOptions {
+  active(): boolean;
+  pick: 'terrain' | 'world';
+  onPress(cell: ToolCell | null): void;
+}
+export interface ToolInput {
+  /** Re-picks the current visible ray, including camera and terrain changes. */
+  aim(): ToolCell | null;
+  dispose(): void;
+}
 
 export interface SkyRigState {
   readonly sunDirection: { readonly x: number; readonly y: number; readonly z: number };
@@ -29,6 +41,8 @@ export interface GroundShadeDisc {
   readonly radius: number;
   readonly darkness: number;
   readonly inner: number;
+  /** Clear eye radius in world units; absent or zero keeps a solid disc. */
+  readonly eyeRadius?: number;
 }
 
 export interface WorldPosition {
@@ -74,6 +88,8 @@ export interface MoverPose {
 }
 
 export interface ClientPluginCtx {
+  /** Aborted before disposal, including canceled preloads. */
+  readonly signal: AbortSignal;
   readonly layer: Group;
 
   readonly audio: PluginAudio;
@@ -138,12 +154,19 @@ export interface ClientPluginCtx {
 
   onCanvasPress(handler: (event: PointerEvent) => boolean): () => void;
 
+  bindToolInput(options: ToolInputOptions): ToolInput;
+
   pickTerrainCell(clientX: number, clientY: number): { x: number; y: number } | null;
 
   /** Camera ray under the pointer; `groundDistance` is where terrain first blocks it (Infinity if none). */
   aimRay(clientX: number, clientY: number): { ray: Ray; groundDistance: number } | null;
 
-  markPickable(object: Object3D, occupancy?: CellOccupancy): () => void;
+  /** Mesh hits use the nearest registered ancestor's resolver; null skips the hit. */
+  markPickable(
+    object: Object3D,
+    occupancy?: CellOccupancy,
+    resolveHit?: (hit: Intersection) => { x: number; y: number } | null,
+  ): () => void;
 
   pickWorldCell(clientX: number, clientY: number): { x: number; y: number } | null;
 

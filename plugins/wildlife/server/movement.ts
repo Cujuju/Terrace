@@ -1,13 +1,9 @@
 import {
   AVOID_TURN_ATTEMPTS as SHARED_AVOID_TURN_ATTEMPTS,
   AVOID_TURN_STEP_RADIANS as SHARED_AVOID_TURN_STEP_RADIANS,
-  CELL_CENTRE_OFFSET,
   CONTOUR_FALLBACK_LOOKAHEAD_DIVISOR as SHARED_CONTOUR_FALLBACK_LOOKAHEAD_DIVISOR,
-  WORLD_UNIT_CELLS,
   advanceClimb,
-  approachAndClimb,
   cellsAcross,
-  climbSeed,
   limitTurn as sharedLimitTurn,
   normalizeAngle as sharedNormalizeAngle,
   steerAvoiding,
@@ -18,7 +14,7 @@ import {
   advanceStillness,
 } from '@terrace/shared';
 import { drawnLengthWorldUnits, realLengthMetres, type WildlifeHabitatSpecies } from '../protocol.ts';
-import { type HabitatWorld, canTraverse, isValidCellFor, walkerProfileOf } from './census.ts';
+import { type HabitatWorld, canTraverse, walkerProfileOf } from './census.ts';
 import { climbOnCourse } from './climbOnCourse.ts';
 import { erodedSamplerFor, isHullPoseValid } from './hull.ts';
 import { type WildlifeEntity, despawnWithCredit, livingEntities } from './population.ts';
@@ -197,13 +193,13 @@ export function steerToValidHeading(
   stepCells: number,
   occupants: readonly Occupant[] = [],
 ): number | null {
-  const eroded = erodedSamplerFor(world, entity.species, entity.size);
-  return steerAvoiding(eroded, walkerProfileOf(entity.species), entity, desired, lookahead, {
+  const eroded = erodedSamplerFor(world, entity.species, entity.size, entity.id);
+  return steerAvoiding(eroded, walkerProfileOf(entity.species, entity.size), entity, desired, lookahead, {
     stepCells,
     occupants,
     selfRadiusCells: personalSpaceCellsOf(entity),
     permits: (x, y, heading) =>
-      isHullPoseValid(world, eroded, entity.species, entity.size, x, y, heading),
+      isHullPoseValid(world, eroded, entity.species, entity.size, x, y, heading, entity.id),
   });
 }
 
@@ -215,10 +211,10 @@ function steerThisTick(
   stepCells: number,
   occupants: readonly Occupant[],
 ): number | null {
-  const eroded = erodedSamplerFor(world, entity.species, entity.size);
+  const eroded = erodedSamplerFor(world, entity.species, entity.size, entity.id);
   return steerWithShorteningProbe(
     eroded,
-    walkerProfileOf(entity.species),
+    walkerProfileOf(entity.species, entity.size),
     entity,
     desired,
     lookahead,
@@ -227,7 +223,7 @@ function steerThisTick(
       occupants,
       selfRadiusCells: personalSpaceCellsOf(entity),
       permits: (x, y, heading) =>
-        isHullPoseValid(world, eroded, entity.species, entity.size, x, y, heading),
+        isHullPoseValid(world, eroded, entity.species, entity.size, x, y, heading, entity.id),
     },
   );
 }
@@ -294,8 +290,13 @@ export function advanceEntity(
   if (profile.climbApproach === 'on-course' && climbOnCourse(world, entity, desired, lookahead, stepCells)) {
     return 'alive';
   }
-  const eroded = erodedSamplerFor(world, entity.species, entity.size);
-  const wanted = steerThisTick(world, entity, desired, lookahead, stepCells, occupants);
+  const cornered = profile.climb !== undefined && profile.climb !== null && profile.climbApproach !== 'on-course';
+  const fullHeading = cornered
+    ? steerToValidHeading(world, entity, desired, lookahead, stepCells, occupants)
+    : undefined;
+  if (fullHeading === null && climbOut(world, entity, desired, lookahead, stepCells)) return 'alive';
+  const eroded = erodedSamplerFor(world, entity.species, entity.size, entity.id);
+  const wanted = fullHeading ?? steerThisTick(world, entity, desired, lookahead, stepCells, occupants);
 
   if (wanted === null) {
     return 'alive';
@@ -307,12 +308,12 @@ export function advanceEntity(
   let nextY = entity.y + Math.sin(steered) * stepCells;
 
   if (
-    !isHullPoseValid(world, eroded, entity.species, entity.size, nextX, nextY, steered) ||
-    !canTraverse(world, entity.species, entity.x, entity.y, nextX, nextY)
+    !isHullPoseValid(world, eroded, entity.species, entity.size, nextX, nextY, steered, entity.id) ||
+    !canTraverse(world, entity.species, entity.x, entity.y, nextX, nextY, entity.size)
   ) {
     const retry = steerThisTick(world, entity, entity.heading, lookahead, stepCells, occupants);
     if (retry === null) {
-      climbOut(world, entity, stepCells);
+      climbOut(world, entity, entity.heading, lookahead, stepCells);
       return 'alive';
     }
 
@@ -320,8 +321,8 @@ export function advanceEntity(
     nextX = entity.x + Math.cos(steered) * stepCells;
     nextY = entity.y + Math.sin(steered) * stepCells;
     if (
-      !isHullPoseValid(world, eroded, entity.species, entity.size, nextX, nextY, steered) ||
-      !canTraverse(world, entity.species, entity.x, entity.y, nextX, nextY)
+      !isHullPoseValid(world, eroded, entity.species, entity.size, nextX, nextY, steered, entity.id) ||
+      !canTraverse(world, entity.species, entity.x, entity.y, nextX, nextY, entity.size)
     ) {
       entity.heading = steered;
       return 'alive';
@@ -334,24 +335,14 @@ export function advanceEntity(
   return 'alive';
 }
 
-function climbOut(world: HabitatWorld, entity: WildlifeEntity, stepCells: number): boolean {
-  const target = {
-    x: Math.floor(entity.x) + Math.round(Math.cos(entity.heading)),
-    y: Math.floor(entity.y) + Math.round(Math.sin(entity.heading)),
-  };
-  if (!isValidCellFor(world, entity.species, target.x + CELL_CENTRE_OFFSET, target.y + CELL_CENTRE_OFFSET)) {
-    return false;
+function climbOut(world: HabitatWorld, entity: WildlifeEntity, desired: number, lookahead: number, stepCells: number): boolean {
+  const firstHeading = Math.round(desired / AVOID_TURN_STEP_RADIANS) * AVOID_TURN_STEP_RADIANS;
+  for (let attempt = 0; attempt <= AVOID_TURN_ATTEMPTS; attempt++) {
+    const magnitude = Math.ceil(attempt / 2) * AVOID_TURN_STEP_RADIANS;
+    const sign = attempt % 2 === 1 ? 1 : -1;
+    if (climbOnCourse(world, entity, firstHeading + sign * magnitude, lookahead, stepCells)) return true;
   }
-  return (
-    approachAndClimb(
-      world,
-      walkerProfileOf(entity.species),
-      entity,
-      target,
-      stepCells,
-      climbSeed(entity.id, Math.floor(entity.x), Math.floor(entity.y), target.x, target.y),
-    ) !== null
-  );
+  return false;
 }
 
 export function advanceMovement(world: HabitatWorld, dt: number): void {

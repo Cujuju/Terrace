@@ -46,6 +46,8 @@ import {
 import { applyInitialUnlock } from './initial-unlock.ts';
 import { chunkPayloadOf, collectUnlockedChunkPayloads } from './mask-filter.ts';
 import { generateWorldName } from './world-name.ts';
+import { PluginSculptPreview } from './plugin-sculpt.ts';
+import type { PluginSculptResult, PluginSculptStep } from '../plugins/types.ts';
 
 function normalizeDifficulty(value: number): number {
   if (!Number.isFinite(value)) return DEFAULT_WORLD_DIFFICULTY;
@@ -112,6 +114,7 @@ export class World {
   private readonly springIndex: SpringIndex;
 
   private readonly riverIndex: RiverNetworkIndex;
+  private readonly pluginSculptPreview: PluginSculptPreview;
 
   private constructor(
     map: Heightmap,
@@ -127,6 +130,7 @@ export class World {
     this.simMillis = simMillis;
     this.springIndex = new SpringIndex(this.map, this.isCellUnlockedHere);
     this.riverIndex = new RiverNetworkIndex(this.map, this.isCellUnlockedHere);
+    this.pluginSculptPreview = new PluginSculptPreview(this.map);
   }
 
   advanceClock(dt: number): void {
@@ -271,6 +275,7 @@ export class World {
     }
 
     this.map.cells.set(cells);
+    this.pluginSculptPreview.reset();
     clearColumns(this.map);
     for (const [i, spans] of columnSpans) {
       setColumn(this.map, cellX(this.size, i), cellY(this.size, i), spans);
@@ -448,13 +453,43 @@ export class World {
     options?: SculptOptions,
   ): CellDiff[] {
     const diff = applySculpt(this.map, x, y, radius, amount, options);
+    this.pluginSculptPreview.synchronize(diff);
+    this.noteTerrainChanged(diff);
+    return diff;
+  }
+
+  applyPluginSculpt(
+    x: number,
+    y: number,
+    radius: number,
+    amount: number,
+    options: SculptOptions,
+    canWrite?: (x: number, y: number) => boolean,
+  ): CellDiff[] {
+    const result = this.applyPluginSculptBatch([{ x, y, radius, amount }], options, canWrite);
+    return result.ok ? result.cells : [];
+  }
+
+  applyPluginSculptBatch(
+    steps: readonly PluginSculptStep[],
+    options: SculptOptions,
+    canWrite?: (x: number, y: number) => boolean,
+  ): PluginSculptResult {
+    const result = this.pluginSculptPreview.applyBatch(steps, options, (x, y) => {
+      if (!this.isCellUnlocked(x, y)) return 'locked';
+      return canWrite !== undefined && !canWrite(x, y) ? 'forbidden' : null;
+    });
+    if (result.ok) this.noteTerrainChanged(result.cells);
+    return result;
+  }
+
+  private noteTerrainChanged(diff: readonly CellDiff[]): void {
     if (diff.length > 0) {
       this.changedSinceSnapshot = true;
       this.springIndex.noteCellsChanged(diff);
       this.riverIndex.noteCellsChanged(diff);
       this.riverNetworkStale = true;
     }
-    return diff;
   }
 
   riverNetwork(): RiverNetwork {

@@ -1,5 +1,6 @@
 import { createSiblingBridge } from '../../../server/src/plugins/kit/bridge.ts';
 import type { SiblingModule, WorldApi } from '../../../server/src/plugins/types.ts';
+import { GROWTH_MODEL_VERSION } from './model.ts';
 
 export interface StructuresGrowthApi {
   setGrowthModel(model: unknown): void;
@@ -15,6 +16,7 @@ let desiredModel: unknown = null;
 function asStructuresGrowthApi(module: SiblingModule | null): StructuresGrowthApi | null {
   if (module === null) return null;
   if (typeof module.setGrowthModel !== 'function') return null;
+  if (module.GROWTH_MODEL_VERSION !== GROWTH_MODEL_VERSION) return null;
   return module as unknown as StructuresGrowthApi;
 }
 

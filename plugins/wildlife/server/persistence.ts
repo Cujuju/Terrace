@@ -8,6 +8,7 @@ import {
 } from '../protocol.ts';
 import { newStillness } from '@terrace/shared';
 import { WILDLIFE_POPULATION_CAP } from './census.ts';
+import { incrementIdentity, isAllocatableIdentity, isIdentityCounter } from './identity.ts';
 import {
   type WildlifeEntity,
   livingEntities,
@@ -78,22 +79,22 @@ export function loadPopulation(data: unknown): void {
 
         const entry = raw as Partial<PersistedEntity>;
         const id = entry.id;
-        if (!Number.isInteger(id) || (id as number) <= 0 || seenIds.has(id as number)) continue;
+        if (!isAllocatableIdentity(id) || seenIds.has(id)) continue;
         if (!isWildlifeHabitatSpecies(entry.species)) continue;
         if (!Number.isFinite(entry.x) || !Number.isFinite(entry.y)) continue;
         if (!Number.isFinite(entry.heading)) continue;
 
-        seenIds.add(id as number);
-        maxId = Math.max(maxId, id as number);
+        seenIds.add(id);
+        maxId = Math.max(maxId, id);
 
         const schoolId =
-          Number.isInteger(entry.schoolId) && (entry.schoolId as number) > 0
-            ? (entry.schoolId as number)
+          isAllocatableIdentity(entry.schoolId)
+            ? entry.schoolId
             : UNRECORDED_SCHOOL_ID;
         maxSchoolId = Math.max(maxSchoolId, schoolId);
 
         restored.push({
-          id: id as number,
+          id,
           species: entry.species,
           climb: null,
           schoolId,
@@ -110,15 +111,16 @@ export function loadPopulation(data: unknown): void {
         });
       }
 
-      if (Number.isInteger(slice.nextId)) persistedNext = slice.nextId as number;
-      if (Number.isInteger(slice.nextSchoolId)) persistedNextSchool = slice.nextSchoolId as number;
+      if (isIdentityCounter(slice.nextId)) persistedNext = slice.nextId;
+      if (isIdentityCounter(slice.nextSchoolId)) persistedNextSchool = slice.nextSchoolId;
     }
   }
 
   let nextFreeSchool = Math.max(persistedNextSchool, maxSchoolId + 1, 1);
   for (let i = 0; i < restored.length; i++) {
     if (restored[i].schoolId !== UNRECORDED_SCHOOL_ID) continue;
-    restored[i] = { ...restored[i], schoolId: nextFreeSchool++ };
+    restored[i] = { ...restored[i], schoolId: nextFreeSchool };
+    nextFreeSchool = incrementIdentity(nextFreeSchool);
   }
 
   replacePopulation(restored, Math.max(persistedNext, maxId + 1, 1), nextFreeSchool);

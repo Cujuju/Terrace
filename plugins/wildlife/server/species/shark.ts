@@ -1,5 +1,6 @@
 import { cellsAcross, cellsOverArea } from '@terrace/shared';
 import { SWIM_PACE_SCALE } from '../../protocol.ts';
+import { SHARK_AUTHORED_BOUNDS } from '../../swimmerBounds.ts';
 import {
   mediumBodyLengthCells,
   AQUATIC_MAX_GRADIENT_PER_CELL,
@@ -20,7 +21,8 @@ const SHARK_PREY: Predation = {
   alarmRadiusCells: SHARK_ALARM_RADIUS_CELLS,
 };
 
-const SHARK_BEAM_OF_LENGTH = 0.84 / 1.5;
+const SHARK_BEAM_OF_LENGTH = SHARK_AUTHORED_BOUNDS.halfWidth * 2 /
+  (SHARK_AUTHORED_BOUNDS.noseX - SHARK_AUTHORED_BOUNDS.tailX);
 
 export const SHARK_BODY_LENGTH_CELLS = mediumBodyLengthCells('shark');
 

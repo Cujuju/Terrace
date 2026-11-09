@@ -10,7 +10,9 @@ import type {
 } from '../../../server/src/plugins/types.ts';
 import { checkAffordability, commitCharge, forgetQuote } from './charging.ts';
 import { clearAllManaPerks, clearManaPerk } from './perks.ts';
+import { clearRevealPolicy, loadRevealPolicy } from './reveal-policy.ts';
 import {
+  bindManaWorld,
   clearManaPools,
   closePoolFor,
   configureManaRegen,
@@ -72,10 +74,16 @@ export const plugin: TerracePlugin = {
   name: 'mana',
 
   onWorldCreate(world: WorldApi): void {
+    loadRevealPolicy(world);
     configureManaRegen(world.difficulty);
 
     clearManaPools();
     clearAllManaPerks();
+    bindManaWorld(world);
+  },
+
+  onWorldClose(): void {
+    resetManaState();
   },
 
   onPlayerJoin(world: WorldApi, player: Player): void {
@@ -106,6 +114,8 @@ export const plugin: TerracePlugin = {
 };
 
 export function resetManaState(): void {
+  bindManaWorld(null);
+  clearRevealPolicy();
   resetManaRegen();
   clearManaPools();
   clearAllManaPerks();

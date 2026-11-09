@@ -18,6 +18,7 @@ import {
 import { timePhase } from '../tick-timing.ts';
 import { chunkPayloadOf, partitionDiffByViewer, type ViewerDiff } from './mask-filter.ts';
 import type { World } from './world.ts';
+import type { PluginSculptResult, PluginSculptStep } from '../plugins/types.ts';
 
 export interface TerrainChangeListener {
   notifyTerrainChanged(diff: readonly CellDiff[], sculptorToken?: string): void;
@@ -37,8 +38,32 @@ export function applyServerSculpt(
   amount: number,
   options?: SculptOptions,
   sculptorToken?: string,
+  pluginConstraint?: { readonly canWrite?: (x: number, y: number) => boolean },
 ): CellDiff[] {
-  const diff = timePhase('sculpt.relax', () => world.applySculpt(x, y, radius, amount, options));
+  const diff = timePhase('sculpt.relax', () => pluginConstraint !== undefined
+    ? world.applyPluginSculpt(x, y, radius, amount, options ?? {}, pluginConstraint.canWrite)
+    : world.applySculpt(x, y, radius, amount, options));
+  return announceSculpt(world, listener, diff, sculptorToken);
+}
+
+export function applyServerSculptBatch(
+  world: World,
+  listener: TerrainChangeListener,
+  steps: readonly PluginSculptStep[],
+  options: SculptOptions,
+  canWrite?: (x: number, y: number) => boolean,
+): PluginSculptResult {
+  const result = timePhase('sculpt.relax', () => world.applyPluginSculptBatch(steps, options, canWrite));
+  if (result.ok) announceSculpt(world, listener, result.cells);
+  return result;
+}
+
+function announceSculpt(
+  world: World,
+  listener: TerrainChangeListener,
+  diff: CellDiff[],
+  sculptorToken?: string,
+): CellDiff[] {
   if (diff.length === 0) return diff;
 
   timePhase('sculpt.broadcast', () => {

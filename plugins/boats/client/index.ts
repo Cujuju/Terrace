@@ -27,6 +27,7 @@ import {
   createBoatModels,
   disposeBoatKit,
   preloadBoatModels,
+  installBoatForMount,
   type BoatModel,
   type BoatModels,
 } from './models.ts';
@@ -145,6 +146,8 @@ export const clientPlugin: TerraceClientPlugin = {
   },
 
   attach(ctx: ClientPluginCtx): void {
+    if (ctx.signal.aborted) return;
+    installBoatForMount(ctx.signal);
     models = createBoatModels();
 
     container = new Group();

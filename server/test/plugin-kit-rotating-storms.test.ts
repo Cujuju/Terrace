@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_TICK_HZ } from '../src/config.ts';
 import {
+  parseStormDamage,
+  severityAt,
+  STORM_WIND_FALLOFF_EYEWALL,
+  STORM_WIND_FALLOFF_QUADRATIC,
+} from '../src/plugins/kit/rotatingStormDamage.ts';
+import {
   createRotatingStorms,
   parseRotatingStormsSnapshot,
   ROTATING_STORM_DAMAGE_INTERVAL_SECONDS,
@@ -96,23 +102,41 @@ describe('rotatingStorms track', () => {
 });
 
 describe('rotatingStorms terrain', () => {
-  it('decays a storm standing on the terrain its profile calls hostile', () => {
-    const SLOW_SPIN_UP_SECONDS = 1000;
+  it.each(['land', 'water'] as const)('attenuates growing and mature storms over hostile %s', (hostileTerrain) => {
     const DECAY_PER_SECOND = 0.25;
     const profile: RotatingStormProfile = {
       ...STRAIGHT,
       speedCellsPerSecond: 0,
-      spinUpSeconds: SLOW_SPIN_UP_SECONDS,
       hostileTerrainDecayPerSecond: DECAY_PER_SECOND,
+      hostileTerrain,
     };
+    const world = uniformWorld(hostileTerrain === 'land' ? LAND_HEIGHT : WATER_HEIGHT);
+    for (const envelope of [0.5, 1]) {
+      const storms = engine(profile);
+      const storm = storms.spawnAt(world, 100, 100);
+      storm.envelope = envelope;
+
+      storms.advance(world, 1);
+
+      expect(storm.envelope).toBeCloseTo(envelope - DECAY_PER_SECOND, 10);
+    }
+  });
+
+  it('scales net decay by hostile coverage without cancelling it with spin-up', () => {
+    const profile = { ...STRAIGHT, speedCellsPerSecond: 0, hostileTerrainDecayPerSecond: 0.25 };
     const storms = engine(profile);
-    const world = uniformWorld(WATER_HEIGHT);
-    const storm = storms.spawnAt(world, 100, 100);
+    const world = coastWorld();
+    const storm = storms.spawnAt(world, WORLD_SIZE / 2, WORLD_SIZE / 2);
     storm.envelope = 1;
+    const hostileFraction = waterFractionUnder(world, storm.x, storm.y, storm.radius);
 
-    storms.advance(world, 1);
+    storms.advance(world, TICK_SECONDS);
 
-    expect(storm.envelope).toBeCloseTo(1 + 1 / SLOW_SPIN_UP_SECONDS - DECAY_PER_SECOND, 10);
+    expect(hostileFraction).toBeGreaterThan(0);
+    expect(hostileFraction).toBeLessThan(1);
+    expect(storm.envelope).toBeCloseTo(
+      1 - hostileFraction * profile.hostileTerrainDecayPerSecond * TICK_SECONDS, 10,
+    );
   });
 
   it('leaves a storm alone on terrain its profile does not call hostile', () => {
@@ -407,4 +431,47 @@ describe('waterFractionUnder', () => {
     expect(waterFractionUnder(world, -100, -100, 6)).toBe(1);
     expect(waterFractionUnder(world, WORLD_SIZE / 2, WORLD_SIZE / 2, 6)).toBe(0);
   });
+});
+
+describe('rotating storm damage falloff', () => {
+  const payload = {
+    stormId: 1, x: WORLD_SIZE / 2, y: WORLD_SIZE / 2,
+    radius: 10, eyeRadius: 2, intensity: 0.8, durationSeconds: 1, cells: [],
+  };
+
+  it('keeps the default eyewall profile and the legacy parsed-record contract', () => {
+    const damage = parseStormDamage(payload)!;
+    expect(damage).not.toBeNull();
+    expect(damage.windFalloff).toBe(STORM_WIND_FALLOFF_EYEWALL);
+    expect(severityAt(damage, payload.x, payload.y)).toBe(0);
+    expect(severityAt(damage, payload.x + payload.eyeRadius, payload.y)).toBe(0);
+    const halfRadius = payload.radius / 2;
+    const expected = payload.intensity * (1 - halfRadius / payload.radius) /
+      (1 - payload.eyeRadius / payload.radius);
+    expect(severityAt(damage, payload.x + halfRadius, payload.y)).toBeCloseTo(expected, 10);
+    expect(severityAt(payload, payload.x + halfRadius, payload.y)).toBeCloseTo(expected, 10);
+  });
+
+  it('uses the selected quadratic profile at the centre, within the disc and beyond its rim', () => {
+    const damage = parseStormDamage(payload, STORM_WIND_FALLOFF_QUADRATIC)!;
+    expect(damage).not.toBeNull();
+    expect(damage.windFalloff).toBe(STORM_WIND_FALLOFF_QUADRATIC);
+    for (const fraction of [0, 0.25, 0.5, 0.75, 1, 2]) {
+      const expected = payload.intensity * Math.max(0, 1 - fraction * fraction);
+      expect(severityAt(damage, payload.x + payload.radius * fraction, payload.y))
+        .toBeCloseTo(expected, 10);
+    }
+  });
+
+  it('takes the profile from the consumer selector, never from payload metadata', () => {
+    const damage = parseStormDamage({ ...payload, windFalloff: STORM_WIND_FALLOFF_QUADRATIC })!;
+    expect(severityAt(damage, payload.x, payload.y)).toBe(0);
+  });
+
+  it.each([STORM_WIND_FALLOFF_EYEWALL, STORM_WIND_FALLOFF_QUADRATIC] as const)(
+    'preserves payload validation for profile %s', (profile) => {
+      expect(parseStormDamage({ ...payload, radius: 0 }, profile)).toBeNull();
+      expect(parseStormDamage({ ...payload, intensity: Number.NaN }, profile)).toBeNull();
+    },
+  );
 });

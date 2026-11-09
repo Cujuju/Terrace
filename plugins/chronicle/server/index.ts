@@ -138,9 +138,9 @@ function onStructuresChanges(world: WorldApi, payload: unknown): void {
 
   const lines: string[] = [];
 
-  if (event.seeded.length > 0) {
-    const anchor = event.seeded[0];
-    if (!alreadyToldToday(`seed:${chunkKeyOf(anchor)}`)) {
+  for (const [key, cells] of groupByChunk(event.seeded)) {
+    const anchor = cells[0];
+    if (!alreadyToldToday(`seed:${key}`)) {
       lines.push(seededLine(settlementRace(anchor.x, anchor.y), placeOf(anchor)));
     }
   }
@@ -192,7 +192,6 @@ function onFireBurned(world: WorldApi, payload: unknown): void {
   const event = parseFireBurned(payload);
   if (event === null) return;
   if (event.consumed < CHRONICLE_WILDFIRE_MIN_CELLS) return;
-  if (alreadyToldToday(`fire:${chunkKeyOf(event)}`)) return;
   write(world, [wildfireLine(event.consumed, placeOf(event))]);
 }
 
@@ -309,6 +308,7 @@ export const plugin: TerracePlugin = {
   },
 
   onWorldEvent(world: WorldApi, event: string, payload: unknown): void {
+    worldSimMillis = world.simMillis;
     switch (event) {
       case 'structures:changes':
         onStructuresChanges(world, payload);

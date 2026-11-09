@@ -1,4 +1,5 @@
 import { parseRotatingStormsSnapshot } from '../../../server/src/plugins/kit/rotatingStorms.ts';
+import type { SliceLoadOutcome } from '../../../server/src/plugins/types.ts';
 import { cyclones } from './sim.ts';
 
 export const CYCLONE_SLICE_VERSION = 1;
@@ -9,11 +10,11 @@ export function saveCyclones(): unknown {
   return cyclones.snapshot();
 }
 
-export function loadCyclones(data: unknown): void {
+export function loadCyclones(data: unknown): SliceLoadOutcome {
   restoredThisCreate = true;
   cyclones.reset();
   const snapshot = parseRotatingStormsSnapshot(data);
-  if (snapshot === null) return;
+  if (snapshot === null) return 'refuse';
   cyclones.restore(snapshot);
 }
 

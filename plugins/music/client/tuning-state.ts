@@ -64,7 +64,7 @@ export const DIALS: Readonly<Record<MusicTuningField, Dial>> = {
     max: 6,
     step: 0.1,
     unit: "s",
-    title: "How slowly each chord swells in.",
+    title: "How slowly each chord swells in, up to one chord's length.",
   },
 
   padReleaseSeconds: {

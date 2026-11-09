@@ -1,14 +1,29 @@
 import {
   CHUNK_SIZE,
   chunkIndex,
+  chunkIndexOfCell,
   chunksPerEdge,
   chunksWithinSweep,
   revealReachCells,
   strokeSweep,
+  strokeWriteSweep,
   type CellDiff,
   type SculptIntent,
 } from '@terrace/shared';
 import type { IntentCtx, TerracePlugin, WorldApi } from '../../../server/src/plugins/types.ts';
+
+/** Before application, bounds every possible unlock; afterwards, names the reach and changed chunks. */
+export function sculptUnlockChunks(worldSize: number, intent: SculptIntent, diff?: readonly CellDiff[]): number[] {
+  const core = strokeSweep(intent);
+  const chunks = new Set(chunksWithinSweep(worldSize, core, revealReachCells(core.radius)));
+  if (diff === undefined) {
+    const writes = strokeWriteSweep(intent);
+    for (const chunk of chunksWithinSweep(worldSize, writes, writes.radius)) chunks.add(chunk);
+  } else {
+    for (const cell of diff) chunks.add(chunkIndexOfCell(worldSize, cell.x, cell.y));
+  }
+  return [...chunks].sort((a, b) => a - b);
+}
 
 function creepForSculptor(
   world: WorldApi,
@@ -31,8 +46,7 @@ function creepForSculptor(
 
 function openReach(world: WorldApi, intent: SculptIntent, token: string): void {
   const cols = chunksPerEdge(world.worldSize);
-  const sweep = strokeSweep(intent);
-  for (const index of chunksWithinSweep(world.worldSize, sweep, revealReachCells(sweep.radius))) {
+  for (const index of sculptUnlockChunks(world.worldSize, intent, [])) {
     world.unlockChunkForToken(token, index % cols, Math.floor(index / cols));
   }
 }

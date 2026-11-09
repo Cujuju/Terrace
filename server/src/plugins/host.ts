@@ -1,10 +1,11 @@
 import type { CellDiff, SculptIntent } from '@terrace/shared';
+import { isDeepStrictEqual } from 'node:util';
 import { logError, logInfo, logWarn } from '../log.ts';
 import type { Player } from '../player.ts';
 import type { TerrainChangeListener } from '../world/sculpt-service.ts';
 import type { World } from '../world/world.ts';
 import { timePhase, timePluginPhase } from '../tick-timing.ts';
-import { readSlice, wrapSlice } from './slice-envelope.ts';
+import { LEGACY_SLICE_VERSION, readSlice, wrapSlice } from './slice-envelope.ts';
 import {
   ALLOW,
   type IntentVerdict,
@@ -48,6 +49,9 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
   private readonly world: World;
   private handlersByType: Map<string, (player: Player, payload: unknown) => void> | null = null;
   private dormantSlices: Record<string, unknown> = {};
+  private persistedSlices: Record<string, unknown> = {};
+  private persistenceSaveGeneration = 0;
+  private confirmedPersistenceGeneration = 0;
   private writeSuppressed: Set<string> = new Set();
   // Each plugin's last good stored slice: a save() that throws re-emits it instead of dropping the slice.
   private lastGoodSlices = new Map<string, unknown>();
@@ -347,12 +351,17 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
       const { plugin } = loaded;
       if (!plugin.persistence) continue;
       if (this.writeSuppressed.has(plugin.name)) continue;
-      let data: unknown;
-      let detached: unknown;
+      let stored: unknown;
       try {
-        data = plugin.persistence.save();
-        // Detached: a plugin may mutate the object it returned before a later save throws.
-        detached = data === undefined ? undefined : structuredClone(data);
+        const data = plugin.persistence.save();
+        if (data === undefined) continue;
+        const version = plugin.persistence.version;
+        if (!Number.isSafeInteger(version) || version < LEGACY_SLICE_VERSION) {
+          throw new Error('persistence.version must be a positive safe integer');
+        }
+        // Validate and detach the complete bytes before promoting the fallback.
+        stored = JSON.parse(JSON.stringify(wrapSlice(version, data))) as unknown;
+        if (!Object.hasOwn(stored as object, 'data')) throw new Error('persistence data is not JSON serializable');
       } catch (error) {
         this.recordFault(plugin, 'persistence.save', error);
         if (this.lastGoodSlices.has(plugin.name)) {
@@ -361,14 +370,28 @@ export class PluginHost implements TerrainChangeListener, ChunkUnlockListener, W
         }
         continue;
       }
-      if (data === undefined) continue;
-      slices[plugin.name] = wrapSlice(plugin.persistence.version, data);
-      this.lastGoodSlices.set(plugin.name, wrapSlice(plugin.persistence.version, detached));
+      slices[plugin.name] = stored;
+      this.lastGoodSlices.set(plugin.name, stored);
     }
     return slices;
   }
 
+  persistenceChanged(slices: Record<string, unknown>): boolean {
+    return !isDeepStrictEqual(slices, this.persistedSlices);
+  }
+
+  beginPersistenceSave(): number {
+    return ++this.persistenceSaveGeneration;
+  }
+
+  notePersistenceSaved(slices: Record<string, unknown>, generation = this.beginPersistenceSave()): void {
+    if (generation < this.confirmedPersistenceGeneration) return;
+    this.confirmedPersistenceGeneration = generation;
+    this.persistedSlices = structuredClone(slices);
+  }
+
   restorePersistence(slices: Record<string, unknown>): void {
+    this.notePersistenceSaved(slices);
     const installed = new Set(this.installedPluginNames);
     const enabled = new Set(this.pluginNames);
     this.dormantSlices = {};

@@ -7,6 +7,7 @@ import {
 import { planFlyby, settlements } from './settlements.ts';
 
 let flight: ApacheFlight | null = null;
+let visibilityCells: readonly { readonly x: number; readonly y: number }[] = [];
 let nextId = 1;
 let waitSeconds = 20;
 let cadence = 'occasional';
@@ -18,7 +19,16 @@ function broadcast(world: WorldApi, onlyPlayerId?: string): void {
   world.broadcastVisible(APACHE_STATE_MESSAGE, items, (item) => {
     sampleFlight(item, item.elapsed, pose);
     return { x: pose.x / CELL_WORLD_SIZE, y: pose.z / CELL_WORLD_SIZE };
-  }, (visible) => ({ flight: visible[0] ?? null }), { skipEmpty: false, onlyPlayerId });
+  }, (visible) => ({ flight: visible[0] ?? null }), {
+    skipEmpty: false, onlyPlayerId,
+    isVisibleTo: (playerId) => visibilityCells.every(({ x, y }) => world.isCellVisibleTo(playerId, x, y)),
+  });
+}
+
+function startFlight(world: WorldApi, site?: { readonly x: number; readonly y: number }): ApacheFlight | null {
+  const plan = planFlyby(world, nextId, random, site);
+  visibilityCells = plan?.visibilityCells ?? [];
+  return plan?.flight ?? null;
 }
 
 function nextWait(): number {
@@ -35,6 +45,7 @@ export const plugin: TerracePlugin = {
   }],
   onWorldCreate(world): void {
     flight = null;
+    visibilityCells = [];
     nextId = 1;
     waitSeconds = 20;
     cadence = world.setting('arrivals') ?? 'occasional';
@@ -43,12 +54,13 @@ export const plugin: TerracePlugin = {
   },
   onWorldClose(): void {
     flight = null;
+    visibilityCells = [];
     settlements.clear();
   },
   onAction(world, key, site) {
     if (key !== 'flyby') return { ok: false, detail: `No such Apache action "${key}".` };
     if (flight !== null) return { ok: false, detail: 'An Apache is already making a pass.' };
-    flight = planFlyby(world, nextId, random, site);
+    flight = startFlight(world, site);
     if (flight === null) {
       return { ok: false, detail: 'No revealed settlement within 160 cells has a clear low-pass corridor.' };
     }
@@ -68,7 +80,7 @@ export const plugin: TerracePlugin = {
     if (cadence === 'manual' || world.players().length === 0) return;
     waitSeconds -= dt;
     if (waitSeconds > 0) return;
-    flight = planFlyby(world, nextId, random);
+    flight = startFlight(world);
     waitSeconds = flight === null ? 15 : nextWait();
     if (flight !== null) {
       nextId++;

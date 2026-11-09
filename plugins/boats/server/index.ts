@@ -10,8 +10,12 @@ import {
   parseMonsterSightings,
   parseVillageChanges,
 } from './events.ts';
-import { parseStormDamage } from '../../../server/src/plugins/kit/rotatingStormDamage.ts';
-import { CYCLONE_DAMAGE_EVENT_NAME } from './cyclone-event.ts';
+import {
+  parseStormDamage,
+  STORM_WIND_FALLOFF_EYEWALL,
+  STORM_WIND_FALLOFF_QUADRATIC,
+} from '../../../server/src/plugins/kit/rotatingStormDamage.ts';
+import { CYCLONE_DAMAGE_EVENT_NAME, TORNADO_DAMAGE_EVENT_NAME } from './cyclone-event.ts';
 import {
   advanceFleet,
   boatPosition,
@@ -26,6 +30,7 @@ import {
   resetFleet,
   resurveyAllShipyards,
   resurveyShipyardsNear,
+  reconcileVillages,
   type KrakenTarget,
 } from './fleet.ts';
 import { closeFireBridge, loadFireBridge, registerBoatsFuel } from './fire-bridge.ts';
@@ -34,6 +39,7 @@ import { loadBoats, saveBoats } from './persistence.ts';
 export const BROADCAST_TICK_INTERVAL = 5;
 
 const EVENT_STRUCTURES_CHANGES = 'structures:changes';
+const STRUCTURES_PLUGIN_NAME = 'structures';
 const EVENT_MONSTERS_POSITIONS = 'monsters:positions';
 
 export const DEFEATED_EVENT = 'defeated';
@@ -41,8 +47,21 @@ export const DEFEATED_EVENT = 'defeated';
 let tickCount = 0;
 
 let krakenThisTick: KrakenTarget | null = null;
+let villagesNeedBootstrap = true;
+
+function bootstrapVillages(world: WorldApi): void {
+  if (!villagesNeedBootstrap) return;
+  const structures = world.sibling(STRUCTURES_PLUGIN_NAME);
+  if (typeof structures?.standingStructures === 'function') {
+    const changes = parseVillageChanges({ upgraded: structures.standingStructures() });
+    if (changes === null) throw new Error('[boats] invalid standingStructures snapshot');
+    reconcileVillages(changes.gained);
+  }
+  villagesNeedBootstrap = false;
+}
 
 function simulate(world: WorldApi, dt: number): void {
+  bootstrapVillages(world);
   const kraken = krakenThisTick;
   krakenThisTick = null;
 
@@ -107,11 +126,12 @@ export const plugin: TerracePlugin = {
   name: BOATS_PLUGIN_NAME,
 
   onWorldCreate(world: WorldApi): void {
+    villagesNeedBootstrap = true;
     loadFireBridge(world);
     registerBoatsFuel({
       name: BOATS_PLUGIN_NAME,
-      entityAt: (x: number, y: number) => {
-        const boat = burnableBoatAt(x, y);
+      entityAt: (x: number, y: number, accepts?: (id: number) => boolean) => {
+        const boat = burnableBoatAt(x, y, accepts);
         if (boat === null) return null;
         return {
           id: boat.id,
@@ -171,8 +191,11 @@ export const plugin: TerracePlugin = {
       return;
     }
 
-    if (event === CYCLONE_DAMAGE_EVENT_NAME) {
-      const damage = parseStormDamage(payload);
+    if (event === CYCLONE_DAMAGE_EVENT_NAME || event === TORNADO_DAMAGE_EVENT_NAME) {
+      const profile = event === TORNADO_DAMAGE_EVENT_NAME
+        ? STORM_WIND_FALLOFF_QUADRATIC
+        : STORM_WIND_FALLOFF_EYEWALL;
+      const damage = parseStormDamage(payload, profile);
       if (damage === null) return;
       noteStormWind(damage);
     }
@@ -183,6 +206,7 @@ export const plugin: TerracePlugin = {
 
 export function resetBoatsState(): void {
   tickCount = 0;
+  villagesNeedBootstrap = true;
   krakenThisTick = null;
   resetFleet();
 }

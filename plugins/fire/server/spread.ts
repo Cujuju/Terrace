@@ -1,4 +1,4 @@
-import { BAND_HEIGHT } from '@terrace/shared';
+import { BAND_HEIGHT, cellCentre } from '@terrace/shared';
 import type { WorldApi } from '../../../server/src/plugins/types.ts';
 import {
   fireEntityKey,
@@ -56,7 +56,7 @@ function distanceFactor(distanceCells: number): number {
 }
 
 function cellOf(value: number): number {
-  return Math.round(value);
+  return Math.floor(value);
 }
 
 const NEIGHBOUR_OFFSETS: readonly (readonly [number, number])[] = [
@@ -385,7 +385,7 @@ function spreadToCells(
     if (x < 0 || y < 0 || x >= world.worldSize || y >= world.worldSize) continue;
     if (blaze.isBurning(x, y)) continue;
 
-    const rate = spreadRate(world, from, { x, y }, wind);
+    const rate = spreadRate(world, from, cellCentre({ x, y }), wind);
     if (rate <= 0) continue;
     const key = fireKey(x, y);
     if (!heatLedger.absorb(key, rate, dt)) continue;
@@ -423,7 +423,7 @@ export function spreadOnce(
   dt: number,
 ): SpreadResult {
   const wind = currentWind();
-  const cellSources = blaze.fires();
+  const cellSources = blaze.fires().map((fire) => ({ ...fire, ...cellCentre(fire) }));
   const entitySources = entityBlaze.burningWithAge();
   const candidates = sweptCandidates(flammableNow());
   const grid = new CandidateGrid(world.worldSize, candidates);

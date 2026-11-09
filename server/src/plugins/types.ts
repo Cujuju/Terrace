@@ -5,6 +5,23 @@ export type { Player };
 
 export type SiblingModule = Readonly<Record<string, unknown>>;
 
+export interface PluginSculptStep {
+  readonly x: number;
+  readonly y: number;
+  readonly radius: number;
+  readonly amount: number;
+}
+
+export type PluginSculptResult =
+  | { readonly ok: true; readonly cells: CellDiff[] }
+  | { readonly ok: false; readonly reason: 'locked' | 'forbidden'; readonly cell: { readonly x: number; readonly y: number } };
+
+export interface BroadcastVisibleOptions<T> {
+  readonly skipEmpty?: boolean;
+  readonly onlyPlayerId?: string;
+  readonly isVisibleTo?: (playerId: string, item: T) => boolean;
+}
+
 export interface WorldApi {
   readonly worldSize: number;
   readonly chunksPerEdge: number;
@@ -27,7 +44,10 @@ export interface WorldApi {
   isChunkVisibleTo(playerId: string, cx: number, cy: number): boolean;
   isCellVisibleTo(playerId: string, x: number, y: number): boolean;
 
-  sculpt(x: number, y: number, radius: number, amount: number): CellDiff[];
+  /** Rejects the whole edit if any computed write is locked or refused. The predicate must only read state. */
+  sculpt(x: number, y: number, radius: number, amount: number, canWrite?: (x: number, y: number) => boolean): CellDiff[];
+  /** Atomic across every step; absent on older hosts. Never replace this with sequential sculpts. */
+  sculptBatch?(steps: readonly PluginSculptStep[], canWrite?: (x: number, y: number) => boolean): PluginSculptResult;
 
   unlockChunk(cx: number, cy: number): boolean;
 
@@ -43,10 +63,7 @@ export interface WorldApi {
     items: readonly T[],
     positionOf: (item: T) => { readonly x: number; readonly y: number },
     buildPayload: (visible: readonly T[]) => unknown,
-    options?: {
-      readonly skipEmpty?: boolean;
-      readonly onlyPlayerId?: string;
-    },
+    options?: BroadcastVisibleOptions<T>,
   ): void;
 
   emitEvent(type: string, payload: unknown): void;

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   CHUNK_SIZE,
+  BEDROCK_BAND,
+  bandLevelHeight,
   DEFAULT_WORLD_SIZE,
   MAX_HEIGHT,
   MIN_HEIGHT,
@@ -15,6 +17,11 @@ import {
   isValidHeight,
   unlockChunk,
   writeChunkHeights,
+  writeChunkPayload,
+  setColumn,
+  spanCount,
+  type ChunkHeights,
+  type ChunkLayeredSpans,
 } from '../src/index.ts';
 
 describe('chunk geometry', () => {
@@ -41,6 +48,68 @@ describe('chunk geometry', () => {
   it('bounds-checks chunk coordinates', () => {
     expect(() => chunkIndex(CHUNK_SIZE * 8, 8, 0)).toThrow(RangeError);
     expect(() => chunkIndex(CHUNK_SIZE * 8, -1, 0)).toThrow(RangeError);
+  });
+});
+
+describe('chunk envelope admission', () => {
+  const ceiling = bandLevelHeight(12);
+  const heights = (): Int16Array => new Int16Array(CHUNK_SIZE * CHUNK_SIZE).fill(ceiling);
+  const existing = () => {
+    const map = createHeightmap(CHUNK_SIZE * 2);
+    map.cells.fill(bandLevelHeight(2));
+    setColumn(map, 4, 4, [
+      { floorBand: BEDROCK_BAND, ceiling: bandLevelHeight(2) },
+      { floorBand: 5, ceiling: bandLevelHeight(6) },
+    ]);
+    return map;
+  };
+
+  it.each([
+    null, [], {}, { at: null, runs: [] }, { at: [], runs: null },
+    { at: {}, runs: [] }, { at: [], runs: { length: 0 } },
+  ])('rejects malformed layered envelopes atomically: %j', (layered) => {
+    const map = existing();
+    const cells = map.cells.slice();
+    const spans = new Map(map.columnSpans);
+    expect(() => writeChunkPayload(map, 0, 0, heights(), layered as unknown as ChunkLayeredSpans)).toThrow(RangeError);
+    expect(map.cells).toEqual(cells);
+    expect(map.columnSpans).toEqual(spans);
+  });
+
+  it.each([0.5, NaN, Infinity, -1])('rejects malformed chunk coordinates atomically: %s', (cx) => {
+    const map = existing();
+    const cells = map.cells.slice();
+    const spans = new Map(map.columnSpans);
+    expect(() => writeChunkPayload(map, cx, 0, heights())).toThrow(RangeError);
+    expect(map.cells).toEqual(cells);
+    expect(map.columnSpans).toEqual(spans);
+  });
+
+  it('validates the complete height envelope before replacing columns', () => {
+    const invalid: unknown[] = [null, {}, new Float64Array(CHUNK_SIZE * CHUNK_SIZE),
+      new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * Int16Array.BYTES_PER_ELEMENT + 1),
+      [...heights().slice(0, -1), MAX_HEIGHT + 1]];
+    for (const wire of invalid) {
+      const map = existing();
+      const cells = map.cells.slice();
+      const spans = new Map(map.columnSpans);
+      expect(() => writeChunkPayload(map, 0, 0, wire as ChunkHeights)).toThrow(RangeError);
+      expect(map.cells).toEqual(cells);
+      expect(map.columnSpans).toEqual(spans);
+    }
+  });
+
+  it('retains height fallback and rejection counts for malformed individual columns', () => {
+    const map = existing();
+    const layered = { at: [0, 1], runs: [
+      2, BEDROCK_BAND, bandLevelHeight(2), 5, ceiling,
+      2, BEDROCK_BAND, bandLevelHeight(2), 1, ceiling,
+    ] };
+    expect(writeChunkPayload(map, 0, 0, heights(), layered)).toBe(1);
+    expect(spanCount(map, 0, 0)).toBe(2);
+    expect(spanCount(map, 1, 0)).toBe(1);
+    expect(map.cells[0]).toBe(ceiling);
+    expect(map.cells[1]).toBe(ceiling);
   });
 });
 

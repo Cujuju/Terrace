@@ -6,6 +6,7 @@ import {
   WILDLIFE_HABITAT_SPECIES,
   type WildlifeHabitatSpecies,
 } from '../protocol.ts';
+import { WHALE_AUTHORED_BOUNDS } from '../swimmerBounds.ts';
 import {
   mediumBodyLengthCells,
   AQUATIC_MAX_GRADIENT_PER_CELL,
@@ -51,7 +52,8 @@ const FISH_BEAM_OF_LENGTH = 0.16 / 0.7;
 
 export const FISH_BODY_LENGTH_CELLS = mediumBodyLengthCells('fish');
 
-const WHALE_BEAM_OF_LENGTH = 1.0 / 5;
+const WHALE_BEAM_OF_LENGTH = WHALE_AUTHORED_BOUNDS.humpback.halfWidth * 2 /
+  (WHALE_AUTHORED_BOUNDS.humpback.noseX - WHALE_AUTHORED_BOUNDS.humpback.tailX);
 
 export const WHALE_BODY_LENGTH_CELLS = mediumBodyLengthCells('whale');
 

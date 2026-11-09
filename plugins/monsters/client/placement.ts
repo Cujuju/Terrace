@@ -5,8 +5,6 @@ import { KRAKEN_LURK_DEPTH } from './kraken-anatomy.ts';
 
 export { SEA_SURFACE_WORLD_Y };
 
-export const UNKNOWN_TERRAIN_WORLD_Y = 0;
-
 export type MonsterPlacementRule =
   | { readonly placement: 'swimmer'; readonly lurkDepth: number }
   | { readonly placement: 'walker' };
@@ -29,9 +27,9 @@ export function lurkDepthOf(kind: MonsterKind): number {
   return rule.lurkDepth;
 }
 
-export function monsterOriginWorldY(seabedY: number | null, lurkDepth: number): number {
+export function monsterOriginWorldY(seabedY: number | null, lurkDepth: number): number | null {
+  if (seabedY === null) return null;
   const preferred = SEA_SURFACE_WORLD_Y - lurkDepth;
-  if (seabedY === null) return preferred;
   return Math.max(seabedY, preferred);
 }
 
@@ -50,11 +48,10 @@ export function monsterOriginY(
   sampleRenderedY: (cellX: number, cellY: number) => number | null,
   x: number,
   y: number,
-): number {
+): number | null {
   const rule = placementRuleOf(kind);
   if (rule.placement === 'walker') {
-    const ground = walkerGroundWorldY(sampleRenderedY, x, y);
-    return ground ?? UNKNOWN_TERRAIN_WORLD_Y;
+    return walkerGroundWorldY(sampleRenderedY, x, y);
   }
   return monsterOriginWorldY(sampleRenderedY(x, y), rule.lurkDepth);
 }

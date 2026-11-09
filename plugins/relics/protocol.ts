@@ -126,6 +126,8 @@ export const CAST_DENIED_TARGET = 'target';
 export const CAST_DENIED_WARDED = 'warded';
 export const CAST_DENIED_UNSUITABLE = 'unsuitable';
 
+export const CAST_DENIED_UNAVAILABLE = 'unavailable';
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }

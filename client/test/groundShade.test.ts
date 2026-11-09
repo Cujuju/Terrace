@@ -6,6 +6,7 @@ import {
   groundShadeAt,
   groundShadeMaxFor,
   groundShadeUniforms,
+  setGroundShade,
   type GroundShadeDisc,
 } from '../src/render/groundShade.ts';
 import { createClientPluginHost } from '../src/plugins/host.ts';
@@ -54,6 +55,22 @@ describe('groundShadeAt — the projection the shader runs', () => {
       groundShadeAt(DISC_RADIUS * 0.5, 0, 0, SUN_OVERHEAD, discs),
     ).toBeCloseTo(0.5, 10);
     expect(groundShadeAt(DISC_RADIUS * 0.75, 0, 0, SUN_OVERHEAD, discs)).toBeLessThan(0.5);
+  });
+
+  it.each([SUN_OVERHEAD, SUN_45_DEGREES])('projects a clear eye with the surrounding shadow', (sun) => {
+    const eyeRadius = DISC_RADIUS / 4;
+    const discs = [disc({ eyeRadius, inner: 0.5 })];
+    const projectedX = -DISC_HEIGHT * sun.x / sun.y;
+    expect(groundShadeAt(projectedX, 0, 0, sun, discs)).toBe(0);
+    expect(groundShadeAt(projectedX + eyeRadius, 0, 0, sun, discs)).toBe(0);
+    expect(groundShadeAt(projectedX + DISC_RADIUS / 2, 0, 0, sun, discs)).toBeCloseTo(0.5, 10);
+    expect(groundShadeAt(projectedX + DISC_RADIUS, 0, 0, sun, discs)).toBe(0);
+  });
+
+  it('keeps other cloud shade inside an eye and preserves a solid disc with eye radius zero', () => {
+    const solid = disc({ darkness: 0.2, eyeRadius: 0 });
+    const eye = disc({ eyeRadius: DISC_RADIUS / 4 });
+    expect(groundShadeAt(0, 0, 0, SUN_OVERHEAD, [eye, solid])).toBeCloseTo(0.2, 10);
   });
 
   it('displaces the shadow along the sun, by the disc height over the sun slope', () => {
@@ -116,6 +133,15 @@ describe('groundShadeMaxFor — the uniform array bound', () => {
     const missing = Number.NaN;
     expect(groundShadeMaxFor([{ groundShadeBudget: 4 }, { groundShadeBudget: missing }])).toBe(4);
   });
+});
+
+it('packs the explicit eye radius for the shader and defaults other discs to solid', () => {
+  configureGroundShade(2);
+  const eyeRadius = DISC_RADIUS / 4;
+  setGroundShade(SUN_OVERHEAD, [disc({ eyeRadius }), disc()]);
+  const shapes = groundShadeUniforms().uShadeB.value;
+  expect(shapes[0].toArray()).toEqual([0.5, 0, DISC_RADIUS, eyeRadius]);
+  expect(shapes[1].toArray()).toEqual([0.5, 0, DISC_RADIUS, 0]);
 });
 
 function stubViewport() {

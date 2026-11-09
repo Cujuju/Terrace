@@ -58,13 +58,11 @@ services:
       # — and then ignores it. Kept mounted so an upgrading deployment's world
       # is still reachable to be copied.
       DB_PATH: ${DB_PATH:-/data/world.db}
-      # WORLD_ADMIN_KEY is deliberately NOT listed here, exactly as ROLLBACK_KEY
-      # is not: naming it with a "${WORLD_ADMIN_KEY:-}" default would pass an
-      # EMPTY value when it is unset, and empty means "turn world management
-      # off" — so the compose file would silently disable a feature the .env
-      # never mentioned. Left absent, the variable reaches the server only when
-      # the operator actually set one, and the server applies its own documented
-      # default (and its own boot warning) otherwise.
+      # Empty and unset keys both mean unkeyed; configured keys must reach the server.
+      WORLD_ADMIN_KEY: ${WORLD_ADMIN_KEY:-}
+      ROLLBACK_KEY: ${ROLLBACK_KEY:-}
+      PLUGINS_ENABLED: ${PLUGINS_ENABLED:-}
+      SNAPSHOT_RETENTION: ${SNAPSHOT_RETENTION:-10}
       # Seconds a world switch is announced for when somebody other than the
       # operator is connected; skipped entirely when they are alone.
       WORLD_SWITCH_COUNTDOWN_S: ${WORLD_SWITCH_COUNTDOWN_S:-10}

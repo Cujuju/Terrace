@@ -15,24 +15,29 @@ import {
   type FreshwaterMap,
   type TraversalProfile,
 } from '@terrace/shared';
-import { WILDLIFE_HABITAT_SPECIES, type WildlifeHabitatSpecies } from '../protocol.ts';
+import { DEFAULT_SIZE_CLASS, WILDLIFE_HABITAT_SPECIES, WILDLIFE_SIZE_CLASSES, type WildlifeHabitatSpecies, type WildlifeSizeClass } from '../protocol.ts';
+import { sharkMaxGroundHeight } from '../swimmerBounds.ts';
 import { profileOf, spawnGroundConstrains } from './species.ts';
 import { NO_MIN_WATER_DEPTH, SPAWN_AT_ANY_HEIGHT } from './species/profile.ts';
 
-export function walkerProfileOf(species: WildlifeHabitatSpecies): TraversalProfile {
-  return WALKER_PROFILES[species];
+export function walkerProfileOf(species: WildlifeHabitatSpecies, size: WildlifeSizeClass = DEFAULT_SIZE_CLASS): TraversalProfile {
+  return species === 'shark' ? SHARK_WALKER_PROFILES[size] : WALKER_PROFILES[species];
 }
 
-function walkerProfileFor(species: WildlifeHabitatSpecies): TraversalProfile {
+function walkerProfileFor(species: WildlifeHabitatSpecies, size: WildlifeSizeClass = DEFAULT_SIZE_CLASS): TraversalProfile {
   const profile = profileOf(species);
   const archetype =
     profile.habitat === 'land' ? LAND_WALKER_PROFILE : waterBandProfile(profile.habitat);
   const depth = profile.minWaterDepthBands;
+  const maxHeight = Math.min(
+    depth === NO_MIN_WATER_DEPTH ? Infinity : SEA_LEVEL - depth * BAND_HEIGHT,
+    species === 'shark' ? sharkMaxGroundHeight(size) : Infinity,
+  );
   return {
     ...archetype,
     maxGradientPerCell: profile.maxGradientPerCell,
     ...(profile.climb === undefined || profile.climb === null ? {} : { climb: profile.climb }),
-    ...(depth === NO_MIN_WATER_DEPTH ? {} : { maxGroundHeight: SEA_LEVEL - depth * BAND_HEIGHT }),
+    ...(Number.isFinite(maxHeight) ? { maxGroundHeight: maxHeight } : {}),
   };
 }
 
@@ -40,6 +45,10 @@ const WALKER_PROFILES: Readonly<Record<WildlifeHabitatSpecies, TraversalProfile>
   Object.fromEntries(
     WILDLIFE_HABITAT_SPECIES.map((species) => [species, walkerProfileFor(species)]),
   ) as Record<WildlifeHabitatSpecies, TraversalProfile>;
+
+const SHARK_WALKER_PROFILES = Object.fromEntries(
+  WILDLIFE_SIZE_CLASSES.map((size) => [size, walkerProfileFor('shark', size)]),
+) as Readonly<Record<WildlifeSizeClass, TraversalProfile>>;
 
 export interface HabitatWorld {
   readonly worldSize: number;
@@ -75,8 +84,9 @@ export function canTraverse(
   fromY: number,
   toX: number,
   toY: number,
+  size: WildlifeSizeClass = DEFAULT_SIZE_CLASS,
 ): boolean {
-  return canTraverseSegment(world, walkerProfileOf(species), fromX, fromY, toX, toY);
+  return canTraverseSegment(world, walkerProfileOf(species, size), fromX, fromY, toX, toY);
 }
 
 export function openDirectionCount(

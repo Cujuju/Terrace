@@ -20,15 +20,15 @@ export function climbOnCourse(
   if (step.fromX === Math.floor(entity.x) && step.fromY === Math.floor(entity.y)) {
     const seed = climbSeed(entity.id, step.fromX, step.fromY, step.toX, step.toY);
     const target = { x: step.toX, y: step.toY };
-    return approachAndClimb(world, walkerProfileOf(entity.species), entity, target, stepCells, seed) !== null;
+    return approachAndClimb(world, walkerProfileOf(entity.species, entity.size), entity, target, stepCells, seed) !== null;
   }
 
   const nextX = entity.x + Math.cos(heading) * stepCells;
   const nextY = entity.y + Math.sin(heading) * stepCells;
-  const eroded = erodedSamplerFor(world, entity.species, entity.size);
+  const eroded = erodedSamplerFor(world, entity.species, entity.size, entity.id);
   if (
-    !isHullPoseValid(world, eroded, entity.species, entity.size, nextX, nextY, heading) ||
-    !canTraverse(world, entity.species, entity.x, entity.y, nextX, nextY)
+    !isHullPoseValid(world, eroded, entity.species, entity.size, nextX, nextY, heading, entity.id) ||
+    !canTraverse(world, entity.species, entity.x, entity.y, nextX, nextY, entity.size)
   ) {
     return false;
   }

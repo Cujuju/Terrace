@@ -1,5 +1,5 @@
 import { BAND_HEIGHT, MAX_BRUSH_RADIUS } from '@terrace/shared';
-import type { WorldApi } from '../../../server/src/plugins/types.ts';
+import type { PluginSculptResult, PluginSculptStep, WorldApi } from '../../../server/src/plugins/types.ts';
 import type { SkillId } from '../protocol.ts';
 
 export interface TerraformStep {
@@ -143,16 +143,18 @@ export function applyTerraform(
   x: number,
   y: number,
   steps: readonly TerraformStep[],
-): number {
+  canWrite?: (x: number, y: number) => boolean,
+): PluginSculptResult | { readonly ok: false; readonly reason: 'unavailable' } {
+  if (typeof world.sculptBatch !== 'function') return { ok: false, reason: 'unavailable' };
   const size = world.worldSize;
-  let changed = 0;
+  const batch: PluginSculptStep[] = [];
 
   for (const step of steps) {
     const cx = x + step.dx;
     const cy = y + step.dy;
     if (cx < 0 || cy < 0 || cx >= size || cy >= size) continue;
-    changed += world.sculpt(cx, cy, step.radius, step.amount).length;
+    batch.push({ x: cx, y: cy, radius: step.radius, amount: step.amount });
   }
 
-  return changed;
+  return world.sculptBatch(batch, canWrite);
 }

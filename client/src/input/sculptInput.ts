@@ -29,6 +29,7 @@ export function createSculptInput(options: SculptInputOptions): SculptInput {
   const { canvas } = options;
 
   const onPointerDown = (event: PointerEvent): void => {
+    if (event.defaultPrevented) return;
     if (event.pointerType === 'touch') {
       s.activeTouchIds.add(event.pointerId);
       if (s.activeTouchIds.size > 1) {

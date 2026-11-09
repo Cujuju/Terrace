@@ -1,6 +1,7 @@
 import DatabaseConstructor from 'better-sqlite3';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { logError, logInfo, logWarn } from '../src/log.ts';
 import {
   SNAPSHOT_WRITTEN_COLUMNS,
@@ -120,6 +121,30 @@ if (proof === null) {
   );
 }
 logInfo(`same world confirmed: snapshot #${proof} is identical in both files`);
+
+// Names and thumbnails can change on otherwise identical history; pins are local retention policy.
+const MUTABLE_SNAPSHOT_METADATA = new Set(['world_name', 'thumbnail', 'pinned']);
+const overlapping = db.prepare(
+  'SELECT id FROM main.snapshots WHERE id IN (SELECT id FROM source.snapshots) ORDER BY id',
+).all() as { id: number }[];
+for (const { id } of overlapping) {
+  const rows = ['main', 'source'].map((schema) => {
+    const row = db.prepare(`SELECT * FROM ${schema}.snapshots WHERE id = ?`).get(id) as Record<string, unknown>;
+    return Object.fromEntries(Object.entries(row).filter(([key]) => !MUTABLE_SNAPSHOT_METADATA.has(key)));
+  });
+  const missingColumns = Object.keys(rows[0]!).filter((key) => !Object.hasOwn(rows[1]!, key));
+  if (missingColumns.length > 0) refuse(`refusing: source snapshots lack ${missingColumns.join(', ')}. Nothing was merged.`);
+  for (const table of ['snapshots', 'plugin_slices', 'token_masks']) {
+    const [mine, theirs] = table === 'snapshots'
+      ? rows
+      : ['main', 'source'].map((schema) => db.prepare(
+          `SELECT * FROM ${schema}.${table} WHERE snapshot_id = ? ORDER BY ${table === 'plugin_slices' ? 'plugin' : 'token'}`,
+        ).all(id));
+    if (!isDeepStrictEqual(mine, theirs)) {
+      refuse(`refusing: divergent snapshot #${id} in ${table}; matching ids contain different data. Nothing was merged.`);
+    }
+  }
+}
 
 const missing = (
   db

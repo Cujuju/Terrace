@@ -62,8 +62,9 @@ export function buildBoltGeometry(): BufferGeometry {
 
 export interface DryBoltRig {
   readonly root: Group;
-  strike(worldX: number, worldZ: number, governor: LightningGovernor): boolean;
+  strike(worldX: number, worldZ: number, governor: LightningGovernor, onFlash?: () => void): boolean;
   update(dt: number, reduced: boolean): void;
+  reset(): void;
   dispose(): void;
 }
 
@@ -97,12 +98,22 @@ export function createDryBoltRig(
   let wasFlashing = false;
   let strikeX = 0;
   let strikeZ = 0;
+  let pendingFlash: (() => void) | null = null;
+
+  function reset(): void {
+    schedule.reset();
+    pendingFlash = null;
+    bolt.visible = false;
+    wasFlashing = false;
+    flash.park();
+  }
 
   return {
     root,
 
-    strike(worldX: number, worldZ: number, governor: LightningGovernor): boolean {
+    strike(worldX, worldZ, governor, onFlash): boolean {
       if (!schedule.strike(governor)) return false;
+      pendingFlash = onFlash ?? null;
       pivot.position.set(worldX, 0, worldZ);
       pivot.rotation.y = Math.atan2(worldZ, worldX);
       strikeX = worldX;
@@ -118,13 +129,19 @@ export function createDryBoltRig(
       if (flashing) {
         material.opacity = brightness;
         flash.flash(strikeX, BOLT_BOTTOM_WORLD_Y, strikeZ, brightness);
+        const onFlash = pendingFlash;
+        pendingFlash = null;
+        onFlash?.();
       } else if (wasFlashing) {
         flash.park();
       }
       wasFlashing = flashing;
     },
 
+    reset,
+
     dispose(): void {
+      reset();
       root.clear();
       material.dispose();
     },

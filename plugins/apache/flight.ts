@@ -20,6 +20,9 @@ export function createFlightPose(): FlightPose {
 const TWO_PI = Math.PI * 2;
 const SPEED_VARIATION = 0.12;
 const EFFECTIVE_GRAVITY = 0.7;
+export const MAX_FLIGHT_SPEED_WORLD_UNITS_PER_SECOND =
+  Math.hypot(FLIGHT_HALF_LENGTH, FLIGHT_BEND * Math.PI) *
+  (2 + SPEED_VARIATION * TWO_PI) / FLIGHT_SECONDS;
 
 function clamp(value: number, limit: number): number {
   return Math.max(-limit, Math.min(limit, value));

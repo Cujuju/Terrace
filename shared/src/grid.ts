@@ -69,3 +69,39 @@ export function forEachLineCell(
 export function chebyshevDistance(x0: number, y0: number, x1: number, y1: number): number {
   return Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0));
 }
+
+/** Visits the start and every crossed cell; a corner checks both flanks from the preceding cell before its diagonal. */
+export function everyCrossedCell(
+  fromX: number,
+  fromY: number,
+  toX: number,
+  toY: number,
+  visit: (x: number, y: number, previousX: number, previousY: number) => boolean,
+): boolean {
+  if (![fromX, fromY, toX, toY].every((v) => Number.isSafeInteger(Math.floor(v)))) return false;
+  let x = Math.floor(fromX);
+  let y = Math.floor(fromY);
+  const endX = Math.floor(toX);
+  const endY = Math.floor(toY);
+  const stepX = Math.sign(toX - fromX);
+  const stepY = Math.sign(toY - fromY);
+  const width = Math.abs(toX - fromX);
+  const height = Math.abs(toY - fromY);
+  if (!visit(x, y, x, y)) return false;
+  while (x !== endX || y !== endY) {
+    // Compare boundary times by cross multiplication, recomputed from the origin to avoid accumulated drift.
+    const nextX = x === endX ? Infinity : (stepX > 0 ? x + 1 - fromX : fromX - x) * height;
+    const nextY = y === endY ? Infinity : (stepY > 0 ? y + 1 - fromY : fromY - y) * width;
+    const crossX = nextX <= nextY;
+    const crossY = nextY <= nextX;
+    if (crossX && crossY) {
+      if (!visit(x + stepX, y, x, y) || !visit(x, y + stepY, x, y)) return false;
+    }
+    const nx = x + (crossX ? stepX : 0);
+    const ny = y + (crossY ? stepY : 0);
+    if (!visit(nx, ny, x, y)) return false;
+    x = nx;
+    y = ny;
+  }
+  return true;
+}

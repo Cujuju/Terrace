@@ -1,3 +1,4 @@
+import { CHUNK_SIZE } from '@terrace/shared';
 import type {
   PersistenceSlice,
   PluginActionOutcome,
@@ -219,6 +220,16 @@ export const plugin: TerracePlugin = {
     if (frequency === 'off') return;
     broadcastDebris(world, trackedDebris(), player.id);
     if (livingSlides().length > 0) broadcastActive(world, player.id);
+  },
+
+  onChunkUnlockedForToken(world: WorldApi, token: string, cx: number, cy: number): void {
+    if (frequency === 'off') return;
+    const cells = trackedDebris().filter((cell) =>
+      Math.floor(cell.x / CHUNK_SIZE) === cx && Math.floor(cell.y / CHUNK_SIZE) === cy,
+    );
+    for (const player of world.players()) {
+      if (player.token === token) broadcastDebris(world, cells, player.id);
+    }
   },
 
   persistence,

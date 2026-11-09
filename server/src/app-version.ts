@@ -38,7 +38,7 @@ function baseline(repoDir: string): { features: number; patches: number } {
 /**
  * `0.<feat commits>.<non-feat commits not reachable from any feat>`, merges excluded,
  * counted on from the root commit's {@link BASELINE_TRAILER} when it has one.
- * Every new commit raises it; a shallow clone undercounts.
+ * A shallow clone undercounts.
  */
 export function appVersion(repoDir: string): string {
   let log: string;

@@ -1,10 +1,9 @@
-import { CELL_WORLD_SIZE, MAX_HEIGHT, MAX_RELIEF_WORLD_UNITS, SEA_LEVEL, cellsAcross } from '@terrace/shared';
+import { CHUNK_SIZE, SEA_LEVEL } from '@terrace/shared';
 import { createSiblingBridge } from '../../../server/src/plugins/kit/bridge.ts';
 import type { PluginActionSite, WorldApi } from '../../../server/src/plugins/types.ts';
-import { createFlightPose, sampleFlight } from '../flight.ts';
+import { terrainCapY, visitCorridor } from '../clearance.ts';
 import {
-  APACHE_AUTHORED_ROTOR_RADIUS_WORLD_UNITS,
-  APACHE_DRAW_SCALE,
+  APACHE_CLEARANCE_RADIUS_WORLD_UNITS,
   FLIGHT_SECONDS,
   ROOFTOP_CLEARANCE,
   type ApacheFlight,
@@ -22,47 +21,52 @@ export const settlements = createSiblingBridge<StructuresApi>({
   unavailableWarning: '[apache] structures unavailable; waiting for settlements before flying',
 });
 
-const HEIGHT_SCALE = MAX_RELIEF_WORLD_UNITS / MAX_HEIGHT;
-// One cell past the drawn rotor disc covers sampling between cell centres.
-const CORRIDOR_ROUNDING_CELLS = 1;
-const CORRIDOR_RADIUS_CELLS = Math.ceil(
-  cellsAcross(APACHE_AUTHORED_ROTOR_RADIUS_WORLD_UNITS * APACHE_DRAW_SCALE) + CORRIDOR_ROUNDING_CELLS,
-);
 const MAX_TARGET_ATTEMPTS = 6;
+const MAX_ADDITIONAL_ALTITUDE_WORLD_UNITS = 1;
 
-function corridorAltitude(world: WorldApi, flight: ApacheFlight, groundCache: Map<number, number>): number | null {
-  const pose = createFlightPose();
+export interface FlybyPlan {
+  readonly flight: ApacheFlight;
+  readonly visibilityCells: readonly { readonly x: number; readonly y: number }[];
+}
+
+function corridorAltitude(
+  world: WorldApi, flight: ApacheFlight, groundAt: (x: number, y: number) => number | null,
+): number | null {
   let required = flight.altitude;
-  // Below half a cell of travel per sample, including the rotor footprint and cell rounding.
-  for (let i = 0; i <= 512; i++) {
-    sampleFlight(flight, FLIGHT_SECONDS * i / 512, pose);
-    const x = Math.round(pose.x / CELL_WORLD_SIZE), y = Math.round(pose.z / CELL_WORLD_SIZE);
-    if (x < 0 || y < 0 || x >= world.worldSize || y >= world.worldSize) continue;
-    const heightAbovePass = pose.altitude - flight.altitude;
-    for (let dy = -CORRIDOR_RADIUS_CELLS; dy <= CORRIDOR_RADIUS_CELLS; dy++) {
-      for (let dx = -CORRIDOR_RADIUS_CELLS; dx <= CORRIDOR_RADIUS_CELLS; dx++) {
-        const sx = x + dx, sy = y + dy;
-        if (sx < 0 || sy < 0 || sx >= world.worldSize || sy >= world.worldSize) continue;
-        const key = sy * world.worldSize + sx;
-        let ground = groundCache.get(key);
-        if (ground === undefined) {
-          ground = Math.max(SEA_LEVEL, world.heightAt(sx, sy)) * HEIGHT_SCALE;
-          groundCache.set(key, ground);
-        }
-        required = Math.max(required, ground + ROOFTOP_CLEARANCE - heightAbovePass);
-        if (required > flight.altitude + 1) return null;
-      }
-    }
-  }
-  return required;
+  const clear = visitCorridor(flight, 0, FLIGHT_SECONDS, world.worldSize, (x, y, altitude) => {
+    const ground = groundAt(x, y);
+    if (ground === null) return;
+    required = Math.max(required, ground + ROOFTOP_CLEARANCE + APACHE_CLEARANCE_RADIUS_WORLD_UNITS -
+      (altitude - flight.altitude));
+    return required <= flight.altitude + MAX_ADDITIONAL_ALTITUDE_WORLD_UNITS;
+  });
+  return clear ? required : null;
 }
 
 export function planFlyby(
   world: WorldApi, id: number, random: () => number, near?: PluginActionSite,
-): ApacheFlight | null {
-  const available = settlements.api()?.standingStructures().filter(({ x, y }) =>
-    world.isCellUnlocked(x, y) && world.heightAt(x, y) > SEA_LEVEL &&
-    (near === undefined || Math.hypot(x - near.x, y - near.y) <= 160)) ?? [];
+): FlybyPlan | null {
+  const visibility = new Map<number, { x: number; y: number }>();
+  const groundCache = new Map<number, number>();
+  const requireCell = (x: number, y: number): void => {
+    const cx = Math.floor(x / CHUNK_SIZE), cy = Math.floor(y / CHUNK_SIZE);
+    visibility.set(cy * world.chunksPerEdge + cx, { x: cx * CHUNK_SIZE, y: cy * CHUNK_SIZE });
+  };
+  const groundAt = (x: number, y: number): number | null => {
+    if (!world.isCellUnlocked(x, y)) return null;
+    const key = y * world.worldSize + x;
+    let ground = groundCache.get(key);
+    if (ground === undefined) {
+      requireCell(x, y);
+      ground = terrainCapY(world.heightAt(x, y));
+      groundCache.set(key, ground);
+    }
+    return ground;
+  };
+  const available = settlements.api()?.standingStructures().filter(({ x, y }) => {
+    return (near === undefined || Math.hypot(x - near.x, y - near.y) <= 160) &&
+      world.isCellUnlocked(x, y);
+  }) ?? [];
   if (available.length === 0) return null;
   if (near !== undefined) {
     available.sort((a, b) => (a.x - near.x) ** 2 + (a.y - near.y) ** 2 -
@@ -70,20 +74,23 @@ export function planFlyby(
   }
   const offset = near === undefined ? Math.floor(random() * available.length) : 0;
   const heading = random() * Math.PI * 2;
-  const groundCache = new Map<number, number>();
   for (let attempt = 0; attempt < Math.min(MAX_TARGET_ATTEMPTS, available.length); attempt++) {
     const target = available[(offset + attempt) % available.length]!;
-    const altitude = world.heightAt(target.x, target.y) * HEIGHT_SCALE + ROOFTOP_CLEARANCE;
+    requireCell(target.x, target.y);
+    if (world.heightAt(target.x, target.y) <= SEA_LEVEL) continue;
+    const ground = groundAt(target.x, target.y);
+    if (ground === null) continue;
+    const altitude = ground + ROOFTOP_CLEARANCE + APACHE_CLEARANCE_RADIUS_WORLD_UNITS;
     for (let bearing = 0; bearing < 8; bearing++) {
       const flight: ApacheFlight = {
         id, centreX: target.x, centreY: target.y,
         heading: (heading + bearing * Math.PI / 4) % (Math.PI * 2),
         turn: random() < 0.5 ? -1 : 1, altitude, elapsed: 0,
       };
-      const safeAltitude = corridorAltitude(world, flight, groundCache);
+      const safeAltitude = corridorAltitude(world, flight, groundAt);
       // A distant ridge must not turn a rooftop pass into a high-altitude crossing.
-      if (safeAltitude !== null && safeAltitude <= altitude + 1) {
-        return { ...flight, altitude: safeAltitude };
+      if (safeAltitude !== null) {
+        return { flight: { ...flight, altitude: safeAltitude }, visibilityCells: [...visibility.values()] };
       }
     }
   }

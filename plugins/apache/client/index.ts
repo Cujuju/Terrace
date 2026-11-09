@@ -3,6 +3,7 @@ import { Euler, Quaternion } from 'three';
 import type { ClientPluginCtx, TerraceClientPlugin } from '../../../client/src/plugins/types.ts';
 import { watchReducedMotion, type ReducedMotionWatch } from '../../../client/src/plugins/kit/reducedMotion.ts';
 import { createFlightPose, fadeAt, sampleFlight } from '../flight.ts';
+import { corridorLift, terrainCapY } from '../clearance.ts';
 import {
   APACHE_PLUGIN_NAME, APACHE_STATE_MESSAGE, ROOFTOP_CLEARANCE, parseApachePayload,
 } from '../protocol.ts';
@@ -10,10 +11,11 @@ import { createApache, preloadApache, releaseApache, type ApacheModel } from './
 import { FlightPlayback } from './playback.ts';
 
 const playback = new FlightPlayback();
-const pose = createFlightPose(), ahead = createFlightPose();
+const pose = createFlightPose();
 const attitude = new Quaternion();
 const angles = new Euler(0, 0, 0, 'YZX');
-const LOOK_AHEAD_SECONDS = [0, 0.75, 1.5, 2.5] as const;
+const LOOK_AHEAD_SECONDS = 2.5;
+const groundCache = new Map<number, number>();
 let model: ApacheModel | null = null;
 let reducedMotion: ReducedMotionWatch | null = null;
 let unsubscribes: Array<() => void> = [];
@@ -23,6 +25,7 @@ let visibleLastFrame = false;
 
 function reset(): void {
   playback.clear();
+  groundCache.clear();
   lift = targetLift = 0;
   visibleLastFrame = false;
   if (model !== null) model.rig.root.visible = false;
@@ -47,14 +50,27 @@ function render(ctx: ClientPluginCtx, dt: number): void {
     visibleLastFrame = false;
     return;
   }
-  // Drawn-ground look-ahead responds to terrain sculpted after the server planned the pass.
-  for (const seconds of LOOK_AHEAD_SECONDS) {
-    sampleFlight(flight, playback.elapsed + seconds, ahead);
-    const height = ctx.drawnGroundYAt(ahead.x / CELL_WORLD_SIZE, ahead.z / CELL_WORLD_SIZE);
-    if (height !== null) targetLift = Math.max(targetLift, height + ROOFTOP_CLEARANCE - ahead.altitude);
-  }
+  const size = ctx.worldSize();
+  const groundAt = (sx: number, sy: number): number | null => {
+    const key = sy * size + sx;
+    let height = groundCache.get(key);
+    if (height !== undefined) return height;
+    const sample = ctx.terrainSampleAt(sx, sy);
+    if (sample === null) return null;
+    height = terrainCapY(sample);
+    groundCache.set(key, height);
+    return height;
+  };
+  targetLift = Math.max(targetLift, corridorLift(
+    flight, playback.elapsed, playback.elapsed + LOOK_AHEAD_SECONDS, size, groundAt, ROOFTOP_CLEARANCE,
+  ));
   const blend = 1 - Math.exp(-Math.min(dt, 0.1) * 3);
   lift += (targetLift - lift) * blend;
+  if (lift < corridorLift(flight, playback.elapsed, playback.elapsed, size, groundAt, 0)) {
+    root.visible = false;
+    visibleLastFrame = false;
+    return;
+  }
   root.position.set(pose.x, pose.altitude + lift, pose.z);
   angles.set(pose.bank, -pose.heading, pose.pitch, 'YZX');
   attitude.setFromEuler(angles);
@@ -81,12 +97,14 @@ export const clientPlugin: TerraceClientPlugin = {
         if (state === null) return;
         if (playback.flight?.id !== state.flight?.id) {
           lift = targetLift = 0;
+          groundCache.clear();
           visibleLastFrame = false;
         }
         playback.receive(state.flight, performance.now() / 1000);
       }),
       ctx.onFrame((dt) => render(ctx, dt)),
       ctx.onWorldReset(reset),
+      ctx.onTerrainChanged(() => groundCache.clear()),
     ];
   },
   dispose(): void {

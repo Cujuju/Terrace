@@ -1,5 +1,7 @@
 export const CYCLONE_DAMAGE_EVENT_NAME = 'cyclone:damage';
 
+export const TORNADO_DAMAGE_EVENT_NAME = 'tornado:damage';
+
 export const FLORA_WIND_MIN_SEVERITY = 0.15;
 
 export const FLORA_WIND_TREE_FELL_CHANCE_PER_SEVERITY_SECOND = 0.25;

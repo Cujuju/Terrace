@@ -18,6 +18,9 @@ export function secondsPerChord(tempoBpm: number): number {
 
 export const MELODY_SUBDIVISIONS_PER_BEAT = 2;
 
+/** Daynight starts at dawn; noon is one quarter of a cycle later. */
+export const DEFAULT_DAY_PHASE = 0.25;
+
 export const OCTAVE_SEMITONES = 12;
 
 const A4_MIDI_NOTE = 69;
@@ -51,6 +54,7 @@ const BRIGHT_SCALE_SEMITONES: readonly number[] = [0, 2, 4, 7, 9];
 const OVERCAST_SCALE_SEMITONES: readonly number[] = [0, 3, 5, 7, 10];
 
 export interface ComposerMood {
+  /** Dawn-based daynight phase, in [0, 1]. */
   readonly dayPhase: number;
   readonly weather: number;
   readonly tension: number;
@@ -95,7 +99,7 @@ function clampUnit(value: number): number {
 }
 
 function daylightFromPhase(dayPhase: number): number {
-  return (1 - Math.cos(2 * Math.PI * clampUnit(dayPhase))) / 2;
+  return (1 + Math.sin(2 * Math.PI * clampUnit(dayPhase))) / 2;
 }
 
 export function moodParameters(mood: ComposerMood, tuning: ComposerTuning): MoodParameters {

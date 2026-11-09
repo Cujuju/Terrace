@@ -27,11 +27,25 @@ export function openWorlds(
   manager: WorldManager,
 ): WorldBootOutcome {
   const adopted: string[] = [];
-  const legacy = migrateLegacyWorld(config, registry);
-  if (legacy !== null) adopted.push(legacy);
+  let migrationFailed = false;
+  try {
+    const legacy = migrateLegacyWorld(config, registry);
+    if (legacy !== null) adopted.push(legacy);
+  } catch (error) {
+    migrationFailed = true;
+    logWarn(`could not import legacy world ${config.dbPath}; preserving its files: ${String(error)}`);
+  }
 
   if (manager.loadFromPointer()) {
     return { adopted, createdFirstWorld: false, loadedId: manager.activeId };
+  }
+  if (migrationFailed) {
+    logWarn('legacy import failed; remaining unloaded with world management available');
+    return { adopted, createdFirstWorld: false, loadedId: null };
+  }
+  if (registry.hasActiveSelection()) {
+    logWarn('the selected world could not be loaded; preserving the selection and remaining unloaded');
+    return { adopted, createdFirstWorld: false, loadedId: null };
   }
 
   const worlds = registry.list(null);

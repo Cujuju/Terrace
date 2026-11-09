@@ -99,6 +99,7 @@ export interface Slide {
   sculptTimerSeconds: number;
   headSteps: number;
   toeSteps: number;
+  toeCursor: number;
   excavated: number;
   carried: number;
   gain: number;
@@ -170,12 +171,13 @@ function admitSite(site: Site): void {
     let driestKey = -1;
     let driest = Number.POSITIVE_INFINITY;
     for (const [otherKey, other] of sites) {
+      if (other.cooldownSeconds <= 0 && (other.saturation > 0 || wettingRate(other) > 0)) continue;
       const score = other.cooldownSeconds > 0 ? -other.cooldownSeconds : other.saturation;
       if (score >= driest) continue;
       driest = score;
       driestKey = otherKey;
     }
-    if (driestKey < 0 || driest >= 0) return;
+    if (driestKey < 0) return;
     sites.delete(driestKey);
   }
   sites.set(key, site);
@@ -218,6 +220,12 @@ export function isSaturated(site: Site): boolean {
   return site.cooldownSeconds <= 0 && site.saturation >= MUDSLIDE_SATURATION_SECONDS;
 }
 
+function wettingRate(site: Site): number {
+  const rainRate = rainAt(site.x, site.y) >= MUDSLIDE_SOAKING_RAIN_INTENSITY ? 1 : 0;
+  const waterRate = site.freshwater ? MUDSLIDE_FRESHWATER_SOAK_RATE : 0;
+  return Math.max(rainRate, waterRate);
+}
+
 export function soakSites(dt: number): void {
   for (const site of sites.values()) {
     if (site.cooldownSeconds > 0) {
@@ -226,9 +234,7 @@ export function soakSites(dt: number): void {
       continue;
     }
 
-    const rainRate = rainAt(site.x, site.y) >= MUDSLIDE_SOAKING_RAIN_INTENSITY ? 1 : 0;
-    const waterRate = site.freshwater ? MUDSLIDE_FRESHWATER_SOAK_RATE : 0;
-    const wetting = Math.max(rainRate, waterRate);
+    const wetting = wettingRate(site);
 
     site.saturation =
       wetting > 0
@@ -318,6 +324,7 @@ export function startSlide(world: MudslideWorld, x: number, y: number): Slide | 
     sculptTimerSeconds: 0,
     headSteps: 0,
     toeSteps: 0,
+    toeCursor: 0,
     excavated: 0,
     carried: 0,
     gain: 0,
@@ -365,13 +372,13 @@ function scourHead(world: MudslideWorld, slide: Slide): void {
   slide.gain = slide.gain === 0 ? gain : (slide.gain + gain) / 2;
 }
 
-function deposit(world: MudslideWorld, slide: Slide, x: number, y: number, volume: number): void {
-  if (slide.gain <= 0 || volume <= 0) return;
+function deposit(world: MudslideWorld, slide: Slide, x: number, y: number, volume: number): boolean {
+  if (slide.gain <= 0 || volume <= 0) return false;
   const amount = Math.max(1, Math.round(volume / slide.gain));
 
   const measured = sculptGuarded(world, x, y, MUDSLIDE_BRUSH_RADIUS_CELLS, amount);
   slide.unmeasuredCells += measured.unmeasuredCells;
-  if (measured.net <= 0) return;
+  if (measured.net <= 0) return false;
 
   slide.carried = Math.max(0, slide.carried - measured.net);
   recordDelta(slide, x, y, measured.net);
@@ -380,6 +387,7 @@ function deposit(world: MudslideWorld, slide: Slide, x: number, y: number, volum
   slide.pendingDebris.push(cell);
   debris.push(cell);
   if (debris.length > MAX_TRACKED_DEBRIS) debris.splice(0, debris.length - MAX_TRACKED_DEBRIS);
+  return true;
 }
 
 function advanceFront(world: MudslideWorld, slide: Slide, dt: number): void {
@@ -430,12 +438,17 @@ function sculptStep(world: MudslideWorld, slide: Slide): void {
     return;
   }
 
-  if (slide.toeSteps >= MUDSLIDE_TOE_DUMP_STEPS) return;
-  slide.toeSteps++;
-  const back = slide.toeSteps % MUDSLIDE_TOE_LOBE_CELLS;
-  const cell = slide.path[Math.max(0, slide.path.length - 1 - back)]!;
-  const stepsLeft = Math.max(1, MUDSLIDE_TOE_DUMP_STEPS - slide.toeSteps + 1);
-  deposit(world, slide, cell.x, cell.y, slide.carried / stepsLeft);
+  const lobe = (slide.toeSteps + 1) % MUDSLIDE_TOE_LOBE_CELLS;
+  const back = (slide.toeCursor + lobe) % slide.path.length;
+  const cell = slide.path[slide.path.length - 1 - back]!;
+  // The target dump count shapes the lobe; completion requires draining the measured load.
+  const stepsLeft = Math.max(1, MUDSLIDE_TOE_DUMP_STEPS - slide.toeSteps);
+  if (deposit(world, slide, cell.x, cell.y, slide.carried / stepsLeft)) {
+    slide.toeSteps++;
+  } else {
+    // Refusals advance the bounded path search, never the successful-dump budget.
+    slide.toeCursor = (slide.toeCursor + 1) % slide.path.length;
+  }
 }
 
 export function movedGround(slide: Slide): boolean {
@@ -445,7 +458,7 @@ export function movedGround(slide: Slide): boolean {
 function isFinished(slide: Slide): boolean {
   if (slide.stop === null) return false;
   const owing = slide.carried > MUDSLIDE_MASS_TOLERANCE_HEIGHT_UNITS;
-  if (owing && slide.toeSteps < MUDSLIDE_TOE_DUMP_STEPS) return false;
+  if (owing) return false;
   return slide.lingerSeconds >= MUDSLIDE_LINGER_SECONDS;
 }
 
@@ -555,6 +568,7 @@ export interface SerializedSlide {
   readonly sculptTimerSeconds: number;
   readonly headSteps: number;
   readonly toeSteps: number;
+  readonly toeCursor: number;
   readonly excavated: number;
   readonly carried: number;
   readonly gain: number;
@@ -581,6 +595,7 @@ export function slidesSnapshot(): SlidesSnapshot {
       sculptTimerSeconds: slide.sculptTimerSeconds,
       headSteps: slide.headSteps,
       toeSteps: slide.toeSteps,
+      toeCursor: slide.toeCursor,
       excavated: slide.excavated,
       carried: slide.carried,
       gain: slide.gain,
@@ -611,6 +626,7 @@ export function restoreSlides(snapshot: SlidesSnapshot): void {
     sculptTimerSeconds: saved.sculptTimerSeconds,
     headSteps: saved.headSteps,
     toeSteps: saved.toeSteps,
+    toeCursor: saved.toeCursor ?? 0,
     excavated: saved.excavated,
     carried: saved.carried,
     gain: saved.gain,

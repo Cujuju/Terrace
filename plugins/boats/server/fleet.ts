@@ -13,11 +13,9 @@ import {
   findRouteWithStatus,
   followRoute,
   isWalkableCell as sharedIsWalkableCell,
-  labelSeaRegions,
   navigableWaterProfile,
   nearestWithinReach,
   normalizeAngle,
-  regionAt,
   snapWaypointToWalkable,
   waypointForMember,
   withCachedClearance,
@@ -26,7 +24,7 @@ import {
   type Occupant,
   type RouteBudget,
   type RouteCell,
-  type SeaRegions,
+  type RouteSearchOutcome,
   type TerrainSampler,
   type Waypoint,
   type WaypointChainSnapshot,
@@ -45,6 +43,7 @@ import {
   BOAT_WIND_PUSH_CELLS_PER_SEVERITY_SECOND,
   BOAT_WIND_PUSH_STEP_CELLS,
 } from './cyclone-event.ts';
+import { SeaRegionIndex } from './sea-regions.ts';
 import {
   HOME_GUARD_BOATS_PER_VILLAGE,
   SQUADRON_LEG_LENGTH_CELLS,
@@ -123,8 +122,7 @@ export const BOAT_PERSONAL_SPACE_CELLS = cellsAcross(0.5);
  * budgeted trial search inside its box; arrival draws the next leg. */
 const FLEET_HOP_LENGTH_CELLS = 16;
 
-/** Cap for one leg-level search per fleet chain rebuild. One routed leg
- * subdivides into hops, amortizing the search; one attempt per tick. */
+/** Per-profile expansion cap for a fleet leg. One leg is planned per tick. */
 const LEG_ROUTE_NODE_CAP = 32768;
 
 /** Seconds a flagship holds no route before its leg is declared blocked and
@@ -265,6 +263,11 @@ const BOAT_HULL_BEAM = 0.34 * BOAT_DRAW_SCALE;
 
 export const BOAT_BEAM_CLEARANCE_CELLS = Math.ceil((BOAT_HULL_BEAM / 2) * WORLD_UNIT_CELLS);
 
+const BOAT_TURN_CLEARANCE_CELLS = Math.ceil(Math.hypot(
+  BOAT_HULL_LENGTH_CELLS / 2,
+  (BOAT_HULL_BEAM / 2) * WORLD_UNIT_CELLS,
+));
+
 export function isHullPose(
   world: BoatWorld,
   eroded: TerrainSampler,
@@ -352,6 +355,7 @@ interface Voyage {
    * (dithering sums to zero), so this accrues in whole windows only. */
   nullSeconds: number;
   poolTried: boolean;
+  terrainVersion: number;
   slot: number | null;
   slotList: BerthList | null;
   heldTicks: number;
@@ -490,6 +494,14 @@ export function forgetVillage(x: number, y: number): void {
     if (boat.homeX === x && boat.homeY === y) dropVoyage(boat.id);
   }
   boats = scuttled;
+}
+
+export function reconcileVillages(standing: readonly KrakenTarget[]): void {
+  const present = new Set(standing.map((cell) => villageKey(cell.x, cell.y)));
+  for (const village of villages.values()) {
+    if (!present.has(villageKey(village.x, village.y))) forgetVillage(village.x, village.y);
+  }
+  for (const cell of standing) rememberVillage(cell.x, cell.y);
 }
 
 export function isSailable(world: BoatWorld, cellX: number, cellY: number): boolean {
@@ -885,17 +897,13 @@ const TICK_ROUTE_SEARCH_CAP = 8;
  * it; maze searches exhaust it and defer instead. */
 const TRIAL_NODE_BUDGET = 1024;
 
-/** Rescue budget for stuck boats: one capped pool search per stuck episode.
- * Capped so one rescue cannot eat the tick. */
+// Each attempt can try whole-hull and beam clearance; both debit the same tick pool.
+const ROUTE_CLEARANCE_PROFILE_COUNT = 2;
+
+/** Each stuck episode may try both capped clearance profiles from the shared pool. */
 const STUCK_POOL_NODES = 8192;
 
-/** Beyond this chebyshev distance A* boxes dwarf the pool, so boats steer
- * direct until they close within range. */
-const ROUTE_DIRECT_RANGE_CELLS = 300;
-
 const UNREACHABLE_CACHE_CAP = 4096;
-
-const SEA_REGIONS_REBUILD_COOLDOWN_MS = 15_000;
 
 let terrainVersion = 0;
 let terrainChangeBumps = 0;
@@ -927,32 +935,24 @@ function rememberUnreachable(key: string): void {
   unreachableCache.set(key, terrainVersion);
 }
 
-let seaRegions: SeaRegions | null = null;
+let seaRegions: SeaRegionIndex | null = null;
 let seaRegionsVersion = -1;
 let seaRegionsDemand = false;
-let seaRegionsLastBuildMs = 0;
-
-function currentSeaRegions(): SeaRegions | null {
+function currentSeaRegions(): SeaRegionIndex | null {
   if (seaRegions !== null && seaRegionsVersion === terrainVersion) return seaRegions;
   seaRegionsDemand = true;
   return null;
 }
 
 function maybeRebuildSeaRegions(world: BoatWorld): void {
-  if (seaRegions !== null && seaRegionsVersion === terrainVersion) return;
-  if (!seaRegionsDemand) return;
-  const nowMs = performance.now();
-  if (seaRegions !== null && nowMs - seaRegionsLastBuildMs < SEA_REGIONS_REBUILD_COOLDOWN_MS) {
-    return;
+  if (!seaRegionsDemand || boats.length === 0) return;
+  if (seaRegions === null || seaRegionsVersion !== terrainVersion) {
+    seaRegions = new SeaRegionIndex(world.worldSize, BOAT_DRAFT_HEIGHT_UNITS);
+    seaRegionsVersion = terrainVersion;
   }
-  seaRegionsDemand = false;
-  seaRegionsLastBuildMs = nowMs;
-  // Uncached wrapper: a full-map scan touches each cell once, so a memo
-  // cache would be all insert cost and no hits. The per-tick wrapper stays
-  // cached; both dilate identically.
   const eroded = withClearance(world, BOAT_BEAM_CLEARANCE_CELLS);
-  seaRegions = labelSeaRegions(eroded, HULL_PROFILE);
-  seaRegionsVersion = terrainVersion;
+  seaRegions.advance(eroded);
+  seaRegionsDemand = !seaRegions.complete;
 }
 
 let sailCursor = 0;
@@ -1076,7 +1076,7 @@ function squadronNavigator(
       // and stays in the departure sea region.
       const regions = currentSeaRegions();
       const fromRegion =
-        regions === null ? 0 : regionAt(regions, world.worldSize, fromX, fromY);
+        regions === null ? 0 : regions.at(fromX, fromY);
       const spoke = (seed + attempt) % SQUADRON_WAYPOINT_ATTEMPTS;
       const bearing = (spoke * FULL_TURN_RADIANS) / SQUADRON_WAYPOINT_ATTEMPTS;
       const dx = Math.cos(bearing);
@@ -1090,7 +1090,7 @@ function squadronNavigator(
         const y = fromY + dy * reach;
         if (!isManoeuvrablePose(world, eroded, x, y, bearing)) continue;
         if (regions !== null && fromRegion !== 0) {
-          const goalRegion = regionAt(regions, world.worldSize, x, y);
+          const goalRegion = regions.at(x, y);
           if (goalRegion !== 0 && goalRegion !== fromRegion) continue;
         }
         debug.legFromCalls++;
@@ -1114,6 +1114,33 @@ function villageRanks(): number[] {
   return ranks;
 }
 
+/** Prefer routes with room to turn the whole hull; narrow channels retain the beam-clearance route when necessary. */
+function findBoatRoute(
+  world: BoatWorld,
+  eroded: TerrainSampler,
+  from: RouteCell,
+  to: RouteCell,
+  budget: RouteBudget,
+  nodeCap: number,
+): RouteSearchOutcome {
+  const search = (terrain: TerrainSampler): RouteSearchOutcome => {
+    const allowance = Math.min(nodeCap, budget.remaining);
+    const attempt = createRouteBudget(allowance);
+    const outcome = findRouteWithStatus(terrain, HULL_PROFILE, from, to, attempt);
+    budget.remaining -= allowance - attempt.remaining;
+    return outcome;
+  };
+  const turning = withCachedClearance(world, BOAT_TURN_CLEARANCE_CELLS);
+  if (
+    sharedIsWalkableCell(turning, HULL_PROFILE, from.x, from.y) &&
+    sharedIsWalkableCell(turning, HULL_PROFILE, to.x, to.y)
+  ) {
+    const outcome = search(turning);
+    if (outcome.plan !== null) return outcome;
+  }
+  return search(eroded);
+}
+
 /** Route a fleet leg once, stride the route into hops. Null when the leg
  * won't route; the caller falls back to subdivision. */
 function routeLegPoints(
@@ -1127,20 +1154,21 @@ function routeLegPoints(
   if (budget.remaining <= 0) return null;
   const regions = currentSeaRegions();
   const fromRegion =
-    regions === null ? 0 : regionAt(regions, world.worldSize, flagship.x, flagship.y);
+    regions === null ? 0 : regions.at(flagship.x, flagship.y);
   const goalRegion =
-    regions === null ? 0 : regionAt(regions, world.worldSize, leg.x, leg.y);
+    regions === null ? 0 : regions.at(leg.x, leg.y);
   if (regions !== null && fromRegion !== 0 && goalRegion !== 0 && fromRegion !== goalRegion) {
     return null;
   }
-  const allowance = Math.min(budget.remaining, LEG_ROUTE_NODE_CAP);
+  const allowance = Math.min(budget.remaining, LEG_ROUTE_NODE_CAP * ROUTE_CLEARANCE_PROFILE_COUNT);
   const legBudget = createRouteBudget(allowance);
-  const outcome = findRouteWithStatus(
+  const outcome = findBoatRoute(
+    world,
     eroded,
-    HULL_PROFILE,
     { x: flagship.x, y: flagship.y },
     { x: leg.x, y: leg.y },
     legBudget,
+    LEG_ROUTE_NODE_CAP,
   );
   budget.remaining -= allowance - legBudget.remaining;
   if (outcome.plan === null) {
@@ -1376,14 +1404,15 @@ function rescueRoute(
   goalX: number,
   goalY: number,
 ): { readonly cells: ReadonlyArray<RouteCell>; readonly cost: number } | null {
-  const allowance = Math.min(tick.budget.remaining, STUCK_POOL_NODES);
+  const allowance = STUCK_POOL_NODES * ROUTE_CLEARANCE_PROFILE_COUNT;
   const rescue = createRouteBudget(allowance);
-  const outcome = findRouteWithStatus(
+  const outcome = findBoatRoute(
+    tick.world,
     eroded,
-    HULL_PROFILE,
     { x: boat.x, y: boat.y },
     { x: goalX, y: goalY },
     rescue,
+    STUCK_POOL_NODES,
   );
   tick.budget.remaining -= allowance - rescue.remaining;
   if (outcome.status === 'unreachable') {
@@ -1395,15 +1424,13 @@ function rescueRoute(
   return outcome.plan;
 }
 
-/** Rescue is due when cruising is definitionally failing: stuck, or
- * chronically routeless. Station approaches never rescue. */
-function rescueDue(tick: SailTick, voyage: Voyage, cruising: boolean): boolean {
+/** Every failing approach can spend a rescue search, including combat dispatch. */
+function rescueDue(tick: SailTick, voyage: Voyage): boolean {
   return (
-    cruising &&
-    (voyage.noProgressSeconds > BOAT_STUCK_SECONDS ||
-      voyage.nullSeconds > BOAT_STUCK_SECONDS) &&
+    (voyage.noProgressSeconds >= BOAT_STUCK_SECONDS ||
+      voyage.nullSeconds >= BOAT_STUCK_SECONDS) &&
     !voyage.poolTried &&
-    tick.budget.remaining > 0
+    tick.budget.remaining >= STUCK_POOL_NODES * ROUTE_CLEARANCE_PROFILE_COUNT
   );
 }
 
@@ -1573,6 +1600,7 @@ function sailBoat(tick: SailTick, index: number): void {
       noProgressSeconds: 0,
       nullSeconds: 0,
       poolTried: false,
+      terrainVersion,
       slot: null,
       slotList: null,
       heldTicks: 0,
@@ -1583,6 +1611,10 @@ function sailBoat(tick: SailTick, index: number): void {
       anchorTicks: 0,
     };
     voyages.set(boat.id, voyage);
+  }
+  if (voyage.terrainVersion !== terrainVersion) {
+    voyage.poolTried = false;
+    voyage.terrainVersion = terrainVersion;
   }
   // The stuck gate is inclusive: windowed accrual lands on exactly
   // BOAT_STUCK_SECONDS after two stagnant windows, matching the old
@@ -1653,48 +1685,39 @@ function sailBoat(tick: SailTick, index: number): void {
       voyage.goalY = goalY;
     } else if (tick.searchesLeft <= 0) {
       debug.sailDeferred++;
-    } else if (
-      Math.max(Math.abs(boat.x - goalX), Math.abs(boat.y - goalY)) > ROUTE_DIRECT_RANGE_CELLS
-    ) {
-      // Whole-journey spans never fit a trial; a failing boat may spend one
-      // capped rescue from the pool instead of burning trials on them.
-      if (rescueDue(tick, voyage, target === null)) {
-        voyage.poolTried = true;
-        debug.sailRescue++;
-        plan = rescueRoute(tick, eroded, boat, goalX, goalY);
-      } else {
-        debug.farSkips++;
-      }
     } else {
       const key =
         `${Math.floor(boat.x)},${Math.floor(boat.y)}>` +
         `${Math.floor(goalX)},${Math.floor(goalY)}`;
       if (unreachableCache.get(key) === terrainVersion) {
         debug.cacheHits++;
-      } else if (exhaustedCache.get(key) === terrainVersion && !rescueDue(tick, voyage, target === null)) {
+      } else if (exhaustedCache.get(key) === terrainVersion && !rescueDue(tick, voyage)) {
         // Same span filled the box on this terrain version and no rescue is
         // due: re-spending the trial would starve routable searches.
         debug.exhaustedHits++;
       } else {
         const regions = currentSeaRegions();
         const fromRegion =
-          regions === null ? 0 : regionAt(regions, world.worldSize, boat.x, boat.y);
+          regions === null ? 0 : regions.at(boat.x, boat.y);
         const goalRegion =
-          regions === null ? 0 : regionAt(regions, world.worldSize, goalX, goalY);
+          regions === null ? 0 : regions.at(goalX, goalY);
         if (regions !== null && fromRegion !== 0 && goalRegion !== 0 && fromRegion !== goalRegion) {
           debug.regionHits++;
           rememberUnreachable(key);
         } else {
           tick.searchesLeft--;
           debug.sailSearches++;
-          const trial = createRouteBudget(TRIAL_NODE_BUDGET);
-          const outcome = findRouteWithStatus(
+          const allowance = Math.min(budget.remaining, TRIAL_NODE_BUDGET * ROUTE_CLEARANCE_PROFILE_COUNT);
+          const trial = createRouteBudget(allowance);
+          const outcome = findBoatRoute(
+            world,
             eroded,
-            HULL_PROFILE,
             { x: boat.x, y: boat.y },
             { x: goalX, y: goalY },
             trial,
+            TRIAL_NODE_BUDGET,
           );
+          budget.remaining -= allowance - trial.remaining;
           if (outcome.status === 'exhausted') {
             debug.expensive++;
             rememberExhausted(key);
@@ -1708,12 +1731,12 @@ function sailBoat(tick: SailTick, index: number): void {
               fr: fromRegion,
               gr: goalRegion,
               status: outcome.status,
-              spent: TRIAL_NODE_BUDGET - trial.remaining,
+              spent: allowance - trial.remaining,
             };
           }
           if (outcome.status === 'unreachable') rememberUnreachable(key);
           plan = outcome.plan;
-          if (plan === null && outcome.status === 'exhausted' && rescueDue(tick, voyage, target === null)) {
+          if (plan === null && outcome.status === 'exhausted' && rescueDue(tick, voyage)) {
             voyage.poolTried = true;
             debug.sailRescue++;
             plan = rescueRoute(tick, eroded, boat, goalX, goalY);
@@ -1782,17 +1805,6 @@ function sailBoat(tick: SailTick, index: number): void {
   }
   const stride = Math.min(step, range - standoff) * advance * cohesion;
   const turnThisTick = Math.min(maxTurnRadians, stride / BOAT_TIGHTEST_TURN_RADIUS_CELLS);
-  if (voyage.route === null && range > 0) {
-    const probeX = boat.x + ((goalX - boat.x) / range) * stride;
-    const probeY = boat.y + ((goalY - boat.y) / range) * stride;
-    if (!isHullPose(world, eroded, probeX, probeY, boat.heading)) {
-      // Blocked, not arrived: adopt the goal but hold without settling.
-      // Persistent blocks escalate to rescue via the net-motion window.
-      adoptGoal(goalX, goalY);
-      tick.debug.tmpProbe++;
-      return;
-    }
-  }
   const helm = {
     x: boat.x,
     y: boat.y,
@@ -1801,6 +1813,8 @@ function sailBoat(tick: SailTick, index: number): void {
     routeIndex: voyage.routeIndex,
   };
   const others = withoutSelf(berths, berths[index]);
+  const replanAllowance = Math.min(budget.remaining, TRIAL_NODE_BUDGET);
+  const replanBudget = createRouteBudget(replanAllowance);
   const result = followRoute(eroded, HULL_PROFILE, helm, {
     stepCells: stride,
     lookaheadCells: lookahead,
@@ -1811,8 +1825,9 @@ function sailBoat(tick: SailTick, index: number): void {
     permits: (x, y, heading) => isHullPose(world, eroded, x, y, heading),
     maxTurnRadians: turnThisTick,
     aimAheadCells: BOAT_AIM_AHEAD_CELLS,
-    replanNodeBudget: Math.min(budget.remaining, TRIAL_NODE_BUDGET),
+    replanNodeBudget: replanBudget,
   });
+  budget.remaining -= replanAllowance - replanBudget.remaining;
   voyage.sailedFrom = { x: boat.x, y: boat.y };
   boat.heading = helm.heading;
   boat.x = helm.x;
@@ -2065,8 +2080,13 @@ export function advanceFleet(
 
 const FIRE_REACH_CELLS = BOAT_PERSONAL_SPACE_CELLS;
 
-export function burnableBoatAt(x: number, y: number): { id: number; distanceCells: number } | null {
-  const nearest = nearestWithinReach(boats, x, y, FIRE_REACH_CELLS, (boat) => boat);
+export function burnableBoatAt(
+  x: number,
+  y: number,
+  accepts?: (id: number) => boolean,
+): { id: number; distanceCells: number } | null {
+  const candidates = accepts === undefined ? boats : boats.filter((boat) => accepts(boat.id));
+  const nearest = nearestWithinReach(candidates, x, y, FIRE_REACH_CELLS, (boat) => boat);
   return nearest === null
     ? null
     : { id: nearest.item.id, distanceCells: nearest.distanceCells };

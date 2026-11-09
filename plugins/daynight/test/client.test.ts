@@ -161,9 +161,9 @@ describe('lerpPhase', () => {
 describe('DayNightInterpolator', () => {
   it('walks toward the newest phase and clamps at the end of the window', () => {
     const interpolator = new DayNightInterpolator();
-    interpolator.receive(0.1);
+    interpolator.receive({ phase: 0.1, day: null, genesisDay: null });
     interpolator.advance(DEFAULT_INTERPOLATION_SECONDS);
-    interpolator.receive(0.3);
+    interpolator.receive({ phase: 0.3, day: null, genesisDay: null });
 
     expect(interpolator.samplePhase()).toBeCloseTo(0.1, 9);
     interpolator.advance(DEFAULT_INTERPOLATION_SECONDS / 2);
@@ -176,49 +176,49 @@ describe('DayNightInterpolator', () => {
 
   it('places a first-seen phase exactly where the server says it is', () => {
     const interpolator = new DayNightInterpolator();
-    interpolator.receive(0.77);
+    interpolator.receive({ phase: 0.77, day: null, genesisDay: null });
     expect(interpolator.samplePhase()).toBe(0.77);
   });
 
   it('measures the window and clamps it into the documented band', () => {
     const interpolator = new DayNightInterpolator();
-    interpolator.receive(0);
+    interpolator.receive({ phase: 0, day: null, genesisDay: null });
     interpolator.advance(60);
-    interpolator.receive(0.1);
+    interpolator.receive({ phase: 0.1, day: null, genesisDay: null });
     interpolator.advance(MAX_INTERPOLATION_SECONDS);
     expect(interpolator.progress()).toBe(1);
 
     const fast = new DayNightInterpolator();
-    fast.receive(0);
+    fast.receive({ phase: 0, day: null, genesisDay: null });
     fast.advance(1e-9);
-    fast.receive(0.1);
+    fast.receive({ phase: 0.1, day: null, genesisDay: null });
     fast.advance(MIN_INTERPOLATION_SECONDS);
     expect(fast.progress()).toBe(1);
   });
 
   it('starts the next segment from the RENDERED phase, not the last message', () => {
     const interpolator = new DayNightInterpolator();
-    interpolator.receive(0);
+    interpolator.receive({ phase: 0, day: null, genesisDay: null });
     interpolator.advance(DEFAULT_INTERPOLATION_SECONDS);
-    interpolator.receive(0.4);
+    interpolator.receive({ phase: 0.4, day: null, genesisDay: null });
     interpolator.advance(DEFAULT_INTERPOLATION_SECONDS / 4);
     expect(interpolator.samplePhase()).toBeCloseTo(0.1, 9);
-    interpolator.receive(0.6);
+    interpolator.receive({ phase: 0.6, day: null, genesisDay: null });
     expect(interpolator.samplePhase()).toBeCloseTo(0.1, 9);
   });
 
   it('interpolates FORWARD through the midnight seam, never backward through noon', () => {
     const interpolator = new DayNightInterpolator();
-    interpolator.receive(0.98);
+    interpolator.receive({ phase: 0.98, day: null, genesisDay: null });
     interpolator.advance(DEFAULT_INTERPOLATION_SECONDS);
-    interpolator.receive(0.02);
+    interpolator.receive({ phase: 0.02, day: null, genesisDay: null });
     interpolator.advance(DEFAULT_INTERPOLATION_SECONDS / 2);
     expect(interpolator.samplePhase()).toBeCloseTo(0, 9);
   });
 
   it('forgets everything on clear', () => {
     const interpolator = new DayNightInterpolator();
-    interpolator.receive(0.5);
+    interpolator.receive({ phase: 0.5, day: null, genesisDay: null });
     interpolator.clear();
     expect(interpolator.samplePhase()).toBe(0);
   });

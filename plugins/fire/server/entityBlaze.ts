@@ -4,6 +4,7 @@ import {
   entityFuelSource,
   type EntityFuelSource,
   type FlammableIndividual,
+  type ResolvedEntityFuel,
 } from './entityFuel.ts';
 
 interface BurningEntity {
@@ -53,35 +54,24 @@ export class EntityBlaze {
       this.burning.has(fireEntityKey(sourceName, id)),
     );
     if (found === null) return null;
-
-    const key = fireEntityKey(found.source.name, found.id);
-    if (this.burning.has(key)) return null;
-
-    const entity: BurningEntity = {
-      sourceName: found.source.name,
-      id: found.id,
-      burnSeconds: found.fuel.burnSeconds,
-      ageSeconds: 0,
-    };
-    this.burning.set(key, entity);
-    this.ignitedSinceDrain.push(found.source.positionOf(found.id) ?? { x, y });
-    found.source.onIgnited?.([found.id]);
-    return toState(entity);
+    return this.igniteResolved(found);
   }
 
   igniteIndividual(candidate: FlammableIndividual): FireEntityState | null {
-    if (this.burning.size >= FIRE_ENTITY_CAP) return null;
+    const source = entityFuelSource(candidate.sourceName);
+    if (source === null) return null;
+    return this.igniteResolved({ source, id: candidate.id, fuel: candidate.fuel });
+  }
 
-    const { sourceName, id, fuel } = candidate;
+  igniteResolved({ source, id, fuel }: ResolvedEntityFuel): FireEntityState | null {
+    if (this.burning.size >= FIRE_ENTITY_CAP) return null;
+    const sourceName = source.name;
     const key = fireEntityKey(sourceName, id);
     if (this.burning.has(key)) return null;
-
-    const source = entityFuelSource(sourceName);
-    if (source === null) return null;
-
-    if (fuel.burnSeconds <= 0) return null;
-
-    if (source.positionOf(id) === null) return null;
+    if (entityFuelSource(sourceName) !== source) return null;
+    if (!Number.isFinite(fuel.burnSeconds) || fuel.burnSeconds <= 0) return null;
+    const at = source.positionOf(id);
+    if (at === null) return null;
 
     const entity: BurningEntity = {
       sourceName,
@@ -90,7 +80,7 @@ export class EntityBlaze {
       ageSeconds: 0,
     };
     this.burning.set(key, entity);
-    this.ignitedSinceDrain.push({ x: candidate.x, y: candidate.y });
+    this.ignitedSinceDrain.push({ x: at.x, y: at.y });
     source.onIgnited?.([id]);
     return toState(entity);
   }

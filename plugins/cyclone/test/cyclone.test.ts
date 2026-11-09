@@ -86,9 +86,21 @@ describe('the cyclone slice', () => {
     expect(cyclones.spawnAt(WORLD, 100, 120).name).toBe('Hurricane Bramble');
   });
 
-  it('leaves an empty sky when the slice is unreadable, rather than the old one', () => {
+  it('refuses an unreadable slice and leaves an empty sky, rather than the old one', () => {
     cyclones.spawnAt(WORLD, 100, 120);
-    loadCyclones({ storms: 'not a list' });
+    expect(loadCyclones({ storms: 'not a list' })).toBe('refuse');
+    expect(cyclones.count()).toBe(0);
+  });
+
+  it('propagates refusal through the persistence hook so the host can park the bytes', () => {
+    const world = seaWorld(openSea).api;
+    cyclonePlugin.onWorldCreate!(world);
+    cyclones.spawnAt(world, SITE.x, SITE.y);
+
+    const outcome = cyclonePlugin.persistence!.load({ storms: 'not a list' }, CYCLONE_SLICE_VERSION);
+    cyclonePlugin.onWorldCreate!(world);
+
+    expect(outcome).toBe('refuse');
     expect(cyclones.count()).toBe(0);
   });
 
@@ -107,6 +119,24 @@ describe('where a cyclone forms', () => {
     const world = seaWorld((x, y) => (x === SITE.x && y === SITE.y ? SEA_LEVEL : LAND_HEIGHT)).api;
     expect(isCycloneSite(world, SITE.x, SITE.y)).toBe(false);
     expect(isCycloneSite(seaWorld(openSea).api, SITE.x, SITE.y)).toBe(true);
+  });
+});
+
+describe('cyclone landfall', () => {
+  it.each([0.5, 1])('weakens a storm with envelope %s over land', (envelope) => {
+    const world = seaWorld(continent).api;
+    const storm = cyclones.spawnAt(world, SITE.x, SITE.y);
+    const landfallSeconds = 10;
+    const tickSeconds = 0.1;
+    storm.envelope = envelope;
+    storm.lifeSeconds += landfallSeconds;
+
+    for (let tick = 0; tick < landfallSeconds / tickSeconds; tick++) {
+      cyclones.advance(world, tickSeconds);
+    }
+
+    expect(storm.retiring).toBe(false);
+    expect(storm.envelope).toBeLessThan(envelope);
   });
 });
 

@@ -117,7 +117,7 @@ export class RollbackService {
     }
 
     try {
-      this.saveCurrent();
+      this.saveCurrent(true);
       world.markSnapshotted();
     } catch (error) {
       logError('rolled-back world could not be snapshotted; scheduler will retry', error);
@@ -133,20 +133,24 @@ export class RollbackService {
     return { type: 'rollbackResult', ok: true, toId, undoId };
   }
 
-  private saveCurrent(): number {
+  private saveCurrent(retainPrevious = false): number {
     const { world, host, store } = this.deps;
-    return store.saveSnapshot({
+    const pluginSlices = host.collectPersistence();
+    const persistenceGeneration = host.beginPersistenceSave();
+    const id = store.saveSnapshot({
       worldSize: world.size,
       name: world.name,
       cells: world.heightsForPersistence(),
       columnSpans: world.spansForPersistence(),
       mask: world.mask,
-      pluginSlices: host.collectPersistence(),
+      pluginSlices,
       tokenMasks: world.tokenMasks(),
       simMillis: world.simMillis,
       genesisMillis: world.genesisMillis,
       thumbnail: buildThumbnail(world.map.cells, world.size),
-    });
+    }, { retainPrevious });
+    host.notePersistenceSaved(pluginSlices, persistenceGeneration);
+    return id;
   }
 
   private announceToAll(): void {

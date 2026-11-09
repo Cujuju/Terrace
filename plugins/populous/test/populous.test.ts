@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   POPULOUS_CAPACITY_BY_TIER,
+  GROWTH_MODEL_VERSION,
   POPULOUS_GROWTH_PER_STEP,
   POPULOUS_POPULATION_AFTER_EMIT,
   POPULOUS_TIER_BY_FLAT_NEIGHBORS,
-  POPULOUS_TIER_CLIMB_PER_STEP,
   populousTierFor,
   stepPopulous,
   type PopulousCellRecord,
@@ -22,6 +22,7 @@ import { worldWithSibling } from '../../../server/test/support/harness.ts';
 
 const WORLD_SIZE = 64;
 const MAX_TIER = 5;
+const DENSE_CHAIN = Array.from({ length: MAX_TIER + 1 }, (_, kind) => kind);
 const KEY_STRIDE = 65536;
 
 function key(x: number, y: number): number {
@@ -51,11 +52,23 @@ function contextExcept(blocked: ReadonlyArray<readonly [number, number]>): Popul
   const denied = new Set(blocked.map(([x, y]) => key(x, y)));
   return {
     maxTier: MAX_TIER,
+    resolveStage: (_x, _y, tier) => ({ kind: tier, tier }),
+    nextStage(_x, _y, ceiling, current) {
+      const next = DENSE_CHAIN[DENSE_CHAIN.indexOf(current.kind!) + 1];
+      const tier = ceiling < current.tier ? ceiling : next === undefined || next > ceiling ? current.tier : next;
+      return { kind: tier, tier };
+    },
     isBuildable(x: number, y: number): boolean {
       if (x < 0 || y < 0 || x >= WORLD_SIZE || y >= WORLD_SIZE) return false;
       return !denied.has(key(x, y));
     },
     hasBuildingWithinSeparation: separationCheck,
+    absorbedByUpgrade(cells, x, y, kind) {
+      if (kind === 0) return [];
+      return [...cells].filter(([cell, record]) => record.tier === 0 &&
+        Math.abs(cell % KEY_STRIDE - x) <= SEPARATION &&
+        Math.abs(Math.floor(cell / KEY_STRIDE) - y) <= SEPARATION).map(([cell]) => cell);
+    },
   };
 }
 
@@ -102,7 +115,7 @@ describe('tier follows the flat, buildable ground around a house', () => {
     let live = boardOf([[10, 10]]);
     const ctx = contextExcept([]);
     const top = populousTierFor(8, MAX_TIER);
-    for (let expected = POPULOUS_TIER_CLIMB_PER_STEP; expected <= top; expected += POPULOUS_TIER_CLIMB_PER_STEP) {
+    for (const expected of DENSE_CHAIN.slice(1)) {
       const result = stepPopulous(world, live, ctx);
       live = result.nextLive;
       expect(live.get(key(10, 10))!.tier).toBe(Math.min(top, expected));
@@ -132,7 +145,7 @@ describe('tier follows the flat, buildable ground around a house', () => {
     const after = result.nextLive.get(key(10, 10))!;
     expect(after.tier).toBe(populousTierFor(2, MAX_TIER));
     expect(after.tier).toBeLessThan(MAX_TIER);
-    expect(result.upgraded).toEqual([{ x: 10, y: 10, tier: after.tier }]);
+    expect(result.upgraded).toEqual([{ x: 10, y: 10, tier: after.tier, kind: after.kind }]);
   });
 
   it('never births a house from neighbour count alone', () => {
@@ -259,6 +272,7 @@ describe('the plugin', () => {
   it('offers its model on every open and takes it back when the world closes', () => {
     const registered: unknown[] = [];
     const world = worldWithSibling('structures', {
+      GROWTH_MODEL_VERSION,
       setGrowthModel: (m: unknown) => registered.push(m),
     });
 
@@ -277,7 +291,7 @@ describe('the plugin', () => {
     expect(registered).toEqual([]);
 
     loadStructuresBridge(
-      worldWithSibling('structures', { setGrowthModel: (m: unknown) => registered.push(m) }),
+      worldWithSibling('structures', { GROWTH_MODEL_VERSION, setGrowthModel: (m: unknown) => registered.push(m) }),
     );
     expect(registered).toEqual([growthModelForTest()]);
   });
@@ -285,6 +299,16 @@ describe('the plugin', () => {
   it('loads with structures absent rather than throwing', () => {
     registerGrowthModel(growthModelForTest());
     loadStructuresBridge(worldWithSibling('structures', {}));
+  });
+
+  it('does not register with an older growth-context provider', () => {
+    const registered: unknown[] = [];
+    loadStructuresBridge(worldWithSibling('structures', {
+      GROWTH_MODEL_VERSION: GROWTH_MODEL_VERSION - 1,
+      setGrowthModel: (model: unknown) => registered.push(model),
+    }));
+    registerGrowthModel(growthModelForTest());
+    expect(registered).toEqual([]);
   });
 
   it('sends a settler out of the house that filled, through pilgrims', () => {
@@ -332,7 +356,44 @@ describe('the plugin', () => {
 });
 
 describe('buildings never stand within the separation of one another', () => {
-  const STEPS = Math.ceil(MAX_TIER / POPULOUS_TIER_CLIMB_PER_STEP) + 1;
+  const STEPS = DENSE_CHAIN.length;
+
+  it('removes upgrade and emission records for a camp absorbed later in the generation', () => {
+    const ctx = contextExcept([]);
+    ctx.nextStage = (x) => x === 10 ? { kind: 100, tier: 0 } : { kind: 1, tier: 1 };
+    const result = stepPopulous(world, boardOf([[10, 10], [14, 10]],
+      { kind: 0, tier: 0, age: 1, population: 7 }), ctx);
+    expect([...result.nextLive.keys()]).toEqual([key(14, 10)]);
+    expect(result.died).toEqual([{ x: 10, y: 10 }]);
+    expect(result.upgraded).toEqual([{ x: 14, y: 10, kind: 1, tier: 1 }]);
+    expect(result.emitted).toEqual([{ x: 14, y: 10 }]);
+  });
+
+  it('publishes resolved occupancy before deciding the next camp in a homestead', () => {
+    const ctx = contextExcept([]);
+    const result = stepPopulous(world, boardOf([[10, 10], [11, 10], [10, 11], [11, 11]]), ctx);
+    expect(result.nextLive.size).toBe(1);
+    const only = [...result.nextLive.values()][0];
+    expect(only.kind).toBe(only.tier);
+    expect(result.upgraded).toHaveLength(1);
+    expect(result.died).toHaveLength(3);
+  });
+
+  it('retains the supported current building when its proposed lot is blocked', () => {
+    const base = contextExcept([]);
+    const currentKind = 100;
+    const proposedKind = 200;
+    const ctx: PopulousContext = {
+      ...base,
+      resolveStage: (_x, _y, tier) => ({ kind: tier <= 1 ? currentKind : proposedKind, tier }),
+      nextStage: () => ({ kind: proposedKind, tier: 2 }),
+      isBuildable: (x, y, kind) => kind !== proposedKind && base.isBuildable(x, y),
+    };
+    const live = boardOf([[10, 10]], { kind: currentKind, tier: 1, age: 4, population: 0 });
+    const result = stepPopulous(world, live, ctx);
+    expect(result.nextLive.get(key(10, 10))).toEqual({ kind: currentKind, tier: 1, age: 5, population: 1 });
+    expect(result.upgraded).toEqual([]);
+  });
 
   it('promotes one cell of a 2×2 homestead and demolishes the other three', () => {
     const ctx = contextExcept([]);

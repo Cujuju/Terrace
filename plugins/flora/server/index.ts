@@ -60,9 +60,12 @@ import { parseStructuresOccupation } from './structures-event.ts';
 import {
   parseStormDamage,
   severityAt,
+  STORM_WIND_FALLOFF_EYEWALL,
+  STORM_WIND_FALLOFF_QUADRATIC,
 } from '../../../server/src/plugins/kit/rotatingStormDamage.ts';
 import {
   CYCLONE_DAMAGE_EVENT_NAME,
+  TORNADO_DAMAGE_EVENT_NAME,
   FLORA_WIND_CROP_FLATTEN_CHANCE_PER_SEVERITY_SECOND,
   FLORA_WIND_CROP_MIN_SEVERITY,
   FLORA_WIND_CROP_REGROW_SECONDS,
@@ -682,9 +685,10 @@ function reactToBurnedOutCells(payload: unknown): void {
   for (const cell of cells) scorchField.scorch(cell.x, cell.y, simSeconds);
 }
 
-function reactToCycloneDamage(payload: unknown): void {
+function reactToWindDamage(event: string, payload: unknown): void {
   if (fuelWorld === null) return;
-  const damage = parseStormDamage(payload);
+  const damage = parseStormDamage(payload, event === TORNADO_DAMAGE_EVENT_NAME
+    ? STORM_WIND_FALLOFF_QUADRATIC : STORM_WIND_FALLOFF_EYEWALL);
   if (damage === null) return;
 
   const taken: TreeCell[] = [];
@@ -788,7 +792,9 @@ export const plugin: TerracePlugin = {
   onWorldEvent(world: WorldApi, event: string, payload: unknown): void {
     if (event === 'structures:changes') onStructuresChanges(world, payload);
     if (event === FIRE_CELLS_BURNED_OUT_EVENT_NAME) reactToBurnedOutCells(payload);
-    if (event === CYCLONE_DAMAGE_EVENT_NAME) reactToCycloneDamage(payload);
+    if (event === CYCLONE_DAMAGE_EVENT_NAME || event === TORNADO_DAMAGE_EVENT_NAME) {
+      reactToWindDamage(event, payload);
+    }
   },
 
   onPlayerJoin(world: WorldApi, player: Player): void {

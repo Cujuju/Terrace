@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import type { LoadedPlugin } from './plugins/types.ts';
 import { SERVER_VERSION } from './version.ts';
+import { coreVersionStamp } from './core-version.ts';
 
 const BUILD_IDENTITY_LENGTH = 12;
 
@@ -13,10 +14,12 @@ export const UNKNOWN_BUILD_IDENTITY = 'unknown';
 let identity: string = UNKNOWN_BUILD_IDENTITY;
 
 let clientManifest: string = NO_CLIENT_DIST;
+let coreStamp = '';
 
 function digestOf(plugins: readonly LoadedPlugin[]): string {
   const hash = createHash('sha256');
   hash.update(`server:${SERVER_VERSION}\n`);
+  hash.update(`core:${coreStamp}\n`);
   for (const loaded of plugins) {
     hash.update(`plugin:${loaded.plugin.name}:${loaded.version}\n`);
   }
@@ -31,6 +34,7 @@ export function initBuildIdentity(args: {
   if (identity !== UNKNOWN_BUILD_IDENTITY) {
     throw new Error('initBuildIdentity() called twice — boot order bug');
   }
+  coreStamp = coreVersionStamp(resolve(import.meta.dirname, '..', '..'));
 
   try {
     clientManifest = readFileSync(join(args.clientDistPath, 'index.html'), 'utf8');

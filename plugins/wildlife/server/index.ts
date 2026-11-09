@@ -126,8 +126,8 @@ export const plugin: TerracePlugin = {
     loadFireBridge(world);
     registerWildlifeFuel({
       name: WILDLIFE_PLUGIN_NAME,
-      entityAt: (x: number, y: number) => {
-        const found = burnableEntityAt(x, y);
+      entityAt: (x: number, y: number, accepts?: (id: number) => boolean) => {
+        const found = burnableEntityAt(x, y, accepts);
         if (found === null) return null;
         return {
           id: found.entity.id,

@@ -91,8 +91,8 @@ export const plugin: TerracePlugin = {
     loadFireBridge(world);
     registerPilgrimsFuel({
       name: PILGRIMS_PLUGIN_NAME,
-      entityAt: (x: number, y: number) => {
-        const walker = burnableWalkerAt(x, y);
+      entityAt: (x: number, y: number, accepts?: (id: number) => boolean) => {
+        const walker = burnableWalkerAt(x, y, accepts);
         if (walker === null) return null;
         return {
           id: walker.id,
@@ -154,8 +154,13 @@ function* allWalkers(): Generator<{ id: number; x: number; y: number }> {
   yield* settling.states();
 }
 
-function burnableWalkerAt(x: number, y: number): { id: number; distanceCells: number } | null {
-  const nearest = nearestWithinReach(allWalkerStates(), x, y, FIRE_CELL_REACH, (walker) => walker);
+function burnableWalkerAt(
+  x: number,
+  y: number,
+  accepts?: (id: number) => boolean,
+): { id: number; distanceCells: number } | null {
+  const candidates = allWalkerStates().filter((walker) => accepts?.(walker.id) ?? true);
+  const nearest = nearestWithinReach(candidates, x, y, FIRE_CELL_REACH, (walker) => walker);
   return nearest === null
     ? null
     : { id: nearest.item.id, distanceCells: nearest.distanceCells };

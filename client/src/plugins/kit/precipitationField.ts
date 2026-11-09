@@ -1,9 +1,12 @@
 import {
   BufferGeometry,
   Float32BufferAttribute,
+  InstancedBufferAttribute,
   LineSegments,
-  Points,
+  PlaneGeometry,
+  Sprite,
   type Object3D,
+  type SpriteMaterial,
 } from 'three';
 import { LineBasicNodeMaterial, PointsNodeMaterial, type NodeMaterial } from 'three/webgpu';
 import {
@@ -98,14 +101,20 @@ export function createPrecipitationField(
     }
   }
 
-  const geometry = new BufferGeometry();
-  geometry.setAttribute('position', new Float32BufferAttribute(new Float32Array(vertices * 3), 3));
-  geometry.setAttribute('aSlot', new Float32BufferAttribute(slotOf, 1));
-  geometry.setAttribute('aDisc', new Float32BufferAttribute(disc, 2));
-  geometry.setAttribute('aBirth', new Float32BufferAttribute(births, 1));
-  geometry.setAttribute('aPhase', new Float32BufferAttribute(phases, 1));
-  geometry.setAttribute('aDensity', new Float32BufferAttribute(densities, 1));
-  geometry.setAttribute('aEnd', new Float32BufferAttribute(ends, 1));
+  const geometry = profile.form === 'streak' ? new BufferGeometry() : new PlaneGeometry();
+  if (profile.form === 'streak') {
+    geometry.setAttribute('position', new Float32BufferAttribute(new Float32Array(vertices * 3), 3));
+  }
+  const particleAttribute = (array: Float32Array, itemSize: number) =>
+    profile.form === 'streak'
+      ? new Float32BufferAttribute(array, itemSize)
+      : new InstancedBufferAttribute(array, itemSize);
+  geometry.setAttribute('aSlot', particleAttribute(slotOf, 1));
+  geometry.setAttribute('aDisc', particleAttribute(disc, 2));
+  geometry.setAttribute('aBirth', particleAttribute(births, 1));
+  geometry.setAttribute('aPhase', particleAttribute(phases, 1));
+  geometry.setAttribute('aDensity', particleAttribute(densities, 1));
+  geometry.setAttribute('aEnd', particleAttribute(ends, 1));
 
   const slots = createMassSlots(spec.maxMasses);
   const massDensity: number[] = Array.from({ length: spec.maxMasses }, () => 1);
@@ -168,7 +177,14 @@ export function createPrecipitationField(
   spec.applyRevealClip(material, label);
 
   const object =
-    profile.form === 'streak' ? new LineSegments(geometry, material) : new Points(geometry, material);
+    material instanceof PointsNodeMaterial
+      // Sprite accepts node materials at runtime; its typings still require SpriteMaterial.
+      ? new Sprite(material as unknown as SpriteMaterial)
+      : new LineSegments(geometry, material);
+  if (object instanceof Sprite) {
+    object.geometry = geometry;
+    object.count = particles;
+  }
   object.name = `${spec.name}:precipitation`;
   object.renderOrder = spec.renderOrder;
   object.visible = false;

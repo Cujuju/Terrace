@@ -5,10 +5,6 @@ import {
   ARENA_RADIUS_CELLS,
   BREATHE_RADIUS_FRACTION,
   CLIMB_WORLD_UNITS,
-  CRASH_CRATER_DEPTH_BANDS,
-  CRASH_CRATER_RADIUS_CELLS,
-  CRASH_SEABED_CRATER_MAX_DEPTH_BANDS,
-  CRASH_FIRE_RING_OFFSETS,
   CRASH_WIRE_SECONDS,
   DIVE_SECONDS,
   DOGFIGHT_SECONDS,
@@ -16,7 +12,6 @@ import {
   ENTRY_DISTANCE_CELLS,
   EXIT_SPEED_MAX_CELLS_PER_SECOND,
   FLYBY_SECONDS,
-  HEIGHT_WORLD_SCALE,
   LASER_BOLT_RETAIN_SECONDS,
   LASER_BOLT_SPEED_CELLS_PER_SECOND,
   LASER_BURST_REST_MAX_SECONDS,
@@ -47,20 +42,19 @@ import {
   type SaucerState,
   SAUCER_DIAMETER_CELLS,
 } from '../protocol.ts';
-import { BAND_HEIGHT, CELL_WORLD_SIZE } from '@terrace/shared';
-import { igniteCrashCell } from './fire-bridge.ts';
+import { CELL_WORLD_SIZE, type CellDiff } from '@terrace/shared';
+import { applyCrash, type CrashWorld } from './crash.ts';
 import { createEncounterRng } from './rng.ts';
 import {
   findArenaSite,
   findArenaSiteNear,
+  crashCellAt,
+  FLIGHT_ARENA_RADIUS_CELLS,
   type ArenaSite,
   type CrashCell,
-  type SiteWorld,
 } from './site.ts';
 
-export interface EncounterWorld extends SiteWorld {
-  sculpt(x: number, y: number, radius: number, amount: number): unknown;
-}
+export type EncounterWorld = CrashWorld;
 
 const BREATHE_RADIANS_PER_SECOND_MIN = 0.9;
 const BREATHE_RADIANS_PER_SECOND_MAX = 1.6;
@@ -85,7 +79,9 @@ const WINGMATE_BEARING_SPREAD_RADIANS = 0.35;
 
 const EXIT_CLIMB_WORLD_UNITS = 12;
 
-const CRASH_CRATER_AMOUNT = -(CRASH_CRATER_DEPTH_BANDS * BAND_HEIGHT);
+const MAX_EXIT_DISTANCE_CELLS = exitDistance(
+  Math.max(APPROACH_SPEED_CELLS_PER_SECOND, DOGFIGHT_SPEED_CELLS_PER_SECOND), 1,
+);
 
 type Resolution = 'dive' | 'exit';
 
@@ -110,6 +106,8 @@ interface Saucer {
   lastTarget: number | null;
   resolution: Resolution;
   resolveSeconds: number;
+  resolveCarrySeconds: number;
+  diveAtColumn: boolean;
   crashCell: CrashCell | null;
   resolveFromX: number;
   resolveFromY: number;
@@ -225,6 +223,7 @@ function rung(rank: number, count: number, min: number, max: number): number {
 }
 
 function begin(
+  world: EncounterWorld,
   kind: EncounterKind,
   site: ArenaSite,
   roster: Roster,
@@ -276,6 +275,8 @@ function begin(
         lastTarget: null,
         resolution: 'exit',
         resolveSeconds: 0,
+        resolveCarrySeconds: 0,
+        diveAtColumn: false,
         crashCell: null,
         resolveFromX: 0,
         resolveFromY: 0,
@@ -307,6 +308,7 @@ function begin(
     crashCellsUsed: 0,
   };
 
+  certifyFlight(world, encounter);
   placeSaucers();
   return seed;
 }
@@ -327,7 +329,7 @@ export function trySpawnEncounter(world: EncounterWorld, kind: EncounterKind): E
   if (site === null) return null;
   return {
     kind,
-    seed: begin(kind, site, roster, rng),
+    seed: begin(world, kind, site, roster, rng),
     site,
     saucers: roster.total,
     factions: roster.factionVariants.length,
@@ -346,7 +348,7 @@ export function forceEncounterNear(
   if (site === null) return null;
   return {
     kind,
-    seed: begin(kind, site, roster, rng),
+    seed: begin(world, kind, site, roster, rng),
     site,
     saucers: roster.total,
     factions: roster.factionVariants.length,
@@ -436,6 +438,42 @@ function placeOnCurve(saucer: Saucer, site: ArenaSite, t: number): void {
 
 const curveStartPose: CurvePose = { x: 0, y: 0, alt: 0, heading: 0 };
 
+function poseOnFlyby(saucer: Saucer, site: ArenaSite, seconds: number, out: CurvePose): void {
+  const inward = ENTRY_DISTANCE_CELLS - APPROACH_SPEED_CELLS_PER_SECOND * seconds;
+  const along = inward + Math.abs(saucer.formationSlot) * FLYBY_WING_STAGGER_CELLS;
+  const abeam = saucer.formationSlot * FLYBY_WING_SPACING_CELLS;
+  const cos = Math.cos(saucer.bearing);
+  const sin = Math.sin(saucer.bearing);
+  out.x = site.centreX + cos * along - sin * abeam;
+  out.y = site.centreY + sin * along + cos * abeam;
+  out.alt = site.altitude;
+  out.heading = saucer.bearing + Math.PI;
+}
+
+function exitDistance(speed: number, t: number): number {
+  const gain = EXIT_SPEED_MAX_CELLS_PER_SECOND - speed;
+  return RESOLVE_SECONDS * (speed * t + (gain * t * t * t) / 3);
+}
+
+function certifyFlight(world: EncounterWorld, live: Encounter): void {
+  const { site } = live;
+  const centre = { x: site.centreX, y: site.centreY };
+  for (const saucer of live.saucers) {
+    if (live.kind === 'flyby') {
+      poseOnFlyby(saucer, site, 0, shooterPose);
+      poseOnFlyby(saucer, site, FLYBY_SECONDS, targetPose);
+      site.terrain.includeCorridor(world, shooterPose, targetPose);
+      continue;
+    }
+    // Every orbit and crash target is inside the arena; its swept disc covers every possible approach, dive and exit.
+    const reach = Math.max(ENTRY_DISTANCE_CELLS, MAX_EXIT_DISTANCE_CELLS);
+    site.terrain.includeCorridor(world, centre, {
+      x: centre.x + Math.cos(saucer.bearing) * reach,
+      y: centre.y + Math.sin(saucer.bearing) * reach,
+    }, FLIGHT_ARENA_RADIUS_CELLS);
+  }
+}
+
 function poseOnApproach(saucer: Saucer, site: ArenaSite, t: number, out: CurvePose): void {
   poseOnCurve(saucer, site, 0, curveStartPose);
   const curveStart = Math.hypot(curveStartPose.x - site.centreX, curveStartPose.y - site.centreY);
@@ -468,15 +506,7 @@ function placeSaucers(): void {
     }
 
     if (saucer.phase === 'flyby') {
-      const inward = ENTRY_DISTANCE_CELLS - APPROACH_SPEED_CELLS_PER_SECOND * live.stageSeconds;
-      const along = inward + Math.abs(saucer.formationSlot) * FLYBY_WING_STAGGER_CELLS;
-      const abeam = saucer.formationSlot * FLYBY_WING_SPACING_CELLS;
-      const cos = Math.cos(saucer.bearing);
-      const sin = Math.sin(saucer.bearing);
-      saucer.x = site.centreX + cos * along - sin * abeam;
-      saucer.y = site.centreY + sin * along + cos * abeam;
-      saucer.alt = site.altitude;
-      saucer.heading = saucer.bearing + Math.PI;
+      poseOnFlyby(saucer, site, live.stageSeconds, saucer);
       saucer.speed = APPROACH_SPEED_CELLS_PER_SECOND;
       continue;
     }
@@ -492,20 +522,26 @@ function placeSaucers(): void {
       const dx = cell.x - saucer.resolveFromX;
       const dy = cell.y - saucer.resolveFromY;
       const dAlt = cell.groundY - saucer.resolveFromAlt;
-      const length = Math.hypot(dx, dy, dAlt / CELL_WORLD_SIZE);
+      const horizontalLength = Math.hypot(dx, dy);
+      const verticalLength = Math.abs(dAlt) / CELL_WORLD_SIZE;
+      const length = horizontalLength + verticalLength;
       const entry =
         length > 0 ? Math.min(1, (saucer.resolveFromSpeed * saucer.diveSeconds) / length) : 1;
       const fall = entry * t + (1 - entry) * t * t;
-      saucer.x = saucer.resolveFromX + dx * fall;
-      saucer.y = saucer.resolveFromY + dy * fall;
-      saucer.alt = saucer.resolveFromAlt + dAlt * fall;
+      const travelled = length * fall;
+      const horizontal = saucer.diveAtColumn || horizontalLength === 0 ? 1 : Math.min(1, travelled / horizontalLength);
+      const vertical = verticalLength > 0 ? clamp01((travelled - horizontalLength) / verticalLength) : 1;
+      // Cross the certified corridor above its terrain, then descend at the impact cell.
+      saucer.x = saucer.resolveFromX + dx * horizontal;
+      saucer.y = saucer.resolveFromY + dy * horizontal;
+      saucer.alt = saucer.resolveFromAlt + dAlt * vertical;
       saucer.heading = Math.atan2(dy, dx);
       saucer.speed = ((entry + 2 * (1 - entry) * t) * length) / saucer.diveSeconds;
       continue;
     }
     const t = clamp01(saucer.resolveSeconds / RESOLVE_SECONDS);
     const gain = EXIT_SPEED_MAX_CELLS_PER_SECOND - saucer.resolveFromSpeed;
-    const run = RESOLVE_SECONDS * (saucer.resolveFromSpeed * t + (gain * t * t * t) / 3);
+    const run = exitDistance(saucer.resolveFromSpeed, t);
     saucer.x = saucer.resolveFromX + Math.cos(saucer.bearing) * run;
     saucer.y = saucer.resolveFromY + Math.sin(saucer.bearing) * run;
     saucer.alt = saucer.resolveFromAlt + EXIT_CLIMB_WORLD_UNITS * t * t * t;
@@ -556,7 +592,7 @@ function saucerById(live: Encounter, id: number): Saucer | null {
   return null;
 }
 
-function advanceFight(dt: number): void {
+function advanceBolts(dt: number): void {
   const live = encounter;
   if (live === null) return;
 
@@ -574,6 +610,11 @@ function advanceFight(dt: number): void {
   if (live.bolts.length > 0) {
     live.bolts = live.bolts.filter((bolt) => bolt.age < LASER_BOLT_RETAIN_SECONDS);
   }
+}
+
+function advanceFight(dt: number): void {
+  const live = encounter;
+  if (live === null) return;
 
   for (const shooter of live.saucers) {
     if (!isFighting(shooter)) continue;
@@ -667,19 +708,29 @@ function resolveAs(saucer: Saucer, resolution: Resolution, cell: CrashCell | nul
   saucer.resolution = resolution;
   saucer.crashCell = cell;
   saucer.resolveSeconds = 0;
+  saucer.resolveCarrySeconds = 0;
+  saucer.diveAtColumn = cell !== null && cell.x === saucer.x && cell.y === saucer.y;
   saucer.resolveFromX = saucer.x;
   saucer.resolveFromY = saucer.y;
   saucer.resolveFromAlt = saucer.alt;
   saucer.resolveFromSpeed = saucer.speed;
   saucer.diveSeconds = DIVE_SECONDS;
   if (cell !== null && saucer.speed > 0) {
-    const length = Math.hypot(
-      cell.x - saucer.x,
-      cell.y - saucer.y,
-      (cell.groundY - saucer.alt) / CELL_WORLD_SIZE,
-    );
+    const length = Math.hypot(cell.x - saucer.x, cell.y - saucer.y) +
+      Math.abs(cell.groundY - saucer.alt) / CELL_WORLD_SIZE;
     saucer.diveSeconds = Math.min(DIVE_SECONDS, length / saucer.speed);
   }
+}
+
+function diveCornerSeconds(saucer: Saucer, cell: CrashCell): number {
+  const horizontal = Math.hypot(cell.x - saucer.resolveFromX, cell.y - saucer.resolveFromY);
+  const length = horizontal + Math.abs(cell.groundY - saucer.resolveFromAlt) / CELL_WORLD_SIZE;
+  if (length === 0 || horizontal === 0) return 0;
+  const fraction = horizontal / length;
+  const entry = Math.min(1, (saucer.resolveFromSpeed * saucer.diveSeconds) / length);
+  // Invert entry*t + (1-entry)*t² without subtracting nearly equal roots.
+  const t = (2 * fraction) / (entry + Math.sqrt(entry * entry + 4 * (1 - entry) * fraction));
+  return t * saucer.diveSeconds;
 }
 
 function fightingFactions(live: Encounter): number[] {
@@ -707,25 +758,6 @@ function decideOnTime(live: Encounter): void {
   }
 }
 
-function applyCrash(world: EncounterWorld, cell: CrashCell): void {
-  if (cell.water) {
-    if (cell.depthBands <= CRASH_SEABED_CRATER_MAX_DEPTH_BANDS) {
-      world.sculpt(cell.x, cell.y, CRASH_CRATER_RADIUS_CELLS, CRASH_CRATER_AMOUNT);
-    }
-    return;
-  }
-  world.sculpt(cell.x, cell.y, CRASH_CRATER_RADIUS_CELLS, CRASH_CRATER_AMOUNT);
-
-  for (const [dx, dy] of CRASH_FIRE_RING_OFFSETS) {
-    igniteRingCell(cell.x + dx, cell.y + dy, world.worldSize);
-  }
-}
-
-function igniteRingCell(x: number, y: number, worldSize: number): void {
-  if (x < 0 || y < 0 || x >= worldSize || y >= worldSize) return;
-  igniteCrashCell(x, y);
-}
-
 export interface EncounterTick {
   readonly changed: boolean;
   readonly crashed: readonly CrashCell[];
@@ -739,6 +771,7 @@ export function advanceEncounter(world: EncounterWorld, dt: number): EncounterTi
   if (live === null) return NO_CHANGE;
 
   live.stageSeconds += dt;
+  advanceBolts(dt);
 
   if (live.stage === 'flyby') {
     if (live.stageSeconds >= FLYBY_SECONDS) {
@@ -776,16 +809,30 @@ export function advanceEncounter(world: EncounterWorld, dt: number): EncounterTi
   const crashed: CrashCell[] = [];
   for (const saucer of live.saucers) {
     if (saucer.phase !== 'resolve') continue;
-    saucer.resolveSeconds += dt;
+    if (saucer.crashCell !== null) {
+      saucer.crashCell = crashCellAt(world, saucer.crashCell.x, saucer.crashCell.y);
+    }
+    saucer.resolveSeconds += dt + saucer.resolveCarrySeconds;
+    saucer.resolveCarrySeconds = 0;
+    if (saucer.resolution === 'dive' && !saucer.diveAtColumn && saucer.crashCell !== null) {
+      const corner = diveCornerSeconds(saucer, saucer.crashCell);
+      if (saucer.resolveSeconds >= corner) {
+        // Publish the corner before descending so client interpolation cannot cut across the terrain. Carry the overshoot into the next tick.
+        saucer.resolveCarrySeconds = saucer.resolveSeconds - corner;
+        saucer.resolveSeconds = corner;
+        saucer.diveAtColumn = true;
+      }
+    }
     const lasts = saucer.resolution === 'dive' ? saucer.diveSeconds : RESOLVE_SECONDS;
     if (saucer.resolveSeconds < lasts) continue;
     saucer.gone = true;
     const cell = saucer.crashCell;
     if (saucer.resolution !== 'dive' || cell === null) continue;
-    applyCrash(world, cell);
+    const impact = applyCrash(world, cell);
+    if (impact === null) continue;
     const age = saucer.resolveSeconds - lasts;
-    live.crashes.push({ id: saucer.id, x: cell.x, y: cell.y, water: cell.water, age });
-    crashed.push(cell);
+    live.crashes.push({ id: saucer.id, x: impact.x, y: impact.y, water: impact.water, age });
+    crashed.push(impact);
   }
   if (live.saucers.some((saucer) => saucer.gone)) {
     const kept = live.saucers.filter((saucer) => !saucer.gone);
@@ -800,6 +847,24 @@ export function advanceEncounter(world: EncounterWorld, dt: number): EncounterTi
 
   placeSaucers();
   return { changed: true, crashed, ended: false };
+}
+
+export function refreshEncounterTerrain(world: EncounterWorld, diff: readonly CellDiff[]): boolean {
+  const live = encounter;
+  if (live === null) return false;
+  const rise = live.site.terrain.refresh(world, diff);
+  if (rise <= 0) return false;
+  for (const saucer of live.saucers) {
+    saucer.alt += rise;
+    if (saucer.phase === 'resolve') saucer.resolveFromAlt += rise;
+  }
+  return true;
+}
+
+export function encounterVisibleTo(
+  world: { isChunkVisibleTo(id: string, x: number, y: number): boolean }, id: string,
+): boolean {
+  return encounter?.site.terrain.visibleTo(world, id) ?? true;
 }
 
 function enterStage(live: Encounter, stage: Stage): void {

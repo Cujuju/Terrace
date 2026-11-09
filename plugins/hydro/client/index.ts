@@ -34,19 +34,7 @@ let marker: PourMarker | null = null;
 
 let bucketHeld = false;
 
-let pourCell: { x: number; y: number } | null = null;
-
-let pointerX = 0;
-let pointerY = 0;
-let pointerMoved = false;
-
-let pickedAtX = 0;
-let pickedAtY = 0;
-
-const POUR_REPICK_TRAVEL_PX = 4;
-
-let onPointerMove: ((event: PointerEvent) => void) | null = null;
-let unsubscribePress: (() => void) | null = null;
+let toolInput: ReturnType<ClientPluginCtx['bindToolInput']> | null = null;
 let unsubscribeMessages: Array<() => void> = [];
 let unsubscribeFrames: (() => void) | null = null;
 let unsubscribeTerrain: (() => void) | null = null;
@@ -64,8 +52,6 @@ const shade: GroundShadeDisc[] = [];
 const POUR_TOOL_ID = 'pour';
 const POUR_TOOL_LABEL = 'Hydro';
 const POUR_TOOL_TITLE = 'Hydro: douse unlocked ground';
-
-const POUR_BUTTON = 0;
 
 const HYDRO_SHADE_DARKNESS = 0.18;
 
@@ -122,17 +108,6 @@ function buildLists(): void {
   }
 }
 
-function handlePress(ctx: ClientPluginCtx, event: PointerEvent): boolean {
-  if (!bucketHeld) return false;
-  if (event.button !== POUR_BUTTON) return false;
-
-  const cell = ctx.pickWorldCell(event.clientX, event.clientY);
-  if (cell === null) return true;
-
-  ctx.send(HYDRO_POUR_MESSAGE, { x: cell.x, y: cell.y });
-  return true;
-}
-
 export const clientPlugin: TerraceClientPlugin = {
   name: HYDRO_PLUGIN_NAME,
 
@@ -160,22 +135,17 @@ export const clientPlugin: TerraceClientPlugin = {
       icon: WaterIcon,
       onSelected: (selected) => {
         bucketHeld = selected;
-        if (!selected) {
-          pourCell = null;
-          marker?.hide();
-        }
+        if (!selected) marker?.hide();
       },
     });
 
-    onPointerMove = (event: PointerEvent): void => {
-      if (!bucketHeld) return;
-      pointerX = event.clientX;
-      pointerY = event.clientY;
-      pointerMoved = true;
-    };
-    window.addEventListener('pointermove', onPointerMove);
-
-    unsubscribePress = ctx.onCanvasPress((event) => handlePress(ctx, event));
+    toolInput = ctx.bindToolInput({
+      active: () => bucketHeld,
+      pick: 'terrain',
+      onPress: (cell) => {
+        if (cell !== null) ctx.send(HYDRO_POUR_MESSAGE, { x: cell.x, y: cell.y });
+      },
+    });
 
     unsubscribeMessages = [
       ctx.onMessage(HYDRO_PATCHES_MESSAGE, (payload) => {
@@ -202,20 +172,7 @@ export const clientPlugin: TerraceClientPlugin = {
 
       elapsedSeconds += dt;
 
-      if (bucketHeld && pointerMoved) {
-        const travelX = pointerX - pickedAtX;
-        const travelY = pointerY - pickedAtY;
-        const farEnough =
-          travelX * travelX + travelY * travelY >=
-          POUR_REPICK_TRAVEL_PX * POUR_REPICK_TRAVEL_PX;
-        if (pourCell === null || farEnough) {
-          pointerMoved = false;
-          pickedAtX = pointerX;
-          pickedAtY = pointerY;
-          pourCell = ctx.pickWorldCell(pointerX, pointerY);
-        }
-      }
-
+      const pourCell = toolInput?.aim() ?? null;
       if (bucketHeld && pourCell !== null && marker !== null) {
         const groundY = ctx.drawnGroundYAt(pourCell.x, pourCell.y);
         if (groundY === null) marker.hide();
@@ -254,17 +211,11 @@ export const clientPlugin: TerraceClientPlugin = {
     unsubscribeTerrain = null;
     unsubscribeFrames?.();
     unsubscribeFrames = null;
-    unsubscribePress?.();
-    unsubscribePress = null;
+    toolInput?.dispose();
+    toolInput = null;
     unpublishShade?.();
     unpublishShade = null;
-    if (onPointerMove !== null) window.removeEventListener('pointermove', onPointerMove);
-    onPointerMove = null;
     bucketHeld = false;
-    pourCell = null;
-    pointerMoved = false;
-    pickedAtX = 0;
-    pickedAtY = 0;
 
     patches.clear();
     instances.length = 0;

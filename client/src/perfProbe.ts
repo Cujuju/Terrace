@@ -22,6 +22,7 @@ import {
   POSITION_Y_UNITS_PER_WORLD_UNIT,
 } from './render/gpuMesher/gpuChunkAnswer.ts';
 import { TIMESTAMP_QUERY_FEATURE } from './render/gpuTimer.ts';
+import { instrumentMessageListeners } from './messageTiming.ts';
 import { clearGroundShade } from './render/groundShade.ts';
 import {
   BAND_WORLD_HEIGHT,
@@ -615,10 +616,10 @@ function siteOf(): string {
 }
 
 function timed<A extends unknown[]>(key: string, fn: (...args: A) => unknown) {
-  return (...args: A): unknown => {
+  return function (this: unknown, ...args: A): unknown {
     const started = performance.now();
     try {
-      return fn(...args);
+      return fn.apply(this, args);
     } finally {
       addCost(key, performance.now() - started);
     }
@@ -645,36 +646,17 @@ function installTaskTiming(): void {
   const originalRaf = global['requestAnimationFrame'] as (fn: (t: number) => void) => number;
   global['requestAnimationFrame'] = (fn: (t: number) => void): number =>
     originalRaf(timed(`raf ${siteOf()}`, fn) as (t: number) => void);
-  const originalAdd = EventTarget.prototype.addEventListener;
-  EventTarget.prototype.addEventListener = function (
-    this: EventTarget,
-    type: string,
-    listener: unknown,
-    options?: unknown,
-  ): void {
-    if (type === 'message' && typeof listener === 'function') {
-      const label =
-        this instanceof Worker
-          ? 'Worker'
-          : this instanceof WebSocket
-            ? 'WebSocket'
-            : this instanceof MessagePort
-              ? 'MessagePort'
-              : 'message';
-      return originalAdd.call(
-        this,
-        type,
-        timed(`${label} ${siteOf()}`, listener as (...args: unknown[]) => unknown) as EventListener,
-        options as AddEventListenerOptions,
-      );
-    }
-    return originalAdd.call(
-      this,
-      type,
-      listener as EventListener,
-      options as AddEventListenerOptions,
-    );
-  };
+  instrumentMessageListeners((target) => {
+    const label =
+      target instanceof Worker
+        ? 'Worker'
+        : target instanceof WebSocket
+          ? 'WebSocket'
+          : target instanceof MessagePort
+            ? 'MessagePort'
+            : 'message';
+    return `${label} ${siteOf()}`;
+  }, addCost);
 }
 
 interface GpuTimer {

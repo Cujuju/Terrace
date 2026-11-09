@@ -1,5 +1,6 @@
 import { assetSpeciesBuilder, type SpeciesAssetSpec } from './assetSpecies.ts';
 import { WHALE_JOINTS, animateWhale, whaleEnvelope } from './whale.ts';
+import { WHALE_AUTHORED_BOUNDS } from '../../swimmerBounds.ts';
 
 export const BLUE_WHALE_HALF_WIDTH = 0.37;
 
@@ -10,6 +11,7 @@ export const BLUE_WHALE_ASSET: SpeciesAssetSpec = {
   file: 'blue-whale.glb',
   joints: WHALE_JOINTS,
   envelope: BLUE_WHALE_ENVELOPE,
+  bounds: WHALE_AUTHORED_BOUNDS.blue,
 };
 
 export const buildBlueWhale = assetSpeciesBuilder(BLUE_WHALE_ASSET, animateWhale);

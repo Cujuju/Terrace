@@ -5,6 +5,7 @@ export interface GhostLog {
   prune(nowMs: number): void;
   settle(seq: number): void;
   seqs(): readonly number[];
+  nextExpiryAtMs(): number | null;
 }
 
 // Ghost seqs: sent intents (seq-holders) with no visible prediction. Bounded like
@@ -36,6 +37,11 @@ export function createGhostLog(): GhostLog {
 
     seqs(): readonly number[] {
       return [...ghosts.keys()];
+    },
+
+    nextExpiryAtMs(): number | null {
+      const oldest = ghosts.values().next();
+      return oldest.done ? null : oldest.value + PREDICTION_TTL_MS;
     },
   };
 }

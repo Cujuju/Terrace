@@ -18,6 +18,7 @@ let plume: PlumeRenderer | null = null;
 let unsubscribeMessages: Array<() => void> = [];
 let unsubscribeFrames: (() => void) | null = null;
 let unsubscribeTerrain: (() => void) | null = null;
+let unsubscribeWorldReset: (() => void) | null = null;
 
 const vents = new Map<number, VentState>();
 
@@ -37,6 +38,13 @@ function plumeSources(ctx: ClientPluginCtx): PlumeSource[] {
 function replaceVents(list: readonly VentState[]): void {
   vents.clear();
   for (const vent of list) vents.set(vent.id, vent);
+}
+
+function resetWorldState(): void {
+  vents.clear();
+  elapsedSeconds = 0;
+  flow?.clear();
+  plume?.clear();
 }
 
 const LAVA_FLOW_DRAW_OBJECTS = 1;
@@ -75,9 +83,10 @@ export const clientPlugin: TerraceClientPlugin = {
       }),
     ];
 
-    unsubscribeTerrain = ctx.onTerrainChanged(() => {
-      if (flow?.pendingGround) flow.retryPending(groundAt);
+    unsubscribeTerrain = ctx.onTerrainChanged((dirty) => {
+      flow?.refreshGround(dirty, ctx.worldSize(), groundAt);
     });
+    unsubscribeWorldReset = ctx.onWorldReset(resetWorldState);
 
     unsubscribeFrames = ctx.onFrame((dt) => {
       elapsedSeconds += dt;
@@ -95,6 +104,8 @@ export const clientPlugin: TerraceClientPlugin = {
     unsubscribeTerrain = null;
     unsubscribeFrames?.();
     unsubscribeFrames = null;
+    unsubscribeWorldReset?.();
+    unsubscribeWorldReset = null;
 
     vents.clear();
     elapsedSeconds = 0;

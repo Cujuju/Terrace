@@ -3,6 +3,7 @@ import type {
   PluginActionOutcome,
   PluginActionSite,
   Player,
+  SliceLoadOutcome,
   TerracePlugin,
   WorldApi,
 } from '../../../server/src/plugins/types.ts';
@@ -104,9 +105,12 @@ function broadcastChanges(
   molten: readonly LavaCellState[],
   forgotten: ReadonlyArray<{ x: number; y: number }>,
 ): void {
+  // A melt can be evicted in the same tick; the final removal wins on the wire.
+  const retainedMolten = forgotten.length === 0 ? molten : molten.filter((cell) =>
+    !forgotten.some((removed) => removed.x === cell.x && removed.y === cell.y));
   const items: VisibleItem[] = [
     ...vents.map((vent) => ({ kind: 'vent', vent }) as const),
-    ...molten.map((cell) => ({ kind: 'molten', cell }) as const),
+    ...retainedMolten.map((cell) => ({ kind: 'molten', cell }) as const),
     ...forgotten.map((cell) => ({ kind: 'forgotten', cell }) as const),
   ];
 
@@ -142,7 +146,7 @@ function openDugVents(world: WorldApi): boolean {
 function simulate(world: WorldApi, dt: number): void {
   tickCount++;
 
-  let ventsChanged = openDugVents(world);
+  let ventsChanged = activity !== 'none' && openDugVents(world);
 
   if (activity === 'active' && rollSpontaneousBirth(world, dt) !== null) {
     ventsChanged = true;
@@ -177,9 +181,10 @@ const persistence: PersistenceSlice = {
   save(): unknown {
     return saveVolcanoes();
   },
-  load(data: unknown): void {
+  load(data: unknown, fromVersion: number): SliceLoadOutcome {
     resetVolcanoes();
-    loadVolcanoes(data);
+    restoredThisSession = false;
+    if (fromVersion !== VOLCANOES_SLICE_VERSION || !loadVolcanoes(data)) return 'refuse';
     restoredThisSession = true;
   },
 };
@@ -261,19 +266,16 @@ export const plugin: TerracePlugin = {
   onTick(world: WorldApi, dt: number): void {
     drainPendingConeSculpts(world);
 
-    if (activity === 'none') return;
     simulate(world, dt);
   },
 
   onTerrainChanged(world: WorldApi, diff: readonly CellDiff[]): void {
-    if (activity === 'none') return;
-
     if (!isSelfSculpting()) {
       const forgotten = forgetLavaAt(diff);
       if (forgotten.length > 0) broadcastChanges(world, ventStates(), [], forgotten);
     }
 
-    if (ventCount() >= MAX_VENTS_PER_WORLD) return;
+    if (activity === 'none' || ventCount() >= MAX_VENTS_PER_WORLD) return;
 
     for (const cell of diff) {
       if (!isLavaExposed(cell.h)) continue;
@@ -282,8 +284,13 @@ export const plugin: TerracePlugin = {
   },
 
   onPlayerJoin(world: WorldApi, player: Player): void {
-    if (activity === 'none') return;
     broadcastAll(world, player.id);
+  },
+
+  onChunkUnlockedForToken(world: WorldApi, token: string): void {
+    for (const player of world.players()) {
+      if (player.token === token) broadcastAll(world, player.id);
+    }
   },
 
   persistence,

@@ -6,6 +6,7 @@ import {
   CAST_DENIED_TARGET,
   CAST_DENIED_UNOWNED,
   CAST_DENIED_UNSUITABLE,
+  CAST_DENIED_UNAVAILABLE,
   CAST_DENIED_WARDED,
 } from '../protocol.ts';
 import { cooldownLabelSeconds } from './gems.ts';
@@ -138,6 +139,7 @@ const DENIAL_TEXT: Record<string, string> = {
   [CAST_DENIED_COOLDOWN]: 'That skill is still recharging.',
   [CAST_DENIED_TARGET]: 'That target is outside your territory.',
   [CAST_DENIED_UNSUITABLE]: 'That ground has no cliff face to bring down.',
+  [CAST_DENIED_UNAVAILABLE]: 'This server cannot safely cast relic skills.',
   [CAST_DENIED_WARDED]: 'Another hand shaped that ground a moment ago.',
 };
 

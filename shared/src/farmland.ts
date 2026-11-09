@@ -1,4 +1,5 @@
-import { bandOf, isWater } from './heightmap.ts';
+import { drawnBandOfSample } from './bands.ts';
+import { isWater } from './heightmap.ts';
 
 export interface FarmlandWorld {
   readonly worldSize: number;
@@ -20,7 +21,7 @@ export function isFarmlandCell(world: FarmlandWorld, x: number, y: number): bool
 
   const height = world.heightAt(x, y);
   if (isWater(height)) return false;
-  const band = bandOf(height);
+  const band = drawnBandOfSample(height);
 
   let touchesWater = false;
   for (const [dx, dy] of ADJACENT_OFFSETS) {
@@ -33,7 +34,7 @@ export function isFarmlandCell(world: FarmlandWorld, x: number, y: number): bool
       touchesWater = true;
       continue;
     }
-    if (bandOf(neighborHeight) !== band) return false;
+    if (drawnBandOfSample(neighborHeight) !== band) return false;
   }
   return touchesWater;
 }
@@ -51,7 +52,7 @@ export function isFarmlandPlot(
 
   const height = world.heightAt(x, y);
   if (isWater(height)) return false;
-  const band = bandOf(height);
+  const band = drawnBandOfSample(height);
 
   for (const [dx, dy] of ADJACENT_OFFSETS) {
     const nx = x + dx;
@@ -62,7 +63,7 @@ export function isFarmlandPlot(
       if (treadCells >= 1) return false;
       continue;
     }
-    if (bandOf(neighborHeight) !== band) return false;
+    if (drawnBandOfSample(neighborHeight) !== band) return false;
   }
   for (let dy = -treadCells; dy <= treadCells; dy++) {
     for (let dx = -treadCells; dx <= treadCells; dx++) {
@@ -72,7 +73,7 @@ export function isFarmlandPlot(
       if (nx < 0 || ny < 0 || nx >= world.worldSize || ny >= world.worldSize) return false;
       const neighborHeight = world.heightAt(nx, ny);
       if (isWater(neighborHeight)) return false;
-      if (bandOf(neighborHeight) !== band) return false;
+      if (drawnBandOfSample(neighborHeight) !== band) return false;
     }
   }
 

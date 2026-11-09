@@ -96,12 +96,16 @@ function distanceToChord(chord: CellRayChord, plantX: number, plantZ: number): n
   return Math.hypot(toPlantX - along * alongX, toPlantZ - along * alongZ);
 }
 
-function widen(into: CellColumn | null, column: CellColumn): CellColumn {
-  if (into === null) return column;
-  return {
-    loY: into.loY < column.loY ? into.loY : column.loY,
-    hiY: into.hiY > column.hiY ? into.hiY : column.hiY,
-  };
+function columnEntry(column: CellColumn, chord: CellRayChord): number {
+  if (chord.fromY === undefined || chord.toY === undefined) return 0;
+  const rise = chord.toY - chord.fromY;
+  if (rise === 0) {
+    return chord.fromY >= column.loY && chord.fromY <= column.hiY ? 0 : Infinity;
+  }
+  const lo = (column.loY - chord.fromY) / rise;
+  const hi = (column.hiY - chord.fromY) / rise;
+  const entry = Math.max(0, Math.min(lo, hi));
+  return entry <= Math.min(1, Math.max(lo, hi)) ? entry : Infinity;
 }
 
 export function treeOccupancy(
@@ -111,21 +115,28 @@ export function treeOccupancy(
   return (x: number, y: number, chord: CellRayChord): CellColumn | null => {
     if (trees.size === 0) return null;
     let column: CellColumn | null = null;
+    let nearest = Infinity;
     for (let dy = -TREE_NEIGHBOURHOOD_CELLS; dy <= TREE_NEIGHBOURHOOD_CELLS; dy++) {
       for (let dx = -TREE_NEIGHBOURHOOD_CELLS; dx <= TREE_NEIGHBOURHOOD_CELLS; dx++) {
         const cell = trees.get(treeKey(x + dx, y + dy));
         if (cell === undefined) continue;
-        const groundY = groundAt(cell.x, cell.y);
-        if (groundY === null) continue;
-        const variation = treeVariation(cell.x, cell.y);
-        const kind = treeKindAt(cell.x, cell.y, groundY / HEIGHT_WORLD_SCALE);
         const distance = distanceToChord(
           chord,
           cell.x * CELL_WORLD_SIZE,
           cell.y * CELL_WORLD_SIZE,
         );
+        if (distance > TREE_MAX_CROWN_RADIUS) continue;
+        const groundY = groundAt(cell.x, cell.y);
+        if (groundY === null) continue;
+        const variation = treeVariation(cell.x, cell.y);
+        const kind = treeKindAt(cell.x, cell.y, groundY / HEIGHT_WORLD_SCALE);
         const one = treeColumnAt(kind, variation.scale, groundY, distance);
-        if (one !== null) column = widen(column, one);
+        if (one === null) continue;
+        const entry = columnEntry(one, chord);
+        if (entry < nearest) {
+          nearest = entry;
+          column = { ...one, cell };
+        }
       }
     }
     return column;
@@ -141,6 +152,7 @@ export function cropOccupancy(
   return (x: number, y: number, chord: CellRayChord): CellColumn | null => {
     if (crops.size === 0) return null;
     let column: CellColumn | null = null;
+    let nearest = Infinity;
     for (let dy = -neighbourhood; dy <= neighbourhood; dy++) {
       for (let dx = -neighbourhood; dx <= neighbourhood; dx++) {
         const cell = crops.get(cropKey(x + dx, y + dy));
@@ -153,10 +165,15 @@ export function cropOccupancy(
         if (distance > reach.horizontal) continue;
         const groundY = groundAt(cell.x, cell.y);
         if (groundY === null) continue;
-        column = widen(column, {
+        const one = {
           loY: groundY - reach.down,
           hiY: groundY + reach.up,
-        });
+        };
+        const entry = columnEntry(one, chord);
+        if (entry < nearest) {
+          nearest = entry;
+          column = { ...one, cell };
+        }
       }
     }
     return column;

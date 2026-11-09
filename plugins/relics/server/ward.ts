@@ -17,6 +17,11 @@ export function claimWardCells(size: number, owner: string, cells: readonly Cell
   for (const { x, y } of cells) wards.set(y * size + x, { owner, remainingS: BEDROCK_WARD_SECONDS });
 }
 
+export function isCellWardedAgainst(size: number, actor: string, x: number, y: number): boolean {
+  const ward = wards.get(y * size + x);
+  return ward !== undefined && ward.owner !== actor;
+}
+
 /** One closed-form test per standing ward, whatever shape the stroke swept. */
 export function wardHolderAgainst(
   size: number,

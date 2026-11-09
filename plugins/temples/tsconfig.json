@@ -17,5 +17,5 @@
     "jsx": "preserve",
     "jsxImportSource": "solid-js"
   },
-  "include": ["protocol.ts", "server", "client"]
+  "include": ["protocol.ts", "server", "client", "test"]
 }
