@@ -17,7 +17,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { logInfo, logWarn } from '../log.ts';
 import { SnapshotStore } from './snapshot-store.ts';
 import { buildThumbnail } from './thumbnail.ts';
@@ -371,29 +371,34 @@ export class WorldRegistry {
     logWarn(`archived world "${archivedId}" was PURGED — ${path} no longer exists`);
   }
 
-  // Main-file existence marks a world as present, so sidecars move first and the main file last.
+  // Main-file existence marks a world as present. Sidecars are copied first, so the source bundle
+  // stays whole until the main file moves; a crash at any point loses no WAL.
   private publishBundle(source: string, target: string): void {
     if (existsSync(target)) throw new Error(`refusing to overwrite ${target}`);
-    const moved: string[] = [];
+    const copied: string[] = [];
     try {
       for (const suffix of ['-wal', '-shm']) {
-        // Sidecars with no main file are crash orphans; SQLite would pair them with any new database.
-        rmSync(target + suffix, { force: true });
+        const sidecar = target + suffix;
+        // A sidecar with no main file would pair with any new database; set it aside, never delete it.
+        if (existsSync(sidecar)) {
+          renameSync(sidecar, join(dirname(sidecar), `.orphan-${randomUUID()}-${basename(sidecar)}`));
+        }
         if (existsSync(source + suffix)) {
-          renameSync(source + suffix, target + suffix);
-          moved.push(suffix);
+          copyFileSync(source + suffix, sidecar);
+          copied.push(sidecar);
         }
       }
       renameSync(source, target);
     } catch (error) {
-      for (const suffix of moved) {
-        try {
-          renameSync(target + suffix, source + suffix);
-        } catch (rollbackError) {
-          logWarn(`could not return ${target + suffix} to ${source}: ${String(rollbackError)}`);
-        }
-      }
+      for (const sidecar of copied) rmSync(sidecar, { force: true });
       throw error;
+    }
+    for (const suffix of ['-wal', '-shm']) {
+      try {
+        rmSync(source + suffix, { force: true });
+      } catch (cleanupError) {
+        logWarn(`published ${target} but could not remove ${source + suffix}: ${String(cleanupError)}`);
+      }
     }
   }
 
