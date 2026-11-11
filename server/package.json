@@ -7,11 +7,11 @@
     "./plugin-api": "./src/plugins/types.ts"
   },
   "scripts": {
-    "start": "node src/index.ts",
+    "start": "node --env-file-if-exists=../.env src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "rollback": "node scripts/rollback.ts",
-    "import-world": "node scripts/import-world.ts",
+    "rollback": "node --env-file-if-exists=../.env scripts/rollback.ts",
+    "import-world": "node --env-file-if-exists=../.env scripts/import-world.ts",
     "merge-world-history": "node scripts/merge-world-history.ts"
   },
   "dependencies": {

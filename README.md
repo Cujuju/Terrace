@@ -49,9 +49,9 @@ so on the public internet put something in front of it that limits access.
 
 ## Configuration
 
-Set these as environment variables when starting the server, e.g.
-`PORT=3000 pnpm --filter @terrace/server start`. Nothing is required; every
-value has a default, and invalid values fail at boot naming the variable.
+Copy `.env.example` to `.env` and edit it, or set environment variables when
+starting the server (they win over `.env`). Nothing is required; every value
+has a default, and invalid values fail at boot naming the variable.
 
 | Variable | Default | |
 |---|---|---|
