@@ -196,9 +196,9 @@ function createOutlineQuery(lines: readonly Point[][], maxDistanceFixed: number)
       for (let y = cy - ring; y <= cy + ring; y++) {
         if (y < minY || y > maxY) continue;
         const row = (y - minY) * width;
-        for (let x = cx - ring; x <= cx + ring; x++) {
+        const step = ring > 0 && y > cy - ring && y < cy + ring ? 2 * ring : 1;
+        for (let x = cx - ring; x <= cx + ring; x += step) {
           if (x < minX || x > maxX) continue;
-          if (ring > 0 && x !== cx - ring && x !== cx + ring && y !== cy - ring && y !== cy + ring) continue;
           const bucket = buckets[row + x - minX];
           if (bucket !== undefined) for (const s of bucket) {
             if (seen[s.order] === stamp) continue;

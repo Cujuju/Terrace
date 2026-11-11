@@ -42,18 +42,39 @@ function resample(line: Point[]): Point[] {
 function blur(values: Int32Array, pinned: Uint8Array, closed: boolean, passes: number): Int32Array {
   const n = values.length;
   let current = values.slice();
-  let next = new Int32Array(n);
+  let next = values.slice();
+  const runs: number[] = [];
+  for (let i = 0; i < n;) {
+    if (pinned[i] === 1) { i++; continue; }
+    const start = i++;
+    while (i < n && pinned[i] !== 1) i++;
+    runs.push(start, i);
+  }
+  const settled = new Uint8Array(runs.length / 2);
   for (let pass = 0; pass < passes; pass++) {
-    for (let i = 0; i < n; i++) {
-      if (pinned[i] === 1) {
-        next[i] = values[i]!;
-        continue;
+    let changed = false;
+    // Both buffers retain the original pinned values; only movable runs need writes.
+    for (let run = 0; run < runs.length; run += 2) {
+      if (settled[run / 2] === 1) continue;
+      let runChanged = false;
+      const start = runs[run]!;
+      const end = runs[run + 1]!;
+      for (let i = runs[run]!; i < end; i++) {
+        const before = i > 0 ? current[i - 1]! : closed ? current[n - 1]! : current[i]!;
+        const after = i < n - 1 ? current[i + 1]! : closed ? current[0]! : current[i]!;
+        const value = Math.floor((before + 2 * current[i]! + after + 2) / 4);
+        next[i] = value;
+        if (value !== current[i]) runChanged = true;
       }
-      const before = i > 0 ? current[i - 1]! : closed ? current[n - 1]! : current[i]!;
-      const after = i < n - 1 ? current[i + 1]! : closed ? current[0]! : current[i]!;
-      next[i] = Math.floor((before + 2 * current[i]! + after + 2) / 4);
+      if (runChanged) changed = true;
+      else if (!closed || (start > 0 && end < n) || pinned[0] === 1 || pinned[n - 1] === 1) {
+        // Fixed runs between pinned boundaries cannot be disturbed by another run.
+        settled[run / 2] = 1;
+      }
     }
     [current, next] = [next, current];
+    // A fixed point of this integer recurrence stays fixed for every remaining pass.
+    if (!changed) break;
   }
   return current;
 }
