@@ -132,7 +132,7 @@ CONTROL_POLL_INTERVAL_S = 0.25
 # snapshot and then exits with this code; a supervisor is expected to bring the
 # process straight back, which is how new plugin/core code becomes live (Node's
 # ESM module map has no eviction, so the process is the unit of code identity).
-# docker (`restart: unless-stopped`) and systemd (`Restart=always`) already do
+# systemd (`Restart=always`) and similar supervisors already do
 # that for any exit; this script did not restart on ANY code, so the branch
 # below is new rather than a reclassification.
 #
@@ -367,7 +367,7 @@ def start_control_reader(state) -> threading.Thread:
     BOTH halves from the terminal; the button (world-admin `serverRestart`,
     exit code TERRACE_RESTART_EXIT_CODE) restarts the SERVER only and is
     reachable by an admin who is not at this terminal, gives connected players
-    a countdown notice first, and works in docker and systemd where there is no
+    a countdown notice first, and works under systemd where there is no
     terminal at all. Neither replaces the other.
 
     Runs as a daemon thread so it can never keep the interpreter alive after
@@ -438,8 +438,7 @@ def main(watch: bool) -> int:
     #
     # VITE_SERVER_URL is the documented override, so this sets it from the same
     # PORT the server is being handed. setdefault, so an explicit
-    # VITE_SERVER_URL in the shell still wins - the Docker Compose path relies
-    # on that.
+    # VITE_SERVER_URL in the shell still wins.
     # THE PORT ONLY - NEVER THE HOST (owner bug report 2026-09-06: "I can bring
     # up the client, but I can't connect to the server", playing from a second
     # machine on the LAN). This used to set VITE_SERVER_URL to a whole endpoint
@@ -448,7 +447,7 @@ def main(watch: bool) -> int:
     # derives the hostname from the page it was served by, precisely so a LAN
     # visitor dials the server that served them (client/src/config.ts) - the
     # override was defeating it. VITE_SERVER_URL is still the whole-endpoint
-    # override and still wins if the shell sets it, for Docker Compose.
+    # override and still wins if the shell sets it.
     env.setdefault("VITE_SERVER_PORT", str(env.get("PORT", 2567)))
 
     # IN DEV MODE, DO NOT LET THE GAME SERVER SERVE client/dist.

@@ -48,8 +48,7 @@ export const plugin: TerracePlugin = {
 Run it:
 
 ```sh
-docker compose up --build          # plugins/ is copied into the image
-docker compose logs -f server
+pnpm --filter @terrace/server start   # plugins/ is scanned at boot
 ```
 
 ```
@@ -201,8 +200,8 @@ their next join snapshot.
   Silence it with `plugins/hello/package.json`:
   `{"name": "@terrace/plugin-hello", "version": "0.1.0", "private": true, "type": "module"}`.
 - **npm dependencies** need that `package.json` (the `plugins/*` glob makes it a
-  workspace package) *and* one `pnpm install` to update `pnpm-lock.yaml`. The
-  Docker build uses `--frozen-lockfile` and fails with
+  workspace package) *and* one `pnpm install` to update `pnpm-lock.yaml`. CI
+  installs with `--frozen-lockfile` and fails with
   `ERR_PNPM_OUTDATED_LOCKFILE` otherwise. Dependency-free plugins need no lockfile
   change.
 - **A malformed plugin aborts boot** rather than starting a world quietly missing

@@ -61,7 +61,7 @@ export function createPluginVersionContext(pluginsDir: string): PluginVersionCon
       logWarn(
         'plugin version stamps have no git and no TERRACE_VERSION to derive from — ' +
           'every restart will look like every plugin changed. Set TERRACE_VERSION ' +
-          '(a docker image should inject it at build) to make the stamps stable.',
+          '(a packaged build should inject it) to make the stamps stable.',
       );
     }
   }

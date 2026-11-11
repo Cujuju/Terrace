@@ -11,16 +11,18 @@ Everything gamey (mana, settlers, weather, monsters) is a plugin.
 
 ## Quickstart
 
-Needs Docker Engine 23+ with Compose v2.
+Needs Node 24+ and pnpm (version pinned in `package.json`).
 
 ```sh
 git clone https://github.com/Cujuju/Terrace.git
 cd Terrace
-docker compose up
+pnpm install
+pnpm --filter @terrace/client build
+pnpm --filter @terrace/server start
 ```
 
-The first build takes a few minutes. When the log shows
-`[terrace] listening on ws://0.0.0.0:2567`, open <http://localhost:8080>.
+When the log shows `[terrace] listening on ws://0.0.0.0:2567`, open
+<http://localhost:2567>. The server hosts both the page and the world.
 
 | Input | Action |
 |---|---|
@@ -34,43 +36,35 @@ The first build takes a few minutes. When the log shows
 
 Bindings can be changed under **Controls** in the HUD.
 
-`docker compose down` stops it; worlds live in the `terrace_world-data` volume
-and survive. `docker compose down -v` deletes them.
+Ctrl-C stops the server. Worlds are saved in `server/data/worlds/` and come
+back on the next start.
 
 ### Playing with friends
 
-The server address is compiled into the client, so set it to one your friends
-can reach and rebuild:
+Open port `2567` and send friends `http://your-host:2567`. The page connects
+back to whichever server it was loaded from, so there is nothing to rebuild.
 
-```sh
-cp .env.example .env
-# in .env:  PUBLIC_WS_URL=ws://your-host:2567
-docker compose up --build
-```
-
-Open ports `8080` (page) and `2567` (world server).
-
-There are no accounts. Anyone who can reach those ports can sculpt your world,
+There are no accounts. Anyone who can reach that port can sculpt your world,
 so on the public internet put something in front of it that limits access.
 
 ## Configuration
 
-Copy `.env.example` to `.env`. Nothing is required; every value has a default,
-and invalid values fail at boot naming the variable.
+Set these as environment variables when starting the server, e.g.
+`PORT=3000 pnpm --filter @terrace/server start`. Nothing is required; every
+value has a default, and invalid values fail at boot naming the variable.
 
 | Variable | Default | |
 |---|---|---|
 | `WORLD_SIZE` | `2048` | Cells per edge for new worlds. Multiple of 16, 448–4096. `512` suits a small VPS. |
 | `WORLD_DIFFICULTY` | `50` | 1–100. Plugins decide what it means. |
-| `PORT` | `2567` | World server port. Update `PUBLIC_WS_URL` to match. |
-| `CLIENT_PORT` | `8080` | Port serving the page. |
+| `PORT` | `2567` | Port for the page and the world server. |
 | `ROLLBACK_KEY` | *(none)* | Protects the **Restore points** panel. Unset = no key needed. |
 | `WORLD_ADMIN_KEY` | *(none)* | Protects the **Worlds** panel. Unset = no key needed. |
 | `PLUGINS_ENABLED` | *(unset)* | Comma-separated plugin allow-list, or `none` for bare terrain. |
 | `SNAPSHOT_INTERVAL_S` | `60` | How often a changed world is saved. |
 | `SNAPSHOT_RETENTION` | `10` | Restore points kept per world. Pinned points don't count. |
 
-`.env.example` lists the rest.
+`.env.example` documents the rest.
 
 ## Worlds and backups
 
@@ -79,15 +73,8 @@ and invalid values fail at boot naming the variable.
 - The **Worlds** panel creates, loads, renames, duplicates and archives worlds.
   Archiving moves the file to `.trash`; only an explicit **Purge** deletes one.
 - Import a world file: `pnpm --dir server import-world /path/to/world.db`
-
-Back up (stop first; the databases use WAL mode):
-
-```sh
-docker compose stop server
-docker run --rm -v terrace_world-data:/data -v "$PWD:/backup" busybox \
-  tar czf /backup/terrace-backup.tar.gz -C /data .
-docker compose start server
-```
+- Back up: stop the server, then copy `server/data/worlds/` (or your
+  `WORLDS_DIR`). Copy only while stopped; the databases use WAL mode.
 
 ## Plugins
 
@@ -103,10 +90,9 @@ Included: `apache`, `boats`, `chronicle`, `cyclone`, `daynight`, `fire`,
 
 ## Development
 
-Needs Node 24+ and pnpm (version pinned in `package.json`).
+For live reload, run the server and the Vite dev client side by side:
 
 ```sh
-pnpm install
 pnpm --filter @terrace/server start   # world server on :2567
 pnpm --filter @terrace/client dev     # client on :5173
 ```

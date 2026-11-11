@@ -8,9 +8,9 @@ import { join } from 'node:path';
 const MAJOR = 0;
 /** Conventional-commit feature subject, scoped or not; `feat!:` counts. */
 const FEATURE_SUBJECT = /^feat(\([^)]*\))?!?:/;
-/** Docker images ship no `.git`; the image build injects the version here instead. */
+/** Packaged builds ship no `.git`; the packager injects the version here instead (client/electron/serverChild.ts). */
 const VERSION_OVERRIDE_ENV = 'TERRACE_VERSION';
-/** No repository and no override: an image built without TERRACE_VERSION (restart-and-persistence decisions). */
+/** No repository and no override: a build shipped without TERRACE_VERSION (restart-and-persistence decisions). */
 export const UNVERSIONED = 'unversioned';
 /** Trailer on a root commit that replaced earlier history: the version reached before it, e.g. `Version-Baseline: 0.632.5`. */
 const BASELINE_TRAILER = 'Version-Baseline';

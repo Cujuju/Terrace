@@ -1,4 +1,4 @@
-// Prints this checkout's version from git alone (ignores TERRACE_VERSION): the value a docker build injects.
+// Prints this checkout's version from git alone (ignores TERRACE_VERSION): the value a packaged build injects.
 import { resolve } from 'node:path';
 import { appVersion } from '../src/app-version.ts';
 

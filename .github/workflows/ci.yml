@@ -1,5 +1,5 @@
 # Minimal CI: install, typecheck, test across the workspace. Keep under a minute;
-# no build artifacts, no deploy jobs (docker compose is the deployment story).
+# no build artifacts, no deploy jobs.
 name: ci
 
 on:
