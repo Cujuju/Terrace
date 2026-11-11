@@ -59,7 +59,7 @@ function blur(values: Int32Array, pinned: Uint8Array, closed: boolean, passes: n
       let runChanged = false;
       const start = runs[run]!;
       const end = runs[run + 1]!;
-      for (let i = runs[run]!; i < end; i++) {
+      for (let i = start; i < end; i++) {
         const before = i > 0 ? current[i - 1]! : closed ? current[n - 1]! : current[i]!;
         const after = i < n - 1 ? current[i + 1]! : closed ? current[0]! : current[i]!;
         const value = Math.floor((before + 2 * current[i]! + after + 2) / 4);
