@@ -33,6 +33,9 @@ const FIRST_UNIQUE_SUFFIX = 2;
 const MAX_UNIQUE_SUFFIX = 999;
 const SQLITE_MAX_INTEGRITY_ERRORS = 1;
 
+// SQLite side files: they belong to whatever main file sits beside them and carry no identity.
+const SIDE_FILE_SUFFIXES = ['-wal', '-shm', '-journal'] as const;
+
 function archiveStamp(now: number): string {
   return String(now);
 }
@@ -167,7 +170,7 @@ export class WorldRegistry {
 
   discardStaged(id: string): void {
     const staged = this.stagedPathFor(id);
-    for (const suffix of ['', '-wal', '-shm']) rmSync(staged + suffix, { force: true });
+    for (const suffix of ['', ...SIDE_FILE_SUFFIXES]) rmSync(staged + suffix, { force: true });
   }
 
   private scan(dir: string): WorldFile[] {
@@ -368,7 +371,7 @@ export class WorldRegistry {
   purge(archivedId: string): void {
     const path = this.pathFor(archivedId, true);
     if (!existsSync(path)) throw new Error(`no archived world "${archivedId}"`);
-    for (const suffix of ['', '-wal', '-shm']) {
+    for (const suffix of ['', ...SIDE_FILE_SUFFIXES]) {
       rmSync(path + suffix, { force: true });
     }
     logWarn(`archived world "${archivedId}" was PURGED — ${path} no longer exists`);
@@ -377,7 +380,7 @@ export class WorldRegistry {
   // Every world-file creator calls this first: a sidecar with no main file would pair with any new
   // database, so it is set aside under a hidden name, never deleted.
   private setAsideOrphanSidecars(path: string): void {
-    for (const suffix of ['-wal', '-shm']) {
+    for (const suffix of SIDE_FILE_SUFFIXES) {
       const sidecar = path + suffix;
       if (existsSync(sidecar)) {
         renameSync(sidecar, join(dirname(sidecar), `.orphan-${randomUUID()}-${basename(sidecar)}`));
@@ -392,7 +395,7 @@ export class WorldRegistry {
     const copied: string[] = [];
     try {
       this.setAsideOrphanSidecars(target);
-      for (const suffix of ['-wal', '-shm']) {
+      for (const suffix of SIDE_FILE_SUFFIXES) {
         if (existsSync(source + suffix)) {
           copyFileSync(source + suffix, target + suffix);
           copied.push(target + suffix);
@@ -409,7 +412,7 @@ export class WorldRegistry {
       }
       throw error;
     }
-    for (const suffix of ['-wal', '-shm']) {
+    for (const suffix of SIDE_FILE_SUFFIXES) {
       try {
         rmSync(source + suffix, { force: true });
       } catch (cleanupError) {
@@ -441,7 +444,7 @@ export class WorldRegistry {
     try {
       copyFileSync(absolute, staged);
       if (!readable) {
-        for (const suffix of ['-wal', '-shm']) {
+        for (const suffix of SIDE_FILE_SUFFIXES) {
           if (existsSync(absolute + suffix)) copyFileSync(absolute + suffix, staged + suffix);
         }
       }
@@ -458,7 +461,7 @@ export class WorldRegistry {
       if (existsSync(target)) throw new Error(`world "${id}" appeared while it was being adopted`);
       this.publishBundle(staged, target);
     } catch (error) {
-      for (const path of [staged, staged + '-wal', staged + '-shm']) {
+      for (const path of [staged, ...SIDE_FILE_SUFFIXES.map((suffix) => staged + suffix)]) {
         try {
           rmSync(path, { force: true });
         } catch (cleanupError) {
