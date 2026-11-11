@@ -1,4 +1,5 @@
 import DatabaseConstructor from 'better-sqlite3';
+import { randomUUID } from 'node:crypto';
 import {
   MAX_WORLD_ID_LENGTH,
   slugifyWorldName,
@@ -160,8 +161,7 @@ export class WorldRegistry {
     const target = this.pathFor(id);
     if (existsSync(target)) throw new Error(`world "${id}" appeared while it was being created`);
     this.checkpoint(staged);
-    renameSync(staged, target);
-    this.moveSidecars(staged, target);
+    this.publishBundle(staged, target);
   }
 
   discardStaged(id: string): void {
@@ -339,8 +339,7 @@ export class WorldRegistry {
     if (existsSync(this.pathFor(archivedId, true))) archivedId = `${archivedId}-1`;
 
     const target = this.pathFor(archivedId, true);
-    renameSync(source, target);
-    this.moveSidecars(source, target);
+    this.publishBundle(source, target);
     logInfo(`world "${id}" archived to ${target}`);
     return { archivedId, path: target };
   }
@@ -358,8 +357,7 @@ export class WorldRegistry {
     }
 
     const target = this.pathFor(restoredId);
-    renameSync(source, target);
-    this.moveSidecars(source, target);
+    this.publishBundle(source, target);
     logInfo(`archived world "${archivedId}" restored as "${restoredId}"`);
     return restoredId;
   }
@@ -373,9 +371,29 @@ export class WorldRegistry {
     logWarn(`archived world "${archivedId}" was PURGED — ${path} no longer exists`);
   }
 
-  private moveSidecars(source: string, target: string): void {
-    for (const suffix of ['-wal', '-shm']) {
-      if (existsSync(source + suffix)) renameSync(source + suffix, target + suffix);
+  // Main-file existence marks a world as present, so sidecars move first and the main file last.
+  private publishBundle(source: string, target: string): void {
+    if (existsSync(target)) throw new Error(`refusing to overwrite ${target}`);
+    const moved: string[] = [];
+    try {
+      for (const suffix of ['-wal', '-shm']) {
+        // Sidecars with no main file are crash orphans; SQLite would pair them with any new database.
+        rmSync(target + suffix, { force: true });
+        if (existsSync(source + suffix)) {
+          renameSync(source + suffix, target + suffix);
+          moved.push(suffix);
+        }
+      }
+      renameSync(source, target);
+    } catch (error) {
+      for (const suffix of moved) {
+        try {
+          renameSync(target + suffix, source + suffix);
+        } catch (rollbackError) {
+          logWarn(`could not return ${target + suffix} to ${source}: ${String(rollbackError)}`);
+        }
+      }
+      throw error;
     }
   }
 
@@ -396,20 +414,37 @@ export class WorldRegistry {
     if (id === null) return null;
 
     this.checkpoint(absolute, !readable);
-    copyFileSync(absolute, this.pathFor(id));
-    if (!readable) {
-      for (const suffix of ['-wal', '-shm']) {
-        if (existsSync(absolute + suffix)) copyFileSync(absolute + suffix, this.pathFor(id) + suffix);
+    const target = this.pathFor(id);
+    // Unique hidden names leave crash remnants invisible to scans and later imports.
+    const staged = join(this.worldsDir, `.adopting-${randomUUID()}${WORLD_FILE_EXTENSION}`);
+    try {
+      copyFileSync(absolute, staged);
+      if (!readable) {
+        for (const suffix of ['-wal', '-shm']) {
+          if (existsSync(absolute + suffix)) copyFileSync(absolute + suffix, staged + suffix);
+        }
       }
-    }
-    // The copy carries the name it was imported under, as a duplicate does.
-    if (readable && name !== stored.name) {
-      const store = SnapshotStore.open(this.pathFor(id));
-      try {
-        store.setWorldName(name);
-      } finally {
-        store.close();
+      // The copy carries the name it was imported under, as a duplicate does.
+      if (readable && name !== stored.name) {
+        const store = SnapshotStore.open(staged);
+        try {
+          store.setWorldName(name);
+        } finally {
+          store.close();
+        }
+        this.checkpoint(staged);
       }
+      if (existsSync(target)) throw new Error(`world "${id}" appeared while it was being adopted`);
+      this.publishBundle(staged, target);
+    } catch (error) {
+      for (const path of [staged, staged + '-wal', staged + '-shm']) {
+        try {
+          rmSync(path, { force: true });
+        } catch (cleanupError) {
+          logWarn(`could not remove failed adoption file ${path}: ${String(cleanupError)}`);
+        }
+      }
+      throw error;
     }
     logInfo(`adopted "${absolute}" as world "${id}" ("${name}")`);
     return id;

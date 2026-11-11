@@ -1,11 +1,16 @@
-import { existsSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CHUNK_SIZE } from '@terrace/shared';
 import { SnapshotStore } from '../src/persistence/snapshot-store.ts';
 import { TRASH_DIR_NAME, WorldRegistry } from '../src/persistence/world-registry.ts';
 import { World } from '../src/world/world.ts';
 import { makeTempRoot, removeTempRoot } from './support/tempRoot.ts';
+
+vi.mock('node:fs', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs')>();
+  return { ...fs, copyFileSync: vi.fn(fs.copyFileSync) };
+});
 
 const WORLD_SIZE = CHUNK_SIZE * 4;
 
@@ -231,6 +236,39 @@ describe('ids are paths, so they are validated', () => {
 });
 
 describe('adopting a legacy world', () => {
+  it('leaves a failed bundle unpublished and retries the complete adoption', async () => {
+    const legacyPath = join(root, 'legacy.db');
+    const contents = ['', '-wal', '-shm'].map((suffix) => [suffix, `unreadable ${suffix} bytes`] as const);
+    for (const [suffix, bytes] of contents) writeFileSync(legacyPath + suffix, bytes);
+    const fs = await vi.importActual<typeof import('node:fs')>('node:fs');
+    vi.mocked(copyFileSync).mockImplementation((source, target, mode) => {
+      if (source === legacyPath + '-shm') throw new Error('injected SHM copy failure');
+      fs.copyFileSync(source, target, mode);
+    });
+    try {
+      expect(() => registry.adopt(legacyPath, 'imported')).toThrow('injected SHM copy failure');
+    } finally {
+      vi.mocked(copyFileSync).mockImplementation(fs.copyFileSync);
+    }
+    const afterFailure = {
+      main: registry.has('imported'),
+      wal: existsSync(registry.pathFor('imported') + '-wal'),
+      shm: existsSync(registry.pathFor('imported') + '-shm'),
+      listed: registry.list(null).map((world) => world.id),
+    };
+    const retry = new WorldRegistry(registry.worldsDir).adopt(legacyPath, 'imported');
+    expect({ afterFailure, retry }).toEqual({
+      afterFailure: { main: false, wal: false, shm: false, listed: [] },
+      retry: 'imported',
+    });
+    for (const [suffix, bytes] of contents) {
+      // SQLite may rebuild SHM while inspecting an unreadable database.
+      if (suffix !== '-shm') expect(readFileSync(legacyPath + suffix, 'utf8')).toBe(bytes);
+      expect(readFileSync(registry.pathFor('imported') + suffix)).toEqual(readFileSync(legacyPath + suffix));
+    }
+    expect(readdirSync(registry.worldsDir).some((name) => name.startsWith('.adopting-'))).toBe(false);
+  });
+
   it('copies it in, leaving the original exactly where it was', () => {
     const legacyDir = mkdtempSync(join(root, 'legacy-'));
     const legacyPath = join(legacyDir, 'world.db');
