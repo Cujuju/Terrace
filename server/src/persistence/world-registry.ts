@@ -153,6 +153,7 @@ export class WorldRegistry {
     if (existsSync(this.pathFor(id)) || existsSync(staged)) {
       throw new Error(`refusing to create world "${id}": it already exists or is being created`);
     }
+    this.setAsideOrphanSidecars(staged);
     return SnapshotStore.open(staged, retention);
   }
 
@@ -286,6 +287,7 @@ export class WorldRegistry {
     if (existsSync(path)) {
       throw new Error(`refusing to create world "${id}": ${path} already exists`);
     }
+    this.setAsideOrphanSidecars(path);
     return SnapshotStore.open(path, retention);
   }
 
@@ -296,6 +298,7 @@ export class WorldRegistry {
     if (existsSync(target)) throw new Error(`world "${toId}" already exists`);
 
     this.checkpoint(source);
+    this.setAsideOrphanSidecars(target);
     copyFileSync(source, target);
   }
 
@@ -371,26 +374,39 @@ export class WorldRegistry {
     logWarn(`archived world "${archivedId}" was PURGED — ${path} no longer exists`);
   }
 
+  // Every world-file creator calls this first: a sidecar with no main file would pair with any new
+  // database, so it is set aside under a hidden name, never deleted.
+  private setAsideOrphanSidecars(path: string): void {
+    for (const suffix of ['-wal', '-shm']) {
+      const sidecar = path + suffix;
+      if (existsSync(sidecar)) {
+        renameSync(sidecar, join(dirname(sidecar), `.orphan-${randomUUID()}-${basename(sidecar)}`));
+      }
+    }
+  }
+
   // Main-file existence marks a world as present. Sidecars are copied first, so the source bundle
   // stays whole until the main file moves; a crash at any point loses no WAL.
   private publishBundle(source: string, target: string): void {
     if (existsSync(target)) throw new Error(`refusing to overwrite ${target}`);
     const copied: string[] = [];
     try {
+      this.setAsideOrphanSidecars(target);
       for (const suffix of ['-wal', '-shm']) {
-        const sidecar = target + suffix;
-        // A sidecar with no main file would pair with any new database; set it aside, never delete it.
-        if (existsSync(sidecar)) {
-          renameSync(sidecar, join(dirname(sidecar), `.orphan-${randomUUID()}-${basename(sidecar)}`));
-        }
         if (existsSync(source + suffix)) {
-          copyFileSync(source + suffix, sidecar);
-          copied.push(sidecar);
+          copyFileSync(source + suffix, target + suffix);
+          copied.push(target + suffix);
         }
       }
       renameSync(source, target);
     } catch (error) {
-      for (const sidecar of copied) rmSync(sidecar, { force: true });
+      for (const sidecar of copied) {
+        try {
+          rmSync(sidecar, { force: true });
+        } catch (cleanupError) {
+          logWarn(`could not remove unpublished ${sidecar}: ${String(cleanupError)}`);
+        }
+      }
       throw error;
     }
     for (const suffix of ['-wal', '-shm']) {
