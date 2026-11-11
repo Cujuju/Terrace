@@ -112,21 +112,39 @@ describe('Chronicle event contracts', () => {
     expect(host.faultCount('chronicle')).toBe(0);
   });
 
-  it('preserves legacy milestone IDs and historical entries without guessing their ladder', () => {
+  it.each([1, 2])('restarts rank firsts from v%s while preserving historical entries', (version) => {
     const legacyEntries = [{ day: 0, text: "The Unos raised the world's first timber house." }];
     const host = boot({
-      v: 2,
+      v: version,
       simMillis: 0,
       entries: packEntries(legacyEntries),
       tierFirsts: [2],
-      monsterKinds: [],
-      toldDay: -1,
-      toldToday: [],
+      monsterKinds: ['yeti'],
+      toldDay: 0,
+      toldToday: ['volcanoes:erupted'],
     });
     expect(chronicleEntries()).toEqual(legacyEntries);
     const saved = host.collectPersistence().chronicle;
-    expect(saved).toMatchObject({ v: 2, data: { tierFirsts: [2], entries: packEntries(legacyEntries) } });
-    boot(saved);
+    expect(saved).toEqual({
+      v: 3,
+      data: {
+        v: 3,
+        simMillis: 0,
+        entries: packEntries(legacyEntries),
+        rankFirsts: [],
+        monsterKinds: ['yeti'],
+        toldDay: 0,
+        toldToday: ['volcanoes:erupted'],
+      },
+    });
+    const restored = boot(saved);
     expect(chronicleEntries()).toEqual(legacyEntries);
+    restored.notifyWorldEvent('structures:changes', {
+      cause: 'generation',
+      upgraded: [{ x: CHUNK_SIZE, y: CHUNK_SIZE, tier: 2 }],
+    });
+    expect(chronicleEntries()[0]).toEqual(legacyEntries[0]);
+    expect(texts()).toHaveLength(2);
+    expect(texts().at(-1)).toContain("world's first settlement of complexity rank 2");
   });
 });

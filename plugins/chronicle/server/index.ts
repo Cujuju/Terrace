@@ -46,7 +46,11 @@ export const CHRONICLE_SECONDS_PER_DAY = DAY_LENGTH_SECONDS;
 
 const LEGACY_CHRONICLE_SECONDS_PER_DAY = 600;
 
-export const CHRONICLE_SLICE_VERSION = 2;
+export const CHRONICLE_SLICE_VERSION = 3;
+
+// v1 counted days at 600 s; v1 and v2 keyed milestone firsts by the old tier ladder.
+const DAY_LENGTH_MIGRATION_SLICE_VERSION = 1;
+const TIER_LADDER_SLICE_VERSION = 2;
 
 export const GENESIS_TEXT = 'The world was young, and its history unwritten.';
 
@@ -54,7 +58,7 @@ let entries: ChronicleEntry[] = [];
 let worldSimMillis = 0;
 
 let sagaGenesisMillis = 0;
-let tierFirsts = new Set<number>();
+let rankFirsts = new Set<number>();
 let monsterKindsSeen = new Set<string>();
 let toldToday = new Set<string>();
 let toldDay = -1;
@@ -62,7 +66,7 @@ let toldDay = -1;
 let restored: {
   entries: ChronicleEntry[];
   simMillis: number;
-  tierFirsts: number[];
+  rankFirsts: number[];
   monsterKinds: string[];
   toldDay: number;
   toldToday: string[];
@@ -146,10 +150,10 @@ function onStructuresChanges(world: WorldApi, payload: unknown): void {
   }
 
   const newTiers = [...new Set(
-    event.upgraded.map((cell) => cell.tier).filter((tier) => tier >= 1 && !tierFirsts.has(tier)),
+    event.upgraded.map((cell) => cell.tier).filter((tier) => tier >= 1 && !rankFirsts.has(tier)),
   )].sort((a, b) => a - b);
   for (const tier of newTiers) {
-    tierFirsts.add(tier);
+    rankFirsts.add(tier);
     const where = event.upgraded.find((cell) => cell.tier === tier);
     if (where !== undefined) {
       lines.push(firstTierLine(settlementRace(where.x, where.y), tier, placeOf(where)));
@@ -224,7 +228,7 @@ const persistence: PersistenceSlice = {
       v: CHRONICLE_SLICE_VERSION,
       simMillis: sagaAgeMillis(),
       entries: packEntries(entries),
-      tierFirsts: [...tierFirsts],
+      rankFirsts: [...rankFirsts],
       monsterKinds: [...monsterKindsSeen],
       toldDay,
       toldToday: [...toldToday],
@@ -240,13 +244,13 @@ const persistence: PersistenceSlice = {
       v?: unknown;
       simMillis?: unknown;
       entries?: unknown;
-      tierFirsts?: unknown;
+      rankFirsts?: unknown;
       monsterKinds?: unknown;
       toldDay?: unknown;
       toldToday?: unknown;
     };
-    const legacy = slice.v === 1;
-    if (slice.v !== CHRONICLE_SLICE_VERSION && !legacy) return undefined;
+    const legacy = slice.v === DAY_LENGTH_MIGRATION_SLICE_VERSION;
+    if (slice.v !== CHRONICLE_SLICE_VERSION && slice.v !== TIER_LADDER_SLICE_VERSION && !legacy) return undefined;
 
     const parsedEntries = parseEntries({ entries: slice.entries });
     const millis =
@@ -258,8 +262,9 @@ const persistence: PersistenceSlice = {
         legacy ? { ...entry, day: migrateDay(entry.day) } : entry,
       ),
       simMillis: millis,
-      tierFirsts: Array.isArray(slice.tierFirsts)
-        ? slice.tierFirsts.filter((t): t is number => Number.isInteger(t))
+      // Older milestone IDs have no ladder epoch; preserve history but restart firsts.
+      rankFirsts: slice.v === CHRONICLE_SLICE_VERSION && Array.isArray(slice.rankFirsts)
+        ? slice.rankFirsts.filter((rank): rank is number => Number.isInteger(rank))
         : [],
       monsterKinds: Array.isArray(slice.monsterKinds)
         ? slice.monsterKinds.filter((k): k is string => typeof k === 'string')
@@ -284,7 +289,7 @@ export const plugin: TerracePlugin = {
     worldSimMillis = world.simMillis;
     if (restored !== null) {
       entries = restored.entries;
-      tierFirsts = new Set(restored.tierFirsts);
+      rankFirsts = new Set(restored.rankFirsts);
       monsterKindsSeen = new Set(restored.monsterKinds);
       toldDay = restored.toldDay;
       toldToday = new Set(restored.toldToday);
@@ -355,7 +360,7 @@ export function resetChronicleState(): void {
   entries = [];
   worldSimMillis = 0;
   sagaGenesisMillis = 0;
-  tierFirsts = new Set();
+  rankFirsts = new Set();
   monsterKindsSeen = new Set();
   toldToday = new Set();
   toldDay = -1;

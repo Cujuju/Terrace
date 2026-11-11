@@ -238,6 +238,8 @@ describe('persistence and the cap', () => {
     });
     harness.host.notifyWorldEvent('monsters:arrived', { kind: 'yeti', ...cellIn(2, 2) });
     const saved = harness.host.collectPersistence()[CHRONICLE_PLUGIN_NAME];
+    expect(saved).toMatchObject({ v: 3, data: { v: 3, rankFirsts: [1] } });
+    expect(saved).not.toHaveProperty('data.tierFirsts');
     const before = [...chronicleEntries()];
 
     const restored = boot(saved);
@@ -262,6 +264,14 @@ describe('persistence and the cap', () => {
   it('an unknown slice version is ignored, not misread', () => {
     boot({ v: 999, entries: [{ d: 0, t: 'from the future' }] });
     expect(texts()).toEqual([GENESIS_TEXT]);
+  });
+
+  it.each([
+    { data: { v: 4 }, fromVersion: 4 },
+    { data: { v: 4 }, fromVersion: 1 },
+    { data: {}, fromVersion: 4 },
+  ])('refuses a v4 slice: %j', ({ data, fromVersion }) => {
+    expect(chroniclePlugin.persistence?.load(data, fromVersion)).toBe('refuse');
   });
 
   it('the scroll is capped; the oldest pages crumble first', () => {
