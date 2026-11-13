@@ -4,6 +4,8 @@ dist/
 dist-electron/
 .electron-stage/
 release/
+# Dev build of the tailcat helper (scripts/build-tailcat-bridge.mjs).
+tools/tailcat-bridge/bin/
 data/
 .env
 *.tsbuildinfo

@@ -33,6 +33,12 @@ export const clientDist = isPackaged
   ? join(process.resourcesPath, 'renderer')
   : join(repoRoot, 'client', 'dist');
 
+/** The tailcat helper: staged per arch when packaged, `pnpm bridge:build` in a checkout. */
+const BRIDGE_FILE = IS_WINDOWS ? 'tailcat-bridge.exe' : 'tailcat-bridge';
+export const bridgePath = isPackaged
+  ? join(process.resourcesPath, 'bridge', BRIDGE_FILE)
+  : join(repoRoot, 'tools', 'tailcat-bridge', 'bin', BRIDGE_FILE);
+
 /** Windows reads its icon sizes from the .ico; other systems cannot load one. */
 const ICON_FILE = IS_WINDOWS ? 'icon.ico' : 'icon.png';
 /** The app icon for the tray and dev windows; null when the file is absent. */

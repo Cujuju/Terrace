@@ -5,6 +5,7 @@ import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { buildBridge } from './build-tailcat-bridge.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const stage = path.join(repoRoot, '.electron-stage');
@@ -64,7 +65,16 @@ for (const plugin of readdirSync(path.join(repoRoot, 'plugins'), { withFileTypes
   });
 }
 
+// One helper per package architecture: a macOS run packages arm64 and x64 (client/electron-builder.ts).
+console.log('[stage] build the tailcat helper');
+const bridgeArchs = process.platform === 'darwin' ? ['arm64', 'x64'] : [process.arch];
+const bridgeOs = { win32: 'win', darwin: 'mac', linux: 'linux' }[process.platform];
+const stagedBridges = bridgeArchs.map((arch) =>
+  buildBridge(process.platform, arch, path.join(stage, 'bridge', `${bridgeOs}-${arch}`)),
+);
+
 const mustExist = [
+  ...stagedBridges,
   path.join(stagedServer, 'server', 'src', 'boot', 'packaged-entry.ts'),
   path.join(stagedServer, 'shared', 'src', 'index.ts'),
   path.join(stagedServer, 'node_modules', '@colyseus', 'core'),

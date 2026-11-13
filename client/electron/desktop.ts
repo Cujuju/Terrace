@@ -1,4 +1,5 @@
 // The desktop shell's state in main: settings, the embedded server, what the window shows, the tray, the hotkey and updates.
+import { join } from 'node:path';
 import { app, dialog, globalShortcut, ipcMain, type BrowserWindow, type IpcMainInvokeEvent } from 'electron';
 import { APP_NAME, IS_WINDOWS, appIconPath, devServerUrl, envDataDir, fixedPort } from './appEnv.ts';
 import {
@@ -24,6 +25,7 @@ import { restartApp } from './restart.ts';
 import { ServerSupervisor, type ServerLaunch } from './serverChild.ts';
 import { freePortFrom, loopbackOrigin, portFree, probeServer } from './serverProbe.ts';
 import { readDesktopSettings, writeDesktopSettings } from './settingsFile.ts';
+import { TailcatHost } from './tailcatBridge.ts';
 import { AppTray } from './tray.ts';
 import { Updates } from './updates.ts';
 import { raiseWindow } from './windowState.ts';
@@ -38,6 +40,8 @@ const HTTP_ERROR_STATUS = 400;
 const CONNECT_BUTTON = 0;
 const USE_FREE_PORT_BUTTON = 0;
 const QUIT_BUTTON = 1;
+/** In the app's own folder, not the data folder: the address belongs to this machine, not to a world. */
+const TAILCAT_KEY_FILE = 'tailcat-host-key.json';
 
 const messageOf = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
@@ -102,6 +106,7 @@ export class Desktop {
     (logPath) => this.fail(`The world server keeps stopping. Its log is at ${logPath}`),
   );
   private readonly trayAvailable = appIconPath() !== null;
+  private readonly tailcat = new TailcatHost(join(app.getPath('userData'), TAILCAT_KEY_FILE), () => this.changed());
 
   /** `onFatal` reports why the app cannot go on, then ends it. */
   constructor(private readonly onFatal: (message: string) => void) {}
@@ -212,14 +217,28 @@ export class Desktop {
   /** Starts the embedded server with no window to show it in. */
   async startServer(): Promise<boolean> {
     await this.supervisor.start();
-    if (await this.supervisor.ready()) return true;
+    if (await this.supervisor.ready()) {
+      this.syncTailcat();
+      return true;
+    }
     this.fail('The world server did not start in time.');
     return false;
   }
 
   async stopServer(): Promise<void> {
+    await this.tailcat.stop();
     await this.supervisor.stop();
     this.supervisor.close();
+  }
+
+  /** Shares only a server this app runs: one it merely joined is not its to hand out. */
+  private syncTailcat(): void {
+    void this.tailcat.sync(this.hosting && this.settings.shareOverTailcat, this.port());
+  }
+
+  private newTailcatAddress(): Promise<void> {
+    if (!this.hosting || !this.settings.shareOverTailcat) throw new Error('Sharing over tailcat is off.');
+    return this.tailcat.rotate(this.port());
   }
 
   private fail(message: string): void {
@@ -282,6 +301,7 @@ export class Desktop {
       trayAvailable: this.tray !== undefined,
       update: this.updates?.current() ?? { phase: 'unsupported' },
       version: __CLIENT_VERSION__,
+      tailcat: this.tailcat.current(),
     };
   }
 
@@ -293,6 +313,9 @@ export class Desktop {
     this.bindHotkey();
     this.changed();
     const serverChanged = SERVER_SETTING_KEYS.some((key) => before[key] !== this.settings[key]);
+    const shareChanged = before.shareOverTailcat !== this.settings.shareOverTailcat || before.port !== this.settings.port;
+    // A port change restarts the helper before the server is back; its connections retry until it is.
+    if (shareChanged && this.win !== undefined) this.syncTailcat();
     // Before the first start there is no server to restart: host() reads the new settings.
     if (!serverChanged || !this.hosting || this.win === undefined) return;
     await this.supervisor.restart();
@@ -389,6 +412,8 @@ export class Desktop {
         return this.join(String(args[0]));
       case 'dismissJoinFailure':
         return this.dismissJoinFailure();
+      case 'newTailcatAddress':
+        return this.newTailcatAddress();
       case 'goHome':
         return this.showHome();
       case 'checkForUpdate':

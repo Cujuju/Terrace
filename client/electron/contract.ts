@@ -26,6 +26,8 @@ export interface DesktopSettings {
   hotkey: string | null;
   /** The last remote server joined, offered again. */
   lastServer: string | null;
+  /** Also serves this machine's world at a tailcat address, so players join without an open port. */
+  shareOverTailcat: boolean;
 }
 
 export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
@@ -38,6 +40,8 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   startHidden: true,
   hotkey: null,
   lastServer: null,
+  // Off: sharing contacts Tailscale's relays and hands out an address anyone can join with.
+  shareOverTailcat: false,
 };
 
 /** Settings whose change restarts the embedded server. */
@@ -108,8 +112,16 @@ export function normalizeDesktopSettings(v: unknown): DesktopSettings {
     startHidden: flag(o['startHidden'], d.startHidden),
     hotkey: isHotkey(o['hotkey']) ? o['hotkey'] : d.hotkey,
     lastServer: text('lastServer'),
+    shareOverTailcat: flag(o['shareOverTailcat'], d.shareOverTailcat),
   };
 }
+
+/** Where sharing over tailcat stands. `address` admits anyone who has it. */
+export type TailcatShare =
+  | { phase: 'off' }
+  | { phase: 'starting' }
+  | { phase: 'ready'; address: string }
+  | { phase: 'failed'; message: string };
 
 export type DesktopPlatform = 'windows' | 'mac' | 'linux';
 
@@ -157,6 +169,7 @@ export interface HostDesktopState {
   trayAvailable: boolean;
   update: UpdateStatus;
   version: string;
+  tailcat: TailcatShare;
 }
 
 export type DesktopState = GuestDesktopState | HostDesktopState;
@@ -187,6 +200,8 @@ export interface DesktopMethods {
   /** Shows the server at `address`; a failure lands in state as `joinFailure`. */
   join(address: string): void;
   dismissJoinFailure(): void;
+  /** Replaces the tailcat address; nobody holding the old one can join again. */
+  newTailcatAddress(): void;
   goHome(): void;
   checkForUpdate(): void;
   installUpdate(): void;

@@ -17,6 +17,8 @@ const config: Configuration = {
   extraResources: [
     { from: 'dist', to: 'renderer', filter: ['**/*'] },
     { from: '../.electron-stage/server', to: 'server', filter: ['**/*'] },
+    // The tailcat helper for this package's os and arch (scripts/electron-package.mjs stages each).
+    { from: '../.electron-stage/bridge/${os}-${arch}', to: 'bridge', filter: ['**/*'] },
   ],
   asar: true,
   // The asar ships no node_modules, and the server's native module is a Node-API prebuild.
