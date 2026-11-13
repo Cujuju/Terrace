@@ -7,6 +7,7 @@ import {
   type UpdateStatus,
 } from '../../electron/contract.ts';
 import { desktopBridge, desktopErrorMessage } from '../state/desktopState.ts';
+import { TailcatSharePanel } from './TailcatSharePanel.tsx';
 
 const trayWord = (platform: DesktopPlatform): string => (platform === 'mac' ? 'menu bar' : 'tray');
 
@@ -159,6 +160,8 @@ export function DesktopPanel(props: {
       <p class="hud-hint">
         A change here restarts the world server. Worlds in the old folder stay there.
       </p>
+
+      <TailcatSharePanel host={props.host} />
 
       <p class="desktop-heading">Join a server</p>
       <form
