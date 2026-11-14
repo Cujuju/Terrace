@@ -32,9 +32,9 @@ Stage only your exact paths — never `-A`, never a bare `git add`.
 The commit type is the version bump (`server/src/app-version.ts`): `feat` raises
 the minor number, every other type the patch. Nothing to edit by hand.
 
-Working in a worktree? Commit to its branch, then call `ExitWorktree`
-(`action: "keep"`) to return to this checkout and merge there — git against the
-shared checkout is blocked from inside a worktree until you do.
+Do feature work in a worktree branch, not on `main` in this checkout. When it
+is done, commit to the branch, push it and open a PR against `main`; never merge
+it into this checkout locally. Then call `ExitWorktree` (`action: "keep"`).
 
 ## Hard rules from the design record
 
