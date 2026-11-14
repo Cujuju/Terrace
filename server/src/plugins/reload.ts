@@ -1,10 +1,14 @@
-import { register } from 'node:module';
+import { registerHooks } from 'node:module';
 import { realpath } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { PluginLoadError, findServerEntry, pluginFromModule } from './discovery.ts';
 import { createPluginVersionContext, reloadedVersionStamp } from './plugin-version.ts';
-import { PLUGIN_RELOAD_GENERATION_PARAM, PLUGIN_RELOAD_ROOT_PARAM } from './reload-hooks.ts';
+import {
+  PLUGIN_RELOAD_GENERATION_PARAM,
+  PLUGIN_RELOAD_ROOT_PARAM,
+  resolve as resolveReloadTagged,
+} from './reload-hooks.ts';
 import type { LoadedPlugin } from './types.ts';
 
 let generation = 0;
@@ -13,7 +17,7 @@ let hooksRegistered = false;
 
 function registerReloadHooks(): void {
   if (hooksRegistered) return;
-  register('./reload-hooks.ts', import.meta.url);
+  registerHooks({ resolve: resolveReloadTagged });
   hooksRegistered = true;
 }
 
