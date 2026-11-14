@@ -10,12 +10,12 @@ interface ResolveResult {
   readonly url: string;
 }
 
-export async function resolve(
+export function resolve(
   specifier: string,
   context: ResolveContext,
-  nextResolve: (specifier: string, context: ResolveContext) => Promise<ResolveResult>,
-): Promise<ResolveResult> {
-  const result = await nextResolve(specifier, context);
+  nextResolve: (specifier: string, context: ResolveContext) => ResolveResult,
+): ResolveResult {
+  const result = nextResolve(specifier, context);
   const parent = context.parentURL;
   if (parent === undefined || !parent.includes(PLUGIN_RELOAD_GENERATION_PARAM)) return result;
 
