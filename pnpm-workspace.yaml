@@ -38,3 +38,7 @@ peerDependencyRules:
     '@typescript-eslint/typescript-estree>typescript': '7'
     '@typescript-eslint/project-service>typescript': '7'
     '@typescript-eslint/tsconfig-utils>typescript': '7'
+
+# Owner-approved security bump (#538) installed before pnpm's release-age window elapsed.
+minimumReleaseAgeExclude:
+  - electron@45.3.3
