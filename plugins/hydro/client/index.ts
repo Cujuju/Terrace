@@ -3,12 +3,13 @@ import type {
   GroundShadeDisc,
   TerraceClientPlugin,
 } from '../../../client/src/plugins/types.ts';
-import { CELL_WORLD_SIZE } from '@terrace/shared';
+import { BAND_HEIGHT, CELL_WORLD_SIZE, MAX_HEIGHT, MAX_RELIEF_WORLD_UNITS } from '@terrace/shared';
 import {
   HYDRO_CHANGES_MESSAGE,
   HYDRO_PATCHES_MESSAGE,
   HYDRO_PATCH_CAP,
   HYDRO_PATCH_CORE_FRACTION,
+  HYDRO_PATCH_RADIUS_CELLS,
   HYDRO_PATCH_RADIUS_WORLD_UNITS,
   HYDRO_PLUGIN_NAME,
   HYDRO_POUR_MESSAGE,
@@ -21,12 +22,39 @@ import {
 } from '../protocol.ts';
 import { WaterIcon } from './WaterIcon.tsx';
 import { createPourMarker, type PourMarker } from './pourMarker.ts';
-import { createPuddles, type PuddleInstance, type Puddles } from './puddles.ts';
+import {
+  PUDDLE_MASK_CELLS,
+  PUDDLE_MASK_SAMPLES_PER_CELL,
+  PUDDLE_MASK_SPAN,
+  createPuddles,
+  type PuddleInstance,
+  type Puddles,
+} from './puddles.ts';
 
 interface LocalPatch {
   readonly cell: HydroPatchState;
   drawnY: number | null;
+  onStep: Uint8Array | null;
   ageSeconds: number;
+}
+
+// Cells drawn within half a band of the centre's ground share its step; others lie past a riser.
+const SAME_STEP_TOLERANCE_WORLD = (BAND_HEIGHT * MAX_RELIEF_WORLD_UNITS) / MAX_HEIGHT / 2;
+
+function stepMask(ctx: ClientPluginCtx, cell: HydroPatchState, drawnY: number): Uint8Array {
+  const mask = new Uint8Array(PUDDLE_MASK_CELLS);
+  const half = HYDRO_PATCH_RADIUS_CELLS * PUDDLE_MASK_SAMPLES_PER_CELL;
+  for (let sy = 0; sy < PUDDLE_MASK_SPAN; sy++) {
+    for (let sx = 0; sx < PUDDLE_MASK_SPAN; sx++) {
+      const ground = ctx.drawnGroundYAt(
+        cell.x + (sx - half) / PUDDLE_MASK_SAMPLES_PER_CELL,
+        cell.y + (sy - half) / PUDDLE_MASK_SAMPLES_PER_CELL,
+      );
+      const same = ground !== null && Math.abs(ground - drawnY) <= SAME_STEP_TOLERANCE_WORLD;
+      mask[sy * PUDDLE_MASK_SPAN + sx] = same ? 1 : 0;
+    }
+  }
+  return mask;
 }
 
 let puddles: Puddles | null = null;
@@ -66,6 +94,7 @@ function adoptGround(ctx: ClientPluginCtx, patch: LocalPatch): void {
     return;
   }
   patch.drawnY = drawnY;
+  patch.onStep = stepMask(ctx, patch.cell, drawnY);
 }
 
 function resolveGround(ctx: ClientPluginCtx): void {
@@ -74,7 +103,7 @@ function resolveGround(ctx: ClientPluginCtx): void {
 }
 
 function addPatch(ctx: ClientPluginCtx, cell: HydroPatchState): void {
-  const patch: LocalPatch = { cell, drawnY: null, ageSeconds: cell.ageSeconds };
+  const patch: LocalPatch = { cell, drawnY: null, onStep: null, ageSeconds: cell.ageSeconds };
   patches.set(hydroKey(cell.x, cell.y), patch);
   adoptGround(ctx, patch);
 }
@@ -90,13 +119,13 @@ function buildLists(): void {
   shade.length = 0;
 
   for (const patch of patches.values()) {
-    if (patch.drawnY === null) continue;
+    if (patch.drawnY === null || patch.onStep === null) continue;
     const wetness = hydroWetness(patch.ageSeconds);
     if (wetness <= 0) continue;
 
     const x = patch.cell.x * CELL_WORLD_SIZE;
     const z = patch.cell.y * CELL_WORLD_SIZE;
-    instances.push({ x, z, drawnY: patch.drawnY, wetness });
+    instances.push({ x, z, drawnY: patch.drawnY, wetness, onStep: patch.onStep });
     shade.push({
       x,
       z,
@@ -163,7 +192,10 @@ export const clientPlugin: TerraceClientPlugin = {
     ];
 
     unsubscribeTerrain = ctx.onTerrainChanged(() => {
-      for (const patch of patches.values()) patch.drawnY = null;
+      for (const patch of patches.values()) {
+        patch.drawnY = null;
+        patch.onStep = null;
+      }
       resolveGround(ctx);
     });
 
