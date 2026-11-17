@@ -1,10 +1,14 @@
 import {
+  DataTexture,
   Group,
+  LinearFilter,
   InstancedBufferAttribute,
   InstancedMesh,
   Matrix4,
   PlaneGeometry,
   Quaternion,
+  RedFormat,
+  UnsignedByteType,
   Vector3,
 } from 'three';
 import { NodeMaterial } from 'three/webgpu';
@@ -18,7 +22,9 @@ import {
   positionGeometry,
   sin,
   smoothstep,
+  texture,
   uniform,
+  vec2,
   vec3,
   vec4,
 } from 'three/tsl';
@@ -26,8 +32,21 @@ import { radianceForDisplay } from '../../../client/src/render/displayRadiance.t
 import {
   HYDRO_PATCH_CAP,
   HYDRO_PATCH_CORE_FRACTION,
+  HYDRO_PATCH_RADIUS_CELLS,
   HYDRO_PATCH_RADIUS_WORLD_UNITS,
 } from '../protocol.ts';
+
+/** Mask samples per cell along each axis, so the cut follows the smoothed lip rather than whole cells. */
+export const PUDDLE_MASK_SAMPLES_PER_CELL = 4;
+/** Samples across one puddle's footprint, centre sample included. */
+export const PUDDLE_MASK_SPAN = 2 * HYDRO_PATCH_RADIUS_CELLS * PUDDLE_MASK_SAMPLES_PER_CELL + 1;
+export const PUDDLE_MASK_CELLS = PUDDLE_MASK_SPAN * PUDDLE_MASK_SPAN;
+const PUDDLE_MASK_HALF_SPAN = HYDRO_PATCH_RADIUS_CELLS * PUDDLE_MASK_SAMPLES_PER_CELL;
+// The filtered mask crosses 0.5 at the lip; this band anti-aliases the cut edge.
+const MASK_EDGE_LOW = 0.25;
+const MASK_EDGE_HIGH = 0.75;
+
+const MASK_ON_STEP_BYTE = 255;
 
 const PUDDLE_HOVER_HEIGHT = 0.02;
 
@@ -52,6 +71,8 @@ export interface PuddleInstance {
   readonly z: number;
   readonly drawnY: number;
   readonly wetness: number;
+  /** One byte per mask sample, row-major from the -x,-z corner: 1 where the ground shares the centre's step. */
+  readonly onStep: Uint8Array;
 }
 
 export interface Puddles {
@@ -79,6 +100,15 @@ export function createPuddles(): Puddles {
 
   const elapsedUniform = uniform(0);
   const aWetness = attribute<'float'>('aWetness', 'float');
+  const aRow = attribute<'float'>('aRow', 'float');
+
+  // One SPAN x SPAN tile per instance slot, stacked in z, so bilinear filtering blends both axes.
+  const maskBytes = new Uint8Array(PUDDLE_MASK_CELLS * HYDRO_PATCH_CAP);
+  const maskTexture = new DataTexture(
+    maskBytes, PUDDLE_MASK_SPAN, PUDDLE_MASK_SPAN * HYDRO_PATCH_CAP, RedFormat, UnsignedByteType,
+  );
+  maskTexture.magFilter = LinearFilter;
+  maskTexture.minFilter = LinearFilter;
 
   // The quad lies in XZ, two units across, so position.xz is the offset from the centre in radii.
   const vPlan = positionGeometry.xz;
@@ -89,6 +119,14 @@ export function createPuddles(): Puddles {
     const radius = length(vPlan);
     const falloff = float(1.0).sub(smoothstep(HYDRO_PATCH_CORE_FRACTION, 1.0, radius));
     Discard(falloff.lessThanEqual(0.0));
+
+    // Past a riser the flat disc would float a band above the lower step, so that part is not drawn.
+    const texel = vPlan.mul(PUDDLE_MASK_HALF_SPAN).add(PUDDLE_MASK_HALF_SPAN + 0.5);
+    const onStep = smoothstep(MASK_EDGE_LOW, MASK_EDGE_HIGH, texture(
+      maskTexture,
+      vec2(texel.x.div(PUDDLE_MASK_SPAN), aRow.mul(PUDDLE_MASK_SPAN).add(texel.y).div(PUDDLE_MASK_SPAN * HYDRO_PATCH_CAP)),
+    ).r);
+    Discard(onStep.lessThanEqual(0.0));
 
     // Rings ride on top of the falloff, never multiplied in, so the ripple cannot move the edge.
     const ripple = sin(
@@ -102,6 +140,7 @@ export function createPuddles(): Puddles {
     );
 
     const alpha = falloff
+      .mul(onStep)
       .mul(aWetness)
       .mul(PUDDLE_ALPHA_PEAK)
       .mul(float(1.0).add(ripple.mul(PUDDLE_RIPPLE_DEPTH)));
@@ -119,6 +158,8 @@ export function createPuddles(): Puddles {
 
   const wetness = new InstancedBufferAttribute(new Float32Array(HYDRO_PATCH_CAP), 1);
   geometry.setAttribute('aWetness', wetness);
+  const rows = new InstancedBufferAttribute(Float32Array.from({ length: HYDRO_PATCH_CAP }, (_, i) => i), 1);
+  geometry.setAttribute('aRow', rows);
 
   const matrix = new Matrix4();
   const position = new Vector3();
@@ -137,10 +178,13 @@ export function createPuddles(): Puddles {
         matrix.compose(position, rotation, scale);
         mesh.setMatrixAt(i, matrix);
         wetness.setX(i, patch.wetness);
+        const row = i * PUDDLE_MASK_CELLS;
+        for (let c = 0; c < PUDDLE_MASK_CELLS; c++) maskBytes[row + c] = patch.onStep[c] === 1 ? MASK_ON_STEP_BYTE : 0;
       }
       mesh.count = count;
       mesh.instanceMatrix.needsUpdate = true;
       wetness.needsUpdate = true;
+      maskTexture.needsUpdate = true;
     },
 
     update(elapsed: number): void {
@@ -150,6 +194,7 @@ export function createPuddles(): Puddles {
     dispose(): void {
       geometry.dispose();
       material.dispose();
+      maskTexture.dispose();
       mesh.dispose();
     },
   };
